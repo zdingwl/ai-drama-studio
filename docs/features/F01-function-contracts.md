@@ -76,55 +76,103 @@ C:\Users\xxx\AppData\Local\AI Drama Studio
 4 passed
 ```
 
-测试覆盖：覆盖路径优先、Windows 默认、空白覆盖忽略、无法确定位置明确失败、没有隐藏 mkdir 副作用。
-
 ---
 
-# 3. `init_database()` — 下一函数 / PLANNED
+# 3. `init_database()` — 已完成 / TESTED
+
+文件：
+
+```text
+engine/app/core/database.py
+engine/migrations/env.py
+engine/migrations/versions/0001_create_projects.py
+engine/tests/unit/test_database.py
+```
 
 **业务作用**
 
-初始化 F01 需要的应用级 SQLite：
+初始化 F01 唯一的应用级 SQLite：
 
 ```text
 <get_app_data_path()>/app.db
 ```
 
-并保证 `projects` 表存在。
+并通过 Alembic `0001_create_projects` 创建 F01 唯一的业务表 `projects`。
 
-**为什么需要**
+**为什么使用 Alembic，而不是临时 `create_all()`**
 
-F01 必须做到关闭/重启后项目仍然存在，因此项目记录不能只放内存或前端 localStorage。
+数据库从第一版开始就需要可追踪升级历史。开发期初始化和以后正式升级统一走 Migration，避免同一个 `app.db` 同时存在两套建表方式。
 
-**计划职责**
+**实际职责**
 
-- 创建应用数据目录（如果不存在）；
-- 建立 SQLite/SQLAlchemy Engine；
-- 创建或升级 F01 所需 Schema；
-- 返回后续业务可以使用的数据库访问对象。
+- 应用数据目录不存在时创建；
+- 固定数据库文件名为 `app.db`；
+- 调用 Alembic 升级到当前 `head`；
+- 重复调用保持幂等；
+- 返回已经初始化完成的 `app.db` 路径。
 
 **明确不做**
 
 - 不创建具体 Project；
-- 不创建 Workspace；
+- 不创建 Project Workspace；
 - 不写 `project.json`；
-- 不创建 F02 以后才需要的表。
+- 不插入项目记录；
+- 不创建 Episode、Shot、Character 等后续 Feature 表。
 
-**必须有的中文说明**
+**数据库注释**
 
-`projects` 表和每个字段的业务意义必须在 Model/Migration 中解释，并与 F01 Database Dictionary 保持一致。
+`0001_create_projects.py` 已为表用途、字段意义、状态约束和 downgrade 边界写简体中文说明。
 
-**测试至少覆盖**
+当前 `projects` 字段与 F01 Database Dictionary 一致：
 
-- 全新临时目录能初始化；
-- `app.db` 被创建；
-- `projects` 表存在；
-- 重复调用不会重复建表或报错；
-- 测试环境不污染真实 LocalAppData。
+```text
+id
+name
+source_language
+target_language
+target_region
+workspace_path
+project_format_version
+status
+created_at
+last_opened_at
+```
+
+**依赖**
+
+```text
+SQLAlchemy==2.0.50
+alembic==1.18.4
+pytest==9.0.2
+```
+
+记录在：
+
+```text
+engine/requirements.txt
+```
+
+**实际测试结果**
+
+```text
+6 passed
+```
+
+覆盖：
+
+- 全新临时目录创建 `app.db`；
+- 只出现 `alembic_version + projects`；
+- projects 10 个字段完全一致；
+- Alembic revision=`0001_create_projects`；
+- 重复初始化安全；
+- 非法 `status` 被数据库拒绝；
+- 重复 `workspace_path` 被数据库拒绝。
+
+当前测试容器 Python 为 3.13.5；项目正式基线仍是 Python 3.11，F01 完整验收前必须在目标 Python 3.11 环境再跑一次完整测试。
 
 ---
 
-# 4. `generate_project_id()` — PLANNED
+# 4. `generate_project_id()` — 下一函数 / PLANNED
 
 生成：
 
