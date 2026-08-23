@@ -9,14 +9,15 @@ Project: AI Drama Studio
 Official Baseline: main
 Current Working Branch: main（用户未要求切换/新建其它分支）
 Current Feature: F01 — 创建项目
-Feature Status: PLANNED / NOT_STARTED
+Feature Status: PLANNED
+F01 Contract: DRAFTED / WAITING_USER_CONFIRMATION
 Stable Features: none
 Frozen Features: none
 Business Code: not started
 Business DB/Migration: not started
 ```
 
-`main` 已经是唯一正式 Source of Truth。PR #2 和 PR #1 均已完成合并，不再依赖旧文档分支恢复上下文。
+`main` 是唯一正式 Source of Truth。
 
 ## Git 操作权限
 
@@ -32,9 +33,69 @@ Git 分支和 PR 结构由用户控制。
 
 当前用户已经明确要求：**不要擅自新建分支。**
 
-因此下一步开发不得因为“一个 Feature 一个分支”而自动创建 `feature/F01-create-project`。只有用户后续明确要求创建/切换某个分支时，才执行相应 Git 结构操作。
+因此 F01 当前直接在用户指定的 `main` 维护文档；只有用户后续明确要求其它 Git 结构动作时才执行。
 
 详细规则：`AGENTS.md` 与 `SKILL.md` 第 28 节。
+
+## F01 Contract 已建立
+
+当前正式草案：
+
+```text
+docs/features/F01-create-project.md
+```
+
+F01 被定义为：
+
+> 建立 Project 容器、应用级项目注册、Workspace、`project.json`、重启恢复；不涉及任何视频或 AI。
+
+当前建议的关键设计（等待用户确认）：
+
+```text
+1. 应用级单 SQLite：app.db
+2. 默认 Workspace Root：%USERPROFILE%/AI Drama Studio Projects
+3. Project ID：PROJECT_<UUID4_HEX>
+4. Project Workspace：<root>/<project_id>/
+5. F01 只创建 project.json，不提前创建媒体目录
+6. 浏览器开发期自定义存储位置使用文本路径；Electron 后续再接原生目录选择器
+7. F01 不做删除/重命名/归档/导入导出
+8. project_format_version = 1
+9. Project lifecycle = creating → ready；创建中断通过 startup recovery 恢复
+```
+
+用户确认前不得把 F01 标记 `IN_PROGRESS`，不得开始业务代码。
+
+## F01 单函数开发方式
+
+F01 已拆成单函数执行顺序，详细见 `docs/features/F01-create-project.md`。
+
+执行原则：
+
+```text
+函数实现
+→ 对应测试
+→ PASS
+→ 下一个函数
+```
+
+分组：
+
+```text
+Backend Foundation
+→ Project Validation / ID / Paths
+→ Manifest
+→ Repository
+→ Recovery / Service
+→ API
+→ Frontend API / Store
+→ Frontend UI
+→ 前后端联调
+→ Restart / Recovery
+→ READY_FOR_REVIEW
+→ 用户验收
+```
+
+禁止一次把整个 F01 堆完后再统一测试。
 
 ## Approved Production Flow
 
@@ -105,8 +166,7 @@ AI / Codex / Agent 只能自行推进到 `READY_FOR_REVIEW`。
 - Simplified-Chinese code/database business comments；
 - Database Dictionary；
 - Stable Feature Regression；
-- Cross-conversation documentation continuity；
-- Git Branch / PR Operations Require Explicit User Authorization。
+- Cross-conversation documentation continuity。
 
 ## 当前技术方案
 
@@ -120,38 +180,25 @@ GPU: RTX 4060 Ti 16GB，开发期 concurrency = 1
 Strong VLM / Video / Premium TTS / Premium LipSync: Provider Adapter API
 ```
 
+F01 实现时只安装 F01 实际需要的最小依赖；PyTorch/CUDA/OpenCV/AI 模型不在 F01 提前安装。
+
 ## 当前代码/数据状态
 
+- F01 Contract 文档已创建；
 - 无正式业务代码；
 - 无业务数据库；
 - 无 Migration；
-- 无 Stable/Frozen Feature；
-- 无历史业务 Contract 需要兼容。
-
-因此下一步可以从 F01 正确冻结第一份 Project Contract。
+- 无 Stable/Frozen Feature。
 
 ## 当前阻塞项
 
-无。
+唯一阻塞：
+
+> 等待用户确认 `docs/features/F01-create-project.md` 第 31 节的 9 个关键决策。
 
 ## 已知 Bug
 
 无业务代码，暂无运行 Bug。
-
-## F01 Contract 必须确定
-
-- Project ID；
-- `project_format_version`；
-- 默认 Workspace 根目录；
-- Project 目录结构；
-- 每项目独立 SQLite vs 应用级 DB + Workspace；
-- Project metadata；
-- 创建项目表单字段；
-- DB/File 创建事务、失败回滚与恢复；
-- Database Dictionary；
-- P0 Checklist；
-- Current Tests；
-- 用户人工验收步骤。
 
 ## 新对话最短恢复路径
 
@@ -159,24 +206,18 @@ Strong VLM / Video / Premium TTS / Premium LipSync: Provider Adapter API
 AGENTS.md
 → SKILL.md
 → docs/PROJECT_STATE.md
-→ 当前 docs/features/FXX-*.md（创建后）
+→ docs/features/F01-create-project.md
 → 最新相关 Session Handoff
-→ 按当前 Feature Rule References 读取必要详细规范
+→ 按 F01 Rule References 读取必要详细规范
 ```
 
 不要无差别读取整个 `docs/`，也不要要求用户重新解释已记录的需求和技术决定。
 
-## 最新交接
-
-`docs/sessions/2026-08-23_1457_PROJECT_git-branch-permission.md`
-
-该文档记录用户新增的 Git 分支/PR 权限边界：未经明确授权不得创建或改变分支结构。
-
 ## 下一步唯一动作
 
-> 在**用户当前指定的 Git 工作方式**下建立并完善 `docs/features/F01-create-project.md` Contract；未经用户明确要求，不创建 `feature/F01-create-project` 或任何其它新分支。Contract 经用户确认后，才开始写第一行业务代码。
+> 用户审核并确认 F01 Contract 的 9 个关键决策。确认后把 F01 状态从 `PLANNED` 改为 `IN_PROGRESS`，然后严格从单函数 B01 开始编码；不擅自新建分支，不实现 F02。
 
 ## 最近更新时间
 
-- 日期：2026-08-23 14:57 +08:00
-- 状态：新增 Git 操作权限边界；禁止 Agent 未经用户明确授权创建、切换或修改分支/PR 结构。Feature 01 仍处于 PLANNED / NOT_STARTED。
+- 日期：2026-08-23 15:18 +08:00
+- 状态：F01 单函数级开发 Contract 已建立，等待用户确认后开始编码。
