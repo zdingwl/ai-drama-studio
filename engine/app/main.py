@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -88,6 +89,26 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Content-Type"],
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+        """把 Schema 枚举/格式错误转换成前端统一 error envelope。
+
+        语言和地区虽然已经由下拉框限制，但 API 仍必须独立防御非法请求。
+        本处理器不修正用户输入，只明确拒绝非标准值。
+        """
+
+        invalid_fields = {str(error["loc"][-1]) for error in exc.errors() if error.get("loc")}
+        if "source_language" in invalid_fields:
+            code, message = "PROJECT_SOURCE_LANGUAGE_UNSUPPORTED", "原片语言不是系统支持的标准语言"
+        elif "target_language" in invalid_fields:
+            code, message = "PROJECT_TARGET_LANGUAGE_UNSUPPORTED", "目标语言不是系统支持的标准语言"
+        elif "target_region" in invalid_fields:
+            code, message = "PROJECT_TARGET_REGION_UNSUPPORTED", "目标地区不是系统支持的标准地区"
+        else:
+            code, message = "PROJECT_REQUEST_INVALID", "创建项目请求格式不正确"
+
+        return JSONResponse(status_code=422, content={"error": {"code": code, "message": message}})
 
     @app.exception_handler(ProjectError)
     async def project_error_handler(_: Request, exc: ProjectError) -> JSONResponse:
