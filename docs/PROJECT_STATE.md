@@ -9,12 +9,11 @@ Project: AI Drama Studio
 Official Baseline: main
 Current Working Branch: main（用户未要求切换/新建其它分支）
 Current Feature: F01 — 创建项目
-Feature Status: PLANNED
-F01 Contract: SIMPLIFIED / WAITING_USER_CONFIRMATION
-F01 Function Responsibilities: SIMPLIFIED / WAITING_USER_CONFIRMATION
+Feature Status: IN_PROGRESS
+F01 Contract: CONFIRMED
 Stable Features: none
 Frozen Features: none
-Business Code: not started
+Business Code: started
 Business DB/Migration: not started
 ```
 
@@ -24,7 +23,7 @@ Business DB/Migration: not started
 
 未经用户明确要求，AI / Codex / Agent 不得新建、切换、删除、重命名分支，也不得擅自创建/关闭/合并/重定向 PR。
 
-当前继续维护 `main`，不创建新分支。
+当前继续直接维护 `main`，不创建新分支。
 
 ---
 
@@ -35,15 +34,11 @@ docs/features/F01-create-project.md
 docs/features/F01-function-contracts.md
 ```
 
-F01 已从上一版“几十个函数/复杂恢复状态”重新瘦身。
-
-核心原则：
-
-> 重要函数讲透；简单函数写清楚；不为了架构完整提前制造复杂度。
+简化版 F01 已由用户确认，不再等待 Contract 确认。
 
 ---
 
-# F01 当前范围
+# F01 范围
 
 第一阶段只解决：
 
@@ -59,11 +54,9 @@ F01 已从上一版“几十个函数/复杂恢复状态”重新瘦身。
 
 ---
 
-# F01 当前数据设计
+# F01 数据设计
 
-## 数据库
-
-一个应用级 SQLite：
+应用级 SQLite：
 
 ```text
 %LOCALAPPDATA%/AI Drama Studio/app.db
@@ -90,63 +83,41 @@ created_at
 last_opened_at
 ```
 
-不再在 F01 保存 `created_with_app_version`、`created_with_schema_revision`、`updated_at` 等非必要字段。
-
-## Workspace
+Workspace：
 
 ```text
 <workspace_root>/<project_id>/project.json
 ```
 
-F01 只创建 `project.json`，不提前创建未来媒体目录。
-
-`project.json` 只保存项目基础字段，不保存模型、API、视频清单或 AI 结果。
+F01 只创建 `project.json`，不提前创建媒体目录。
 
 ---
 
-# F01 当前 API
-
-项目业务只保留三个接口：
+# F01 API
 
 ```text
+GET  /api/health
 GET  /api/projects
 POST /api/projects
 POST /api/projects/{project_id}/open
-```
-
-另有：
-
-```text
-GET /api/health
 ```
 
 Controller 只负责 HTTP → Service → Response，不直接 SQL、不 mkdir、不写 `project.json`。
 
 ---
 
-# F01 当前核心函数规模
-
-后端约 9 个核心函数：
+# F01 核心函数
 
 ```text
-get_app_data_path()
-init_database()
-generate_project_id()
-create_project_workspace()
-create_project()
-list_projects()
-open_project()
-recover_creating_projects()
-create_app()
-```
-
-Controller：
-
-```text
-list_projects_api()
-create_project_api()
-open_project_api()
-health_api()
+1. get_app_data_path()             [TESTED / PASS]
+2. init_database()                 [NEXT]
+3. generate_project_id()           [PLANNED]
+4. create_project_workspace()      [PLANNED]
+5. create_project()                [PLANNED]
+6. list_projects()                 [PLANNED]
+7. open_project()                  [PLANNED]
+8. recover_creating_projects()     [PLANNED]
+9. create_app()                    [PLANNED]
 ```
 
 前端主要动作：
@@ -158,111 +129,97 @@ submitCreateProject()
 openProject()
 ```
 
-日期显示、表单 reset、JSON dumps、简单路径拼接等不再单独做项目级 Function Contract。
+---
+
+# 已完成：get_app_data_path()
+
+实现：
+
+```text
+engine/app/core/paths.py
+```
+
+测试：
+
+```text
+engine/tests/unit/test_paths.py
+```
+
+pytest 配置：
+
+```text
+pyproject.toml
+```
+
+函数语义：
+
+- 测试/开发可用 `AI_DRAMA_APP_DATA_DIR` 覆盖；
+- 正式 Windows 默认 `%LOCALAPPDATA%/AI Drama Studio`；
+- 只解析路径，不 mkdir；
+- 无法确定位置时明确失败，不偷偷写到当前目录。
+
+实际测试：
+
+```text
+4 passed
+```
+
+测试容器 Python 为 3.13.5，仅证明当前纯路径函数逻辑通过；项目正式环境基线仍是 Python 3.11，F01 完整验收前必须在目标环境再跑完整测试。
 
 ---
 
-# F01 简单恢复规则
+# 当前代码/数据状态
 
-Project 状态只有：
-
-```text
-creating
-ready
-```
-
-创建：
+已存在：
 
 ```text
-DB creating
-→ 创建 Workspace + project.json
-→ 成功改 ready
+engine/app/core/paths.py
+engine/tests/unit/test_paths.py
+pyproject.toml
 ```
 
-启动恢复：
+尚未存在：
 
 ```text
-找到 creating
-→ Workspace + project.json 完整且 ID 一致：改 ready
-→ 否则安全清理 creating 记录和明确属于该 project_id 的半成品目录
+app.db
+projects Model
+Migration
+FastAPI app
+Vue frontend
 ```
 
-F01 不建立复杂 Recovery Framework、Repair UI 或 orphan 管理后台。
-
-无法确认归属的未知用户文件禁止自动删除。
+没有任何 F02 代码。
 
 ---
 
-# 代码和数据库注释仍然是强制要求
+# 开发纪律
 
-瘦身不等于减少可理解性。
-
-正式代码仍必须：
-
-- 核心业务函数写简体中文 docstring；
-- 说明业务作用、为什么这样做、安全边界和主要异常；
-- SQLAlchemy 表/字段写中文业务说明；
-- Migration 写中文说明；
-- F01 文档维护 Database Dictionary。
-
----
-
-# F01 测试只围绕真实用户场景
-
-必须覆盖：
+继续严格按：
 
 ```text
-创建成功
-重启后仍存在
-重新打开成功
-同名项目不冲突
-非法/不可写路径失败且不产生假项目
-creating 脏记录重启后恢复或安全清理
+当前核心函数说明
+→ 实现
+→ 对应测试
+→ PASS
+→ Feature 文档记录
+→ 下一个函数
 ```
 
----
+不一次堆完整 F01。
 
-# 当前待用户确认的 8 项
+业务代码、数据库表/字段、API Schema 必须有简体中文业务解释。
 
-```text
-1. 应用级单 SQLite app.db。
-2. 默认 Workspace Root = %USERPROFILE%/AI Drama Studio Projects。
-3. Project ID = PROJECT_<UUID4_HEX>。
-4. F01 只创建 project.json，不提前创建媒体目录。
-5. projects 表只保留当前 10 个必要字段。
-6. 项目业务 API 只保留 list / create / open 三个。
-7. F01 只做 creating / ready 简单恢复，不做复杂 Recovery Framework。
-8. project_format_version = 1。
-```
-
-用户确认前：
-
-```text
-不得把 F01 改为 IN_PROGRESS
-不得开始业务代码
-不得实现 F02
-```
-
----
-
-# 新对话最短恢复路径
-
-```text
-AGENTS.md
-→ SKILL.md
-→ docs/PROJECT_STATE.md
-→ docs/features/F01-create-project.md
-→ docs/features/F01-function-contracts.md
-→ 最新 F01 Session Handoff
-```
+AI / Agent 最多把 F01 推进到 `READY_FOR_REVIEW`；只有用户明确验收通过后才能 `STABLE/FROZEN`。
 
 ---
 
 # 下一步唯一动作
 
-> 用户审核并确认 F01 简化版 Contract 的 8 项关键决策。确认后将 F01 改为 `IN_PROGRESS`，再从最小运行骨架和 `get_app_data_path()` / `init_database()` 开始编码；不擅自新建分支，不实现 F02。
+> 开发 `init_database()`：只完成 F01 的应用级 SQLite 初始化和 `projects` 表，不创建 Project Workspace，不写 project.json，不创建 F02 以后才需要的表。
+
+不擅自新建分支，不实现 F02。
 
 ## 最近更新时间
 
-- 日期：2026-08-23 16:02 +08:00
-- 状态：F01 已从过度拆分方案瘦身为最小可验收方案，仍未开始业务代码。
+- 日期：2026-08-23 16:18 +08:00
+- 状态：用户已确认简化版 F01 Contract；F01 正式进入 IN_PROGRESS；第一个核心函数 `get_app_data_path()` 已实现并通过 4 个单测。
