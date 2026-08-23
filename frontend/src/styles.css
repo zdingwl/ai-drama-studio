@@ -1,0 +1,26 @@
+:root { font-family: Inter, "Microsoft YaHei", sans-serif; color: #1f2937; background: #f6f7f9; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+.page { max-width: 1080px; margin: 0 auto; padding: 40px 24px; }
+.page-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.page-header h1 { margin-bottom: 4px; }
+.page-header p { margin-top: 0; color: #6b7280; }
+.page-header button, .actions button { padding: 10px 16px; border: 1px solid #d1d5db; border-radius: 8px; background: white; }
+.project-grid { display: grid; gap: 12px; }
+.project-card { width: 100%; text-align: left; display: grid; gap: 6px; padding: 18px; border: 1px solid #e5e7eb; border-radius: 12px; background: white; }
+.path { color: #6b7280; overflow-wrap: anywhere; }
+.empty { padding: 36px; text-align: center; background: white; border-radius: 12px; color: #6b7280; }
+.dialog-mask { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.35); padding: 20px; }
+.dialog { width: min(520px, 100%); display: grid; gap: 14px; padding: 24px; border-radius: 14px; background: white; }
+.dialog label { display: grid; gap: 6px; }
+.dialog input { padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 8px; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; }
+.error, .error-panel { color: #b42318; }
+.workspace-card { margin-top: 24px; padding: 24px; background: white; border-radius: 12px; }
+dl { display: grid; grid-template-columns: 160px 1fr; gap: 10px; }
+dt { color: #6b7280; }
+dd { margin: 0; overflow-wrap: anywhere; }
+.ready { margin-top: 24px; font-weight: 600; }
+.back { border: 0; background: transparent; padding: 0; }
