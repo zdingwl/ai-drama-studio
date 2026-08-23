@@ -229,3 +229,24 @@ def test_fastapi_controllers_cover_health_create_list_and_open(monkeypatch: pyte
         invalid = client.post("/api/projects", json={"name": " ", "target_language": "en", "target_region": "US"})
         assert invalid.status_code == 422
         assert invalid.json()["error"]["code"] == "PROJECT_NAME_REQUIRED"
+
+
+def test_cors_preflight_allows_local_vite_on_alternate_port(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Vite 从 5173 自动切到 5174 时，项目 API 的 CORS 预检仍必须通过。"""
+
+    monkeypatch.setenv("AI_DRAMA_APP_DATA_DIR", str(tmp_path / "app-data"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    from engine.app.main import create_app
+
+    with TestClient(create_app()) as client:
+        response = client.options(
+            "/api/projects",
+            headers={
+                "Origin": "http://localhost:5174",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5174"
