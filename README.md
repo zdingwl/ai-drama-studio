@@ -2,7 +2,7 @@
 
 AI Drama Studio 是一个 **Windows 本地自用、单用户的 AI 短剧重制生产工作台**。
 
-目标：将已有短剧转换为可编辑、可追踪、可逐镜头重制的结构化生产工程，并完成本土选角、翻译本土化、AI 视频重生成、QC、配音口型、音频字幕和最终导出。
+目标：把现有短剧转换为可编辑、可追踪、可逐镜头重制的结构化生产工程，并完成本土选角、翻译本土化、AI 视频重生成、QC、配音口型、最终音频/字幕和成片导出。
 
 ## Approved Production Flow
 
@@ -44,62 +44,59 @@ AI Drama Studio 是一个 **Windows 本地自用、单用户的 AI 短剧重制�
 → 35 导出
 ```
 
-完整说明见：[`docs/FEATURE_SEQUENCE.md`](./docs/FEATURE_SEQUENCE.md)。
+详细：[`docs/FEATURE_SEQUENCE.md`](./docs/FEATURE_SEQUENCE.md)
 
-## 最重要的开发方式
-
-不要按“大模块”一起开发。
-
-必须：
+## 开发方法
 
 ```text
-当前 Feature Contract
-→ 开发
+Contract
+→ 当前 Feature 开发
 → 单功能测试
-→ 回归测试
+→ Regression
 → 真实素材测试
 → READY_FOR_REVIEW
 → 用户人工验收
-→ 文档更新
 → STABLE/FROZEN
 → 下一 Feature
 ```
 
-AI / Codex 只能把 Feature 推进到 `READY_FOR_REVIEW`；只有用户明确确认验收通过后，才能标记 `STABLE/FROZEN`。
+AI / Codex 不能自行宣布 STABLE/FROZEN。
 
 ## Source of Truth
 
-正式确认的项目事实最终必须进入 `main`。
+```text
+main = 最近一次用户已经确认的正式基线
+branch / PR = 开发中或待审核状态
+```
 
-- `main`：最近一次已确认稳定基线；
-- feature/docs 分支：正在开发或审核中的变更；
-- 新对话默认从 `main` 恢复项目，除非用户明确指定继续某个未合并分支。
-
-## 当前技术方向
-
-- Frontend：Vue 3 + TypeScript + Vite + Pinia
-- Backend / AI Engine：Python 3.11 + FastAPI + PyTorch + CUDA
-- Media：FFmpeg / FFprobe + OpenCV
-- Data：SQLite + SQLAlchemy + Alembic + Local Workspace
-- Desktop：Electron 后置
-- GPU：RTX 4060 Ti 16GB，开发期默认 GPU 单任务串行
-- 强 VLM / Video Generation / Premium TTS / Premium Lip Sync：Provider Adapter 调用 API
+新对话默认从 `main` 恢复项目。
 
 ## 核心规则
 
-1. **一个 Feature 一个 Feature 开发。**
-2. **Shot 是核心生产单元。** 单 Shot 可独立重跑、生成、QC、TTS、Lip Sync、替换。
-3. **AI Result 与 Human Final 分离。** 人工修正不能覆盖 AI 原始结果。
-4. **Revision / Dependency / Stale 可追溯。** 上游语义变化后，旧下游结果不能静默继续使用。
-5. **Video / TTS / Lip Sync 版本化。** 历史结果不覆盖。
-6. **源对白与目标对白分离。** 翻译/本土化必须在 Shot Spec 和 TTS 之前正式确认。
-7. **Source Timeline 是母时间轴。** 业务权威时间使用 integer microseconds。
-8. **模型/Provider 可替换。** 业务层不绑定具体供应商。
-9. **SQLite 与媒体文件写入必须可恢复。**
-10. **计费异步 Provider 必须防重复提交/重复扣费。**
-11. **代码和数据库必须有简体中文业务注释。**
-12. **Stable Feature 必须有回归测试保护。**
-13. **第一版不做 SaaS/集群/微服务重架构。**
+1. 一个 Feature 一个 Feature 开发，不做“大模块一起写完再测”。
+2. Shot 是核心生产单元，单 Shot 可以独立重跑/生成/QC/TTS/LipSync/替换。
+3. AI Result 与 Human Final 分离，不覆盖原始 AI 证据。
+4. Revision / Dependency / Stale 可追溯，上游变化后旧结果不能静默继续用。
+5. Video / TTS / Lip Sync 版本化；Bible/Target Dialogue/Shot Spec 逐步保存 Revision Snapshot。
+6. Source Dialogue 与 Target Dialogue 分离；目标对白在 Shot Spec/TTS 前正式确认。
+7. **Source Timeline 与 Production Timeline 分离**：原片分析属于 Source Domain，最终重制属于 Production Domain；统一使用 integer microseconds，并通过 Shot/映射关系连接。
+8. Provider / Model 可替换，业务层不绑定具体供应商。
+9. SQLite + 媒体文件写入必须可恢复。
+10. 异步计费 Provider 必须防 timeout 导致重复提交/重复扣费。
+11. 新增代码、数据库表/字段、Migration、API Schema 必须有简体中文业务注释。
+12. Stable Feature 必须有 Regression 保护。
+13. 第一版不做 SaaS、集群、微服务等过度设计。
+
+## 技术方向
+
+```text
+Frontend: Vue 3 + TypeScript + Vite + Pinia
+Backend: Python 3.11 + FastAPI + PyTorch + CUDA
+Media: FFmpeg / FFprobe + OpenCV
+Data: SQLite + SQLAlchemy + Alembic + Local Filesystem
+Desktop: Electron（后置）
+GPU: RTX 4060 Ti 16GB，开发期默认 GPU concurrency = 1
+```
 
 ## 新对话最短恢复路径
 
@@ -109,19 +106,19 @@ AGENTS.md
 → docs/PROJECT_STATE.md
 → 当前 docs/features/FXX-*.md
 → 最新相关 docs/sessions/*.md
-→ 再按当前 Feature 的 Rule References 阅读必要详细规则
+→ 根据当前 Feature Rule References 读取必要详细规则
 ```
 
-不要要求用户重新从头解释已经写进仓库的项目背景。
+不要要求用户重新解释已经写进仓库的需求和技术决定。
 
-## 文档入口
+## 主要文档
 
-### 必读入口
+### 必读
 
-- [`AGENTS.md`](./AGENTS.md) — Agent 进入项目的最短规则
-- [`SKILL.md`](./SKILL.md) — 项目级开发技能手册 / 最高层规则
-- [`docs/PROJECT_STATE.md`](./docs/PROJECT_STATE.md) — 当前真实开发状态
-- [`docs/FEATURE_SEQUENCE.md`](./docs/FEATURE_SEQUENCE.md) — 35 个 Approved Production Features
+- [`AGENTS.md`](./AGENTS.md)
+- [`SKILL.md`](./SKILL.md)
+- [`docs/PROJECT_STATE.md`](./docs/PROJECT_STATE.md)
+- [`docs/FEATURE_SEQUENCE.md`](./docs/FEATURE_SEQUENCE.md)
 
 ### 工程规则
 
@@ -137,7 +134,7 @@ AGENTS.md
 - [`docs/CONTINUATION_PROTOCOL.md`](./docs/CONTINUATION_PROTOCOL.md)
 - [`docs/TECH_STACK.md`](./docs/TECH_STACK.md)
 
-### Feature 开发模板
+### 模板
 
 - [`templates/FEATURE_SPEC_TEMPLATE.md`](./templates/FEATURE_SPEC_TEMPLATE.md)
 - [`templates/P0_FEATURE_CHECKLIST.md`](./templates/P0_FEATURE_CHECKLIST.md)
@@ -148,6 +145,4 @@ AGENTS.md
 
 业务代码尚未正式开始。
 
-下一步：
-
-> **Feature 01 — 创建项目 Contract**
+下一步：**Feature 01 — 创建项目 Contract**。
