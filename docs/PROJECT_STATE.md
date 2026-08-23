@@ -1,153 +1,154 @@
 # AI Drama Studio — Project State
 
-> 本文件是新对话恢复当前项目状态的第一入口。历史细节放 `docs/sessions/`，不要把本文件写成流水账。
+> 本文件是新对话恢复当前项目状态的第一入口。历史过程放 `docs/sessions/`。
 
 ## 当前状态
 
 - 项目：AI Drama Studio
-- 形态：Windows 本地自用、单用户 AI 短剧重制工作台
-- 当前工作分支：`docs/p0-hardening`
-- 当前文档 PR：PR #2（基于 `docs/project-skill`）
-- 上游主文档 PR：PR #1（`docs/project-skill` → `main`）
+- 正式基线分支：`main`
+- Source of Truth：`main`
 - 当前业务 Feature：`Feature 01 — 创建项目`
 - 当前 Feature 状态：`PLANNED / NOT_STARTED`
 - 已 Stable Feature：无
 - 已 Frozen Feature：无
-- 业务代码：尚未开始
+- 正式业务代码：尚未开始
+- 业务数据库 / Migration：尚未创建
 
-## Source of Truth 状态
+## 文档合并状态
 
-本轮文档修订完成后必须：
+已完成：
 
 ```text
-先合并 PR #2 → docs/project-skill
-再合并 PR #1 → main
+PR #2 → docs/project-skill
+PR #1 → main
 ```
 
-目标：让 `main` 成为唯一正式项目基线。
+现在所有已经确认的项目 Skill、P0 工程规则、35 Feature 生产流程、模板和交接文档都已经进入 `main`。
 
-在合并完成前，新对话如果要读取最新规则，必须明确使用 `docs/p0-hardening`；合并完成后默认只读 `main`。
+新对话默认只需要从 `main` 恢复，不再依赖 `docs/project-skill` 或 `docs/p0-hardening`。
 
-## 当前批准的业务流程
+## 当前批准的生产流程
 
-正式流程已经从旧的 30 Feature 修正为 **35 Feature**。
-
-新增的独立生产步骤：
-
-- F18 AI 翻译与本土化对白
-- F19 目标对白人工确认
-- F20 目标对白时长约束
-- F31 最终音频组装与混音
-- F32 最终字幕组装
-
-因此后续编号整体顺延。
+Approved Production Flow = **35 Features**。
 
 完整顺序：`docs/FEATURE_SEQUENCE.md`。
 
-关键修正原则：
+关键新增/修正：
 
-1. 源对白与目标对白分离；
-2. 目标对白必须在 Shot Spec / 视频生成之前人工确认；
-3. 视频生成前先做目标对白时长约束；
-4. AI Casting 必须产出 Casting Profile + Candidates；
-5. 最终音频与最终字幕有独立可测试产物；
-6. Feature 01 从第一版保存 `project_format_version`。
+- F18 AI 翻译与本土化对白；
+- F19 目标对白人工确认；
+- F20 目标对白时长约束；
+- F31 最终音频组装与混音；
+- F32 最终字幕组装；
+- F14 AI Casting 必须输出 Casting Profile + Candidates；
+- F01 从第一版保存 `project_format_version`。
 
-## 项目级规则已确认
+## 时间轴规则
 
-### Feature 开发
+采用三个明确概念：
+
+```text
+Source Timeline     = 原片分析证据时间
+Shot-local Time     = 单 Shot 内部生产时间
+Production Timeline = 最终重制成片时间
+```
+
+Source 与 Production 不假设时长恒等。
+
+业务权威时间统一使用 integer microseconds。
+
+详细：`docs/MEDIA_TIMEBASE_CONTRACT.md`。
+
+## Feature 开发流程
 
 ```text
 Contract
 → 开发
-→ 当前 Feature 测试
-→ 受影响 Stable Feature 回归测试
+→ Current Feature Tests
+→ Affected Stable Regression
 → 真实素材测试
 → READY_FOR_REVIEW
 → 用户人工验收
-→ 文档更新
 → STABLE/FROZEN
+→ 下一 Feature
 ```
 
-### 用户验收权限
+AI / Codex / Agent 只能自行推进到 `READY_FOR_REVIEW`。
 
-AI / Codex / Agent 不能自行宣布 `STABLE/FROZEN`。
+只有用户明确确认验收通过后，才能标记 `STABLE/FROZEN`。
 
-只有用户明确确认验收通过后，才允许冻结并进入下一依赖 Feature。
-
-### 文档权威顺序
+## 文档权威顺序
 
 ```text
-用户最新确认并写入仓库的决策
+用户最新明确确认并写入仓库的决策
 → Stable/Frozen Feature Contract
-→ SKILL + 全局/P0规则
+→ SKILL.md + 适用全局/P0规则
 → 当前 Feature Contract
 → PROJECT_STATE
-→ 最新 Session
-→ 历史讨论
+→ 最新 Session Handoff
+→ 历史 Session / 旧讨论
 ```
 
-### P0 工程规则
+## 当前核心工程规则
 
-5 个 P0 继续强制，但总原则已经合并进 `SKILL.md`，不再使用第二本 `SKILL_P0.md`。
+- Dependency / Revision / Invalidation / Stale；
+- Source / Shot-local / Production Timebase；
+- Environment Baseline / Dependency Lock；
+- SQLite + File Recovery / Migration；
+- Provider idempotency / resume / duplicate-charge protection；
+- Simplified-Chinese code/database business comments；
+- Database Dictionary；
+- Stable Feature Regression；
+- Cross-conversation documentation continuity。
 
-详细索引：`docs/P0_RULES_INDEX.md`。
+入口：
 
-### 回归测试
-
-新增：`docs/TESTING_AND_REGRESSION_RULES.md`。
-
-后续修改共享层时，必须运行受影响 Stable Feature regression，不能只测当前 Feature。
-
-### 代码/数据库可理解性
-
-- 业务代码必须有简体中文业务注释；
-- 表/字段必须有中文业务说明；
-- Feature 文档维护 Database Dictionary；
-- Migration / API Schema / Provider Adapter / 复杂算法必须有说明。
-
-详细：`docs/CODE_AND_DATABASE_COMMENT_RULES.md`。
+- `SKILL.md`
+- `docs/P0_RULES_INDEX.md`
+- `docs/TESTING_AND_REGRESSION_RULES.md`
+- `docs/CODE_AND_DATABASE_COMMENT_RULES.md`
 
 ## 当前技术方案
 
 - Frontend：Vue 3 + TypeScript + Vite + Pinia
 - Backend / AI Engine：Python 3.11 + FastAPI + PyTorch
 - Media：FFmpeg / FFprobe + OpenCV
-- Data：SQLite + SQLAlchemy + Alembic + 本地文件系统
+- Data：SQLite + SQLAlchemy + Alembic + Local Filesystem
 - Desktop：Electron 后置
-- GPU：RTX 4060 Ti 16GB，开发阶段默认 GPU concurrency = 1
-- 强 VLM / Video / Premium TTS / Premium Lip Sync：Provider Adapter 调用 API
+- GPU：RTX 4060 Ti 16GB，开发期默认 concurrency = 1
+- Strong VLM / Video / Premium TTS / Premium Lip Sync：Provider Adapter API
 
 ## 当前代码状态
 
-- 没有正式业务代码；
-- 没有业务数据库；
-- 没有 Migration；
-- 没有 Stable Feature；
-- 当前仍是“正式 Feature 01 开发前的项目规则冻结阶段”。
+目前没有正式业务代码，因此：
 
-因此现在修正规则不会造成业务代码返工。
+- 没有历史代码需要兼容；
+- 没有已有业务表需要迁移；
+- 没有 Stable Feature 可被下游破坏；
+- 可以从 F01 正确冻结第一份 Project Contract。
 
 ## 当前阻塞项
 
-唯一阻塞：
+无。
 
-> 最新文档尚未正式进入 `main`。
+## 已知 Bug
 
-本轮完成文档一致性检查后应直接合并 PR #2、PR #1。
+无业务代码，暂无运行 Bug。
 
-## Feature 01 开始前需要在 Contract 确定
+## Feature 01 Contract 必须确定
 
-- 默认 Workspace 根目录；
 - Project ID 规则；
 - `project_format_version` 初始版本；
-- 项目 DB：每项目独立 SQLite，还是应用级 DB + Workspace；
-- 项目元数据字段；
+- 默认 Workspace 根目录；
+- 项目目录结构；
+- 项目 DB 采用每项目独立 SQLite，还是应用级 DB + Workspace；
+- Project metadata；
 - 创建项目表单字段；
-- DB/文件创建事务和失败回滚；
-- P0 Checklist；
+- DB/File 创建事务、失败回滚与恢复；
 - Database Dictionary；
-- F01 测试与用户验收步骤。
+- P0 Checklist；
+- Current Tests；
+- 用户人工验收步骤。
 
 ## 新对话最短恢复路径
 
@@ -155,18 +156,23 @@ AI / Codex / Agent 不能自行宣布 `STABLE/FROZEN`。
 AGENTS.md
 → SKILL.md
 → docs/PROJECT_STATE.md
-→ 当前 docs/features/FXX-*.md
+→ 当前 docs/features/FXX-*.md（存在后）
 → 最新相关 docs/sessions/*.md
-→ 按 Feature Rule References 读取必要详细规范
+→ 按当前 Feature Rule References 读取必要详细规范
 ```
 
-不要一开始无差别读取整个 `docs/`。
+不要无差别读取整个 `docs/`，也不要要求用户重新解释已记录的项目规则。
 
 ## 下一步唯一动作
 
-> 完成本轮文档一致性检查并将 PR #2、PR #1 依次合并到 `main`；随后从 `main` 创建 `feature/F01-create-project`，建立 F01 Contract，不直接开始编码。
+> 从 `main` 创建 `feature/F01-create-project`，先建立 `docs/features/F01-create-project.md` Contract；用户确认 F01 Contract 后，才开始写第一行业务代码。
 
-## 最近一次状态更新
+## 最新交接
+
+- `docs/sessions/2026-08-23_1440_PROJECT_production-flow-review-and-main-merge.md`
+- 合并完成后的最终状态见随后新增的 main-baseline Session Handoff。
+
+## 最近更新时间
 
 - 日期：2026-08-23 14:40 +08:00
-- 内容：重新审查 Skill 后，修正为 35 Feature 完整生产流程；加入翻译/本土化、目标对白时长、最终音频、字幕；合并 P0 总则到主 Skill；明确 main Source of Truth、文档优先级、用户唯一 Stable 权限和回归测试规则。
+- 状态：项目规则与文档已经正式进入 `main`，准备开始 Feature 01 Contract。
