@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,14 +24,24 @@ from engine.app.projects import (
     recover_creating_projects,
 )
 
+# F01 创建项目只允许保存下面这些稳定代码。
+# 前端使用下拉框限制普通用户，API Schema 再限制直接请求，形成双层保护。
+# 以后若新增支持语言/地区，必须同时更新前端 project-options.ts、这里的类型和相关测试。
+LanguageCode = Literal["zh", "en", "ja", "ko", "es", "pt", "fr", "de", "id", "th", "vi"]
+RegionCode = Literal["US", "GB", "JP", "KR", "ES", "BR", "FR", "DE", "ID", "TH", "VN", "TW", "SG"]
+
 
 class CreateProjectRequest(BaseModel):
-    """前端创建项目时允许提交的 F01 基础字段。"""
+    """前端创建项目时允许提交的 F01 基础字段。
+
+    语言和地区使用固定 Literal，而不是任意字符串。
+    这样即使绕过前端直接调用 API，也无法写入 English、usa、中文等非标准值。
+    """
 
     name: str = Field(description="用户看到的项目名称")
-    source_language: str | None = Field(default=None, description="原片语言代码；可为空")
-    target_language: str = Field(description="重制目标语言代码，例如 en")
-    target_region: str = Field(description="本土化目标地区代码，例如 US")
+    source_language: LanguageCode | None = Field(default=None, description="原片标准语言代码；可为空表示暂不指定")
+    target_language: LanguageCode = Field(description="重制目标标准语言代码，例如 en")
+    target_region: RegionCode = Field(description="本土化目标标准地区代码，例如 US")
     workspace_root: str | None = Field(default=None, description="项目保存根目录；为空使用默认路径")
 
 
@@ -115,7 +126,7 @@ def create_app() -> FastAPI:
         只负责接收前端请求、调用 create_project() 并返回结果。
         不负责生成 Project ID、创建目录、写 project.json 或直接执行 SQL。
         """
-        return create_project(**payload.model_dump()).to_dict()
+        return create_project(**payload.model_dump(mode="json")).to_dict()
 
     @app.post("/api/projects/{project_id}/open", response_model=ProjectResponse)
     def open_project_api(project_id: str) -> dict:
