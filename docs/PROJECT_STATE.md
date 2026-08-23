@@ -107,8 +107,8 @@ Controller 只负责 HTTP → Service → Response，不直接 SQL、不 mkdir�
 ```text
 1. get_app_data_path()             [TESTED / PASS]
 2. init_database()                 [TESTED / PASS]
-3. generate_project_id()           [NEXT]
-4. create_project_workspace()      [PLANNED]
+3. generate_project_id()           [TESTED / PASS]
+4. create_project_workspace()      [NEXT]
 5. create_project()                [PLANNED]
 6. list_projects()                 [PLANNED]
 7. open_project()                  [PLANNED]
@@ -116,7 +116,7 @@ Controller 只负责 HTTP → Service → Response，不直接 SQL、不 mkdir�
 9. create_app()                    [PLANNED]
 ```
 
-前端主要动作仍未开始：
+前端主要动作尚未开始：
 
 ```text
 apiRequest()
@@ -127,20 +127,15 @@ openProject()
 
 ---
 
-# 已完成：get_app_data_path()
+# 已完成函数
+
+## 1. `get_app_data_path()`
 
 实现：`engine/app/core/paths.py`  
-测试：`engine/tests/unit/test_paths.py`
+测试：`engine/tests/unit/test_paths.py`  
+结果：`4 passed`。
 
-实际测试：
-
-```text
-4 passed
-```
-
----
-
-# 已完成：init_database()
+## 2. `init_database()`
 
 实现：
 
@@ -150,11 +145,8 @@ engine/migrations/env.py
 engine/migrations/versions/0001_create_projects.py
 ```
 
-测试：
-
-```text
-engine/tests/unit/test_database.py
-```
+测试：`engine/tests/unit/test_database.py`。  
+结果：`6 passed`。
 
 依赖：
 
@@ -164,27 +156,48 @@ alembic==1.18.4
 pytest==9.0.2
 ```
 
-记录在：`engine/requirements.txt`。
+## 3. `generate_project_id()`
 
-关键规则：
+实现：
 
-- `init_database()` 统一通过 Alembic 初始化/升级 `app.db`；
-- 不使用另一套 `create_all()` 建表逻辑；
-- F01 当前只创建 `projects` 一张业务表；
-- Migration 中为表用途和每个字段写简体中文业务说明；
-- `status` 由 DB CHECK 约束为 `creating/ready`；
-- `workspace_path` 由 DB UNIQUE 约束防止两个项目指向同一个目录；
-- 重复调用 `init_database()` 安全。
+```text
+engine/app/core/ids.py
+```
+
+测试：
+
+```text
+engine/tests/unit/test_ids.py
+```
+
+业务规则：
+
+```text
+PROJECT_<32位UUID4小写hex>
+```
+
+函数只生成稳定 Project ID：
+
+- 不访问数据库；
+- 不创建目录；
+- 不读写 `project.json`；
+- 不使用项目名称、视频名称、路径或模型信息参与 ID 计算。
 
 实际测试：
 
 ```text
-6 passed
+3 passed
 ```
 
-覆盖 app.db 创建、字段一致、Alembic revision、重复初始化、非法 status、重复 workspace_path。
+覆盖固定格式、UUID4 版本、连续 5000 次生成无重复。
 
-当前测试容器 Python 为 3.13.5；项目正式环境基线仍为 Python 3.11。F01 完整验收前必须在目标 Python 3.11 环境重跑全部测试。
+该函数没有新增第三方依赖。
+
+---
+
+# 当前测试环境说明
+
+当前工具执行环境为 Python 3.13.5；项目正式基线仍为 Python 3.11。当前单函数测试结果可以证明逻辑正确，但 F01 完整验收前必须在目标 Python 3.11 环境重跑全部测试。
 
 ---
 
@@ -195,10 +208,12 @@ pytest==9.0.2
 ```text
 engine/app/core/paths.py
 engine/app/core/database.py
+engine/app/core/ids.py
 engine/migrations/env.py
 engine/migrations/versions/0001_create_projects.py
 engine/tests/unit/test_paths.py
 engine/tests/unit/test_database.py
+engine/tests/unit/test_ids.py
 engine/requirements.txt
 pyproject.toml
 ```
@@ -206,7 +221,6 @@ pyproject.toml
 尚未实现：
 
 ```text
-Project ID 生成函数
 Project Workspace / project.json
 Project create/list/open 业务
 FastAPI app / Controller
@@ -218,8 +232,6 @@ Vue frontend
 ---
 
 # 开发纪律
-
-继续严格按：
 
 ```text
 当前核心函数说明
@@ -240,11 +252,11 @@ AI / Agent 最多把 F01 推进到 `READY_FOR_REVIEW`；只有用户明确验收
 
 # 下一步唯一动作
 
-> 开发 `generate_project_id()`：只生成稳定 `PROJECT_<UUID4_HEX>` Project ID 并测试格式/唯一性，不创建 Workspace、不写数据库记录、不实现后续业务。
+> 开发 `create_project_workspace()`：只负责根据已经确定的 Project ID 和项目基础信息创建 `<workspace_root>/<project_id>/project.json`，重点测试路径安全、Manifest 内容和失败清理；不写 projects 业务记录、不实现 create/list/open API。
 
 不擅自新建分支，不实现 F02。
 
 ## 最近更新时间
 
-- 日期：2026-08-23 16:24 +08:00
-- 状态：F01 持续 IN_PROGRESS；`get_app_data_path()` 4/4 PASS；`init_database()` 6/6 PASS；下一函数 `generate_project_id()`。
+- 日期：2026-08-23 17:47 +08:00
+- 状态：F01 持续 IN_PROGRESS；前三个核心函数已通过测试；下一函数 `create_project_workspace()`。
