@@ -1,103 +1,153 @@
 # AI Drama Studio
 
-本仓库用于开发一个 **本地自用的 AI 短剧重制生产工作台**。
+AI Drama Studio 是一个 **Windows 本地自用、单用户的 AI 短剧重制生产工作台**。
 
-目标不是做 SaaS，也不是做通用视频生成平台，而是把一部现有短剧转换为可编辑、可追踪、可逐镜头重制的结构化生产工程，并严格按照真实生产流程推进：
+目标：将已有短剧转换为可编辑、可追踪、可逐镜头重制的结构化生产工程，并完成本土选角、翻译本土化、AI 视频重生成、QC、配音口型、音频字幕和最终导出。
+
+## Approved Production Flow
 
 ```text
-上传短剧
-→ 视频预处理
-→ 自动拉片
-→ 人工修正 Shot
-→ 自动识别人
-→ 人工修正人物
-→ 自动识别对白
-→ Speaker / Character 匹配
-→ 人工修正对白
-→ 自动识别 Scene
-→ 人工修正 Scene
-→ 本土演员库
-→ AI 本土选角
-→ 人工选演员
-→ Character Bible
-→ 人工确认
-→ Scene Bible
-→ 人工确认
-→ Shot Specification
-→ 人工确认
-→ 单 Shot 视频生成
-→ Generation 版本管理
-→ Auto QC
-→ 失败 Shot 人工处理
-→ 批量生成
-→ TTS
-→ Dialogue Fit
-→ Lip Sync
-→ 最终合成
-→ 整集 QC
-→ 导出
+01 创建项目
+→ 02 上传原视频
+→ 03 视频预处理
+→ 04 自动拉片
+→ 05 Shot 人工修正
+→ 06 自动人物识别
+→ 07 人物人工修正
+→ 08 ASR 源对白识别
+→ 09 Speaker / Character 匹配
+→ 10 源对白人工修正
+→ 11 Scene 自动识别
+→ 12 Scene 人工修正
+→ 13 本土演员库
+→ 14 AI 本土选角
+→ 15 人工选演员
+→ 16 Character Bible
+→ 17 Scene Bible
+→ 18 AI 翻译与本土化对白
+→ 19 目标对白人工确认
+→ 20 目标对白时长约束
+→ 21 Shot Specification
+→ 22 Shot Spec 人工确认
+→ 23 单 Shot 视频生成
+→ 24 Generation 版本管理
+→ 25 Auto QC
+→ 26 失败 Shot 人工处理
+→ 27 批量生成
+→ 28 TTS
+→ 29 Dialogue Fit
+→ 30 Lip Sync
+→ 31 最终音频组装与混音
+→ 32 最终字幕组装
+→ 33 最终合成
+→ 34 整集 QC
+→ 35 导出
 ```
 
-## 最重要的开发规则
+完整说明见：[`docs/FEATURE_SEQUENCE.md`](./docs/FEATURE_SEQUENCE.md)。
 
-**不要按大模块并行开发。**
+## 最重要的开发方式
 
-必须按照真实使用流程，一个 Feature 一个 Feature 纵向开发：
+不要按“大模块”一起开发。
+
+必须：
 
 ```text
-开发当前 Feature
+当前 Feature Contract
+→ 开发
 → 单功能测试
-→ 使用真实短剧测试
-→ 人工验收
-→ 修复当前 Feature
-→ 再测试
-→ 冻结 Input / Output / API / DB Contract
-→ 才允许进入下一个 Feature
+→ 回归测试
+→ 真实素材测试
+→ READY_FOR_REVIEW
+→ 用户人工验收
+→ 文档更新
+→ STABLE/FROZEN
+→ 下一 Feature
 ```
 
-已经验收为 Stable 的上游 Feature，后续功能原则上只能读取其已冻结 Contract，不能为了下游开发方便而反复修改上游代码。
+AI / Codex 只能把 Feature 推进到 `READY_FOR_REVIEW`；只有用户明确确认验收通过后，才能标记 `STABLE/FROZEN`。
 
-## 当前开发环境
+## Source of Truth
 
-- 使用方式：本地自用、单用户
-- 主要系统：Windows
-- 当前 GPU：NVIDIA RTX 4060 Ti 16GB
-- 开发阶段目标：先保证功能完整可用，不追求速度和并发
-- 前端：Vue 3 + TypeScript + Vite + Pinia
-- 后端 / AI Engine：Python 3.11 + FastAPI + PyTorch + CUDA
-- 视频处理：FFmpeg / FFprobe + OpenCV
-- 数据库：SQLite + SQLAlchemy + Alembic
-- 文件：本地 Workspace
-- 桌面打包：核心流程稳定后再接 Electron
-- 强 VLM / 视频生成 / 高质量 TTS / 高质量 Lip Sync：优先 API
+正式确认的项目事实最终必须进入 `main`。
 
-## 核心设计原则
+- `main`：最近一次已确认稳定基线；
+- feature/docs 分支：正在开发或审核中的变更；
+- 新对话默认从 `main` 恢复项目，除非用户明确指定继续某个未合并分支。
 
-1. **Shot 是核心生产单元。** 单 Shot 必须可以独立分析、生成、QC、重试和人工替换。
-2. **AI 原始结果与人工 Final 结果分离。** 人工修正不能覆盖 AI 原始结果。
-3. **所有生成结果版本化。** Video / TTS / Lip Sync 禁止覆盖旧版本。
-4. **模型必须可替换。** 业务层只认识统一 Contract，不允许绑定具体 Provider。
-5. **媒体文件不进入 SQLite。** 数据库存 ID、状态、结构化 JSON 和相对路径。
-6. **RTX 4060 Ti 16GB 不作为开发阻塞条件。** GPU 任务默认单并发，模型按需加载，用完释放。
-7. **第一版不做 SaaS 重架构。** 不提前引入多租户、Kubernetes、复杂微服务、在线计费、GPU 集群。
+## 当前技术方向
+
+- Frontend：Vue 3 + TypeScript + Vite + Pinia
+- Backend / AI Engine：Python 3.11 + FastAPI + PyTorch + CUDA
+- Media：FFmpeg / FFprobe + OpenCV
+- Data：SQLite + SQLAlchemy + Alembic + Local Workspace
+- Desktop：Electron 后置
+- GPU：RTX 4060 Ti 16GB，开发期默认 GPU 单任务串行
+- 强 VLM / Video Generation / Premium TTS / Premium Lip Sync：Provider Adapter 调用 API
+
+## 核心规则
+
+1. **一个 Feature 一个 Feature 开发。**
+2. **Shot 是核心生产单元。** 单 Shot 可独立重跑、生成、QC、TTS、Lip Sync、替换。
+3. **AI Result 与 Human Final 分离。** 人工修正不能覆盖 AI 原始结果。
+4. **Revision / Dependency / Stale 可追溯。** 上游语义变化后，旧下游结果不能静默继续使用。
+5. **Video / TTS / Lip Sync 版本化。** 历史结果不覆盖。
+6. **源对白与目标对白分离。** 翻译/本土化必须在 Shot Spec 和 TTS 之前正式确认。
+7. **Source Timeline 是母时间轴。** 业务权威时间使用 integer microseconds。
+8. **模型/Provider 可替换。** 业务层不绑定具体供应商。
+9. **SQLite 与媒体文件写入必须可恢复。**
+10. **计费异步 Provider 必须防重复提交/重复扣费。**
+11. **代码和数据库必须有简体中文业务注释。**
+12. **Stable Feature 必须有回归测试保护。**
+13. **第一版不做 SaaS/集群/微服务重架构。**
+
+## 新对话最短恢复路径
+
+```text
+AGENTS.md
+→ SKILL.md
+→ docs/PROJECT_STATE.md
+→ 当前 docs/features/FXX-*.md
+→ 最新相关 docs/sessions/*.md
+→ 再按当前 Feature 的 Rule References 阅读必要详细规则
+```
+
+不要要求用户重新从头解释已经写进仓库的项目背景。
 
 ## 文档入口
 
-- [`SKILL.md`](./SKILL.md)：项目开发总技能手册，所有开发代理与工程师优先阅读。
-- [`docs/FEATURE_SEQUENCE.md`](./docs/FEATURE_SEQUENCE.md)：固定的 30 个 Feature 开发顺序与 Gate。
-- [`docs/TECH_STACK.md`](./docs/TECH_STACK.md)：技术栈、运行环境、AI 模型接入原则。
-- [`docs/DATA_AND_FREEZE_RULES.md`](./docs/DATA_AND_FREEZE_RULES.md)：数据 Contract、版本、冻结和兼容规则。
-- [`templates/FEATURE_SPEC_TEMPLATE.md`](./templates/FEATURE_SPEC_TEMPLATE.md)：每个 Feature 开发前必须填写的统一规格模板。
+### 必读入口
 
-## 对 AI / Codex 的使用规则
+- [`AGENTS.md`](./AGENTS.md) — Agent 进入项目的最短规则
+- [`SKILL.md`](./SKILL.md) — 项目级开发技能手册 / 最高层规则
+- [`docs/PROJECT_STATE.md`](./docs/PROJECT_STATE.md) — 当前真实开发状态
+- [`docs/FEATURE_SEQUENCE.md`](./docs/FEATURE_SEQUENCE.md) — 35 个 Approved Production Features
 
-任何 AI 开发代理开始实现一个 Feature 前，都必须：
+### 工程规则
 
-1. 阅读 `SKILL.md`。
-2. 确认当前应该开发的 Feature 编号。
-3. 确认它依赖的上游 Feature 已经 Stable。
-4. 复制 `templates/FEATURE_SPEC_TEMPLATE.md` 建立当前 Feature Contract。
-5. 不修改未被当前 Feature 明确授权修改的 Stable 数据结构与代码。
-6. 完成后必须给出真实素材验收项与 Freeze 清单。
+- [`docs/P0_RULES_INDEX.md`](./docs/P0_RULES_INDEX.md)
+- [`docs/DEPENDENCY_AND_INVALIDATION_RULES.md`](./docs/DEPENDENCY_AND_INVALIDATION_RULES.md)
+- [`docs/MEDIA_TIMEBASE_CONTRACT.md`](./docs/MEDIA_TIMEBASE_CONTRACT.md)
+- [`docs/ENVIRONMENT_BASELINE.md`](./docs/ENVIRONMENT_BASELINE.md)
+- [`docs/DATA_RECOVERY_AND_MIGRATION_RULES.md`](./docs/DATA_RECOVERY_AND_MIGRATION_RULES.md)
+- [`docs/PROVIDER_JOB_RULES.md`](./docs/PROVIDER_JOB_RULES.md)
+- [`docs/CODE_AND_DATABASE_COMMENT_RULES.md`](./docs/CODE_AND_DATABASE_COMMENT_RULES.md)
+- [`docs/TESTING_AND_REGRESSION_RULES.md`](./docs/TESTING_AND_REGRESSION_RULES.md)
+- [`docs/DATA_AND_FREEZE_RULES.md`](./docs/DATA_AND_FREEZE_RULES.md)
+- [`docs/CONTINUATION_PROTOCOL.md`](./docs/CONTINUATION_PROTOCOL.md)
+- [`docs/TECH_STACK.md`](./docs/TECH_STACK.md)
 
-如果当前 Feature 尚未通过人工验收，不得擅自继续开发下一个依赖它的 Feature。
+### Feature 开发模板
+
+- [`templates/FEATURE_SPEC_TEMPLATE.md`](./templates/FEATURE_SPEC_TEMPLATE.md)
+- [`templates/P0_FEATURE_CHECKLIST.md`](./templates/P0_FEATURE_CHECKLIST.md)
+- [`templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md`](./templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md)
+- [`templates/SESSION_HANDOFF_TEMPLATE.md`](./templates/SESSION_HANDOFF_TEMPLATE.md)
+
+## 当前开发入口
+
+业务代码尚未正式开始。
+
+下一步：
+
+> **Feature 01 — 创建项目 Contract**
