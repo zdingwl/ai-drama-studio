@@ -8,13 +8,14 @@
 Project: AI Drama Studio
 Official Baseline: main
 Current Working Branch: main（用户未要求切换/新建其它分支）
-Current Feature: none（F01 已完成；尚未开始 F02）
+Current Feature: F02 — 上传原视频
+Feature Status: PLANNED
+F02 Contract: DRAFTED / WAITING_USER_CONFIRMATION
+Business Code: NOT STARTED
 F01 — 创建项目: STABLE / FROZEN
-Verification Gate: PASSED BY USER
-READY_FOR_REVIEW: PASSED
 Stable Features: F01
 Frozen Features: F01
-Next Feature: F02 — 上传原视频（NOT STARTED）
+Next After F02: F03 — 视频预处理（NOT STARTED）
 ```
 
 `main` 是唯一正式 Source of Truth。
@@ -23,187 +24,259 @@ Next Feature: F02 — 上传原视频（NOT STARTED）
 
 未经用户明确要求，AI / Codex / Agent 不得新建、切换、删除、重命名分支，也不得擅自创建/关闭/合并/重定向 PR。
 
-当前继续直接维护 `main`；用户尚未要求开始 F02。
+当前继续直接维护 `main`，不创建新分支。
 
 ---
 
-# F01 权威文档
+# F01 冻结基线
 
-```text
-docs/features/F01-create-project.md
-docs/features/F01-function-contracts.md
-docs/features/F01-stable-snapshot.md
-```
-
-其中 `F01-stable-snapshot.md` 是用户验收后的冻结 Contract，后续 Feature 不得静默改变其语义。
-
----
-
-# F01 验收结论
-
-F01 解决的完整闭环：
-
-```text
-创建项目
-→ 保存项目
-→ 首页能看到
-→ 重启后还在
-→ 能重新打开
-```
-
-用户已在 Windows 本机完成实际测试，并于 2026-08-23 22:34 +08:00 明确确认：
-
-```text
-可以，测试也通过，没问题了。
-```
-
-因此按 `docs/DATA_AND_FREEZE_RULES.md`：
+F01 已由用户在 Windows 本机验收通过：
 
 ```text
 F01 = STABLE / FROZEN
 ```
 
+权威冻结快照：
+
+```text
+docs/features/F01-stable-snapshot.md
+```
+
+F02 可以 Additive 扩展，但不得静默改变 F01 的：
+
+```text
+Project ID
+projects 既有字段语义
+project.json V1
+Workspace Root
+F01 API
+creating/ready
+正式 StudioShell UI 基线
+```
+
 ---
 
-# F01 已冻结关键 Contract
-
-## 数据库
+# F02 权威规划文档
 
 ```text
-%LOCALAPPDATA%/AI Drama Studio/app.db
+docs/features/F02-upload-source-video.md
 ```
 
-F01 唯一业务表：`projects`。
+当前只完成 Contract 规划，没有写 F02 业务代码。
 
-冻结字段：
+---
+
+# F02 一句话目标
 
 ```text
-id
-name
-source_language
-target_language
-target_region
-workspace_path
-project_format_version
-status
-created_at
-last_opened_at
+选择原视频
+→ 流式复制进 Project Workspace
+→ SHA-256 / Size
+→ FFprobe 验证并读取基础媒体信息
+→ source_videos ready
+→ 重启后仍可读取
 ```
 
-状态：
+F02 不做：
 
 ```text
-creating
-ready
+转码
+proxy.mp4
+audio.wav
+thumbnail.jpg
+VFR 精确分析
+自动拉片
+ASR
+人物/Scene/AI
 ```
 
-## Project ID
+这些属于 F03 或以后。
+
+---
+
+# F02 当前拟定 Source Contract
+
+## Source ID
 
 ```text
-PROJECT_<32位UUID4小写hex>
+SOURCE_<32位UUID4小写hex>
 ```
+
+## V1 数量
+
+```text
+1 Project → 0 或 1 个 ready Source Video
+```
+
+一旦导入成功，Source 原片只读；F02 不提供替换/删除。
 
 ## Workspace
 
 ```text
-<workspace_root>/<project_id>/project.json
+<workspace>/
+├── project.json
+└── source/
+    └── SOURCE_<UUID>/
+        └── original.<ext>
 ```
 
-默认根目录：
+导入 staging：
 
 ```text
-%USERPROFILE%/AI Drama Studio Projects/
+<workspace>/source/.staging/SOURCE_<UUID>/original.<ext>
 ```
 
-`project_format_version = 1`。
-
-## API
-
-```text
-GET  /api/health
-GET  /api/projects
-POST /api/projects
-POST /api/projects/{project_id}/open
-```
-
-Controller 只负责 HTTP → Schema → 业务函数 → Response；不得直接 SQL、mkdir、写 `project.json`。
-
-## 固定语言 / 地区
-
-创建项目页面固定使用下拉，不允许自由输入不规范代码。
-
-语言：
-
-```text
-zh en ja ko es pt fr de id th vi
-```
-
-地区：
-
-```text
-US GB JP KR ES BR FR DE ID TH VN TW SG
-```
-
-前端下拉 + 后端白名单双层保护。
-
-## UI
-
-F01 已采用正式深色 AI短剧工厂工作台 Design System：
-
-```text
-StudioShell.vue
-ProjectHome.vue
-CreateProjectDialog.vue
-ProjectCard.vue
-ProjectWorkspace.vue
-```
-
-桌面端字号已经按真实 Windows 1920px 可读性调整；不再以设计稿缩略图 7–10px 正文为实现基准。
+DB 只保存相对 Workspace 的媒体路径。
 
 ---
 
-# F01 回归基线
+# F02 Database Draft
 
-后续共享代码若影响 F01，必须至少回归：
-
-```text
-应用数据路径
-SQLite/Alembic 初始化
-Project ID
-创建项目
-固定语言/地区校验
-Workspace/project.json
-项目列表
-打开项目
-creating 恢复
-CORS 本机开发端口
-前端创建/打开流程
-重启后项目仍存在
-```
-
-冻结后若必须改变 V1 Contract：
+新增：
 
 ```text
-Change Request
-→ 影响分析
-→ Migration / Adapter / V2
-→ 用户确认
-→ 修改
-→ F01 Regression
+0002_create_source_videos
+source_videos
 ```
+
+核心内容：
+
+```text
+Source ID / Project ID
+原文件名
+relative_path
+file_size_bytes
+sha256
+importing / ready
+container / duration_us / source_start_time_us
+主 video stream / codec / width / height / fps rational
+主 audio stream / codec / sample rate / channels
+created_at
+```
+
+V1 使用 `UNIQUE(project_id)` 保证一项目一 Source。
 
 ---
 
-# 当前下一步
+# F02 API Draft
+
+Additive 新增：
 
 ```text
-F01 已完成，不再继续修改。
-F02 — 上传原视频 尚未开始。
+GET  /api/projects/{project_id}/source-video
+POST /api/projects/{project_id}/source-video
 ```
 
-只有用户明确要求“开始 F02 / 继续下一阶段”后，才进入 F02 Contract 规划或开发。
+POST：`multipart/form-data` + `file`，成功 `201 Created`。
+
+GET 无 Source：`200 null`。
+
+Controller 继续遵守 F01 冻结职责：HTTP → Schema → Business → Response，不直接 SQL/文件/FFprobe/hash。
+
+---
+
+# F02 核心函数 Draft
+
+只保留真正影响文件/DB/媒体边界的核心函数：
+
+```text
+generate_source_video_id()
+copy_upload_to_staging()
+probe_source_video()
+import_source_video()
+get_source_video()
+recover_source_video_imports()
+```
+
+不再把简单格式化/helper 拆成大量正式 Contract。
+
+---
+
+# F02 文件安全 / Recovery Draft
+
+```text
+DB importing
+→ staging 分块写文件 + SHA-256
+→ close/flush
+→ FFprobe
+→ publish staging → final
+→ DB ready
+```
+
+Final 未发布失败：清理本 Source staging + importing row。
+
+Final 已发布但 DB ready 失败：保留 final + importing，启动 Recovery 完成，不删除已经落盘的原片。
+
+Ready Source 不覆盖、不由缓存清理、不因后续 Feature 重跑替换。
+
+---
+
+# F02 Migration Safety Gate
+
+F02 首次新增 `0002`，按 P0-04 / `DATA_RECOVERY_AND_MIGRATION_RULES.md`：
+
+```text
+检测 app.db 存在且有 pending migration
+→ SQLite safe backup
+→ %LOCALAPPDATA%/AI Drama Studio/backups/
+→ Alembic upgrade
+```
+
+只在确实升级 Schema 时备份，不每次启动都备份。
+
+这会修改共享 `init_database()` 内部安全实现，因此编码时必须完整跑 F01 Regression。
+
+---
+
+# F02 Environment Gate
+
+F02 首次正式依赖 Native FFprobe。
+
+编码/验收需要在目标 Windows 记录：
+
+```text
+ffprobe -version
+```
+
+并更新 `docs/ENVIRONMENT_BASELINE.md`。
+
+Python 只计划新增 F02 必需的 multipart 支持依赖；不提前安装 OpenCV/PyTorch/Whisper。
+
+---
+
+# 当前等待用户确认的 10 项
+
+```text
+1. F02 V1 一个 Project 只允许一个 Source Video
+2. 导入成功后原片只读，不提供替换/删除
+3. 原片复制进 Workspace，不只记录外部电脑路径
+4. Source ID = SOURCE_<UUID4_HEX>
+5. 正式路径 = source/<source_id>/original.<ext>
+6. 浏览器开发阶段使用 multipart + 流式后端写入
+7. F02 使用 FFprobe，只读取基础媒体信息，不转码
+8. duration/start_time 使用整数微秒，FPS 使用 rational
+9. F02 新增 source_videos 表和 0002 Migration
+10. 0002 执行前先做安全 app.db backup
+```
+
+用户确认后：
+
+```text
+F02 → IN_PROGRESS
+→ Migration Backup Gate
+→ Source ID / streaming / FFprobe
+→ import/get/recovery
+→ API
+→ Vue 视频导入页
+→ 自动测试 + F01 Regression
+→ 真实短剧视频测试
+→ READY_FOR_REVIEW
+→ 用户验收
+```
+
+未经确认不开始 F02 业务编码，不进入 F03。
 
 ## 最近更新时间
 
-- 日期：2026-08-23 22:34 +08:00
-- 状态：用户确认 F01 测试通过且无问题；F01 已正式 STABLE / FROZEN；等待用户决定是否开始 F02。
+- 日期：2026-08-23 22:39 +08:00
+- 状态：用户明确开始 F02；F02 上传原视频详细 Contract 已起草，当前等待用户确认关键设计后再编码。
