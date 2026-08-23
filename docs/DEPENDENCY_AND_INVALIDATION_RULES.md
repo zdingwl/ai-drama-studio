@@ -2,261 +2,240 @@
 
 ## 1. 目的
 
-本规则解决一个核心问题：
+解决核心问题：
 
-> 上游 Final 数据已经被下游使用后，如果上游再次被人工修改，旧下游结果是否仍然有效？
+> 上游 Final/Approved/Locked 数据已经被下游使用后，如果上游再次发生语义修改，旧下游结果还能不能继续当作当前结果？
 
-没有失效机制时，系统可能出现“数据看起来都存在，但其实是旧数据”的隐蔽错误。
-
-例如：
-
-```text
-Shot 边界已修改
-但 Character 分析仍然来自旧 Shot
-Shot Spec 仍然来自旧 Character / Scene
-Generation 仍然来自旧 Shot Spec
-QC 却继续显示 PASS
-```
-
-这种情况必须被系统识别。
+原则：不能静默继续使用。
 
 ---
 
-## 2. 核心概念
+## 2. 核心状态
 
 ### Revision
 
-可被人工或系统重新确认的重要业务对象，应有 revision / version 概念。
-
-建议至少覆盖：
-
-- Final Shot
-- Final Character（涉及结构变化时）
-- Final Dialogue
-- Final Scene
-- Character→Actor Mapping
-- Character Bible
-- Scene Bible
-- Shot Specification
-- Reference Asset Set
-
-Revision 只在影响下游语义的内容变化时递增。
+重要业务对象在“影响下游语义”的内容变化时递增 revision。
 
 ### Dependency Snapshot
 
-派生结果创建时必须记录它所依赖的关键上游版本。
-
-示例：
-
-```json
-{
-  "shot_revision": 4,
-  "character_bible_revision": 2,
-  "scene_bible_revision": 3,
-  "shot_spec_revision": 5
-}
-```
+派生结果创建时保存它依赖的上游 revision/version/hash。
 
 ### Fresh
 
-派生结果的 dependency snapshot 与当前上游版本一致。
+依赖快照与当前上游一致。
 
 ### Stale
 
-派生结果仍然存在且历史上可能有价值，但它依赖的上游版本已变化。
-
-`stale` 不等于 `failed`，也不允许自动删除。
+结果本身仍然存在，但上游语义已经变化，因此不能默认作为当前正式输入。
 
 ### Invalid / Broken
 
-结果本身不可用，例如文件损坏、引用文件缺失、数据库关系断裂。
+结果本身损坏、缺文件、关系断裂等。
 
-不要把 `stale` 与 `invalid` 混用。
-
----
-
-## 3. 基本规则
-
-1. 派生结果必须能回答：“我是基于哪些上游版本产生的？”
-2. 上游 revision 变化后，系统必须检查受影响的下游。
-3. 下游旧结果默认标记 `stale`，不自动删除。
-4. Stale 结果不得被新的正式生产流程默认为 Final 输入。
-5. UI 必须显示 stale 原因和需要重新执行的步骤。
-6. 人工可以查看旧结果用于对比，但“人工强制继续使用”必须是显式决策。
+`stale` 不等于 `failed`，也不等于 `invalid`。
 
 ---
 
-## 4. 修改类型
+## 3. 建议需要 Revision 的对象
 
-不是所有修改都应该触发失效。
+至少考虑：
 
-### Display-only Change
+- Final Shot；
+- Final Character 结构；
+- Final Source Dialogue；
+- Final Scene；
+- Character→Actor Mapping；
+- Character Bible；
+- Scene Bible；
+- Target Dialogue；
+- Target Dialogue Timing Constraint；
+- Shot Specification；
+- Reference Asset Set；
+- Selected Generation / Final Voice / Selected LipSync；
+- Final Audio Mix；
+- Subtitle Track。
 
-只改变显示，不改变业务语义。
+Revision 只在语义变化时递增，display-only 修改不应该制造无意义 stale。
 
-示例：
+---
+
+## 4. Display-only vs Semantic Change
+
+### Display-only
+
+通常不触发下游 stale：
 
 ```text
-Character 显示名：人物A → 男主
-Project 显示名称修改
-UI 排序偏好
+Project 显示名称
+Character 显示名（业务身份不变）
+UI 排序/展开状态
+纯备注
 ```
-
-通常不增加语义 revision，不触发下游 stale。
 
 ### Semantic Change
 
-改变下游真实输入。
-
-示例：
+必须评估/触发下游 stale：
 
 ```text
-Shot final_start/final_end 修改
-Dialogue final_text 修改
-Dialogue final_character_id 修改
-Shot Scene 归属修改
-Character→Actor Mapping 修改
-Bible 结构字段修改
-Shot Spec action / camera / duration 修改
-Reference Asset 改变
+Shot final_start/end
+Character 合并/拆分
+Source Dialogue 文本/说话人/时间
+Scene 归属
+Actor Mapping
+Bible 结构字段
+Target Dialogue 文本/说话人
+Timing Constraint
+Shot Spec 动作/镜头/时长/参考
+Selected Generation
+Final Voice
+Selected LipSync
+Audio Mix 输入
+Subtitle Cue 时间/文本
 ```
-
-必须增加对应 revision，并执行失效传播。
 
 ---
 
-## 5. 推荐失效矩阵
+## 5. V1 失效矩阵
 
-以下是 V1 推荐基线；具体 Feature Contract 可以更精细，但不能放宽到“完全不追踪”。
-
-| 上游变化 | 可能 stale 的下游 |
+| 上游变化 | 默认需要评估/标记 stale 的下游 |
 |---|---|
-| Final Shot 边界 | Character Analysis、Scene Candidate、Shot Spec、Generation、QC、Dialogue/Active Speaker 映射（按影响范围） |
-| Final Character 合并/拆分 | Speaker Mapping、Casting、Character Bible、Shot Spec、Generation、QC |
-| Final Dialogue 文本 | Shot Spec、TTS、Dialogue Fit、Lip Sync、Final Render |
-| Dialogue 说话角色 | Shot Spec、Voice binding、TTS、Lip Sync |
-| Final Scene 归属/结构 | Scene Bible、Shot Spec、Generation、QC |
-| Character→Actor Mapping | Character Bible、Shot Spec、Generation、QC |
-| Character Bible | Shot Spec、Generation、Identity QC |
-| Scene Bible | Shot Spec、Generation、Scene QC |
-| Shot Spec | Generation、QC、TTS/LipSync（若涉及 Dialogue/Duration） |
-| Selected Generation | Lip Sync、Final Render、Final QC |
-| Final Voice | Dialogue Fit、Lip Sync、Final Render |
-| Lip Sync Selected Version | Final Render、Final QC |
+| Final Shot 边界 | Character Analysis、Speaker/Active-Speaker Mapping、Scene Candidate、Target Timing、Shot Spec、Generation、QC、TTS Fit、LipSync、Subtitle、Render |
+| Final Character 合并/拆分 | Speaker Mapping、Casting、Character Bible、Localization Context、Shot Spec、Generation、QC |
+| Final Source Dialogue 文本 | Localization Draft、Approved Target Dialogue（如来源变化）、Timing、Shot Spec、TTS、Subtitle |
+| Final Source Dialogue 说话角色 | Localization、Voice Binding、Target Dialogue、Shot Spec、TTS、LipSync |
+| Final Scene 归属/结构 | Scene Bible、Localization Context（如场景影响表达）、Shot Spec、Generation、Scene QC |
+| Character→Actor Mapping | Character Bible、Shot Spec、Generation、Identity QC |
+| Character Bible | Localization Context、Shot Spec、Generation、Identity QC、TTS style（如使用） |
+| Scene Bible | Localization Context（如使用）、Shot Spec、Generation、Scene QC |
+| Approved Target Dialogue | Target Timing、Shot Spec、TTS、Dialogue Fit、LipSync、Subtitle、Final Audio、Render |
+| Target Dialogue Timing Constraint | Shot Spec、Generation（如 duration/action pacing 受影响）、Dialogue Fit |
+| Approved Shot Spec | Generation、QC、TTS/LipSync（若对白/时长相关）、Subtitle timing、Render |
+| Selected Generation | LipSync、Final Audio（若用视频原生音频）、Subtitle/Render timing、Final QC |
+| Final Voice | Dialogue Fit、LipSync、Final Audio、Subtitle timing（如按真实语音调整）、Render |
+| Selected LipSync | Render、Final QC |
+| Final Audio Mix | Render、Final QC |
+| Subtitle Track | Render（烧录时）、Export、Final QC |
+
+具体 Feature 可以缩小影响范围，但必须说明原因；不能默认“不追踪”。
 
 ---
 
-## 6. 不允许自动删除旧结果
+## 6. 派生结果必须记录 Dependency Snapshot
 
-当下游 stale 时：
+例如 Generation 至少应追溯：
 
 ```text
-保留旧记录
-保留旧媒体
-记录 stale_reason
+shot_id + shot_revision
+shot_spec_id + shot_spec_revision
+character_bible revisions
+scene_bible revision
+target_dialogue_revision
+timing_constraint_revision
+reference asset ids/hashes
+provider/model/version
+prompt compiler version
+```
+
+TTS 至少应追溯：
+
+```text
+target_dialogue_revision
+character/voice binding revision
+provider/model/version
+```
+
+Subtitle Track 至少应追溯：
+
+```text
+target_dialogue_revision
+final shot/timeline revisions
+final voice timing revision（如使用）
+```
+
+Final Render 至少应追溯：
+
+```text
+selected shot media versions
+final audio mix revision
+subtitle track revision
+render settings revision
+```
+
+---
+
+## 7. Stale 结果不能自动删除
+
+上游变化后：
+
+```text
+保留旧记录/媒体
 记录 stale_at
+记录 stale_reason
+记录 upstream old/new revision
 ```
 
-禁止：
+原因：
 
-```text
-上游一改
-→ 删除所有旧 Generation
-```
-
-历史结果对于：
-
-- 对比
-- 回退
-- 成本追踪
-- 算法调试
-- 人工误修改恢复
-
-都有价值。
+- 对比；
+- 回退；
+- 成本追踪；
+- 调试；
+- 人工误操作恢复。
 
 ---
 
-## 7. 下游正式读取规则
+## 8. 正式生产读取规则
 
-正式生产步骤默认只能读取：
+默认只允许读取：
 
 ```text
-not stale
+fresh
 + valid
-+ approved/locked/selected（如适用）
++ approved/locked/selected（按对象要求）
 ```
 
-如果只有 stale 数据存在：
+如果只有 stale 数据：
 
-- UI 显示需要重新计算；
-- 后端不得静默继续使用；
-- 若支持人工强制使用，必须记录 override reason。
+- UI 明确提示；
+- 后端禁止静默继续；
+- 给出推荐重新执行 Feature；
+- 若允许人工强制继续，必须记录 override reason。
 
 ---
 
-## 8. Revision 规则
+## 9. Revision 规则
 
 推荐：
 
 ```text
-revision: integer, 从 1 开始
+revision: integer，1 开始，只增不减
 ```
 
-revision 只增不减。
+不能用 `updated_at` 代替 semantic revision。
 
-不要把数据库 `updated_at` 当 revision，因为：
+revision 只有在事务持久化成功后增加。
 
-- display-only 修改也会改 updated_at；
-- 时间精度不能表达明确业务版本；
-- 无法稳定建立依赖快照。
-
-### Revision 增长时机
-
-只有真正持久化成功后才增加 revision。
-
-失败事务不能留下 revision 跳跃造成不一致。
+重要人工资产（Bible、Target Dialogue、Shot Spec 等）在对应 Feature 实现时应保存 Revision Snapshot/历史内容，而不只是覆盖当前值。
 
 ---
 
-## 9. Generation 必须保存输入快照
+## 10. QC 必须绑定具体生成版本
 
-Generation 至少应能追溯：
-
-```text
-shot_id
-shot_revision
-shot_spec_id
-shot_spec_revision
-character_bible revisions
-scene_bible revision
-reference asset IDs/hashes
-provider
-model
-provider/model version（能获得时）
-prompt compiler version
-```
-
-即使上游以后修改，也能知道当时为什么生成了这个结果。
-
----
-
-## 10. QC 必须绑定具体 Generation
-
-QC 不能只绑定 Shot。
-
-必须明确：
+QC 必须明确：
 
 ```text
 qc_result → generation_id/version
 ```
 
-Generation stale 后，其 QC 结果历史仍保留，但不能用于证明新 Generation 或新 Shot Spec 已通过。
+Generation stale 后，旧 QC 作为历史保留，但不能证明新 Generation 已通过。
+
+Episode QC 同样绑定具体 Master Candidate/Render Version。
 
 ---
 
-## 11. UI 规则
+## 11. UI 提示
 
-建议使用：
+建议：
 
 ```text
 ✓ 当前
@@ -264,45 +243,39 @@ Generation stale 后，其 QC 结果历史仍保留，但不能用于证明新 G
 ✕ 损坏/不可用
 ```
 
-Stale 提示必须包含：
+Stale 提示至少说明：
 
-- 哪个上游发生变化；
-- 变化发生时间；
+- 哪个上游改变；
+- revision old → new；
 - 哪些结果受影响；
-- 推荐重新执行哪个 Feature。
-
-示例：
-
-```text
-⚠ SHOT_023 的人物分析已过期
-原因：Shot 边界 revision 3 → 4
-建议：重新执行 Feature 06 人物识别（仅当前 Shot）
-```
+- 推荐重跑哪个 Feature；
+- 是否允许人工 override。
 
 ---
 
 ## 12. Feature Contract 必须回答
 
-如果当前 Feature 产生派生数据，必须写清：
+如果产生派生数据：
 
-1. 依赖哪些上游对象？
-2. 记录哪些上游 revision？
-3. 哪些上游变化会使本结果 stale？
-4. stale 后 UI 怎么提示？
+1. 依赖哪些上游对象/revision？
+2. 保存什么 Dependency Snapshot？
+3. 哪些变化会 stale？
+4. stale 后 UI/后端怎么处理？
 5. 如何重新计算？
-6. 是否支持人工 override？
-7. stale 数据是否允许导出/生成？
+6. 是否允许 override？
+7. stale 是否禁止 Export/Generate/Render？
 
 ---
 
 ## 13. Stable Gate
 
-涉及派生数据的 Feature Freeze 前必须确认：
-
-- [ ] Dependency Snapshot 已定义
-- [ ] Semantic revision 已定义
-- [ ] Stale 状态已定义
-- [ ] Invalidation 触发条件已定义
-- [ ] Stale 不会被静默当作 Final 输入
-- [ ] 重新计算路径已测试
-- [ ] 历史结果不会自动删除
+```text
+[ ] Semantic revision 已定义
+[ ] Dependency Snapshot 已定义
+[ ] Stale 状态/原因已定义
+[ ] Invalidation 触发条件已定义
+[ ] Stale 不会静默进入正式生产
+[ ] Recompute/Recovery 已测试
+[ ] 历史结果不会自动删除
+[ ] 对新 Target Dialogue / Audio / Subtitle 链路的影响已覆盖（如适用）
+```
