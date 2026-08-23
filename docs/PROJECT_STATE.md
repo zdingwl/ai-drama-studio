@@ -42,6 +42,7 @@ Feature 01 → 30 的完整顺序见：
 - `docs/TECH_STACK.md`
 - `docs/DATA_AND_FREEZE_RULES.md`
 - `docs/CONTINUATION_PROTOCOL.md`
+- `docs/CODE_AND_DATABASE_COMMENT_RULES.md`
 - `docs/PROJECT_STATE.md`
 - `docs/features/README.md`
 - `docs/sessions/README.md`
@@ -57,16 +58,29 @@ Feature 01 → 30 的完整顺序见：
 - 代码与文档属于同一个交付物。
 - Feature 缺少文档更新时不得标记 STABLE。
 
+代码与数据库可理解性规则已经启用：
+
+- 业务代码必须包含足够的简体中文业务注释。
+- 注释重点解释业务作用、约束以及“为什么”，禁止机械翻译变量名。
+- 核心文件、Service、公开方法、复杂算法、Provider Adapter、API Schema 必须有说明。
+- 每张业务表必须有中文业务说明。
+- 每个新增/修改的业务字段必须有字段级说明。
+- SQLAlchemy Model、Alembic Migration 和 Pydantic/TypeScript Schema 需要同步表达字段语义。
+- 每个涉及数据库变更的 Feature 文档必须维护 Database Dictionary。
+- Feature 标记 STABLE/FROZEN 前必须通过 Code Comment Review、Database Comment Review 和 Database Dictionary 完整性检查。
+- 详细规则见 `docs/CODE_AND_DATABASE_COMMENT_RULES.md`。
+
 ## 最新开发交接
 
+- `docs/sessions/2026-08-23_1401_PROJECT_code-database-comment-rules.md`
 - `docs/sessions/2026-08-23_1354_PROJECT_continuation-protocol.md`
 
-该文档记录了本次“跨对话持续开发协议”建立过程、文件变化、决策、当前状态与下一步。
+最新交接记录本次“代码与数据库注释强制规范”的建立过程和后续执行要求。
 
 ## 当前代码状态
 
 - 尚未开始业务代码实现。
-- 当前主要成果是项目开发 Skill、技术规则、Feature 顺序、冻结规则及跨对话续开发规则。
+- 当前主要成果是项目开发 Skill、技术规则、Feature 顺序、冻结规则、跨对话续开发规则和代码/数据库注释规范。
 
 ## 当前阻塞项
 
@@ -89,7 +103,7 @@ Feature 01 正式开发前需要在 Feature Spec 中确定：
 
 ## 下一步唯一推荐动作
 
-> 创建 `docs/features/F01-create-project.md`，使用 `templates/FEATURE_SPEC_TEMPLATE.md` 与 `templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md` 定义 Feature 01 Contract；用户确认 Contract 后，才开始 Feature 01 编码。
+> 创建 `docs/features/F01-create-project.md`，使用 `templates/FEATURE_SPEC_TEMPLATE.md` 与 `templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md` 定义 Feature 01 Contract；其中数据库部分必须按 `docs/CODE_AND_DATABASE_COMMENT_RULES.md` 建立完整 Database Dictionary。用户确认 Contract 后，才开始 Feature 01 编码。
 
 ## 新对话恢复顺序
 
@@ -97,11 +111,12 @@ Feature 01 正式开发前需要在 Feature Spec 中确定：
 2. `SKILL.md`
 3. 本文件 `docs/PROJECT_STATE.md`
 4. `docs/CONTINUATION_PROTOCOL.md`
-5. 当前 Feature 文档（目前应为 `docs/features/F01-create-project.md`，创建后生效）
-6. 最新相关 `docs/sessions/*.md`
+5. `docs/CODE_AND_DATABASE_COMMENT_RULES.md`
+6. 当前 Feature 文档（目前应为 `docs/features/F01-create-project.md`，创建后生效）
+7. 最新相关 `docs/sessions/*.md`
 
 ## 最近一次状态更新
 
-- 日期：2026-08-23
-- 内容：跨对话续开发规则、Feature Implementation Log 模板、Session Handoff 模板、Feature/Session 文档目录均已加入仓库，并创建首份真实交接文档。
+- 日期：2026-08-23 14:01 +08:00
+- 内容：新增强制代码与数据库注释规范；要求业务代码、表、字段、Migration、API Schema 均具备可理解的中文说明，并将注释完整性纳入 Feature Stable Gate。
 - 下一步：建立 Feature 01 规格文档。
