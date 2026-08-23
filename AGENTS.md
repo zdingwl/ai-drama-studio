@@ -54,7 +54,7 @@
 - 每个 Feature 编码前填写 `templates/P0_FEATURE_CHECKLIST.md`。
 - AI 原始结果与人工 Final 结果分离。
 - 上游语义变化后按 Revision / Stale 规则处理下游。
-- 涉及媒体时间时遵守 Source Timeline + integer microseconds。
+- 涉及媒体时间时遵守 Source Timeline / Shot-local Time / Production Timeline + integer microseconds。
 - 调用计费异步 Provider 时必须防重复提交/重复扣费。
 - SQLite + 媒体文件写入必须考虑 staging、校验、事务和恢复。
 - 新增/升级依赖必须锁定版本，不依赖 `latest`。
@@ -64,7 +64,39 @@
 
 ---
 
-## 5. Agent 权限边界
+## 5. Git 操作权限边界
+
+Git 分支、PR 和引用结构属于**用户控制范围**，Agent 不得自行决定。
+
+未经用户明确要求，AI / Codex / Agent **禁止**：
+
+- 新建分支；
+- 切换到其它分支并继续开发；
+- 删除分支；
+- 重命名分支；
+- 移动/强制更新 branch ref；
+- 擅自创建 PR；
+- 擅自关闭、合并或重新打开 PR；
+- 擅自修改 PR 的 base/head；
+- 为“规范流程”自行创建 `feature/*`、`fix/*`、`docs/*` 等分支。
+
+默认原则：
+
+```text
+用户明确指定分支
+→ 只在该分支工作
+
+用户未要求创建/切换分支
+→ 不执行任何分支结构变更
+```
+
+`main` 是正式 Source of Truth，但这**不等于 Agent 有权擅自创建新分支或改变 Git 流程**。
+
+如果当前任务需要修改仓库内容，优先遵守用户当前已指定的 Git 工作方式；没有得到明确授权时，不以“最佳实践”为理由替用户创建分支。
+
+---
+
+## 6. Agent 权限边界
 
 AI / Codex / 自动化 Agent 可以将 Feature 推进到：
 
@@ -83,7 +115,7 @@ FROZEN
 
 ---
 
-## 6. 每次实际开发结束必须更新
+## 7. 每次实际开发结束必须更新
 
 至少：
 
@@ -95,7 +127,7 @@ FROZEN
 
 ---
 
-## 7. 详细规则索引
+## 8. 详细规则索引
 
 按需读取：
 
