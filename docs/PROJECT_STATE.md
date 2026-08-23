@@ -11,6 +11,7 @@ Current Working Branch: main（用户未要求切换/新建其它分支）
 Current Feature: F01 — 创建项目
 Feature Status: PLANNED
 F01 Contract: DRAFTED / WAITING_USER_CONFIRMATION
+F01 Function Contracts: DRAFTED / WAITING_USER_CONFIRMATION
 Stable Features: none
 Frozen Features: none
 Business Code: not started
@@ -39,10 +40,22 @@ Git 分支和 PR 结构由用户控制。
 
 ## F01 Contract 已建立
 
-当前正式草案：
+主 Contract：
 
 ```text
 docs/features/F01-create-project.md
+```
+
+单函数详细职责字典：
+
+```text
+docs/features/F01-function-contracts.md
+```
+
+通用单函数模板：
+
+```text
+templates/FUNCTION_CONTRACT_TEMPLATE.md
 ```
 
 F01 被定义为：
@@ -67,12 +80,40 @@ F01 被定义为：
 
 ## F01 单函数开发方式
 
-F01 已拆成单函数执行顺序，详细见 `docs/features/F01-create-project.md`。
+原函数顺序见：
+
+```text
+docs/features/F01-create-project.md
+```
+
+每个函数的详细业务作用、调用关系、输入输出、副作用、禁止行为、异常和测试见：
+
+```text
+docs/features/F01-function-contracts.md
+```
+
+以后仅列函数名和一句“单一职责”不视为完成规划。
+
+每个函数正式开发前必须能够回答：
+
+```text
+1. 解决什么真实业务问题？
+2. 为什么需要独立成函数？
+3. 谁调用它？
+4. 它调用哪些下层函数？
+5. 输入是什么、谁保证输入合法？
+6. 输出是什么？
+7. 会修改 DB / 文件 / 前端状态吗？
+8. 明确禁止修改什么？
+9. 会抛哪些业务异常？
+10. 对应哪些测试？
+```
 
 执行原则：
 
 ```text
-函数实现
+函数 Contract 明确
+→ 函数实现
 → 对应测试
 → PASS
 → 下一个函数
@@ -86,7 +127,7 @@ Backend Foundation
 → Manifest
 → Repository
 → Recovery / Service
-→ API
+→ API Controller
 → Frontend API / Store
 → Frontend UI
 → 前后端联调
@@ -96,6 +137,28 @@ Backend Foundation
 ```
 
 禁止一次把整个 F01 堆完后再统一测试。
+
+## Controller 层特别规则
+
+Controller / Endpoint 是 HTTP 边界层，只允许：
+
+```text
+读取 HTTP 输入
+→ Schema 校验
+→ 调用 Service
+→ 返回 DTO
+→ 映射 Domain Error
+```
+
+Controller 禁止：
+
+- 直接 SQL；
+- mkdir；
+- 读写 project.json；
+- 生成 Project ID；
+- 拼 Workspace 路径；
+- 编写创建事务和 Recovery；
+- 把 Service 业务逻辑复制进路由函数。
 
 ## Approved Production Flow
 
@@ -166,7 +229,8 @@ AI / Codex / Agent 只能自行推进到 `READY_FOR_REVIEW`。
 - Simplified-Chinese code/database business comments；
 - Database Dictionary；
 - Stable Feature Regression；
-- Cross-conversation documentation continuity。
+- Cross-conversation documentation continuity；
+- 单函数 Function Contract：业务意义/调用关系/副作用/异常/测试必须明确。
 
 ## 当前技术方案
 
@@ -184,7 +248,9 @@ F01 实现时只安装 F01 实际需要的最小依赖；PyTorch/CUDA/OpenCV/AI 
 
 ## 当前代码/数据状态
 
-- F01 Contract 文档已创建；
+- F01 主 Contract 文档已创建；
+- F01 单函数详细职责字典已创建；
+- 通用 Function Contract 模板已创建；
 - 无正式业务代码；
 - 无业务数据库；
 - 无 Migration；
@@ -194,7 +260,7 @@ F01 实现时只安装 F01 实际需要的最小依赖；PyTorch/CUDA/OpenCV/AI 
 
 唯一阻塞：
 
-> 等待用户确认 `docs/features/F01-create-project.md` 第 31 节的 9 个关键决策。
+> 等待用户审核 F01 主 Contract + Function Contracts，并确认关键设计后再进入编码。
 
 ## 已知 Bug
 
@@ -207,6 +273,7 @@ AGENTS.md
 → SKILL.md
 → docs/PROJECT_STATE.md
 → docs/features/F01-create-project.md
+→ docs/features/F01-function-contracts.md
 → 最新相关 Session Handoff
 → 按 F01 Rule References 读取必要详细规范
 ```
@@ -215,9 +282,9 @@ AGENTS.md
 
 ## 下一步唯一动作
 
-> 用户审核并确认 F01 Contract 的 9 个关键决策。确认后把 F01 状态从 `PLANNED` 改为 `IN_PROGRESS`，然后严格从单函数 B01 开始编码；不擅自新建分支，不实现 F02。
+> 用户审核 F01 主 Contract 与详细单函数职责。确认后把 F01 状态从 `PLANNED` 改为 `IN_PROGRESS`，然后从 B01 开始，每次严格按 Function Contract → 实现 → 测试 → PASS 的顺序开发；不擅自新建分支，不实现 F02。
 
 ## 最近更新时间
 
-- 日期：2026-08-23 15:18 +08:00
-- 状态：F01 单函数级开发 Contract 已建立，等待用户确认后开始编码。
+- 日期：2026-08-23 15:43 +08:00
+- 状态：补充 F01 单函数详细职责、Controller 边界和通用 Function Contract 模板，仍未开始业务编码。
