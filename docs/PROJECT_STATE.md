@@ -43,6 +43,8 @@ Feature 01 → 30 的完整顺序见：
 - `docs/DATA_AND_FREEZE_RULES.md`
 - `docs/CONTINUATION_PROTOCOL.md`
 - `docs/PROJECT_STATE.md`
+- `docs/features/README.md`
+- `docs/sessions/README.md`
 - `templates/FEATURE_SPEC_TEMPLATE.md`
 - `templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md`
 - `templates/SESSION_HANDOFF_TEMPLATE.md`
@@ -54,6 +56,12 @@ Feature 01 → 30 的完整顺序见：
 - 每次开发结束同步更新本文件。
 - 代码与文档属于同一个交付物。
 - Feature 缺少文档更新时不得标记 STABLE。
+
+## 最新开发交接
+
+- `docs/sessions/2026-08-23_1354_PROJECT_continuation-protocol.md`
+
+该文档记录了本次“跨对话持续开发协议”建立过程、文件变化、决策、当前状态与下一步。
 
 ## 当前代码状态
 
@@ -95,5 +103,5 @@ Feature 01 正式开发前需要在 Feature Spec 中确定：
 ## 最近一次状态更新
 
 - 日期：2026-08-23
-- 内容：跨对话续开发规则、Feature Implementation Log 模板、Session Handoff 模板已加入仓库。
+- 内容：跨对话续开发规则、Feature Implementation Log 模板、Session Handoff 模板、Feature/Session 文档目录均已加入仓库，并创建首份真实交接文档。
 - 下一步：建立 Feature 01 规格文档。
