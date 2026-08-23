@@ -1,0 +1,57 @@
+# Local workspace / media
+workspace/
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.wav
+*.flac
+*.mp3
+
+# Generated images / caches
+cache/
+.cache/
+models/
+weights/
+checkpoints/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+
+# Secrets
+.env
+.env.*
+!*.example
+config/secrets.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Vue / Electron
+node_modules/
+dist/
+.vite/
+release/
+out/
+
+# Local database / runtime logs
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+logs/
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
