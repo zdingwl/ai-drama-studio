@@ -23,12 +23,9 @@ async function handleCreate(payload: CreateProjectPayload): Promise<void> {
 }
 
 async function handleOpen(projectId: string): Promise<void> {
-  try {
-    await store.openProject(projectId)
-    await router.push(`/projects/${projectId}`)
-  } catch {
-    // 留在首页显示 Store 错误，不在 UI 层重复解释后端业务错误。
-  }
+  // 首页只负责导航。真正的“打开项目”由 ProjectWorkspace 统一调用 openProject()。
+  // 这样卡片点击、页面刷新和直接输入 URL 都只走一次后端 /open，不会重复更新时间。
+  await router.push(`/projects/${projectId}`)
 }
 </script>
 
