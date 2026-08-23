@@ -86,13 +86,14 @@ openProject()
 ## 页面
 
 ```text
+StudioShell.vue
 ProjectHome.vue
 CreateProjectDialog.vue
 ProjectCard.vue
 ProjectWorkspace.vue
 ```
 
-没有任何 F02 上传视频代码。
+F01 前端已经重新对齐正式深色工作台设计体系；没有任何 F02 上传视频代码。
 
 ---
 
@@ -127,6 +128,56 @@ ready
 
 ---
 
+# 创建项目固定选项规则
+
+用户确认：固定格式数据不得继续自由输入，避免写入不规范值。
+
+当前创建项目表单：
+
+```text
+source_language  下拉选择，可选“自动识别”
+target_language  下拉选择，必选
+target_region    下拉选择，必选
+```
+
+前端选项集中在：
+
+```text
+frontend/src/constants/project-options.ts
+```
+
+当前语言代码：
+
+```text
+zh en ja ko es pt fr de id th vi
+```
+
+当前地区代码：
+
+```text
+US GB JP KR ES BR FR DE ID TH VN TW SG
+```
+
+前端不再允许用户手写固定代码；后端 `CreateProjectRequest` 同时使用 Literal 白名单进行 API Schema 校验。
+
+绕过前端直接提交 `English / english / USA / 中文` 等非标准值时，API 必须返回 422，并保持统一 error envelope：
+
+```text
+PROJECT_SOURCE_LANGUAGE_UNSUPPORTED
+PROJECT_TARGET_LANGUAGE_UNSUPPORTED
+PROJECT_TARGET_REGION_UNSUPPORTED
+```
+
+新增测试：
+
+```text
+engine/tests/unit/test_project_option_validation.py
+```
+
+规则：以后增加语言/地区时，必须同时更新前端选项、后端白名单和测试，禁止只改一侧。
+
+---
+
 # API
 
 ```text
@@ -144,7 +195,7 @@ Controller 只负责 HTTP → Service → Response，不直接 SQL、不 mkdir�
 
 ## Python / FastAPI
 
-重建当前 F01 工作副本并执行：
+此前重建 F01 工作副本并执行：
 
 ```text
 python -m compileall engine
@@ -159,11 +210,13 @@ pytest -q
 
 覆盖旧的路径/DB/ID 测试，以及 Workspace、create/list/open、Recovery、Controller。
 
+本轮新增固定语言/地区 API 测试文件；由于当前工具环境无法直接拉取完整 Git 仓库进行最新完整 pytest，本轮新增测试仍需在用户 Windows / Python 3.11 环境与完整测试一起重跑，不把此前 29 PASS 冒充为本轮新增代码后的完整结果。
+
 ## 前端核心 API
 
-- TypeScript strict 检查通过：`types/project.ts`、`api/http.ts`、`api/projects.ts`；
-- 所有 `.ts` 与 Vue `<script setup lang="ts">` 做过 TypeScript 语法解析；
-- 真实启动 FastAPI 后，编译后的前端 API 函数完成：空列表 → 201 创建 → 列表出现 → `/open` 200。
+- TypeScript strict 基础检查此前通过；
+- 前端 API 与 FastAPI 实际联调此前完成：空列表 → 201 创建 → 列表出现 → `/open` 200；
+- 本轮把语言/地区自由输入改成固定 select，等待用户本机 `npm run typecheck` / `npm run build` 再做最终确认。
 
 ---
 
@@ -177,39 +230,19 @@ pytest -q
 
 健康检查已经返回 `200 OK`，说明 8080 后端本身正常。
 
-浏览器创建项目时日志出现：
+浏览器创建项目时曾出现：
 
 ```text
 OPTIONS /api/projects 400 Bad Request
 ```
 
-根因：原 CORS 只允许：
+根因：原 CORS 只允许固定 5173；已修正为本机 localhost / 127.0.0.1 任意开发端口，并增加 5174 OPTIONS 回归测试。
 
-```text
-http://localhost:5173
-http://127.0.0.1:5173
-```
-
-当 Vite 因端口占用自动切换到 5174/5175 时，预检会在 Controller 之前被拒绝。
-
-已修正 `engine/app/main.py`：开发阶段允许本机来源：
-
-```text
-http://localhost:<任意端口>
-http://127.0.0.1:<任意端口>
-```
-
-使用 `allow_origin_regex`，没有开放为 `*`。
-
-同时为 `http://localhost:5174` 增加 OPTIONS CORS 回归测试。
-
-前端当前 API 地址已经是：
+前端当前 API 地址：
 
 ```text
 http://127.0.0.1:8080
 ```
-
-修复后用户本地需要同步最新 `main` 并重启后端。
 
 ---
 
@@ -247,11 +280,15 @@ engine/app/projects.py
 engine/app/main.py
 engine/migrations/versions/0001_create_projects.py
 engine/tests/unit/test_remaining_f01.py
+engine/tests/unit/test_project_option_validation.py
 frontend/package.json
 frontend/.node-version
+frontend/src/constants/project-options.ts
 frontend/src/api/http.ts
 frontend/src/api/projects.ts
 frontend/src/stores/project.ts
+frontend/src/components/StudioShell.vue
+frontend/src/components/CreateProjectDialog.vue
 frontend/src/views/ProjectHome.vue
 frontend/src/views/ProjectWorkspace.vue
 ```
@@ -260,11 +297,19 @@ frontend/src/views/ProjectWorkspace.vue
 
 # 下一步唯一动作
 
-不再新增 F01 业务函数，也不进入 F02。
+不进入 F02。
 
-当前优先：用户本地同步 CORS 修复后重新运行前后端，确认 `/api/projects` 不再出现 OPTIONS 400，再继续真实创建/重启/打开验收。
+当前优先：用户本机同步最新 `main`，检查新建项目弹窗中的原片语言 / 目标语言 / 目标地区已经全部变成下拉框，然后执行：
+
+```text
+npm run typecheck
+npm run build
+pytest -q
+```
+
+之后继续创建项目、重启、重新打开的 F01 最终验收。
 
 ## 最近更新时间
 
-- 日期：2026-08-23 19:40 +08:00
-- 状态：F01 全部函数已实现；8080 后端健康检查正常；已修复 Vite 非 5173 端口导致的 CORS OPTIONS 400，等待用户本机重新验证。
+- 日期：2026-08-23 20:54 +08:00
+- 状态：F01 固定格式字段已改为下拉选择 + 后端枚举白名单；等待用户本机同步后完成目标环境验证。
