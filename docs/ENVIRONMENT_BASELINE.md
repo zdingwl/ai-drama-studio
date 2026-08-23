@@ -268,3 +268,31 @@ Provider Token
 - [ ] 未使用未约束的 `latest`
 - [ ] 依赖升级经过相关回归测试
 - [ ] Secrets 未进入 Git
+
+---
+
+## 13. F01 当前已验证依赖快照
+
+截至 2026-08-23，`init_database()` 首次引入并实际测试：
+
+```text
+SQLAlchemy==2.0.50
+alembic==1.18.4
+pytest==9.0.2
+```
+
+声明文件：
+
+```text
+engine/requirements.txt
+```
+
+当前执行测试的容器：
+
+```text
+Python 3.13.5
+```
+
+注意：项目正式目标基线仍是 Python 3.11。当前 6 个数据库测试 PASS 只能证明上述依赖和代码在测试容器可运行，**不能视为 Python 3.11 Stable Gate 已完成**。F01 进入 `READY_FOR_REVIEW` 前必须在目标 Python 3.11 环境重新安装声明依赖并运行完整 F01 测试。
+
+本次依赖不涉及 CUDA、PyTorch、FFmpeg 或 GPU，不改变 RTX 4060 Ti 16GB 的运行约束。
