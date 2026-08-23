@@ -1,18 +1,14 @@
-# F01 — 核心函数职责说明（简化版）
+# F01 — 核心函数职责说明（实现版）
 
-> 目标：让人一眼看懂每个核心函数“为什么存在、做什么、不做什么”。
->
-> F01 不为简单 helper 建几十份 Function Contract。
-
----
+> 目标：重要函数讲透，简单 helper 写清楚；不为了“单函数开发”制造几十层抽象。
 
 ## 1. 分层规则
 
 ### API / Controller
 
-作用：HTTP Request → 调用业务函数 → HTTP Response。
+只负责：HTTP Request → 调用业务函数 → HTTP Response。
 
-禁止直接 SQL、mkdir、写 `project.json`、生成 Project ID，禁止把 `create_project()` 业务流程复制到 Controller。
+禁止：直接 SQL、mkdir、写 `project.json`、生成 Project ID、复制 Service 业务流程。
 
 ### Service / 核心业务函数
 
@@ -20,251 +16,271 @@
 
 ### 小 helper
 
-trim、日期显示、JSON dumps、简单 Path 拼接等只要求名字清楚、必要中文注释和必要测试，不单独写大篇 Contract。
+trim、JSON 读取、Path 拼接、日期显示等不单独做项目级 Contract，但代码命名和必要中文注释必须清楚。
 
 ---
 
-# 2. `get_app_data_path()` — 已完成 / TESTED
+# 2. 后端 9 个核心函数
+
+## 2.1 `get_app_data_path()` — TESTED / PASS
 
 文件：`engine/app/core/paths.py`
 
-**业务作用**：确定 AI Drama Studio 的应用级数据目录。后续 `app.db`、应用日志和应用级配置都从这里定位。
+作用：确定 `app.db` 等应用级数据的根目录。测试/开发可用 `AI_DRAMA_APP_DATA_DIR` 覆盖，Windows 正式默认 `%LOCALAPPDATA%/AI Drama Studio`。
 
-**输入来源**：`AI_DRAMA_APP_DATA_DIR`（开发/测试覆盖）或 Windows `LOCALAPPDATA`。
+不做：不 mkdir、不建数据库、不创建项目。
 
-**副作用**：无，只解析路径。
+测试：`4 passed`。
 
-**明确不做**：不 mkdir、不创建 `app.db`、不初始化数据库、不创建 Project Workspace。
+## 2.2 `init_database()` — TESTED / PASS
 
-**测试结果**：`4 passed`。
+文件：`engine/app/core/database.py`
 
----
+作用：创建应用数据目录和 `app.db`，统一通过 Alembic 升到当前 schema。
 
-# 3. `init_database()` — 已完成 / TESTED
+F01 只创建：`alembic_version + projects`。
 
-文件：
+不做：不创建 Workspace、不插入项目、不创建后续 Feature 表。
 
-```text
-engine/app/core/database.py
-engine/migrations/env.py
-engine/migrations/versions/0001_create_projects.py
-engine/tests/unit/test_database.py
-```
+测试：原有数据库测试 `6 passed`；完整回归中继续 PASS。
 
-**业务作用**：初始化 `<get_app_data_path()>/app.db`，并通过 Alembic `0001_create_projects` 创建 F01 唯一的业务表 `projects`。
+## 2.3 `generate_project_id()` — TESTED / PASS
 
-**为什么使用 Alembic**：数据库从第一版就需要可追踪升级历史，开发期初始化和以后正式升级统一走 Migration，不维护第二套 `create_all()` 建表逻辑。
+文件：`engine/app/core/ids.py`
 
-**明确不做**：不创建具体 Project、不创建 Workspace、不写 `project.json`、不插入项目记录、不创建后续 Feature 表。
+规则：`PROJECT_<32位UUID4小写hex>`。
 
-**依赖**：
+不访问 DB、不创建目录、不使用项目名/视频名/路径参与 ID 计算。
 
-```text
-SQLAlchemy==2.0.50
-alembic==1.18.4
-pytest==9.0.2
-```
+测试：`3 passed`，含连续 5000 次无重复。
 
-**测试结果**：`6 passed`。
+## 2.4 `create_project_workspace()` — TESTED / PASS
 
-覆盖 app.db 创建、字段一致、Alembic revision、重复初始化、非法 status、重复 workspace_path。
+文件：`engine/app/projects.py`
 
----
+作用：创建 `<workspace_root>/<project_id>/project.json`。
 
-# 4. `generate_project_id()` — 已完成 / TESTED
-
-文件：
+关键实现：
 
 ```text
-engine/app/core/ids.py
-engine/tests/unit/test_ids.py
+创建 Workspace Root
+→ 创建唯一 project_id 目录（exist_ok=False）
+→ 写 project.json.tmp
+→ flush + fsync
+→ os.replace() 发布为 project.json
+→ 再读取校验 Project ID / format version
 ```
 
-**业务作用**
+安全边界：
 
-为每个新项目生成一个稳定、与项目名称和路径无关的业务主键：
+- 已有项目目录绝不覆盖；
+- Root 本身是普通文件时返回 `PROJECT_WORKSPACE_INVALID`；
+- 失败时只删除本函数明确创建的 `project.json(.tmp)` 并尝试删除空项目目录；
+- 不递归删除 Workspace Root；
+- 遇到未知用户文件时保留现场。
 
-```text
-PROJECT_<32位UUID4小写hex>
-```
+## 2.5 `create_project()` — TESTED / PASS
 
-示例：
+文件：`engine/app/projects.py`
 
-```text
-PROJECT_86f767c94f2c4f96a1676ce36f615406
-```
-
-**为什么独立存在**
-
-Project ID 后续会同时用于：
-
-- `projects.id`；
-- Workspace 目录名；
-- 后续 Episode / Shot / Character 等数据归属的上游项目身份。
-
-把 ID 规则集中在一个函数里，可以保证项目改名、素材变化、模型切换都不会改变项目身份。
-
-**为什么使用 UUID4**
-
-F01 是本地单用户工具，不需要为了排序能力引入 ULID、雪花算法等额外依赖。Python 标准库 UUID4 已足够简单，碰撞概率极低；SQLite `projects.id` 主键仍是最终冲突保护。
-
-**输入**：无。
-
-**输出**：字符串 `PROJECT_<UUID4_HEX>`。
-
-**副作用**：无。
-
-**明确不做**
-
-- 不访问数据库；
-- 不检查 ID 是否已存在；
-- 不创建 Workspace；
-- 不读写 `project.json`；
-- 不使用项目名称、视频名称、时间戳或保存路径参与 ID 计算。
-
-**测试结果**：
-
-```text
-3 passed
-```
-
-覆盖：
-
-- 固定 `PROJECT_` 前缀；
-- 后缀固定 32 位小写十六进制；
-- 可解析且版本为 UUID4；
-- 连续生成 5000 个 ID 无重复。
-
-该函数没有新增第三方依赖。
-
----
-
-# 5. `create_project_workspace()` — 下一函数 / PLANNED
-
-**业务作用**
-
-为一个已经确定 `project_id` 的项目创建：
-
-```text
-<workspace_root>/<project_id>/project.json
-```
-
-**输入**
-
-项目 ID、项目名称、语言/地区、Workspace Root。
-
-**副作用**
-
-创建项目目录并写 `project.json`。
-
-**安全边界**
-
-失败时只能清理由本函数本次创建且明确属于当前 `project_id` 的目录；绝不能删除 Workspace Root 或其它项目目录。
-
----
-
-# 6. `create_project()` — PLANNED
-
-这是 F01 的核心业务函数。
-
-**业务作用**：把用户的“新建项目”操作变成一个真正可以重新打开的 `ready` 项目。
+作用：把“新建项目”完整变成一个可重新打开的 `ready` 项目。
 
 流程：
 
 ```text
-校验输入
+校验/规范输入
 → generate_project_id()
-→ DB 写 creating
+→ DB INSERT status=creating 并提交
 → create_project_workspace()
-→ DB 改 ready
-→ 返回项目
+→ DB UPDATE status=ready + last_opened_at
+→ 返回 ProjectRecord
 ```
 
-Workspace/project.json 创建失败时，不允许首页留下一个可正常显示和打开的假项目。
+失败规则：
 
----
+- 输入错误发生在 DB 初始化前；
+- Workspace 创建失败时删除本次 `creating` 行；
+- Workspace 已完整写好但最终 DB 更新失败时保留 Workspace + `creating`，交给启动恢复，不删除用户项目文件。
 
-# 7. `list_projects()` — PLANNED
+支持：同名项目允许，ID 和 Workspace 不同。
 
-查询所有 `ready` 项目，供首页最近项目列表使用。只读数据库，不创建/修改 Workspace。
+## 2.6 `list_projects()` — TESTED / PASS
 
----
+文件：`engine/app/projects.py`
 
-# 8. `open_project()` — PLANNED
+作用：首页只读取 `ready` 项目，按 `last_opened_at DESC`、`created_at DESC` 排序。
 
-**业务作用**：真正进入一个已有项目。
+这是只读函数，不打开项目、不修改 Workspace。
+
+## 2.7 `open_project()` — TESTED / PASS
+
+文件：`engine/app/projects.py`
+
+作用：真正进入历史项目。
 
 必须验证：
 
 ```text
 DB 有项目
 status = ready
-Workspace 存在
-project.json 存在且合法
-manifest project_id == DB id
+Workspace 是目录
+project.json 可读取
+manifest.project_id == DB id
+project_format_version == 1
 ```
 
-全部成功后更新 `last_opened_at`。禁止自动修改或删除损坏的用户 Workspace。
+成功后更新 `last_opened_at`。
+
+损坏时只报错，不自动修复或删除用户 Workspace。
+
+## 2.8 `recover_creating_projects()` — TESTED / PASS
+
+文件：`engine/app/projects.py`
+
+作用：应用启动时处理异常退出遗留的 `creating` 项目。
+
+V1 简单规则：
+
+- valid Workspace + Manifest → `ready`；
+- Workspace 不存在 → 删除无意义 creating 行；
+- 只包含 F01 已知半成品文件且目录名等于 Project ID → 安全清理；
+- 有未知用户文件、路径异常或无法确认归属 → 保留现场并计入 `preserved`。
+
+不建立 Repair UI / orphan 管理 / 复杂 Recovery Framework。
+
+## 2.9 `create_app()` — TESTED / PASS（后端）
+
+文件：`engine/app/main.py`
+
+作用：创建最小 FastAPI App，配置本地 Vue CORS、统一 ProjectError 响应、启动时 `init_database()` + `recover_creating_projects()`。
+
+不在 `create_app()` 内实现项目 SQL/Workspace 业务。
 
 ---
 
-# 9. `recover_creating_projects()` — PLANNED
+# 3. Controller — 已实现 / TESTED
 
-应用启动时处理上次异常退出留下的 `status=creating` 项目。
-
-V1 只做简单规则：完整则转 `ready`，明确不完整且目录归属可确认则清理；未知文件不自动删除。
-
-不建立复杂 Recovery Framework 或 Repair UI。
-
----
-
-# 10. `create_app()` — PLANNED
-
-创建 FastAPI 应用，注册 `/api/health` 和三个 Project API，并在启动阶段调用数据库初始化和简单 `creating` 恢复。
-
-不在本函数里实现创建项目业务。
-
----
-
-# 11. Controller
-
-Controller 只保留：
+文件：`engine/app/main.py`
 
 ```text
-health_api()
-list_projects_api()
-create_project_api()
-open_project_api()
+health_api()          GET  /api/health
+list_projects_api()   GET  /api/projects
+create_project_api()  POST /api/projects      → 201 Created
+open_project_api()    POST /api/projects/{id}/open
 ```
 
-Controller 只负责 HTTP → Service → Response，不负责 Project ID、SQL、目录或 Manifest。
+Controller 只做 HTTP → Service → Response。
+
+FastAPI 集成测试已经覆盖健康检查、空列表、创建、列表、打开、业务错误映射。
 
 ---
 
-# 12. 前端主要动作
+# 4. 前端 4 个核心动作 — 已实现
 
-只要求：
+## `apiRequest()`
+
+文件：`frontend/src/api/http.ts`
+
+统一调用 `http://127.0.0.1:8000`，统一 JSON 和 error envelope；不负责导航和业务状态。
+
+## `loadProjects()`
+
+文件：`frontend/src/stores/project.ts`
+
+首页加载 ready 项目列表，维护 `loading/errorMessage`。
+
+## `submitCreateProject()`
+
+文件：`frontend/src/stores/project.ts`
+
+防重复提交；调用创建 API；成功更新 `currentProject` 和首页列表；导航由页面负责。
+
+## `openProject()`
+
+文件：`frontend/src/stores/project.ts`
+
+统一调用 `/open`，成功后写入 `currentProject`。
+
+项目首页卡片只导航到 `/projects/:id`；真正 `openProject()` 由 Workspace 页面统一调用，因此：
 
 ```text
-apiRequest()
-loadProjects()
-submitCreateProject()
-openProject()
+卡片点击
+页面刷新
+直接访问 URL
 ```
 
-简单日期格式化、表单 reset 和 Router 返回不建立单独项目级 Contract。
+都只执行一次后端 `/open`，避免 `last_opened_at` 被重复更新。
 
 ---
 
-# 13. 单函数开发纪律
+# 5. F01 页面 — 已实现
 
 ```text
-先解释当前函数
-→ 实现
-→ 对应测试
-→ PASS
-→ 在 Feature 文档记录结果
-→ 再进入下一个函数
+frontend/src/views/ProjectHome.vue
+frontend/src/components/CreateProjectDialog.vue
+frontend/src/components/ProjectCard.vue
+frontend/src/views/ProjectWorkspace.vue
 ```
 
-不能因为“后面反正要用”就一次把 F01 所有函数提前写完。
+当前 UI 只覆盖 F01：项目列表、新建项目、空 Workspace。没有 F02 上传逻辑。
+
+---
+
+# 6. 测试结果
+
+## Python / FastAPI
+
+重建当前 `main` F01 代码后实际执行：
+
+```text
+29 passed
+```
+
+覆盖旧的路径/数据库/ID 测试，以及 Workspace、create/list/open、Recovery、Controller。
+
+## 前端核心 API
+
+`frontend/src/types/project.ts`、`api/http.ts`、`api/projects.ts` 已通过 TypeScript 严格类型检查。
+
+所有 `.ts` 和 Vue `<script setup lang="ts">` 已做 TypeScript 语法解析，共 10 个脚本块无语法错误。
+
+实际启动 FastAPI 后，用编译后的真实前端 API 函数完成：
+
+```text
+fetchProjects() → []
+createProject() → HTTP 201 / ready
+fetchProjects() → 1 project
+openProjectRequest() → HTTP 200
+```
+
+## 尚未宣称通过
+
+当前执行容器无法联网安装 npm 包，因此尚未执行真实：
+
+```text
+npm ci
+npm run typecheck   # vue-tsc
+npm run build       # Vite
+npm run test        # Vitest
+```
+
+因此 F01 当前仍是 `IN_PROGRESS`，不能标 `READY_FOR_REVIEW`。
+
+---
+
+# 7. 当前开发纪律
+
+所有计划中的 F01 函数已经实现。下一步不再新增业务函数，而是完成目标环境验证与依赖锁：
+
+```text
+生成 package-lock.json
+→ npm ci
+→ vue-tsc
+→ Vite build
+→ 前端真实浏览器联调
+→ Python 3.11 全量 pytest
+→ READY_FOR_REVIEW
+→ 用户验收
+```
+
+未经用户明确要求不新建分支，不进入 F02。
