@@ -1,1466 +1,699 @@
 ---
 name: ai-drama-studio-development
-version: 1.0.0
-description: AI Drama Studio 本地自用 AI 短剧重制工作台的开发技能手册。严格按照真实生产流程逐 Feature 开发、真实素材测试、人工验收、Contract 冻结后再进入下一功能，避免跨模块反复返工。
+version: 2.1.0
+description: AI Drama Studio 本地 AI 短剧重制工作台的项目级开发技能手册。定义 Source of Truth、35 Feature 生产流程、逐 Feature 验收冻结、P0 工程规则和跨对话续开发方式。
 ---
 
 # AI Drama Studio Development Skill
 
-## 1. Skill 的作用
+> 本文件是项目最高层开发规则与规则索引。
+>
+> 详细实现规范放在 `docs/` 中；不要把所有详细规则重复写回本文件。
 
-本 Skill 用于指导 **AI Drama Studio** 的产品设计、技术设计、编码、测试、验收、重构和后续迭代。
+## 1. 项目定位
 
-任何开发人员、AI Coding Agent、Codex 或自动化开发工具在修改本项目之前，都应先阅读本文件。
+AI Drama Studio 是 **Windows 本地自用、单用户的 AI 短剧重制生产工作台**。
 
-本 Skill 的优先目标不是让代码看起来“先进”，而是保证：
-
-1. 真实短剧工作流完整跑通。
-2. 每个功能可以单独验证。
-3. 已经验收的上游功能不被下游反复破坏。
-4. AI 结果始终可人工修正。
-5. 单个 Shot 可以独立重试和替换。
-6. 模型与供应商可以替换。
-7. RTX 4060 Ti 16GB 能完成开发阶段验证。
-8. 系统保持本地自用所需要的简单度。
-
----
-
-# 2. 项目定位
-
-AI Drama Studio 是一个：
-
-> **本地自用的 AI 短剧重制生产工作台。**
-
-系统输入一部已有短剧，通过自动分析 + 人工校正，将其转换为结构化的 Character / Scene / Shot / Dialogue 数据；随后完成本土选角、Character Bible、Scene Bible、Shot Specification、逐镜头 AI 重生成、自动 QC、失败镜头人工修正、TTS、Lip Sync 和整集合成。
-
-它不是：
-
-- 通用 AIGC SaaS
-- 多租户平台
-- 在线商城
-- 视频模型训练平台
-- Premiere / DaVinci 的完整替代品
-- 面向大量并发用户的云服务
-
-第一版只服务一个目标：
-
-> **让本地操作者按照短剧生产流程，从原片一直走到可导出的 AI 重制成片。**
-
----
-
-# 3. 最终业务流程
-
-流程固定为：
+目标：
 
 ```text
-上传短剧
-→ 视频预处理
-→ 自动拉片
-→ 人工修正 Shot
-→ 自动识别人
-→ 人工修正人物
-→ 自动识别对白
-→ Speaker / Character 匹配
-→ 人工修正对白
-→ 自动识别 Scene
-→ 人工修正 Scene
-→ 本土演员库
-→ AI 本土选角
-→ 人工选演员
-→ AI 建 Character Bible
-→ 人工确认 / Lock
-→ AI 建 Scene Bible
-→ 人工确认 / Lock
-→ AI 分析 Shot Specification
-→ 人工确认
-→ 单 Shot 视频生成
-→ Generation 版本管理
-→ Auto QC
-→ 失败 / 低质量 Shot 推人工
-→ 修改 / 重新生成 / 手工替换
-→ 批量生成
-→ TTS
-→ Dialogue Fit
-→ Lip Sync
-→ 最终合成
-→ 整集 QC
-→ 导出
+原片分析
+→ 人物 / 对白 / Scene 结构化
+→ 本土选角
+→ Character / Scene Bible
+→ 目标语言翻译与本土化
+→ Shot Specification
+→ AI 视频重生成
+→ 自动 QC / 人工失败镜头处理
+→ TTS / Lip Sync
+→ 最终音频 / 字幕
+→ 合成 / QC / 导出
 ```
 
-任何产品或代码设计都应服务于这条流程。
+第一版优先级：
+
+```text
+真实生产流程完整可用
+> 可测试、可人工修正、可恢复
+> 自动化程度
+> 性能
+> 架构复杂度
+```
+
+第一版不做 SaaS、多租户、GPU 集群、Kubernetes、复杂微服务、在线计费等重架构。
 
 ---
 
-# 4. 最高优先级规则：必须逐 Feature 开发
+## 2. main 是唯一正式 Source of Truth
 
-## 4.1 禁止“大阶段一起开发”
-
-禁止：
+正式确认的规则、Stable Feature、代码和文档最终必须进入 `main`。
 
 ```text
-先一起开发
-拉片 + 人物 + 对白 + Scene + Bible
-→ 最后统一测试
-→ 发现 Shot 数据结构有问题
-→ 全部跟着返工
+main = 最近一次用户已经确认的正式项目基线
+branch / PR = 开发中或待审核状态
 ```
+
+新对话默认从 `main` 恢复，除非用户明确指定继续某个未合并分支/PR。
+
+`docs/PROJECT_STATE.md` 在 `main` 上必须代表最近一次真实状态。
+
+---
+
+## 3. 文档冲突优先级
+
+```text
+1. 用户最新明确确认并写入仓库的决策
+2. 已 STABLE/FROZEN Feature Contract Snapshot
+3. SKILL.md + 适用全局/P0 Contract
+4. 当前 Feature Contract
+5. docs/PROJECT_STATE.md
+6. 最新 Session Handoff
+7. 历史 Session / 旧讨论
+```
+
+发现冲突必须显式报告，禁止静默选择。
+
+如需改变 Frozen Contract：
+
+```text
+Change Request
+→ 影响分析
+→ Migration / V2 方案
+→ 用户确认
+→ 实施
+→ Regression
+```
+
+---
+
+## 4. 只有用户能最终确认 STABLE/FROZEN
+
+统一状态：
+
+```text
+PLANNED
+IN_PROGRESS
+TESTING
+READY_FOR_REVIEW
+STABLE
+FROZEN
+```
+
+AI / Codex / Agent 最多自行推进到：
+
+```text
+READY_FOR_REVIEW
+```
+
+只有用户明确确认“验收通过”后才能：
+
+```text
+STABLE / FROZEN
+```
+
+未验收不得擅自开发下一依赖 Feature。
+
+---
+
+## 5. 必须逐 Feature 纵向开发
+
+禁止按“大模块”一起开发后统一测试。
 
 必须：
 
 ```text
-Feature 01
-→ 开发
-→ 单功能测试
-→ 真实短剧测试
-→ 人工验收
-→ 修复
-→ 再测试
+当前 Feature Contract
+→ 编码
+→ 当前 Feature Test
+→ Affected Stable Regression
+→ 真实素材测试
+→ 文档更新
+→ READY_FOR_REVIEW
+→ 用户人工验收
 → Freeze
-
-Feature 02
-→ ...
+→ 下一 Feature
 ```
 
-一次只推进 **一个当前 Feature**。
+一次只正式推进一个业务 Feature。
+
+完整说明：`docs/FEATURE_SEQUENCE.md`。
 
 ---
 
-## 4.2 Feature Gate
-
-一个 Feature 只有满足下面条件才能进入 Stable：
-
-```text
-Contract 已定义
-+ 功能实现完成
-+ 异常处理完成
-+ 自动测试完成
-+ 真实素材测试完成
-+ 人工验收通过
-+ Freeze 清单完成
-```
-
-如果没有人工验收通过：
-
-> 不得主动开发下一个依赖它的 Feature。
-
----
-
-## 4.3 每个 Feature 开发前必须建立规格
-
-复制：
-
-```text
-templates/FEATURE_SPEC_TEMPLATE.md
-```
-
-至少写清：
-
-1. 功能目标
-2. 明确不做什么
-3. 前置 Stable Feature
-4. 用户操作流程
-5. Input Contract
-6. Output Contract
-7. 读取的数据
-8. 允许修改的数据
-9. 禁止修改的数据
-10. DB Migration
-11. 文件输入输出
-12. API
-13. 模型 / Provider
-14. GPU 策略
-15. 异常处理
-16. 测试
-17. 真实素材验收
-18. Definition of Done
-19. Freeze
-
-没有 Contract，不开始编码。
-
----
-
-# 5. Stable Feature 冻结原则
-
-Feature 被标记 Stable 后，默认冻结：
-
-- Input Contract
-- Output Contract
-- API Contract
-- 核心 DB fields
-- ID 规则
-- 文件目录 / 命名规则
-- 状态枚举
-- 错误码
-
-后续 Feature 禁止为了方便：
-
-- 重写 Stable 上游模块
-- 改变已有字段语义
-- 绕过上游 Final 数据
-- 在下游复制上游算法
-- 直接删除 Stable 字段
-
-确实需要修改时优先：
-
-```text
-新增字段
-→ Adapter
-→ V2 Contract
-```
-
-而不是破坏 V1。
-
----
-
-# 6. AI Result 与 Final Result 必须分离
-
-只要 AI 结果允许人工修改，就必须保留原始结果。
-
-## Shot
-
-```text
-detected_start
-detected_end
-
-final_start
-final_end
-```
-
-## Character
-
-```text
-ai_cluster_id
-final_character_id
-```
-
-## Dialogue
-
-```text
-asr_text
-final_text
-speaker_candidate
-final_character_id
-```
-
-## QC
-
-```text
-ai_qc_scores
-ai_qc_status
-human_decision
-human_reason
-```
-
-禁止人工编辑直接覆盖 AI 原始结果。
-
-这样做的原因：
-
-- 可追溯
-- 可重新跑模型
-- 可比较算法准确率
-- 可积累真实训练 / 优化数据
-- 可恢复人工误操作
-
----
-
-# 7. Shot 是系统核心生产单元
-
-整个系统必须围绕 Shot 独立性设计。
-
-每个 Shot 必须能够独立：
-
-- 播放
-- 修正时间边界
-- 重新人物分析
-- 修改 Dialogue
-- 修改 Scene
-- 修改 Shot Specification
-- 更换 Reference
-- 更换 Provider
-- 更换 Model
-- 重新生成 Video
-- 单独 QC
-- 重新 TTS
-- 重新 Lip Sync
-- 上传手工替换视频
-- 选择最终版本
-
-一个 Shot 出错：
-
-> 不得要求整集重跑。
-
----
-
-# 8. Generation / TTS / Lip Sync 必须版本化
-
-禁止覆盖历史媒体结果。
-
-## Video Generation
-
-```text
-SHOT_023
-├── V001
-├── V002
-├── V003
-└── V004
-```
-
-Shot 保存：
-
-```text
-selected_generation_id
-```
-
-每个 Generation 至少记录：
-
-- generation_id
-- shot_id
-- version
-- provider
-- model
-- provider_task_id
-- prompt
-- references
-- duration
-- resolution
-- seed（如有）
-- output_path
-- status
-- cost（能获取时）
-- created_at
-- metadata
-- QC result
-
-TTS 和 Lip Sync 使用相同原则。
-
----
-
-# 9. 模型必须可替换
-
-业务代码禁止绑定具体供应商。
-
-错误：
-
-```python
-generate_with_minimax()
-generate_with_runway()
-generate_with_seedance()
-```
-
-正确：
-
-```python
-video_generation.generate(request)
-```
-
-Provider Adapter 再负责：
-
-```text
-Provider A
-Provider B
-Provider C
-```
-
-业务层认识的是：
-
-- Character Bible
-- Scene Bible
-- Shot Specification
-- Generation Request
-- Generation Result
-- QC Result
-- Voice Request
-- LipSync Request
-
-而不是某一个模型品牌。
-
----
-
-# 10. Prompt Compiler 与 Shot Specification 必须分离
-
-Shot Specification 是模型无关的镜头需求。
-
-它描述：
-
-- 哪些人物
-- 哪个 Scene
-- 时长
-- 景别
-- 机位
-- 运镜
-- 动作
-- 情绪
-- 对白
-- 服装
-- Continuity
-- Reference
-
-模型专属 Prompt：
-
-```text
-Shot Specification
-       ↓
-Prompt Compiler
-       ├ Model A Prompt
-       ├ Model B Prompt
-       └ Model C Prompt
-```
-
-禁止把模型 A 的特殊 Prompt 规则污染 Shot Specification。
-
----
-
-# 11. 当前技术栈
-
-## Frontend
-
-```text
-Vue 3
-TypeScript
-Vite
-Pinia
-```
-
-## Backend / AI Engine
-
-```text
-Python 3.11
-FastAPI
-PyTorch
-CUDA
-OpenCV
-FFmpeg
-FFprobe
-```
-
-## Data
-
-```text
-SQLite
-SQLAlchemy
-Alembic
-Local Filesystem
-```
-
-## Desktop
-
-```text
-Electron
-```
-
-但 Electron **后置**。
-
-开发阶段优先：
-
-```text
-Vue localhost:5173
-FastAPI localhost:8000
-```
-
-完整工作流稳定后再打包桌面应用。
-
----
-
-# 12. 当前硬件约束
-
-当前开发机：
-
-```text
-NVIDIA RTX 4060 Ti 16GB
-```
-
-开发阶段：
-
-- 不追求速度
-- 不追求并发
-- 不以 GPU 性能阻塞功能开发
-
-GPU 默认：
-
-```text
-concurrency = 1
-```
-
-策略：
-
-```text
-任务需要模型
-→ load
-→ execute
-→ unload
-→ release VRAM
-```
-
-不要求 Whisper、DINO、Face、LipSync 等全部常驻显存。
-
----
-
-# 13. 本地模型 / API 分工
-
-## 本地优先
-
-- FFmpeg / FFprobe
-- OpenCV
-- Shot Detection
-- Scene Embedding
-- Face Detection / Tracking / Embedding
-- Whisper / WhisperX
-- Speaker Diarization
-- Embedding
-- Technical QC
-- Basic Consistency QC
-- Final Render
-
-## API 优先
-
-- 强 VLM
-- Character Bible 语义生成
-- Scene Bible 语义生成
-- Shot Understanding
-- Prompt 辅助
-- Video Generation
-- Premium TTS
-- Premium Lip Sync
-- Semantic QC
-
-## 不在开发阶段自研基础模型
-
-不投入时间训练：
-
-- Video Foundation Model
-- Large VLM
-- ASR Foundation Model
-- TTS Foundation Model
-
-项目核心是 **Short Drama Production Engine**。
-
----
-
-# 14. 数据核心关系
-
-推荐核心对象：
-
-```text
-Project
-└── Episode
-    ├── Character
-    │   ├── Actor Mapping
-    │   └── Character Bible
-    │
-    ├── Scene
-    │   ├── Scene Bible
-    │   └── Shot
-    │       ├── Character Relations
-    │       ├── Dialogue
-    │       ├── Shot Specification
-    │       ├── Generation[]
-    │       │   └── QC Result
-    │       └── Selected Generation
-    │
-    └── Render / Export
-```
-
-推荐稳定 ID：
-
-```text
-PROJECT_*
-EPISODE_*
-SCENE_*
-SHOT_*
-CHARACTER_*
-ACTOR_*
-DIALOGUE_*
-GENERATION_*
-QC_*
-VOICE_*
-LIPSYNC_*
-RENDER_*
-```
-
-ID 不因文件名、Provider 或重新生成而变化。
-
----
-
-# 15. 本地文件规则
-
-视频、图片、音频禁止直接写 SQLite Blob。
-
-SQLite 保存：
-
-- IDs
-- metadata
-- state
-- relationship
-- structured JSON
-- relative path
-
-媒体保存：
-
-```text
-workspace/
-└── project_001/
-    ├── source/
-    ├── proxy/
-    ├── audio/
-    ├── frames/
-    ├── shots/
-    ├── characters/
-    ├── actors/
-    ├── scenes/
-    ├── generations/
-    ├── voice/
-    ├── lipsync/
-    ├── cache/
-    └── exports/
-```
-
-Source Video 原则上只读。
-
-数据库优先保存相对路径。
-
----
-
-# 16. UI 原则
-
-本项目不是传统后台管理系统。
-
-核心 UI 应接近“AI 视频工作台”：
-
-```text
-┌────────────┬──────────────────────┬──────────────┐
-│ 资源 / 对象 │      视频播放器       │ Inspector    │
-│ Character  │                      │ Shot         │
-│ Scene      │                      │ Character    │
-│ Shot       │                      │ Scene        │
-│ Actor      │                      │ Dialogue     │
-│            │                      │ Prompt / QC  │
-├────────────┴──────────────────────┴──────────────┤
-│ Shot Timeline / Scene Timeline                  │
-└─────────────────────────────────────────────────┘
-```
-
-优先：
-
-- 同一个工作区完成大量操作
-- 少跳页面
-- Shot 点击即查看详情
-- AI 结果旁边直接人工修正
-- 失败原因清楚可见
-
-第一版 Timeline 不做成 Premiere。
-
-只做当前业务必要的：
-
-- 点击
-- 播放
-- 调整 Shot 边界
-- 拆分
-- 合并
-- 排序 / Scene 归属
-- 显示状态
-
----
-
-# 17. 长任务规范
-
-AI / 视频处理任务统一状态：
-
-```text
-pending
-running
-completed
-failed
-cancelled
-```
-
-UI 必须显示：
-
-- 当前任务名称
-- 当前步骤
-- 进度
-- 错误原因
-- 是否可重试
-
-WebSocket 可用于实时进度。
-
-禁止 UI 长时间只有 Loading 且不知道在干什么。
-
----
-
-# 18. 错误恢复原则
-
-每个 Feature 必须支持当前步骤重跑。
-
-例如：
-
-```text
-Character Detection Failed
-→ 只重跑 Character Detection
-```
-
-```text
-SHOT_023 Video Generation Failed
-→ 只重跑 SHOT_023
-```
-
-外部 API 错误至少区分：
-
-- timeout
-- rate_limit
-- provider_error
-- invalid_input
-- content_rejected
-- insufficient_balance
-- task_failed
-
-UI 禁止只显示：
-
-```text
-请求失败
-```
-
-应该尽量显示：
-
-```text
-Provider
-Model
-失败步骤
-错误原因
-重试次数
-可执行动作
-```
-
----
-
-# 19. 30 个 Feature 固定顺序
-
-完整说明见：
-
-```text
-docs/FEATURE_SEQUENCE.md
-```
-
-顺序固定：
+## 6. Approved Production Flow — 35 Features
 
 ```text
 01 创建项目
-02 上传原视频
-03 视频预处理
-04 自动拉片
-05 Shot 人工修正
-06 自动人物识别
-07 人物人工修正
-08 ASR 对白识别
-09 Speaker / Character 匹配
-10 对白人工修正
-11 Scene 自动识别
-12 Scene 人工修正
-13 本土演员库
-14 AI 本土选角
-15 人工选演员
-16 Character Bible
-17 Scene Bible
-18 Shot Specification
-19 Shot Spec 人工确认
-20 单 Shot 视频生成
-21 Generation 版本管理
-22 Auto QC
-23 失败 Shot 人工处理
-24 批量生成
-25 TTS
-26 Dialogue Fit
-27 Lip Sync
-28 最终合成
-29 整集 QC
-30 导出
+→ 02 上传原视频
+→ 03 视频预处理
+→ 04 自动拉片
+→ 05 Shot 人工修正
+→ 06 自动人物识别
+→ 07 人物人工修正
+→ 08 ASR 源对白识别
+→ 09 Speaker / Character 匹配
+→ 10 源对白人工修正
+→ 11 Scene 自动识别
+→ 12 Scene 人工修正
+→ 13 本土演员库
+→ 14 AI 本土选角
+→ 15 人工选演员
+→ 16 Character Bible
+→ 17 Scene Bible
+→ 18 AI 翻译与本土化对白
+→ 19 目标对白人工确认
+→ 20 目标对白时长约束
+→ 21 Shot Specification
+→ 22 Shot Spec 人工确认
+→ 23 单 Shot 视频生成
+→ 24 Generation 版本管理
+→ 25 Auto QC
+→ 26 失败 Shot 人工处理
+→ 27 批量生成
+→ 28 TTS
+→ 29 Dialogue Fit
+→ 30 Lip Sync
+→ 31 最终音频组装与混音
+→ 32 最终字幕组装
+→ 33 最终合成
+→ 34 整集 QC
+→ 35 导出
 ```
 
-除非经过明确产品决策，不随意调整。
+正式业务代码开始后，此顺序默认冻结；任何改序必须经过用户确认和影响分析。
 
 ---
 
-# 20. Feature 01–05：先得到可靠 Final Shot
+## 7. 翻译 / 本土化是正式独立生产链
 
-## Feature 01 — 创建项目
-
-只建立 Project + Workspace。
-
-不要做上传和 AI。
-
-Freeze：
-
-- Project ID
-- Workspace 基础规则
-
-## Feature 02 — 上传原视频
-
-只做：
-
-- 选择文件
-- 复制/登记
-- 读取 metadata
-- 播放
-
-不做拉片。
-
-## Feature 03 — 视频预处理
-
-输出：
+必须区分：
 
 ```text
-proxy.mp4
-audio.wav
-thumbnail.jpg
+Source Dialogue
+├ asr_text
+└ final_source_text
+
+Target Dialogue
+├ literal_translation（可选）
+├ localized_draft
+└ approved_target_text
 ```
 
-确保时间轴稳定。
+规则：
 
-## Feature 04 — 自动拉片
+1. ASR 只负责源语言；
+2. 人工先确认 Final Source Dialogue；
+3. AI 再翻译/本土化；
+4. AI Draft 必须人工确认；
+5. Shot Spec、TTS、字幕读取 Approved Target Dialogue；
+6. 不允许等到 TTS 阶段才第一次翻译。
 
-输入：Proxy。
-
-输出 AI Shot Boundaries。
-
-必须保留：
-
-```text
-detected_start/end
-final_start/end
-```
-
-## Feature 05 — Shot 人工修正
-
-支持：
-
-- 改起止时间
-- 拆分
-- 合并
-- 删除
-- 新增
-
-验收后产生 **Final Shot**。
-
-后续全部读取 Final Shot。
+目标对白生成时必须保留剧情事实，并结合角色身份、关系、场景和目标市场自然表达。
 
 ---
 
-# 21. Feature 06–10：得到可靠 Character 与 Dialogue
+## 8. 目标对白在 Shot Spec 前必须做时长约束
 
-## Feature 06 — 自动人物识别
-
-流程：
+Feature 20 至少形成：
 
 ```text
-Final Shot
-→ Frames
-→ Face Detection
-→ Tracking
-→ Embedding
-→ Clustering
+available_duration_us
+estimated_speech_duration_us
+recommended_rate
+status = pass / review
 ```
 
-输出 Candidate Cluster。
+明显过长时优先回 Feature 19 改写，而不是视频生成后再强行高速 TTS。
 
-## Feature 07 — 人物人工修正
-
-支持：
-
-- 命名
-- 合并
-- 拆分
-- 删除路人
-- 主角/配角
-- Reference
-
-产生 Final Character。
-
-## Feature 08 — ASR
-
-只解决：
-
-```text
-说了什么
-什么时候说
-```
-
-## Feature 09 — Speaker / Character
-
-结合 Speaker、时间重叠、Character Track、可选 Active Speaker，输出候选 + Confidence。
-
-## Feature 10 — 对白人工修正
-
-人工确认：
-
-- 谁说
-- 说什么
-- 起止时间
-
-产生 Final Dialogue。
+正式 TTS 后仍由 Dialogue Fit 做真实时长适配。
 
 ---
 
-# 22. Feature 11–17：Scene、Casting 与 Bible
+## 9. AI 本土选角必须先形成 Casting Profile
 
-## Feature 11 — Scene 自动识别
+Feature 14 不能只是视觉相似度排序。
 
-输入 Final Shots。
+Casting Profile 至少包含：
 
-建议：关键帧 + DINOv2 + 时间连续性 + 聚类。
+- 角色定位；
+- 年龄表现；
+- 外形/气质；
+- 性格；
+- 情绪范围；
+- 动作/表演需求；
+- 角色关系；
+- 原角色视觉；
+- 源对白/剧情上下文。
 
-## Feature 12 — Scene 人工修正
+然后再对 Actor Library 做候选 Ranking。
 
-产生 Final Scene。
-
-## Feature 13 — 演员库
-
-先做 Actor 素材管理，不做 AI。
-
-## Feature 14 — AI 本土选角
-
-AI 推荐 Top N，不自动拍板。
-
-## Feature 15 — 人工选演员
-
-产生稳定：
-
-```text
-Character → Actor Mapping
-```
-
-## Feature 16 — Character Bible
-
-必须结构化。
-
-建议字段：
-
-```text
-Identity
-Appearance
-Face
-Hair
-Body
-Wardrobe Looks
-Accessories
-Expressions
-Behavior
-Voice
-Relationships
-References
-Negative Constraints
-```
-
-状态：
-
-```text
-draft
-reviewed
-locked
-```
-
-只有 locked 用于正式生成。
-
-## Feature 17 — Scene Bible
-
-同样结构化：
-
-```text
-Location
-Time
-Weather
-Lighting
-Architecture
-Layout
-Furniture
-Props
-Color / Style
-References
-Negative Constraints
-```
-
-必须人工确认 + lock。
+最终 Actor 必须人工选择。
 
 ---
 
-# 23. Feature 18–24：Shot 重生成闭环
+## 10. Final Audio 与 Subtitle 是独立产物
 
-## Feature 18 — Shot Specification
+### Final Audio Mix
 
-输入：
+V1 可组合：
 
-- Final Shot
-- Final Character
-- Final Dialogue
-- Locked Character Bible
-- Final Scene
-- Locked Scene Bible
+- Final TTS Dialogue；
+- 原片分离/导入环境音；
+- SFX；
+- BGM；
+- 视频模型原生音频；
+- 人工导入音频。
 
-输出模型无关 Shot Spec。
+Feature 31 负责对齐、混合、基本音量/峰值处理，不要求 V1 自研 AI SFX/BGM 模型。
 
-## Feature 19 — 人工确认 Shot Spec
+### Subtitle Track
 
-只有 approved 才能生成。
+Feature 32 读取 Approved Target Dialogue + Final Production Timeline。
 
-## Feature 20 — 单 Shot 视频生成
-
-第一版只做单 Shot。
-
-先不要批量。
-
-## Feature 21 — Generation 版本管理
-
-必须实现 V1/V2/V3 与 Selected Generation。
-
-## Feature 22 — Auto QC
-
-推荐三级：
-
-```text
-Technical QC
-+ Identity / Scene Consistency QC
-+ Semantic VLM QC
-```
-
-输出：
-
-```text
-PASS
-REVIEW
-FAIL
-```
-
-## Feature 23 — 失败 Shot 人工处理
-
-允许：
-
-- 改 Prompt
-- 改允许编辑的 Shot 参数
-- 换模型
-- 换 Reference
-- Regenerate
-- 手工上传替换
-- 人工通过
-
-## Feature 24 — 批量生成
-
-只能复用已经 Stable 的单 Shot Generation，不允许重新写一套业务逻辑。
+最终字幕不能直接复制 Source ASR 时间。
 
 ---
 
-# 24. Feature 25–30：声音、合成与导出
+## 11. 每个 Feature 开发前必须有 Contract
 
-## Feature 25 — TTS
+使用：
 
-Character 与 Voice 建立稳定 Mapping。
+- `templates/FEATURE_SPEC_TEMPLATE.md`
+- `templates/P0_FEATURE_CHECKLIST.md`
 
-## Feature 26 — Dialogue Fit
+必须定义：
 
-让 Voice Duration 适应 Shot。
+- Scope / Not In Scope；
+- 前置 Stable Feature；
+- User Flow；
+- Input/Output；
+- Reads/Writes/Must NOT Modify；
+- Revision/Dependency/Stale；
+- DB/Migration + Database Dictionary；
+- File/Workspace；
+- Project Format 影响；
+- Media Timebase；
+- API/Task；
+- Model/Provider；
+- Environment；
+- Error/Recovery；
+- Current Tests；
+- Regression Scope；
+- Real Sample Test；
+- Comment Review；
+- Freeze Snapshot。
 
-不允许把声音强行拉伸到明显失真。
+没有 Contract，不编码。
 
-异常进入人工。
+---
 
-## Feature 27 — Lip Sync
+## 12. P0 工程规则
 
-Final Generation + Final Voice → Lip Sync Version。
+5 个 P0 全部强制：
 
-仍然版本化。
+1. Dependency / Revision / Invalidation
+2. Media Timebase
+3. Environment Baseline
+4. DB + File Recovery / Migration
+5. Provider Job Safety
 
-## Feature 28 — 最终合成
+索引：`docs/P0_RULES_INDEX.md`。
 
-FFmpeg 只读取所有 Selected / Final Shot Media。
+详细：
 
-Render 不重新做 AI 理解。
+- `docs/DEPENDENCY_AND_INVALIDATION_RULES.md`
+- `docs/MEDIA_TIMEBASE_CONTRACT.md`
+- `docs/ENVIRONMENT_BASELINE.md`
+- `docs/DATA_RECOVERY_AND_MIGRATION_RULES.md`
+- `docs/PROVIDER_JOB_RULES.md`
 
-## Feature 29 — 整集 QC
+不再使用第二本 `SKILL_P0.md`。
 
-检查：
+---
 
-- Shot 缺失
-- 顺序
-- 黑帧
-- 音频
-- 字幕
-- 静音
-- 音量
-- 总时长
-- 文件损坏
+## 13. 双时间域：Source / Production
 
-## Feature 30 — 导出
+不能把重制成片强行绑定到原片全局时间。
 
-第一版至少：
+### Source Timeline
+
+用于原片证据：
+
+- Source / Proxy / Extracted Audio；
+- Source Shot；
+- Character Tracks；
+- ASR Source Dialogue；
+- Speaker；
+- Source Scene Evidence。
+
+### Production Timeline
+
+用于最终重制：
+
+- Approved Shot Spec duration；
+- Generated/Selected Shot；
+- Final Voice；
+- Lip Sync；
+- Final Audio；
+- Subtitle；
+- Render。
+
+中间步骤优先使用 Shot-local time，再由 Timeline Builder 计算 Production 全局 offset。
+
+统一权威单位：
 
 ```text
-final_master.mp4
-clean_video.mp4
-subtitle.srt
-subtitle.vtt
-final_audio.wav
-project metadata
+integer microseconds (µs)
+```
+
+详细：`docs/MEDIA_TIMEBASE_CONTRACT.md`。
+
+---
+
+## 14. Revision / Dependency / Stale
+
+派生结果必须能回答：
+
+> 我基于哪些上游版本产生？
+
+例如 Generation 应可追溯：
+
+```text
+shot_revision
+shot_spec_revision
+character_bible_revision
+scene_bible_revision
+target_dialogue_revision
+timing_constraint_revision
+reference ids/hashes
+provider/model/version
+prompt compiler version
+```
+
+上游语义变化后：
+
+```text
+旧结果保留
+→ stale
+→ 显示原因
+→ 不再静默作为正式输入
+```
+
+`stale` ≠ `failed` ≠ `invalid`。
+
+---
+
+## 15. AI Result 与 Human Final 分离
+
+示例：
+
+```text
+Shot:
+detected_start_us / detected_end_us
+final_start_us / final_end_us
+
+Dialogue:
+asr_text
+final_source_text
+localized_draft
+approved_target_text
+
+QC:
+ai_qc_status / ai_qc_scores
+human_decision / human_reason
+```
+
+禁止人工修改覆盖原始 AI 证据。
+
+---
+
+## 16. Shot 是核心生产单元
+
+一个 Shot 必须可独立：
+
+- 修边界；
+- 重跑分析；
+- 改 Dialogue/Scene/Spec；
+- 更换 Reference/Provider/Model；
+- Generate / QC；
+- TTS / Lip Sync；
+- 手工替换；
+- 选择 Final。
+
+一个 Shot 出错不能要求整集重跑。
+
+---
+
+## 17. Version / Revision 必须保留历史
+
+必须版本化：
+
+- Video Generation；
+- TTS；
+- Lip Sync。
+
+Character Bible、Scene Bible、Target Dialogue、Shot Spec 在对应 Feature 实现时也应保存可恢复 Revision Snapshot，而不是只保存一个会被覆盖的当前值。
+
+---
+
+## 18. Provider / Model 可替换
+
+业务层使用统一能力 Contract，不直接绑定供应商。
+
+```text
+Business Service
+→ Provider Adapter
+→ Provider-specific API
+```
+
+Shot Spec 是模型无关数据；模型专属 Prompt/参数由 Prompt Compiler / Adapter 生成。
+
+---
+
+## 19. Project Format Version
+
+F01 从第一版保存：
+
+```text
+project_format_version
+```
+
+用于识别 Workspace、项目 metadata、持久化 JSON/Bible/Asset 格式版本。
+
+它不同于 Alembic `schema_revision`。
+
+项目元数据至少应可追溯：
+
+```text
+project_format_version
+app_version
+schema_revision
+created_at
 ```
 
 ---
 
-# 25. Auto QC 的开发原则
+## 20. DB + 文件必须可恢复
 
-第一版不要先训练专用 QC 大模型。
+SQLite 与媒体文件不是同一个事务。
 
-先组合：
+重要文件默认：
 
-## Level 1 — Technical
+```text
+DB pending/writing
+→ staging/tmp
+→ close/validate
+→ atomic rename
+→ DB completed
+```
 
-本地 FFmpeg / OpenCV：
+Migration 前必须有安全备份。
 
-- damaged file
-- black frame
-- freeze
-- blur
-- duration
-- FPS
-- resolution
-- audio track
+Source Video 默认只读。
 
-## Level 2 — Consistency
-
-本地 Embedding：
-
-- Character similarity
-- Scene similarity
-- visual consistency
-
-## Level 3 — Semantic
-
-强 VLM 判断：
-
-- 人物是否符合
-- 动作是否完成
-- 场景是否正确
-- 情绪是否符合
-- 构图是否大致符合
-- 是否出现明显异常
-
-统一输出维度分数、Overall 和 Failure Reason。
-
-开发初期不要过早固定 PASS 阈值，先收集真实数据再校准。
+详细：`docs/DATA_RECOVERY_AND_MIGRATION_RULES.md`。
 
 ---
 
-# 26. 人工审核设计原则
+## 21. Provider Job 必须防重复付费
 
-系统价值不在“完全没有人工”，而在：
-
-> **只把真正需要人工判断的异常推给人工。**
-
-人工队列应该显示：
+计费异步 Provider：
 
 ```text
-Shot
-Failure Reason
-QC Score
-Current Version
-Reference
-Actions
+先创建 local job
+→ request_id/fingerprint
+→ submit
+→ provider_task_id 立即持久化
+→ poll/resume
 ```
 
-操作至少：
+HTTP timeout 只能表示 `UNKNOWN`，不能直接自动重新提交付费任务。
 
-```text
-重新生成
-换模型
-换参考
-修改 Prompt
-修改 Shot Spec
-上传手工视频
-人工通过
-```
+详细：`docs/PROVIDER_JOB_RULES.md`。
 
 ---
 
-# 27. 成本追踪
+## 22. 环境必须可复现
 
-即使本地自用，也建议记录外部 API 成本。
+禁止依赖未约束 `latest`。
 
-按 Generation / Shot / Episode：
+逐步锁定：
 
-```text
-provider
-model
-request duration
-input/output usage
-cost
-success
-retry count
-```
+- Python / Node / package manager；
+- Python/frontend lock；
+- PyTorch/CUDA；
+- FFmpeg；
+- 本地模型 source/version/hash；
+- Provider model/API version。
 
-以后可以得到：
+开发硬件基线：RTX 4060 Ti 16GB，GPU 默认 concurrency = 1。
 
-```text
-某类 Shot
-→ 哪个模型成功率高
-→ 平均生成几次
-→ 平均成本多少
-```
-
-这是未来 Model Router 的数据基础。
+详细：`docs/ENVIRONMENT_BASELINE.md`。
 
 ---
 
-# 28. 开发时禁止过度设计
+## 23. 代码与数据库必须有中文业务注释
 
-第一版不要主动加入：
+新增/修改的：
 
-- SaaS 多租户
-- 登录注册
-- 企业权限
-- 在线充值
-- 分布式 Job Queue
-- Kubernetes
-- 多 GPU 调度集群
-- 大型对象存储集群
-- 完整 Premiere 多轨编辑器
-- 自研视频基础模型
+- 核心业务代码；
+- 表/字段；
+- Migration；
+- API Schema；
+- Provider Adapter；
+- 复杂算法；
 
-只有实际需求出现后再增加。
+必须有足够简体中文说明，重点解释业务意义、边界和“为什么”。
 
----
+数据库 Feature 文档必须维护 Database Dictionary。
 
-# 29. 代码结构建议
-
-```text
-ai-drama-studio/
-├── desktop/
-│   ├── electron/
-│   └── frontend/
-│       └── src/
-│           ├── views/
-│           ├── components/
-│           ├── player/
-│           ├── timeline/
-│           ├── inspector/
-│           ├── stores/
-│           ├── api/
-│           └── types/
-│
-├── engine/
-│   ├── main.py
-│   ├── api/
-│   ├── database/
-│   ├── services/
-│   │   ├── projects/
-│   │   ├── media/
-│   │   ├── shots/
-│   │   ├── characters/
-│   │   ├── dialogues/
-│   │   ├── scenes/
-│   │   ├── casting/
-│   │   ├── bible/
-│   │   ├── generation/
-│   │   ├── qc/
-│   │   ├── voice/
-│   │   ├── lipsync/
-│   │   └── render/
-│   ├── local_models/
-│   ├── providers/
-│   │   ├── vlm/
-│   │   ├── video/
-│   │   ├── tts/
-│   │   └── lipsync/
-│   ├── schemas/
-│   ├── tasks/
-│   └── utils/
-│
-├── config/
-├── docs/
-├── templates/
-└── workspace/  # gitignored
-```
-
-代码目录可以随着实际 Feature 调整，但必须保持职责边界清晰。
+详细：`docs/CODE_AND_DATABASE_COMMENT_RULES.md`。
 
 ---
 
-# 30. AI Coding Agent 执行协议
+## 24. Stable Feature 必须有 Regression 保护
 
-当被要求“开始开发某个 Feature”时，Agent 必须按顺序执行：
-
-## Step 1 — 确认 Feature
-
-明确：
+推荐：
 
 ```text
-Feature ID
-Feature Name
+tests/
+├ unit/
+├ integration/
+├ regression/
+└ fixtures/
 ```
 
-不得顺手开发下一个 Feature。
+后续修改共享代码时必须运行：
 
-## Step 2 — 检查上游
+```text
+Current Feature Tests
++ Affected Stable Feature Regression
+```
 
-确认所有依赖 Feature 已 Stable。
-
-如果上游 Contract 未稳定，不得通过重写上游绕过问题。
-
-## Step 3 — 阅读 Contract
-
-读取：
-
-- SKILL.md
-- docs/FEATURE_SEQUENCE.md
-- 当前 Feature Spec
-- 相关 Stable Contract
-
-## Step 4 — 先设计再编码
-
-至少明确：
-
-- DB changes
-- API
-- file outputs
-- UI state
-- error handling
-- tests
-
-## Step 5 — 编码范围控制
-
-只修改当前 Feature 允许的文件和对象。
-
-如发现必须修改 Stable 上游：
-
-1. 明确说明原因。
-2. 优先 Adapter / additive migration。
-3. 不静默破坏 Contract。
-
-## Step 6 — 测试
-
-包括：
-
-- unit test
-- integration test
-- error path
-- persistence after restart
-- current Feature rerun
-
-## Step 7 — 真实素材验收
-
-提供操作步骤和观察点。
-
-## Step 8 — 等待人工验收
-
-人工没有确认 Stable 前：
-
-> 不继续依赖 Feature。
-
-## Step 9 — Freeze
-
-验收后更新：
-
-- Feature Spec status = stable
-- Stable version
-- Freeze fields
-- Known limitations
+详细：`docs/TESTING_AND_REGRESSION_RULES.md`。
 
 ---
 
-# 31. 修改已有代码时的行为规则
+## 25. 文档是代码交付的一部分
 
-Agent 不得：
+每次实际开发结束至少更新：
 
-- 为了“代码更漂亮”大范围重构 Stable 功能
-- 未经要求升级所有依赖
-- 替换已经能工作的技术栈
-- 把本地自用改造成 SaaS 架构
-- 把 API 模型写死到业务层
-- 删除历史 Generation
-- 覆盖 AI 原始结果
-- 把媒体 Blob 塞进 SQLite
-- 为了性能优化改变业务结果
+1. 当前 `docs/features/FXX-*.md`；
+2. `docs/PROJECT_STATE.md`；
+3. 新建 `docs/sessions/YYYY-MM-DD_HHMM_FXX_topic.md`。
 
-优先：
-
-> 最小修改完成当前 Feature。
+代码完成但文档没更新 = 开发未完成。
 
 ---
 
-# 32. Definition of Done — 项目级标准
+## 26. 新对话最短恢复路径
 
-任何 Feature 的代码完成不等于功能完成。
-
-真正 Done 必须是：
+为了防止上下文超限：
 
 ```text
-用户可以按照真实流程操作
-+ 输出正确
-+ 出错可以恢复
-+ 数据可以持久化
-+ 应用重启后可继续
-+ AI 结果可以人工修正
-+ 当前步骤可以单独重跑
-+ 不破坏 Stable 上游
-+ 使用真实短剧验收通过
+AGENTS.md
+→ SKILL.md
+→ docs/PROJECT_STATE.md
+→ 当前 Feature 文档
+→ 最新相关 Session
+→ 再按 Rule References / P0 Checklist 读取必要详细规范
 ```
+
+不要一开始无差别读取整个 `docs/`。
 
 ---
 
-# 33. 当前第一开发目标
-
-整个仓库建立 Skill 后，正式业务开发从：
+## 27. 技术栈
 
 ```text
-Feature 01 — 创建项目
+Frontend: Vue 3 + TypeScript + Vite + Pinia
+Backend: Python 3.11 + FastAPI + PyTorch + CUDA
+Media: FFmpeg / FFprobe + OpenCV
+Data: SQLite + SQLAlchemy + Alembic + Local Filesystem
+Desktop: Electron（核心流程稳定后）
 ```
 
-开始。
+本地优先：媒体处理、Shot/Scene/Face/ASR/Speaker、基础 QC、Render。
 
-不要直接跳到 AI 生成、人物识别或 Bible。
-
-Feature 01 完成、真实测试、人工验收并 Freeze 后，才进入：
-
-```text
-Feature 02 — 上传原视频
-```
-
-以此类推直到 Feature 30。
+API 优先：强 VLM、Localization 辅助、Video Generation、Premium TTS/LipSync、Semantic QC。
 
 ---
 
-# 34. 相关文档
+## 28. Git / PR
 
-详细固定开发顺序：
-
-```text
-docs/FEATURE_SEQUENCE.md
-```
-
-技术栈与运行规则：
+正式业务开发建议：
 
 ```text
-docs/TECH_STACK.md
+main = 用户已确认稳定基线
+feature/F01-create-project
+feature/F02-upload-source
+...
 ```
 
-数据与 Freeze：
+一个 Feature 尽量对应：
 
 ```text
-docs/DATA_AND_FREEZE_RULES.md
+Contract + Code + Tests + Feature Doc + Session Handoff + PR
 ```
 
-每个 Feature 的规格模板：
-
-```text
-templates/FEATURE_SPEC_TEMPLATE.md
-```
+用户验收后再合入 `main`。
 
 ---
 
-# 35. 最终判断标准
+## 29. Stable Gate
 
-当面对一个技术选择、产品需求或代码改动时，优先问：
+```text
+[ ] Scope / Contract 完成
+[ ] P0 Checklist 完成
+[ ] 实现与错误恢复完成
+[ ] 中文代码/数据库注释完成
+[ ] Current Feature Tests 通过
+[ ] Affected Stable Regression 通过/N/A
+[ ] 真实素材测试完成
+[ ] Feature Doc 更新
+[ ] Session Handoff 创建
+[ ] PROJECT_STATE 更新
+[ ] Agent 状态 READY_FOR_REVIEW
+[ ] 用户明确验收通过
+[ ] Freeze Snapshot 完成
+```
 
-1. 这是不是当前 Feature 必需？
-2. 会不会破坏已经 Stable 的上游？
-3. AI 结果是否还能人工修正？
-4. 单个 Shot 是否还能独立处理？
-5. 是否把具体模型写死了？
-6. 是否能在 RTX 4060 Ti 16GB 开发环境中验证？
-7. 是否增加了当前本地自用场景不需要的复杂度？
+缺任何适用项，不进入 STABLE/FROZEN。
 
-如果一个方案更“高级”，但让这七个问题变差，则不采用。
+---
+
+## 30. 当前唯一开发入口
+
+业务代码尚未正式开始。
+
+下一步：
+
+> **Feature 01 — 创建项目 Contract**
+
+必须先建立：
+
+```text
+docs/features/F01-create-project.md
+```
+
+并在 Contract 中确定：Project ID、`project_format_version`、Workspace、SQLite 布局、表/字段字典、API、P0、测试、Regression 和用户验收步骤，然后才能编码。

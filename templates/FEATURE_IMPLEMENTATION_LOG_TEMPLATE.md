@@ -1,8 +1,8 @@
 # Feature Implementation Log Template
 
-> 用于记录一个 Feature 从开始实现到 Stable/Frozen 的完整开发过程。复制后保存到 `docs/features/FXX-<slug>.md`，并持续更新，不要每次重建。
-
----
+> 每个 Feature 从 Contract 到 Stable/Frozen 的永久开发档案。
+>
+> 建议保存为 `docs/features/FXX-<slug>.md` 并持续更新，不要每次重建新文件。
 
 # Feature XX — <功能名称>
 
@@ -10,201 +10,128 @@
 
 - Feature ID：FXX
 - 名称：
-- 状态：PLANNED / IN_PROGRESS / TESTING / STABLE / FROZEN
+- 状态：PLANNED / IN_PROGRESS / TESTING / READY_FOR_REVIEW / STABLE / FROZEN
 - 前置 Stable Feature：
 - 首次开发日期：
 - 最近更新时间：
-- 当前负责人/Agent：
 - 当前 branch：
 - 当前 PR：
+- 用户验收日期：
+- 用户验收记录：
+
+> Agent 只能自行推进到 `READY_FOR_REVIEW`。只有用户明确验收通过后才能填写 STABLE/FROZEN。
 
 ---
 
-## 2. 功能目标
+## 2. 功能目标 / Scope
 
-说明这个 Feature 为用户解决什么问题，以及完成后的可见结果。
+### 目标
+
+- 
+
+### 明确不做
+
+- 
 
 ---
 
-## 3. 明确不做什么
+## 3. Contract Snapshot
 
-列出本 Feature 不负责的内容，防止范围蔓延。
+### Input
+
+- 
+
+### Output
+
+- 
+
+### Reads
+
+- 
+
+### Writes
+
+- 
+
+### Must NOT Modify
+
+- 
+
+### API
+
+- 
+
+### DB / File
+
+- 
+
+### Revision / Stale
+
+- 
 
 ---
 
-## 4. 用户操作流程
+## 4. P0 Summary
 
 ```text
-步骤 1
-→ 步骤 2
-→ 步骤 3
+P0 DEPENDENCY: PASS / N/A
+P0 TIMEBASE: PASS / N/A
+P0 ENVIRONMENT: PASS / N/A
+P0 RECOVERY: PASS / N/A
+P0 PROVIDER JOB: PASS / N/A
 ```
 
----
-
-## 5. Input Contract
-
-| 字段 | 类型 | 必填 | 来源 | 说明 |
-|---|---|---|---|---|
-| | | | | |
+详细内容可直接引用本 Feature Contract 的 P0 Checklist。
 
 ---
 
-## 6. Output Contract
+## 5. Database Dictionary
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| | | |
+如果涉及数据库，逐表逐字段记录真实业务意义。
 
----
-
-## 7. Data Access Contract
-
-### 允许读取
-
-- 
-
-### 允许新增/修改
-
-- 
-
-### 明确禁止修改
-
-- 
+| Table.Field | Type | Nullable | Meaning | Source | Mutable By | Frozen | Example |
+|---|---|---:|---|---|---|---:|---|
+| | | | | | | | |
 
 ---
 
-## 8. Database Contract
+## 6. Code Map
 
-### Tables
-
-- 
-
-### New / Changed Fields
+### Frontend
 
 - 
 
-### Migration
-
-- migration id：
-- up：
-- down：
-
----
-
-## 9. File Contract
-
-### 输入文件
+### Backend
 
 - 
 
-### 输出文件
+### DB / Migration
 
 - 
 
-### 路径规则
-
-```text
-workspace/...
-```
-
----
-
-## 10. API Contract
-
-### Endpoint
-
-```text
-METHOD /api/...
-```
-
-### Request
-
-```json
-{}
-```
-
-### Response
-
-```json
-{}
-```
-
-### Error Codes
-
-| Code | 场景 | UI 提示 |
-|---|---|---|
-| | | |
-
----
-
-## 11. UI 规格
-
-### 页面/区域
-
-- 
-
-### 操作
-
-- 
-
-### 状态
-
-- loading
-- empty
-- success
-- error
-
----
-
-## 12. 技术实现
-
-### Frontend Code Map
-
-- 
-
-### Backend Code Map
-
-- 
-
-### AI / Media Code Map
-
-- 
-
-### Tests Code Map
+### Tests
 
 - 
 
 ---
 
-## 13. 模型 / Provider / GPU
-
-- 是否使用本地模型：
-- 模型：
-- 是否使用 API：
-- Provider：
-- GPU 策略：
-- 4060 Ti 16GB 注意事项：
-
----
-
-## 14. 关键技术决策
+## 7. 关键技术决策
 
 ### Decision 001
 
 - 决策：
 - 原因：
-- 被否决方案：
-- 为什么否决：
+- 替代方案：
+- 为什么不选：
 - 后续影响：
 
 ---
 
-## 15. 实际开发记录
+## 8. 实际开发记录
 
-### YYYY-MM-DD — 开发记录 01
+### YYYY-MM-DD — Session XX
 
-#### 本次目标
+#### 目标
 
 - 
 
@@ -220,94 +147,139 @@ METHOD /api/...
 
 - 
 
-#### 发现的问题
-
-- 
-
-#### 技术决策
+#### 发现问题
 
 - 
 
 #### Contract 是否变化
 
 - No / Yes
-- 如果 Yes，说明具体变化与原因。
+- 变化：
+- 用户是否需要重新确认：
+
+#### 下一步
+
+- 
 
 ---
 
-## 16. 测试记录
+## 9. Current Feature Tests
 
-### 自动测试
+| Test | Type | Result | Notes |
+|---|---|---|---|
+| | unit/integration/manual | | |
 
-| 测试 | 命令/方法 | 结果 |
+---
+
+## 10. Regression
+
+### Affected Stable Features
+
+- 
+
+### Results
+
+| Feature | Regression | Result |
 |---|---|---|
 | | | |
 
-### 手工测试
+---
 
-| 场景 | 预期 | 实际 | 结果 |
-|---|---|---|---|
-| | | | |
+## 11. 真实素材测试
 
-### 真实短剧素材测试
+```text
+Sample:
+Duration:
+Resolution:
+FPS/VFR:
+Language:
+Environment:
+```
 
-- 素材：
-- 时长：
-- 编码/分辨率：
-- 测试步骤：
-- 结果：
-- 异常：
+- Expected：
+- Actual：
+- Human Correction：
+- Error Cases：
+- Known Limitations：
 
 ---
 
-## 17. 已知 Bug / 风险 / 边界
+## 12. Bug / Risk / Limitation
 
 - 
 
 ---
 
-## 18. Definition of Done
+## 13. Comment / Documentation Review
 
-- [ ] Contract 已确认
-- [ ] 功能实现完成
-- [ ] 错误处理完成
-- [ ] 自动测试通过
-- [ ] 手工测试通过
-- [ ] 真实短剧素材测试通过
-- [ ] 用户人工验收通过
-- [ ] Feature 文档已更新
-- [ ] 最新 Session Handoff 已创建
-- [ ] `docs/PROJECT_STATE.md` 已更新
-- [ ] Freeze Snapshot 已完成
+```text
+CODE COMMENT REVIEW: PASS / N/A
+DATABASE COMMENT REVIEW: PASS / N/A
+DATABASE DICTIONARY: COMPLETE / N/A
+FEATURE DOCUMENT: UPDATED
+SESSION HANDOFF: CREATED
+PROJECT_STATE: UPDATED
+```
 
 ---
 
-## 19. Freeze Snapshot
+## 14. READY_FOR_REVIEW Checklist
+
+- [ ] Contract 实现完成
+- [ ] Scope 未扩散
+- [ ] P0 适用项通过
+- [ ] Current Feature tests 通过
+- [ ] Regression 通过/N/A
+- [ ] 真实素材测试完成
+- [ ] 中文代码/数据库注释完成
+- [ ] 文档更新完成
+- [ ] 无未解释的 Contract Drift
+
+满足后 Agent 可标记：`READY_FOR_REVIEW`。
+
+---
+
+## 15. 用户人工验收
+
+### 验收步骤
+
+1. 
+2. 
+3. 
+
+### 用户结果
+
+```text
+PENDING / PASSED / REJECTED
+```
+
+### 用户反馈
+
+- 
+
+如果 `PASSED` 才允许继续 Freeze。
+
+---
+
+## 16. Freeze Snapshot
 
 ### Stable Version
 
-- Version：V1
+- Version：
 - Freeze Date：
+- User Acceptance Reference：
 
-### Frozen Input
+### Frozen Contracts
 
-- 
-
-### Frozen Output
-
-- 
-
-### Frozen API
-
-- 
-
-### Frozen DB Fields
-
-- 
-
-### Frozen Paths / IDs / States
-
-- 
+- Input：
+- Output：
+- API：
+- DB Fields：
+- IDs：
+- Paths：
+- States：
+- Error Codes：
+- Project Format Impact：
 
 ### 下游只能依赖
 
@@ -315,18 +287,14 @@ METHOD /api/...
 
 ---
 
-## 20. Change Log
+## 17. Change Log
 
-| 日期 | 修改 | 原因 | 影响范围 | Contract变化 | Commit/PR |
+| Date | Change | Reason | Impact | Contract Change | Commit/PR |
 |---|---|---|---|---|---|
 | | | | | | |
 
 ---
 
-## 21. 下一步
+## 18. Next Action
 
-明确写一个可执行动作，不写“继续优化”。
-
-例如：
-
-> 用户验收 Feature 01 后，将其标记 STABLE，并复制模板创建 Feature 02 — 上传视频 Contract。
+必须是下一次会话可以直接执行的具体动作。

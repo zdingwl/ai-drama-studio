@@ -1,122 +1,172 @@
 # AI Drama Studio — Project State
 
-> 本文件是新对话恢复项目状态的第一入口。每次实际开发结束必须更新。
+> 本文件是新对话恢复当前项目状态的第一入口。历史细节放 `docs/sessions/`，不要把本文件写成流水账。
 
 ## 当前状态
 
 - 项目：AI Drama Studio
-- 形态：Windows 本地自用 AI 短剧重制工作台
-- 当前分支：`docs/project-skill`
-- 当前 PR：Draft PR #1 — 项目 Skill / 开发规则初始化
-- 当前 Feature：`Feature 01 — 创建项目`
+- 形态：Windows 本地自用、单用户 AI 短剧重制工作台
+- 当前工作分支：`docs/p0-hardening`
+- 当前文档 PR：PR #2（基于 `docs/project-skill`）
+- 上游主文档 PR：PR #1（`docs/project-skill` → `main`）
+- 当前业务 Feature：`Feature 01 — 创建项目`
 - 当前 Feature 状态：`PLANNED / NOT_STARTED`
 - 已 Stable Feature：无
 - 已 Frozen Feature：无
+- 业务代码：尚未开始
 
-## 已经确定的核心技术方案
+## Source of Truth 状态
+
+本轮文档修订完成后必须：
+
+```text
+先合并 PR #2 → docs/project-skill
+再合并 PR #1 → main
+```
+
+目标：让 `main` 成为唯一正式项目基线。
+
+在合并完成前，新对话如果要读取最新规则，必须明确使用 `docs/p0-hardening`；合并完成后默认只读 `main`。
+
+## 当前批准的业务流程
+
+正式流程已经从旧的 30 Feature 修正为 **35 Feature**。
+
+新增的独立生产步骤：
+
+- F18 AI 翻译与本土化对白
+- F19 目标对白人工确认
+- F20 目标对白时长约束
+- F31 最终音频组装与混音
+- F32 最终字幕组装
+
+因此后续编号整体顺延。
+
+完整顺序：`docs/FEATURE_SEQUENCE.md`。
+
+关键修正原则：
+
+1. 源对白与目标对白分离；
+2. 目标对白必须在 Shot Spec / 视频生成之前人工确认；
+3. 视频生成前先做目标对白时长约束；
+4. AI Casting 必须产出 Casting Profile + Candidates；
+5. 最终音频与最终字幕有独立可测试产物；
+6. Feature 01 从第一版保存 `project_format_version`。
+
+## 项目级规则已确认
+
+### Feature 开发
+
+```text
+Contract
+→ 开发
+→ 当前 Feature 测试
+→ 受影响 Stable Feature 回归测试
+→ 真实素材测试
+→ READY_FOR_REVIEW
+→ 用户人工验收
+→ 文档更新
+→ STABLE/FROZEN
+```
+
+### 用户验收权限
+
+AI / Codex / Agent 不能自行宣布 `STABLE/FROZEN`。
+
+只有用户明确确认验收通过后，才允许冻结并进入下一依赖 Feature。
+
+### 文档权威顺序
+
+```text
+用户最新确认并写入仓库的决策
+→ Stable/Frozen Feature Contract
+→ SKILL + 全局/P0规则
+→ 当前 Feature Contract
+→ PROJECT_STATE
+→ 最新 Session
+→ 历史讨论
+```
+
+### P0 工程规则
+
+5 个 P0 继续强制，但总原则已经合并进 `SKILL.md`，不再使用第二本 `SKILL_P0.md`。
+
+详细索引：`docs/P0_RULES_INDEX.md`。
+
+### 回归测试
+
+新增：`docs/TESTING_AND_REGRESSION_RULES.md`。
+
+后续修改共享层时，必须运行受影响 Stable Feature regression，不能只测当前 Feature。
+
+### 代码/数据库可理解性
+
+- 业务代码必须有简体中文业务注释；
+- 表/字段必须有中文业务说明；
+- Feature 文档维护 Database Dictionary；
+- Migration / API Schema / Provider Adapter / 复杂算法必须有说明。
+
+详细：`docs/CODE_AND_DATABASE_COMMENT_RULES.md`。
+
+## 当前技术方案
 
 - Frontend：Vue 3 + TypeScript + Vite + Pinia
-- AI Backend：Python 3.11 + FastAPI + PyTorch
-- Video：FFmpeg / FFprobe / OpenCV
+- Backend / AI Engine：Python 3.11 + FastAPI + PyTorch
+- Media：FFmpeg / FFprobe + OpenCV
 - Data：SQLite + SQLAlchemy + Alembic + 本地文件系统
-- Desktop：Electron 后置，先浏览器 + localhost 开发
-- GPU：RTX 4060 Ti 16GB，开发期不追求速度，GPU 任务默认串行
-- 强 VLM / 视频生成 / Premium TTS / Premium Lip Sync：Provider Adapter 调用外部 API
-- 核心原则：模型可替换、AI 原始结果与人工 Final 结果分离、Shot 独立、Generation/TTS/LipSync 版本化
-
-## 固定业务开发顺序
-
-Feature 01 → 30 的完整顺序见：
-
-- `docs/FEATURE_SEQUENCE.md`
-
-当前必须从 Feature 01 开始，不跳过前置功能。
-
-## 当前仓库文档状态
-
-已建立：
-
-- `SKILL.md`
-- `AGENTS.md`
-- `docs/FEATURE_SEQUENCE.md`
-- `docs/TECH_STACK.md`
-- `docs/DATA_AND_FREEZE_RULES.md`
-- `docs/CONTINUATION_PROTOCOL.md`
-- `docs/CODE_AND_DATABASE_COMMENT_RULES.md`
-- `docs/PROJECT_STATE.md`
-- `docs/features/README.md`
-- `docs/sessions/README.md`
-- `templates/FEATURE_SPEC_TEMPLATE.md`
-- `templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md`
-- `templates/SESSION_HANDOFF_TEMPLATE.md`
-
-跨对话续开发规则已经启用：
-
-- 每个 Feature 维护长期 Feature 文档。
-- 每次实际开发会话创建独立 Session Handoff。
-- 每次开发结束同步更新本文件。
-- 代码与文档属于同一个交付物。
-- Feature 缺少文档更新时不得标记 STABLE。
-
-代码与数据库可理解性规则已经启用：
-
-- 业务代码必须包含足够的简体中文业务注释。
-- 注释重点解释业务作用、约束以及“为什么”，禁止机械翻译变量名。
-- 核心文件、Service、公开方法、复杂算法、Provider Adapter、API Schema 必须有说明。
-- 每张业务表必须有中文业务说明。
-- 每个新增/修改的业务字段必须有字段级说明。
-- SQLAlchemy Model、Alembic Migration 和 Pydantic/TypeScript Schema 需要同步表达字段语义。
-- 每个涉及数据库变更的 Feature 文档必须维护 Database Dictionary。
-- Feature 标记 STABLE/FROZEN 前必须通过 Code Comment Review、Database Comment Review 和 Database Dictionary 完整性检查。
-- 详细规则见 `docs/CODE_AND_DATABASE_COMMENT_RULES.md`。
-
-## 最新开发交接
-
-- `docs/sessions/2026-08-23_1401_PROJECT_code-database-comment-rules.md`
-- `docs/sessions/2026-08-23_1354_PROJECT_continuation-protocol.md`
-
-最新交接记录本次“代码与数据库注释强制规范”的建立过程和后续执行要求。
+- Desktop：Electron 后置
+- GPU：RTX 4060 Ti 16GB，开发阶段默认 GPU concurrency = 1
+- 强 VLM / Video / Premium TTS / Premium Lip Sync：Provider Adapter 调用 API
 
 ## 当前代码状态
 
-- 尚未开始业务代码实现。
-- 当前主要成果是项目开发 Skill、技术规则、Feature 顺序、冻结规则、跨对话续开发规则和代码/数据库注释规范。
+- 没有正式业务代码；
+- 没有业务数据库；
+- 没有 Migration；
+- 没有 Stable Feature；
+- 当前仍是“正式 Feature 01 开发前的项目规则冻结阶段”。
+
+因此现在修正规则不会造成业务代码返工。
 
 ## 当前阻塞项
 
-无技术阻塞。
+唯一阻塞：
 
-## 已知 Bug
+> 最新文档尚未正式进入 `main`。
 
-无业务代码，因此暂无运行 Bug。
+本轮完成文档一致性检查后应直接合并 PR #2、PR #1。
 
-## 未决策事项
+## Feature 01 开始前需要在 Contract 确定
 
-Feature 01 正式开发前需要在 Feature Spec 中确定：
+- 默认 Workspace 根目录；
+- Project ID 规则；
+- `project_format_version` 初始版本；
+- 项目 DB：每项目独立 SQLite，还是应用级 DB + Workspace；
+- 项目元数据字段；
+- 创建项目表单字段；
+- DB/文件创建事务和失败回滚；
+- P0 Checklist；
+- Database Dictionary；
+- F01 测试与用户验收步骤。
 
-- 项目根目录默认位置
-- Project ID 生成规则
-- 项目 DB 是每项目独立 SQLite，还是应用级 SQLite + project workspace
-- “创建项目”第一版表单最终字段
+## 新对话最短恢复路径
 
-这些应在 Feature 01 Contract 中确定，不应在此全局文件中提前写死。
+```text
+AGENTS.md
+→ SKILL.md
+→ docs/PROJECT_STATE.md
+→ 当前 docs/features/FXX-*.md
+→ 最新相关 docs/sessions/*.md
+→ 按 Feature Rule References 读取必要详细规范
+```
 
-## 下一步唯一推荐动作
+不要一开始无差别读取整个 `docs/`。
 
-> 创建 `docs/features/F01-create-project.md`，使用 `templates/FEATURE_SPEC_TEMPLATE.md` 与 `templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md` 定义 Feature 01 Contract；其中数据库部分必须按 `docs/CODE_AND_DATABASE_COMMENT_RULES.md` 建立完整 Database Dictionary。用户确认 Contract 后，才开始 Feature 01 编码。
+## 下一步唯一动作
 
-## 新对话恢复顺序
-
-1. `AGENTS.md`
-2. `SKILL.md`
-3. 本文件 `docs/PROJECT_STATE.md`
-4. `docs/CONTINUATION_PROTOCOL.md`
-5. `docs/CODE_AND_DATABASE_COMMENT_RULES.md`
-6. 当前 Feature 文档（目前应为 `docs/features/F01-create-project.md`，创建后生效）
-7. 最新相关 `docs/sessions/*.md`
+> 完成本轮文档一致性检查并将 PR #2、PR #1 依次合并到 `main`；随后从 `main` 创建 `feature/F01-create-project`，建立 F01 Contract，不直接开始编码。
 
 ## 最近一次状态更新
 
-- 日期：2026-08-23 14:01 +08:00
-- 内容：新增强制代码与数据库注释规范；要求业务代码、表、字段、Migration、API Schema 均具备可理解的中文说明，并将注释完整性纳入 Feature Stable Gate。
-- 下一步：建立 Feature 01 规格文档。
+- 日期：2026-08-23 14:40 +08:00
+- 内容：重新审查 Skill 后，修正为 35 Feature 完整生产流程；加入翻译/本土化、目标对白时长、最终音频、字幕；合并 P0 总则到主 Skill；明确 main Source of Truth、文档优先级、用户唯一 Stable 权限和回归测试规则。

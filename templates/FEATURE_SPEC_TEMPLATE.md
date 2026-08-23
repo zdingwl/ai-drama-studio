@@ -1,296 +1,266 @@
 # Feature XX — <功能名称>
 
-> 本模板用于 AI Drama Studio 每一个 Feature 的正式开发规格。
+> 每个 Feature 正式编码前必须填写。本模板定义当前 Feature 的边界、数据、测试、P0 和验收。
 >
-> 开发前必须填写，开发完成后补齐测试、验收和 Freeze。没有 Contract，不开始编码。
+> 没有 Contract，不开始编码。
 
 ---
 
-## 0. Feature 状态
+## 0. 基础信息
 
 ```text
-Feature ID: FEATURE_XX
+Feature ID: FXX
 Name:
 Version: v1
-Status: draft | developing | testing | review | stable
-Owner:
+Status: PLANNED | IN_PROGRESS | TESTING | READY_FOR_REVIEW | STABLE | FROZEN
+Branch:
+PR:
 Created At:
-Stable At:
+Last Updated:
 ```
+
+注意：AI/Agent 最多只能标记 `READY_FOR_REVIEW`。只有用户明确验收通过后才能 `STABLE/FROZEN`。
 
 ---
 
 ## 1. 功能目标
 
-一句话说明本 Feature 解决什么问题。
+一句话说明本 Feature 为用户解决什么问题。
 
-示例：
-
-> 将已导入项目的 Proxy Video 自动切分为 Shot Candidate，并保留 AI 原始边界供人工修正。
-
-### 本 Feature 必须完成
+### 必须完成
 
 - 
-- 
 
-### 本 Feature 明确不做
+### 明确不做
 
 - 
-- 
-
-这部分非常重要，防止一个 Feature 越做越大。
 
 ---
 
-## 2. 前置条件
+## 2. 前置 Stable Feature
 
-### 依赖的 Stable Feature
+| Feature | Required Contract | Status |
+|---|---|---|
+| | | |
 
-- Feature XX
-- Feature XX
-
-### 依赖的已冻结对象
-
-- `Project`
-- `Episode`
-- `...`
-
-如果依赖项不是 Stable，停止当前 Feature 开发。
+如依赖项不是 Stable/Frozen，停止编码。
 
 ---
 
 ## 3. 用户操作流程
 
 ```text
-步骤 A
-→ 步骤 B
-→ 步骤 C
+步骤1
+→ 步骤2
+→ 步骤3
 → 完成
 ```
 
-写清楚用户看到什么、点什么、结果在哪里出现。
-
 ---
 
-## 4. 页面 / UI Contract
+## 4. UI Contract
 
-### 4.1 页面位置
+### 页面/区域
 
-```text
-页面：
-区域：
-入口：
-```
+- 页面：
+- 入口：
+- 工作区：
 
-### 4.2 主要控件
-
-- 
-- 
-
-### 4.3 页面状态
-
-必须至少考虑：
+### 状态
 
 ```text
 idle
-loading / running
-success
+loading/running
 empty
+success
 error
 ```
 
-长任务增加：
+长任务按需要增加 pending/running/completed/failed/cancelled/unknown。
 
-```text
-pending
-running
-cancelled
-failed
-completed
-```
-
-### 4.4 用户可执行操作
+### 用户可操作
 
 - 
-- 
 
-### 4.5 用户禁止操作
+### 用户禁止操作
 
-- 
 - 
 
 ---
 
 ## 5. Input Contract
 
-列出当前 Feature 可以读取的输入。
-
-| Field / Object | Type | Source Feature | Required | Notes |
+| Field/Object | Type | Source Feature | Required | Business Meaning |
 |---|---|---|---:|---|
 | | | | | |
-
-示例 JSON：
-
-```json
-{}
-```
 
 ---
 
 ## 6. Output Contract
 
-列出 Feature 成功后必须产生的输出。
-
-| Field / Object | Type | Destination | Notes |
+| Field/Object | Type | Destination | Business Meaning |
 |---|---|---|---|
 | | | | |
 
-示例 JSON：
+---
 
-```json
-{}
-```
+## 7. Data Access Contract
+
+### 允许读取
+
+- 
+
+### 允许新增/修改
+
+- 
+
+### 明确禁止修改
+
+- Stable/Frozen 上游对象；
+- AI 原始结果（如只允许写 Final）；
+- 历史版本；
+- Source Asset（默认只读）。
 
 ---
 
-## 7. 读取的数据
+## 8. Revision / Dependency / Invalidation
 
-允许读取：
-
-- 表 / 对象 A
-- 表 / 对象 B
-
-说明为什么需要读取。
-
----
-
-## 8. 允许修改的数据
-
-当前 Feature 只允许修改：
-
-- 表 / 对象 C
-- 新增字段 / 新记录
-- 当前 Feature 自己的状态
-
-如需迁移，明确 Alembic migration。
+- 本 Feature 依赖哪些上游 revision：
+- 本 Feature 自己是否有 semantic revision：
+- 本 Feature 产生哪些派生结果：
+- 哪些上游变化会使结果 stale：
+- stale 后 UI 提示：
+- stale 后后端禁止行为：
+- 重新计算入口：
+- 是否允许人工 override：
 
 ---
 
-## 9. 禁止修改的数据
+## 9. Database Contract
 
-明确列出：
+### Tables
 
-- Stable 上游对象
-- 不允许回写的字段
-- 不允许覆盖的 AI 原始结果
-- 不允许删除的历史版本
+- 
 
-示例：
+### New / Changed Fields
 
-```text
-禁止修改 source_video
-禁止覆盖 detected_start
-禁止重新生成 Character ID
-```
+- 
 
----
+### Constraints / Indexes
 
-## 10. DB Schema / Migration
-
-### 新增表
-
-```text
-<schema>
-```
-
-### 新增字段
-
-```text
-<table.field>
-```
-
-### Index / Constraint
-
-```text
-...
-```
+- 
 
 ### Migration
 
 ```text
 revision:
 down_revision:
+backup strategy:
+downgrade:
 ```
+
+### Database Dictionary
+
+每个业务字段必须填写：
+
+| Field | Type | Nullable | Default | Business Meaning | Source | Mutable By | Frozen | Example |
+|---|---|---:|---|---|---|---|---:|---|
+| | | | | | | | | |
 
 ---
 
-## 11. 文件输入输出
+## 10. File / Workspace Contract
 
 ### 输入路径
 
 ```text
-workspace/<project>/...
+workspace/...
 ```
 
 ### 输出路径
 
 ```text
-workspace/<project>/...
+workspace/...
 ```
 
-### 文件命名规则
+### 文件命名
 
-```text
-...
-```
+- 
 
-媒体默认禁止写入 SQLite Blob。
+### 写入与恢复
+
+- staging/tmp：
+- 文件校验：
+- atomic rename：
+- DB commit 时机：
+- restart recovery：
+- orphan/missing handling：
 
 ---
 
-## 12. 后端 API
+## 11. Project Format 影响
 
-### Endpoint 1
+- 是否改变 `project_format_version`：Yes / No
+- 原因：
+- 旧项目兼容：
+- 是否需要 Project Format migration：
+
+普通 DB 字段变化不一定改变 Project Format；Workspace/持久化 JSON/项目结构语义变化时必须评估。
+
+---
+
+## 12. Media Timebase
+
+- 适用：Yes / No
+- 输入 timeline：
+- 输出 timeline：
+- 权威字段：`*_us`
+- Source↔Proxy mapping：
+- CFR/VFR：
+- audio offset/sample rate：
+- rounding utility：
+- 时间误差验收：
+
+---
+
+## 13. API Contract
+
+### Endpoint
 
 ```text
-METHOD /path
+METHOD /api/...
 ```
 
-Purpose:
+Purpose：
 
-Request:
+Request：
 
 ```json
 {}
 ```
 
-Response:
+Response：
 
 ```json
 {}
 ```
 
-Errors:
+Errors：
 
-```text
-ERROR_CODE_A
-ERROR_CODE_B
-```
-
-### Endpoint 2
-
-同上。
+| Code | Trigger | UI Message | Retryable | Recovery |
+|---|---|---|---:|---|
+| | | | | |
 
 ---
 
-## 13. WebSocket / Task Event
+## 14. Task / WebSocket
 
-如为长任务，定义事件：
+如果是长任务：
 
 ```json
 {
   "task_id": "...",
-  "feature": "FEATURE_XX",
+  "feature_id": "FXX",
   "status": "running",
   "progress": 0,
   "step": "...",
@@ -298,48 +268,43 @@ ERROR_CODE_B
 }
 ```
 
-任务必须可识别：
-
-```text
-pending
-running
-completed
-failed
-cancelled
-```
+说明：取消、重试、restart resume、interrupted 行为。
 
 ---
 
-## 14. 本地模型 / 云 API
+## 15. Local Model / Provider
 
-| Ability | Model / Provider | Device | Fallback | Notes |
-|---|---|---|---|---|
-| | | CPU/GPU/API | | |
+| Ability | Model/Provider | Version | Device | Fallback | Notes |
+|---|---|---|---|---|---|
+| | | | CPU/GPU/API | | |
 
-如果是外部 Provider，必须经过 Adapter，不允许业务代码直接散落 HTTP 调用。
+### Provider Job（如适用）
 
----
-
-## 15. GPU / Memory 策略
-
-开发环境：RTX 4060 Ti 16GB。
-
-明确：
-
-```text
-是否 GPU:
-预计显存:
-是否必须独占 GPU:
-加载方式:
-任务后是否卸载:
-CPU fallback:
-```
-
-默认 concurrency = 1。
+- local_job_id 创建时机：
+- request_fingerprint：
+- provider idempotency：
+- provider_task_id 保存：
+- submit timeout：
+- poll retry：
+- restart resume：
+- cost：
 
 ---
 
-## 16. 算法流程
+## 16. Environment / Dependency Change
+
+- 新增 Python 依赖：
+- 新增 Node 依赖：
+- 新增 Native Tool：
+- 新增本地模型：
+- lock 更新：
+- model source/hash：
+- RTX 4060 Ti 16GB 可运行性：
+- 新电脑安装验证：
+
+---
+
+## 17. 算法 / 业务流程
 
 ```text
 Input
@@ -351,114 +316,124 @@ Step 2
 Output
 ```
 
-只描述本 Feature，不把下游逻辑塞进来。
+关键阈值/经验规则必须说明为什么存在，以及是否属于可配置参数。
 
 ---
 
-## 17. 人工修正规则
+## 18. AI Result / Human Final
 
-如果 Feature 有 AI 结果：
+如果存在 AI 结果：
 
-- AI 原始结果保存在哪里？
-- Final 数据保存在哪里？
-- 人工可以改哪些字段？
-- 是否需要 Confirm / Lock？
-- 人工修正是否可撤销？
-
-必须明确 AI Result ≠ Final Result。
+- AI 原始结果字段：
+- 人工 Final 字段：
+- 人工可修改：
+- Confirm/Lock：
+- 是否有 Revision Snapshot：
+- Undo/回退方式：
 
 ---
 
-## 18. Versioning
+## 19. Versioning
 
-如果 Feature 会产生可重复生成的媒体或内容，明确：
+如果产生可重复内容：
 
 ```text
-版本 ID：
-版本号规则：
-是否允许删除：
-Selected ID：
+版本对象：
+version id：
 历史是否保留：
+selected/final id：
+删除规则：
 ```
 
 Video / TTS / Lip Sync 默认必须版本化。
 
 ---
 
-## 19. 异常处理
+## 20. 代码与中文注释要求
 
-| Error | Trigger | UI 提示 | Retry | 是否影响上游 | Recovery |
-|---|---|---|---:|---:|---|
-| | | | | | |
+### Code Map
 
-禁止只显示“请求失败”。
+Frontend：
+- 
 
-必须尽量显示：
+Backend：
+- 
 
-- 失败步骤
-- 错误原因
-- 是否已经重试
-- 是否可以切模型 / 重试
+DB：
+- 
 
----
+Tests：
+- 
 
-## 20. 日志与可追溯
+检查：
 
-至少记录：
-
-```text
-task_id
-feature_id
-project_id
-episode_id
-shot_id（如适用）
-start_time
-end_time
-model/provider（如适用）
-status
-error
-```
-
-外部 API 还要记录 provider task id 和 cost（能获取时）。
+- [ ] 核心文件有职责说明
+- [ ] Service/公开方法有 docstring
+- [ ] 复杂业务逻辑解释“为什么”
+- [ ] API Schema 字段有 description
+- [ ] DB 表/字段有业务说明
+- [ ] Migration 有中文说明
+- [ ] Database Dictionary 同步
 
 ---
 
-## 21. 单元测试
+## 21. P0 Checklist
 
-### 正常路径
+把 `templates/P0_FEATURE_CHECKLIST.md` 内容复制到这里或明确链接到当前 Feature 的 P0 区域。
 
-- [ ] Case 1
-- [ ] Case 2
-
-### 边界条件
-
-- [ ] Case 3
-- [ ] Case 4
-
-### 错误场景
-
-- [ ] Case 5
-- [ ] Case 6
+Stable 前所有适用项必须 PASS。
 
 ---
 
-## 22. 真实素材测试
+## 22. Current Feature Tests
 
-必须记录真实短剧样本。
+### Unit
+
+- [ ] 
+
+### Integration
+
+- [ ] 
+
+### Error / Recovery
+
+- [ ] 
+
+---
+
+## 23. Regression Scope
+
+### Affected Stable Features
+
+- FXX：原因
+
+### Regression Tests
+
+| Feature | Test | Result |
+|---|---|---|
+| | | |
+
+如果没有 Stable Feature，写 `N/A — no stable upstream feature yet`。
+
+---
+
+## 24. 真实素材测试
 
 ```text
 Sample:
 Duration:
 Resolution:
-FPS:
+FPS/VFR:
 Language:
-Notes:
+Audio:
+Environment Snapshot:
 ```
 
-测试结果：
+结果：
 
 ```text
-AI Result:
+Expected:
+Actual:
 Human Correction:
 Error Cases:
 Known Limitations:
@@ -466,76 +441,94 @@ Known Limitations:
 
 ---
 
-## 23. 人工验收步骤
+## 25. 用户人工验收步骤
 
-按真实工作流写：
+写成不需要读代码就能执行的步骤：
 
 ```text
-1. 创建/打开测试项目
+1. ...
 2. ...
 3. ...
-4. 确认输出
 ```
 
-验收人员不应该需要阅读代码才能验证 Feature。
+Agent 测试通过后状态为 `READY_FOR_REVIEW`，等待用户执行/确认。
 
 ---
 
-## 24. Definition of Done
+## 26. Definition of Done
 
-- [ ] Scope 明确，没有偷做下游 Feature
-- [ ] Input Contract 完成
-- [ ] Output Contract 完成
-- [ ] UI 完成
-- [ ] API 完成
-- [ ] DB / Migration 完成
-- [ ] 数据持久化完成
-- [ ] 应用重启后数据可恢复
-- [ ] 错误处理完成
-- [ ] 当前 Feature 可独立重跑
-- [ ] 不破坏 Stable 上游 Feature
-- [ ] 单元测试完成
+- [ ] Scope 明确
+- [ ] Input/Output Contract 完成
+- [ ] Data Access Contract 完成
+- [ ] Revision/Invalidation 完成或 N/A
+- [ ] UI/API 完成
+- [ ] DB/Migration 完成或 N/A
+- [ ] File Recovery 完成或 N/A
+- [ ] Media Timebase 完成或 N/A
+- [ ] Provider Safety 完成或 N/A
+- [ ] Environment Lock 完成或 N/A
+- [ ] 中文代码/数据库注释完成
+- [ ] Current Feature tests 通过
+- [ ] Regression 通过或 N/A
 - [ ] 真实素材测试完成
-- [ ] 用户人工验收通过
-- [ ] 文档更新完成
+- [ ] Feature 文档更新
+- [ ] Session Handoff 创建
+- [ ] PROJECT_STATE 更新
+- [ ] 状态已到 READY_FOR_REVIEW
+- [ ] 用户明确验收通过
+- [ ] Freeze Snapshot 完成
 
 ---
 
-## 25. Freeze
+## 27. Freeze Snapshot
 
-验收后冻结：
+用户验收后填写：
 
 ```text
-Input Contract:
-Output Contract:
-API Contract:
-DB fields:
-ID rules:
-File path rules:
-Status enum:
-Error codes:
+Stable Version:
+Stable Date:
+User Acceptance Reference:
+Frozen Input:
+Frozen Output:
+Frozen API:
+Frozen DB Fields:
+Frozen File Paths:
+Frozen IDs:
+Frozen States:
+Frozen Error Codes:
+Project Format Impact:
 ```
 
-Stable Version：`v1`
+---
 
-Stable Date：
+## 28. Known Limitations
+
+- 
+
+V1 接受的限制要明确写出，不要隐藏成“测试通过”。
 
 ---
 
-## 26. Known Limitations
+## 29. Change Log
 
-明确 V1 已知但接受的问题：
-
-- 
-- 
-
-这些问题不要在未授权情况下自动扩大当前 Feature Scope。
+| Date | Change | Reason | Impact | Contract Changed | Commit/PR |
+|---|---|---|---|---|---|
+| | | | | | |
 
 ---
 
-## 27. Future V2 Ideas
+## 30. Next Action
 
-只记录，不在 V1 自动实现：
+必须具体到可执行动作。
 
-- 
-- 
+错误：
+
+```text
+继续优化
+```
+
+正确示例：
+
+```text
+打开 engine/api/projects.py，实现 POST /api/projects 的 workspace 创建事务和失败回滚，并补 F01-API-003。
+```
