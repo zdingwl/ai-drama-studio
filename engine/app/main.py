@@ -68,7 +68,11 @@ def create_app() -> FastAPI:
     app = FastAPI(title="AI Drama Studio", version="0.1.0", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        # Vite 开发服务器在 5173 被占用时会自动切到 5174/5175。
+        # F01 是本机工具，因此开发阶段允许 localhost / 127.0.0.1 的任意端口，
+        # 但不使用 allow_origins=['*']，避免把非本机来源也一起放开。
+        allow_origins=[],
+        allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
         allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Content-Type"],
