@@ -7,6 +7,7 @@
 ```text
 Project: AI Drama Studio
 Official Baseline: main
+Current Working Branch: main（用户未要求切换/新建其它分支）
 Current Feature: F01 — 创建项目
 Feature Status: PLANNED / NOT_STARTED
 Stable Features: none
@@ -16,6 +17,24 @@ Business DB/Migration: not started
 ```
 
 `main` 已经是唯一正式 Source of Truth。PR #2 和 PR #1 均已完成合并，不再依赖旧文档分支恢复上下文。
+
+## Git 操作权限
+
+Git 分支和 PR 结构由用户控制。
+
+未经用户明确要求，AI / Codex / Agent 不得：
+
+- 新建分支；
+- 自动创建 `feature/*` / `fix/*` / `docs/*` 等分支；
+- 切换、删除或重命名分支；
+- force update / 移动 branch ref；
+- 擅自创建、关闭、合并或重定向 PR。
+
+当前用户已经明确要求：**不要擅自新建分支。**
+
+因此下一步开发不得因为“一个 Feature 一个分支”而自动创建 `feature/F01-create-project`。只有用户后续明确要求创建/切换某个分支时，才执行相应 Git 结构操作。
+
+详细规则：`AGENTS.md` 与 `SKILL.md` 第 28 节。
 
 ## Approved Production Flow
 
@@ -86,7 +105,8 @@ AI / Codex / Agent 只能自行推进到 `READY_FOR_REVIEW`。
 - Simplified-Chinese code/database business comments；
 - Database Dictionary；
 - Stable Feature Regression；
-- Cross-conversation documentation continuity。
+- Cross-conversation documentation continuity；
+- Git Branch / PR Operations Require Explicit User Authorization。
 
 ## 当前技术方案
 
@@ -148,15 +168,15 @@ AGENTS.md
 
 ## 最新交接
 
-`docs/sessions/2026-08-23_1440_PROJECT_main-baseline-established.md`
+`docs/sessions/2026-08-23_1457_PROJECT_git-branch-permission.md`
 
-该文档记录了 PR #2 / PR #1 合并、35 Feature、双时间域和下一步 F01 Contract 状态。
+该文档记录用户新增的 Git 分支/PR 权限边界：未经明确授权不得创建或改变分支结构。
 
 ## 下一步唯一动作
 
-> 从 `main` 创建 `feature/F01-create-project`，先创建并完善 `docs/features/F01-create-project.md` Contract；用户确认 Contract 后，才开始写第一行业务代码。
+> 在**用户当前指定的 Git 工作方式**下建立并完善 `docs/features/F01-create-project.md` Contract；未经用户明确要求，不创建 `feature/F01-create-project` 或任何其它新分支。Contract 经用户确认后，才开始写第一行业务代码。
 
 ## 最近更新时间
 
-- 日期：2026-08-23 14:40 +08:00
-- 状态：项目规则与文档已正式进入 `main`，准备开始 Feature 01 Contract。
+- 日期：2026-08-23 14:57 +08:00
+- 状态：新增 Git 操作权限边界；禁止 Agent 未经用户明确授权创建、切换或修改分支/PR 结构。Feature 01 仍处于 PLANNED / NOT_STARTED。
