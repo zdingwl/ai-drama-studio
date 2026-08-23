@@ -151,7 +151,7 @@ python -m compileall engine
 pytest -q
 ```
 
-结果：
+此前完整结果：
 
 ```text
 29 passed
@@ -162,27 +162,69 @@ pytest -q
 ## 前端核心 API
 
 - TypeScript strict 检查通过：`types/project.ts`、`api/http.ts`、`api/projects.ts`；
-- 所有 `.ts` 与 Vue `<script setup lang="ts">` 做过 TypeScript 语法解析，共 10 个脚本块无语法错误；
+- 所有 `.ts` 与 Vue `<script setup lang="ts">` 做过 TypeScript 语法解析；
 - 真实启动 FastAPI 后，编译后的前端 API 函数完成：空列表 → 201 创建 → 列表出现 → `/open` 200。
+
+---
+
+# 2026-08-23 本机运行问题：CORS 预检 400
+
+用户将 FastAPI 改为：
+
+```text
+127.0.0.1:8080
+```
+
+健康检查已经返回 `200 OK`，说明 8080 后端本身正常。
+
+浏览器创建项目时日志出现：
+
+```text
+OPTIONS /api/projects 400 Bad Request
+```
+
+根因：原 CORS 只允许：
+
+```text
+http://localhost:5173
+http://127.0.0.1:5173
+```
+
+当 Vite 因端口占用自动切换到 5174/5175 时，预检会在 Controller 之前被拒绝。
+
+已修正 `engine/app/main.py`：开发阶段允许本机来源：
+
+```text
+http://localhost:<任意端口>
+http://127.0.0.1:<任意端口>
+```
+
+使用 `allow_origin_regex`，没有开放为 `*`。
+
+同时为 `http://localhost:5174` 增加 OPTIONS CORS 回归测试。
+
+前端当前 API 地址已经是：
+
+```text
+http://127.0.0.1:8080
+```
+
+修复后用户本地需要同步最新 `main` 并重启后端。
 
 ---
 
 # 当前尚未完成的验证 Gate
 
-当前容器无法联网安装 npm 包，因此没有伪造：
+目标环境仍需执行：
 
 ```text
-package-lock.json
-npm ci
+package-lock.json / npm ci
 npm run typecheck
 npm run build
 npm run test
 真实浏览器 UI 验收
+Python 3.11 全量 pytest
 ```
-
-前端依赖已使用精确版本写入 `frontend/package.json`，Node 固定为 `22.16.0`，但必须由联网/目标开发机生成真实 `package-lock.json`。
-
-当前 Python 测试容器为 3.13.5；正式项目基线仍为 Python 3.11，F01 进入 READY_FOR_REVIEW 前必须在目标 Python 3.11 环境重跑完整 pytest。
 
 因此当前：
 
@@ -220,21 +262,9 @@ frontend/src/views/ProjectWorkspace.vue
 
 不再新增 F01 业务函数，也不进入 F02。
 
-下一步是目标环境验证：
-
-```text
-生成真实 package-lock.json
-→ npm ci
-→ npm run typecheck
-→ npm run build
-→ npm run test
-→ 浏览器真实创建/重启/打开流程
-→ Python 3.11 全量 pytest
-→ READY_FOR_REVIEW
-→ 用户人工验收
-```
+当前优先：用户本地同步 CORS 修复后重新运行前后端，确认 `/api/projects` 不再出现 OPTIONS 400，再继续真实创建/重启/打开验收。
 
 ## 最近更新时间
 
-- 日期：2026-08-23 18:09 +08:00
-- 状态：F01 所有计划函数已实现；后端 29 tests PASS；前端 API 实际联调通过；等待联网/目标环境完成 npm build/typecheck/test 与 Python 3.11 验证。
+- 日期：2026-08-23 19:40 +08:00
+- 状态：F01 全部函数已实现；8080 后端健康检查正常；已修复 Vite 非 5173 端口导致的 CORS OPTIONS 400，等待用户本机重新验证。
