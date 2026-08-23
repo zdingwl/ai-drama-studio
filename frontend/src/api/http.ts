@@ -1,6 +1,6 @@
 import type { ApiErrorPayload } from '../types/project'
 
-export const API_BASE_URL = 'http://127.0.0.1:8000'
+export const API_BASE_URL = 'http://127.0.0.1:8080'
 
 /**
  * F01 统一 HTTP 请求入口。
