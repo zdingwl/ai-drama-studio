@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import {
+  SOURCE_LANGUAGE_OPTIONS,
+  TARGET_LANGUAGE_OPTIONS,
+  TARGET_REGION_OPTIONS,
+} from '../constants/project-options'
 import type { CreateProjectPayload } from '../types/project'
 
 const props = defineProps<{ open: boolean; submitting: boolean; errorMessage?: string }>()
@@ -17,7 +22,7 @@ const form = reactive<CreateProjectPayload>(initialForm())
 const localError = ref('')
 
 const canSubmit = computed(() => {
-  return Boolean(form.name?.trim() && form.target_language?.trim() && form.target_region?.trim())
+  return Boolean(form.name?.trim() && form.target_language && form.target_region)
 })
 
 watch(
@@ -40,18 +45,18 @@ function submit(): void {
     localError.value = '请输入项目名称'
     return
   }
-  if (!form.target_language?.trim()) {
-    localError.value = '请输入目标语言'
+  if (!form.target_language) {
+    localError.value = '请选择目标语言'
     return
   }
-  if (!form.target_region?.trim()) {
-    localError.value = '请输入目标地区'
+  if (!form.target_region) {
+    localError.value = '请选择目标地区'
     return
   }
 
   emit('submit', {
     name: form.name,
-    source_language: form.source_language?.trim() || null,
+    source_language: form.source_language || null,
     target_language: form.target_language,
     target_region: form.target_region,
     workspace_root: form.workspace_root?.trim() || null,
@@ -97,23 +102,46 @@ function submit(): void {
           <section class="form-section">
             <div class="form-section-title">
               <span>02</span>
-              <div><strong>本土化设置</strong><small>确定原片与目标市场的基础语言信息</small></div>
+              <div><strong>本土化设置</strong><small>固定选项使用标准代码保存，避免产生不规范数据</small></div>
             </div>
             <div class="form-grid three-columns">
               <label class="field">
                 <span>原片语言</span>
-                <div class="input-with-prefix"><i>源</i><input v-model="form.source_language" placeholder="zh / ja / ko" /></div>
-                <small>可留空，后续识别。</small>
+                <div class="input-with-prefix select-with-prefix">
+                  <i>源</i>
+                  <select v-model="form.source_language" aria-label="原片语言">
+                    <option v-for="item in SOURCE_LANGUAGE_OPTIONS" :key="item.value || 'auto'" :value="item.value">
+                      {{ item.label }}
+                    </option>
+                  </select>
+                </div>
+                <small>不知道时选择自动识别。</small>
               </label>
+
               <label class="field">
                 <span>目标语言 <b>*</b></span>
-                <div class="input-with-prefix"><i>语</i><input v-model="form.target_language" required placeholder="en" /></div>
-                <small>使用稳定语言代码。</small>
+                <div class="input-with-prefix select-with-prefix">
+                  <i>语</i>
+                  <select v-model="form.target_language" required aria-label="目标语言">
+                    <option v-for="item in TARGET_LANGUAGE_OPTIONS" :key="item.value" :value="item.value">
+                      {{ item.label }}
+                    </option>
+                  </select>
+                </div>
+                <small>只保存系统支持的标准语言代码。</small>
               </label>
+
               <label class="field">
                 <span>目标地区 <b>*</b></span>
-                <div class="input-with-prefix"><i>地</i><input v-model="form.target_region" required placeholder="US" /></div>
-                <small>使用稳定地区代码。</small>
+                <div class="input-with-prefix select-with-prefix">
+                  <i>地</i>
+                  <select v-model="form.target_region" required aria-label="目标地区">
+                    <option v-for="item in TARGET_REGION_OPTIONS" :key="item.value" :value="item.value">
+                      {{ item.label }}
+                    </option>
+                  </select>
+                </div>
+                <small>只保存系统支持的标准地区代码。</small>
               </label>
             </div>
           </section>
@@ -154,3 +182,40 @@ function submit(): void {
     </Transition>
   </Teleport>
 </template>
+
+<style scoped>
+.select-with-prefix {
+  position: relative;
+}
+
+.select-with-prefix::after {
+  content: '⌄';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-52%);
+  color: #6f7b8d;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.select-with-prefix select {
+  width: 100%;
+  height: 38px;
+  min-width: 0;
+  padding: 0 30px 0 10px;
+  border: 0;
+  outline: 0;
+  color: #dbe2ec;
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.select-with-prefix select option {
+  color: #dbe2ec;
+  background: #111824;
+}
+</style>
