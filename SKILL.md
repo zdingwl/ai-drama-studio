@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-development
-version: 2.1.0
-description: AI Drama Studio 本地 AI 短剧重制工作台的项目级开发技能手册。定义 Source of Truth、35 Feature 生产流程、逐 Feature 验收冻结、P0 工程规则和跨对话续开发方式。
+version: 2.1.1
+description: AI Drama Studio 本地 AI 短剧重制工作台的项目级开发技能手册。定义 Source of Truth、35 Feature 生产流程、逐 Feature 验收冻结、P0 工程规则、Git 权限边界和跨对话续开发方式。
 ---
 
 # AI Drama Studio Development Skill
@@ -56,6 +56,8 @@ branch / PR = 开发中或待审核状态
 新对话默认从 `main` 恢复，除非用户明确指定继续某个未合并分支/PR。
 
 `docs/PROJECT_STATE.md` 在 `main` 上必须代表最近一次真实状态。
+
+> Source of Truth 规则只定义“从哪里读取正式基线”，不授予 Agent 创建、切换或修改分支/PR 结构的权限。Git 操作权限见第 28 节。
 
 ---
 
@@ -639,24 +641,37 @@ API 优先：强 VLM、Localization 辅助、Video Generation、Premium TTS/LipS
 
 ---
 
-## 28. Git / PR
+## 28. Git / Branch / PR 操作必须由用户授权
 
-正式业务开发建议：
+Git 分支与 PR 结构属于用户控制范围，不能由 Agent 按“最佳实践”自行决定。
+
+未经用户明确要求，AI / Codex / Agent **禁止**：
+
+- 新建分支；
+- 自动创建 `feature/*`、`fix/*`、`docs/*` 或任何其它分支；
+- 切换分支后擅自继续修改；
+- 删除或重命名分支；
+- 移动、覆盖或 force update branch ref；
+- 擅自创建 PR；
+- 擅自关闭、合并、重新打开 PR；
+- 擅自修改 PR base/head 或重定向 PR；
+- 因为“一个 Feature 一个分支比较规范”而替用户改变 Git 工作流。
+
+默认执行规则：
 
 ```text
-main = 用户已确认稳定基线
-feature/F01-create-project
-feature/F02-upload-source
-...
+用户明确指定分支/PR操作
+→ 按用户指令执行
+
+用户没有明确要求创建/切换/删除/合并
+→ 不执行对应 Git 结构操作
 ```
 
-一个 Feature 尽量对应：
+如果当前工作已经位于用户指定分支，就在该分支继续。
 
-```text
-Contract + Code + Tests + Feature Doc + Session Handoff + PR
-```
+如果当前正式基线是 `main`，只说明 `main` 是读取基线；**不得由此推导出“应该自动新建 feature 分支”**。
 
-用户验收后再合入 `main`。
+任何需要改变 Git 分支/PR 结构的动作，都必须来自用户的明确指令，而不是 Agent 自行规划。
 
 ---
 
