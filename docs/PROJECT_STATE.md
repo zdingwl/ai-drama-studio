@@ -8,14 +8,13 @@
 Project: AI Drama Studio
 Official Baseline: main
 Current Working Branch: main（用户未要求切换/新建其它分支）
-Current Feature: F01 — 创建项目
-Feature Status: IN_PROGRESS
-F01 Contract: CONFIRMED
-F01 Planned Functions: ALL IMPLEMENTED
-Verification Gate: PENDING
-READY_FOR_REVIEW: NO
-Stable Features: none
-Frozen Features: none
+Current Feature: none（F01 已完成；尚未开始 F02）
+F01 — 创建项目: STABLE / FROZEN
+Verification Gate: PASSED BY USER
+READY_FOR_REVIEW: PASSED
+Stable Features: F01
+Frozen Features: F01
+Next Feature: F02 — 上传原视频（NOT STARTED）
 ```
 
 `main` 是唯一正式 Source of Truth。
@@ -24,7 +23,7 @@ Frozen Features: none
 
 未经用户明确要求，AI / Codex / Agent 不得新建、切换、删除、重命名分支，也不得擅自创建/关闭/合并/重定向 PR。
 
-当前继续直接维护 `main`，不创建新分支。
+当前继续直接维护 `main`；用户尚未要求开始 F02。
 
 ---
 
@@ -33,13 +32,16 @@ Frozen Features: none
 ```text
 docs/features/F01-create-project.md
 docs/features/F01-function-contracts.md
+docs/features/F01-stable-snapshot.md
 ```
+
+其中 `F01-stable-snapshot.md` 是用户验收后的冻结 Contract，后续 Feature 不得静默改变其语义。
 
 ---
 
-# F01 当前完成度
+# F01 验收结论
 
-第一阶段仍只解决：
+F01 解决的完整闭环：
 
 ```text
 创建项目
@@ -49,74 +51,43 @@ docs/features/F01-function-contracts.md
 → 能重新打开
 ```
 
-所有计划中的函数已经实现。
-
-## 后端核心函数
+用户已在 Windows 本机完成实际测试，并于 2026-08-23 22:34 +08:00 明确确认：
 
 ```text
-get_app_data_path()             [PASS]
-init_database()                 [PASS]
-generate_project_id()           [PASS]
-create_project_workspace()      [PASS]
-create_project()                [PASS]
-list_projects()                 [PASS]
-open_project()                  [PASS]
-recover_creating_projects()     [PASS]
-create_app()                    [PASS - backend tests]
+可以，测试也通过，没问题了。
 ```
 
-## Controller
+因此按 `docs/DATA_AND_FREEZE_RULES.md`：
 
 ```text
-health_api()
-list_projects_api()
-create_project_api()
-open_project_api()
+F01 = STABLE / FROZEN
 ```
-
-## 前端核心动作
-
-```text
-apiRequest()
-loadProjects()
-submitCreateProject()
-openProject()
-```
-
-## 页面
-
-```text
-StudioShell.vue
-ProjectHome.vue
-CreateProjectDialog.vue
-ProjectCard.vue
-ProjectWorkspace.vue
-```
-
-F01 前端已经重新对齐正式深色工作台设计体系；没有任何 F02 上传视频代码。
 
 ---
 
-# 当前数据设计
+# F01 已冻结关键 Contract
 
-应用级 SQLite：
+## 数据库
 
 ```text
 %LOCALAPPDATA%/AI Drama Studio/app.db
 ```
 
-唯一业务表：`projects`。
+F01 唯一业务表：`projects`。
 
-Workspace：
-
-```text
-<workspace_root>/<project_id>/project.json
-```
-
-Project ID：
+冻结字段：
 
 ```text
-PROJECT_<32位UUID4小写hex>
+id
+name
+source_language
+target_language
+target_region
+workspace_path
+project_format_version
+status
+created_at
+last_opened_at
 ```
 
 状态：
@@ -126,59 +97,27 @@ creating
 ready
 ```
 
----
-
-# 创建项目固定选项规则
-
-用户确认：固定格式数据不得继续自由输入，避免写入不规范值。
-
-当前创建项目表单：
+## Project ID
 
 ```text
-source_language  下拉选择，可选“自动识别”
-target_language  下拉选择，必选
-target_region    下拉选择，必选
+PROJECT_<32位UUID4小写hex>
 ```
 
-前端选项集中在：
+## Workspace
 
 ```text
-frontend/src/constants/project-options.ts
+<workspace_root>/<project_id>/project.json
 ```
 
-当前语言代码：
+默认根目录：
 
 ```text
-zh en ja ko es pt fr de id th vi
+%USERPROFILE%/AI Drama Studio Projects/
 ```
 
-当前地区代码：
+`project_format_version = 1`。
 
-```text
-US GB JP KR ES BR FR DE ID TH VN TW SG
-```
-
-前端不再允许用户手写固定代码；后端 `CreateProjectRequest` 同时使用 Literal 白名单进行 API Schema 校验。
-
-绕过前端直接提交 `English / english / USA / 中文` 等非标准值时，API 必须返回 422，并保持统一 error envelope：
-
-```text
-PROJECT_SOURCE_LANGUAGE_UNSUPPORTED
-PROJECT_TARGET_LANGUAGE_UNSUPPORTED
-PROJECT_TARGET_REGION_UNSUPPORTED
-```
-
-新增测试：
-
-```text
-engine/tests/unit/test_project_option_validation.py
-```
-
-规则：以后增加语言/地区时，必须同时更新前端选项、后端白名单和测试，禁止只改一侧。
-
----
-
-# API
+## API
 
 ```text
 GET  /api/health
@@ -187,129 +126,84 @@ POST /api/projects
 POST /api/projects/{project_id}/open
 ```
 
-Controller 只负责 HTTP → Service → Response，不直接 SQL、不 mkdir、不写 `project.json`。
+Controller 只负责 HTTP → Schema → 业务函数 → Response；不得直接 SQL、mkdir、写 `project.json`。
+
+## 固定语言 / 地区
+
+创建项目页面固定使用下拉，不允许自由输入不规范代码。
+
+语言：
+
+```text
+zh en ja ko es pt fr de id th vi
+```
+
+地区：
+
+```text
+US GB JP KR ES BR FR DE ID TH VN TW SG
+```
+
+前端下拉 + 后端白名单双层保护。
+
+## UI
+
+F01 已采用正式深色 AI短剧工厂工作台 Design System：
+
+```text
+StudioShell.vue
+ProjectHome.vue
+CreateProjectDialog.vue
+ProjectCard.vue
+ProjectWorkspace.vue
+```
+
+桌面端字号已经按真实 Windows 1920px 可读性调整；不再以设计稿缩略图 7–10px 正文为实现基准。
 
 ---
 
-# 已验证结果
+# F01 回归基线
 
-## Python / FastAPI
-
-此前重建 F01 工作副本并执行：
+后续共享代码若影响 F01，必须至少回归：
 
 ```text
-python -m compileall engine
-pytest -q
+应用数据路径
+SQLite/Alembic 初始化
+Project ID
+创建项目
+固定语言/地区校验
+Workspace/project.json
+项目列表
+打开项目
+creating 恢复
+CORS 本机开发端口
+前端创建/打开流程
+重启后项目仍存在
 ```
 
-此前完整结果：
+冻结后若必须改变 V1 Contract：
 
 ```text
-29 passed
-```
-
-覆盖旧的路径/DB/ID 测试，以及 Workspace、create/list/open、Recovery、Controller。
-
-本轮新增固定语言/地区 API 测试文件；由于当前工具环境无法直接拉取完整 Git 仓库进行最新完整 pytest，本轮新增测试仍需在用户 Windows / Python 3.11 环境与完整测试一起重跑，不把此前 29 PASS 冒充为本轮新增代码后的完整结果。
-
-## 前端核心 API
-
-- TypeScript strict 基础检查此前通过；
-- 前端 API 与 FastAPI 实际联调此前完成：空列表 → 201 创建 → 列表出现 → `/open` 200；
-- 本轮把语言/地区自由输入改成固定 select，等待用户本机 `npm run typecheck` / `npm run build` 再做最终确认。
-
----
-
-# 2026-08-23 本机运行问题：CORS 预检 400
-
-用户将 FastAPI 改为：
-
-```text
-127.0.0.1:8080
-```
-
-健康检查已经返回 `200 OK`，说明 8080 后端本身正常。
-
-浏览器创建项目时曾出现：
-
-```text
-OPTIONS /api/projects 400 Bad Request
-```
-
-根因：原 CORS 只允许固定 5173；已修正为本机 localhost / 127.0.0.1 任意开发端口，并增加 5174 OPTIONS 回归测试。
-
-前端当前 API 地址：
-
-```text
-http://127.0.0.1:8080
-```
-
----
-
-# 当前尚未完成的验证 Gate
-
-目标环境仍需执行：
-
-```text
-package-lock.json / npm ci
-npm run typecheck
-npm run build
-npm run test
-真实浏览器 UI 验收
-Python 3.11 全量 pytest
-```
-
-因此当前：
-
-```text
-Code Functions = COMPLETE
-Feature = IN_PROGRESS
-READY_FOR_REVIEW = NO
-STABLE/FROZEN = NO
+Change Request
+→ 影响分析
+→ Migration / Adapter / V2
+→ 用户确认
+→ 修改
+→ F01 Regression
 ```
 
 ---
 
-# 当前主要代码
+# 当前下一步
 
 ```text
-engine/app/core/paths.py
-engine/app/core/database.py
-engine/app/core/ids.py
-engine/app/projects.py
-engine/app/main.py
-engine/migrations/versions/0001_create_projects.py
-engine/tests/unit/test_remaining_f01.py
-engine/tests/unit/test_project_option_validation.py
-frontend/package.json
-frontend/.node-version
-frontend/src/constants/project-options.ts
-frontend/src/api/http.ts
-frontend/src/api/projects.ts
-frontend/src/stores/project.ts
-frontend/src/components/StudioShell.vue
-frontend/src/components/CreateProjectDialog.vue
-frontend/src/views/ProjectHome.vue
-frontend/src/views/ProjectWorkspace.vue
+F01 已完成，不再继续修改。
+F02 — 上传原视频 尚未开始。
 ```
 
----
-
-# 下一步唯一动作
-
-不进入 F02。
-
-当前优先：用户本机同步最新 `main`，检查新建项目弹窗中的原片语言 / 目标语言 / 目标地区已经全部变成下拉框，然后执行：
-
-```text
-npm run typecheck
-npm run build
-pytest -q
-```
-
-之后继续创建项目、重启、重新打开的 F01 最终验收。
+只有用户明确要求“开始 F02 / 继续下一阶段”后，才进入 F02 Contract 规划或开发。
 
 ## 最近更新时间
 
-- 日期：2026-08-23 20:54 +08:00
-- 状态：F01 固定格式字段已改为下拉选择 + 后端枚举白名单；等待用户本机同步后完成目标环境验证。
+- 日期：2026-08-23 22:34 +08:00
+- 状态：用户确认 F01 测试通过且无问题；F01 已正式 STABLE / FROZEN；等待用户决定是否开始 F02。
