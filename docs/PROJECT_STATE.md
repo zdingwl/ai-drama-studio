@@ -42,9 +42,18 @@ Feature 01 → 30 的完整顺序见：
 - `docs/TECH_STACK.md`
 - `docs/DATA_AND_FREEZE_RULES.md`
 - `docs/CONTINUATION_PROTOCOL.md`
+- `docs/PROJECT_STATE.md`
 - `templates/FEATURE_SPEC_TEMPLATE.md`
-- `templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md`（待创建/本次规则更新）
-- `templates/SESSION_HANDOFF_TEMPLATE.md`（待创建/本次规则更新）
+- `templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md`
+- `templates/SESSION_HANDOFF_TEMPLATE.md`
+
+跨对话续开发规则已经启用：
+
+- 每个 Feature 维护长期 Feature 文档。
+- 每次实际开发会话创建独立 Session Handoff。
+- 每次开发结束同步更新本文件。
+- 代码与文档属于同一个交付物。
+- Feature 缺少文档更新时不得标记 STABLE。
 
 ## 当前代码状态
 
@@ -72,7 +81,7 @@ Feature 01 正式开发前需要在 Feature Spec 中确定：
 
 ## 下一步唯一推荐动作
 
-> 创建 `docs/features/F01-create-project.md`，使用 `templates/FEATURE_SPEC_TEMPLATE.md` 完成 Feature 01 Contract；用户确认 Contract 后，才开始 Feature 01 编码。
+> 创建 `docs/features/F01-create-project.md`，使用 `templates/FEATURE_SPEC_TEMPLATE.md` 与 `templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md` 定义 Feature 01 Contract；用户确认 Contract 后，才开始 Feature 01 编码。
 
 ## 新对话恢复顺序
 
@@ -86,5 +95,5 @@ Feature 01 正式开发前需要在 Feature Spec 中确定：
 ## 最近一次状态更新
 
 - 日期：2026-08-23
-- 内容：增加“每次开发必须有详细文档、支持跨新对话无损续开发”的强制规则。
+- 内容：跨对话续开发规则、Feature Implementation Log 模板、Session Handoff 模板已加入仓库。
 - 下一步：建立 Feature 01 规格文档。
