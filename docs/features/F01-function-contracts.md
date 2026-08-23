@@ -26,55 +26,17 @@ trim、日期显示、JSON dumps、简单 Path 拼接等只要求名字清楚、
 
 # 2. `get_app_data_path()` — 已完成 / TESTED
 
-文件：
+文件：`engine/app/core/paths.py`
 
-```text
-engine/app/core/paths.py
-```
+**业务作用**：确定 AI Drama Studio 的应用级数据目录。后续 `app.db`、应用日志和应用级配置都从这里定位。
 
-**业务作用**
+**输入来源**：`AI_DRAMA_APP_DATA_DIR`（开发/测试覆盖）或 Windows `LOCALAPPDATA`。
 
-确定 AI Drama Studio 的应用级数据目录。后续 `app.db`、应用日志和应用级配置都从这里定位。
+**副作用**：无，只解析路径。
 
-**为什么独立存在**
+**明确不做**：不 mkdir、不创建 `app.db`、不初始化数据库、不创建 Project Workspace。
 
-应用数据目录是全局基础路径，同时测试必须能改到临时目录。把这条规则集中在一个函数里，可以避免数据库、日志等模块各自猜路径。
-
-**输入来源**
-
-```text
-AI_DRAMA_APP_DATA_DIR  # 开发/测试覆盖
-LOCALAPPDATA            # Windows 正式默认
-```
-
-**输出**
-
-`Path`，例如：
-
-```text
-C:\Users\xxx\AppData\Local\AI Drama Studio
-```
-
-**副作用**
-
-无。只解析路径，不创建目录。
-
-**明确不做**
-
-- 不 mkdir；
-- 不创建 `app.db`；
-- 不初始化数据库；
-- 不创建 Project Workspace。
-
-**异常**
-
-没有覆盖值且缺少 `LOCALAPPDATA` 时抛出明确 `RuntimeError`，不偷偷回退到当前工作目录。
-
-**测试结果**
-
-```text
-4 passed
-```
+**测试结果**：`4 passed`。
 
 ---
 
@@ -89,56 +51,13 @@ engine/migrations/versions/0001_create_projects.py
 engine/tests/unit/test_database.py
 ```
 
-**业务作用**
+**业务作用**：初始化 `<get_app_data_path()>/app.db`，并通过 Alembic `0001_create_projects` 创建 F01 唯一的业务表 `projects`。
 
-初始化 F01 唯一的应用级 SQLite：
+**为什么使用 Alembic**：数据库从第一版就需要可追踪升级历史，开发期初始化和以后正式升级统一走 Migration，不维护第二套 `create_all()` 建表逻辑。
 
-```text
-<get_app_data_path()>/app.db
-```
+**明确不做**：不创建具体 Project、不创建 Workspace、不写 `project.json`、不插入项目记录、不创建后续 Feature 表。
 
-并通过 Alembic `0001_create_projects` 创建 F01 唯一的业务表 `projects`。
-
-**为什么使用 Alembic，而不是临时 `create_all()`**
-
-数据库从第一版开始就需要可追踪升级历史。开发期初始化和以后正式升级统一走 Migration，避免同一个 `app.db` 同时存在两套建表方式。
-
-**实际职责**
-
-- 应用数据目录不存在时创建；
-- 固定数据库文件名为 `app.db`；
-- 调用 Alembic 升级到当前 `head`；
-- 重复调用保持幂等；
-- 返回已经初始化完成的 `app.db` 路径。
-
-**明确不做**
-
-- 不创建具体 Project；
-- 不创建 Project Workspace；
-- 不写 `project.json`；
-- 不插入项目记录；
-- 不创建 Episode、Shot、Character 等后续 Feature 表。
-
-**数据库注释**
-
-`0001_create_projects.py` 已为表用途、字段意义、状态约束和 downgrade 边界写简体中文说明。
-
-当前 `projects` 字段与 F01 Database Dictionary 一致：
-
-```text
-id
-name
-source_language
-target_language
-target_region
-workspace_path
-project_format_version
-status
-created_at
-last_opened_at
-```
-
-**依赖**
+**依赖**：
 
 ```text
 SQLAlchemy==2.0.50
@@ -146,45 +65,81 @@ alembic==1.18.4
 pytest==9.0.2
 ```
 
-记录在：
+**测试结果**：`6 passed`。
+
+覆盖 app.db 创建、字段一致、Alembic revision、重复初始化、非法 status、重复 workspace_path。
+
+---
+
+# 4. `generate_project_id()` — 已完成 / TESTED
+
+文件：
 
 ```text
-engine/requirements.txt
+engine/app/core/ids.py
+engine/tests/unit/test_ids.py
 ```
 
-**实际测试结果**
+**业务作用**
+
+为每个新项目生成一个稳定、与项目名称和路径无关的业务主键：
 
 ```text
-6 passed
+PROJECT_<32位UUID4小写hex>
+```
+
+示例：
+
+```text
+PROJECT_86f767c94f2c4f96a1676ce36f615406
+```
+
+**为什么独立存在**
+
+Project ID 后续会同时用于：
+
+- `projects.id`；
+- Workspace 目录名；
+- 后续 Episode / Shot / Character 等数据归属的上游项目身份。
+
+把 ID 规则集中在一个函数里，可以保证项目改名、素材变化、模型切换都不会改变项目身份。
+
+**为什么使用 UUID4**
+
+F01 是本地单用户工具，不需要为了排序能力引入 ULID、雪花算法等额外依赖。Python 标准库 UUID4 已足够简单，碰撞概率极低；SQLite `projects.id` 主键仍是最终冲突保护。
+
+**输入**：无。
+
+**输出**：字符串 `PROJECT_<UUID4_HEX>`。
+
+**副作用**：无。
+
+**明确不做**
+
+- 不访问数据库；
+- 不检查 ID 是否已存在；
+- 不创建 Workspace；
+- 不读写 `project.json`；
+- 不使用项目名称、视频名称、时间戳或保存路径参与 ID 计算。
+
+**测试结果**：
+
+```text
+3 passed
 ```
 
 覆盖：
 
-- 全新临时目录创建 `app.db`；
-- 只出现 `alembic_version + projects`；
-- projects 10 个字段完全一致；
-- Alembic revision=`0001_create_projects`；
-- 重复初始化安全；
-- 非法 `status` 被数据库拒绝；
-- 重复 `workspace_path` 被数据库拒绝。
+- 固定 `PROJECT_` 前缀；
+- 后缀固定 32 位小写十六进制；
+- 可解析且版本为 UUID4；
+- 连续生成 5000 个 ID 无重复。
 
-当前测试容器 Python 为 3.13.5；项目正式基线仍是 Python 3.11，F01 完整验收前必须在目标 Python 3.11 环境再跑一次完整测试。
+该函数没有新增第三方依赖。
 
 ---
 
-# 4. `generate_project_id()` — 下一函数 / PLANNED
-
-生成：
-
-```text
-PROJECT_<UUID4_HEX>
-```
-
-不使用项目名称、视频名称或模型信息。测试格式和批量唯一性。
-
----
-
-# 5. `create_project_workspace()` — PLANNED
+# 5. `create_project_workspace()` — 下一函数 / PLANNED
 
 **业务作用**
 
@@ -212,11 +167,9 @@ PROJECT_<UUID4_HEX>
 
 这是 F01 的核心业务函数。
 
-**业务作用**
+**业务作用**：把用户的“新建项目”操作变成一个真正可以重新打开的 `ready` 项目。
 
-把用户的“新建项目”操作变成一个真正可以重新打开的 `ready` 项目。
-
-**流程**
+流程：
 
 ```text
 校验输入
@@ -226,8 +179,6 @@ PROJECT_<UUID4_HEX>
 → DB 改 ready
 → 返回项目
 ```
-
-**失败**
 
 Workspace/project.json 创建失败时，不允许首页留下一个可正常显示和打开的假项目。
 
@@ -241,9 +192,7 @@ Workspace/project.json 创建失败时，不允许首页留下一个可正常显
 
 # 8. `open_project()` — PLANNED
 
-**业务作用**
-
-真正进入一个已有项目。
+**业务作用**：真正进入一个已有项目。
 
 必须验证：
 
@@ -255,9 +204,7 @@ project.json 存在且合法
 manifest project_id == DB id
 ```
 
-全部成功后更新 `last_opened_at`。
-
-禁止自动修改或删除损坏的用户 Workspace。
+全部成功后更新 `last_opened_at`。禁止自动修改或删除损坏的用户 Workspace。
 
 ---
 
@@ -290,18 +237,7 @@ create_project_api()
 open_project_api()
 ```
 
-示例注释标准：
-
-```python
-@router.post("/api/projects", status_code=201)
-def create_project_api(request: CreateProjectRequest):
-    """
-    新建项目 HTTP 入口。
-
-    只负责接收前端请求、调用 create_project() 并返回结果。
-    不负责生成 Project ID、创建目录、写 project.json 或执行 SQL。
-    """
-```
+Controller 只负责 HTTP → Service → Response，不负责 Project ID、SQL、目录或 Manifest。
 
 ---
 
@@ -321,8 +257,6 @@ openProject()
 ---
 
 # 13. 单函数开发纪律
-
-当前核心函数按下面方式推进：
 
 ```text
 先解释当前函数
