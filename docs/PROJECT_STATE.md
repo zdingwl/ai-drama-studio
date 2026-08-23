@@ -10,8 +10,8 @@ Official Baseline: main
 Current Working Branch: main（用户未要求切换/新建其它分支）
 Current Feature: F01 — 创建项目
 Feature Status: PLANNED
-F01 Contract: DRAFTED / WAITING_USER_CONFIRMATION
-F01 Function Contracts: DRAFTED / WAITING_USER_CONFIRMATION
+F01 Contract: AUDITED V2 / WAITING_USER_CONFIRMATION
+F01 Function Contracts: AUDITED V2 / WAITING_USER_CONFIRMATION
 Stable Features: none
 Frozen Features: none
 Business Code: not started
@@ -22,23 +22,13 @@ Business DB/Migration: not started
 
 ## Git 操作权限
 
-Git 分支和 PR 结构由用户控制。
+未经用户明确要求，AI / Codex / Agent 不得新建、切换、删除、重命名分支，也不得擅自创建/关闭/合并/重定向 PR。
 
-未经用户明确要求，AI / Codex / Agent 不得：
+当前继续维护 `main` 文档，不创建新分支。
 
-- 新建分支；
-- 自动创建 `feature/*` / `fix/*` / `docs/*` 等分支；
-- 切换、删除或重命名分支；
-- force update / 移动 branch ref；
-- 擅自创建、关闭、合并或重定向 PR。
+---
 
-当前用户已经明确要求：**不要擅自新建分支。**
-
-因此 F01 当前直接在用户指定的 `main` 维护文档；只有用户后续明确要求其它 Git 结构动作时才执行。
-
-详细规则：`AGENTS.md` 与 `SKILL.md` 第 28 节。
-
-## F01 Contract 已建立
+# F01 当前权威文档
 
 主 Contract：
 
@@ -46,227 +36,124 @@ Git 分支和 PR 结构由用户控制。
 docs/features/F01-create-project.md
 ```
 
-单函数详细职责字典：
+单函数职责：
 
 ```text
 docs/features/F01-function-contracts.md
 ```
 
-通用单函数模板：
+通用模板：
 
 ```text
 templates/FUNCTION_CONTRACT_TEMPLATE.md
 ```
 
-F01 被定义为：
+新对话恢复 F01 时必须同时读取主 Contract + Function Contracts。
 
-> 建立 Project 容器、应用级项目注册、Workspace、`project.json`、重启恢复；不涉及任何视频或 AI。
+---
 
-当前建议的关键设计（等待用户确认）：
+# F01 第二轮函数审核结果
 
-```text
-1. 应用级单 SQLite：app.db
-2. 默认 Workspace Root：%USERPROFILE%/AI Drama Studio Projects
-3. Project ID：PROJECT_<UUID4_HEX>
-4. Project Workspace：<root>/<project_id>/
-5. F01 只创建 project.json，不提前创建媒体目录
-6. 浏览器开发期自定义存储位置使用文本路径；Electron 后续再接原生目录选择器
-7. F01 不做删除/重命名/归档/导入导出
-8. project_format_version = 1
-9. Project lifecycle = creating → ready；创建中断通过 startup recovery 恢复
-```
+本轮不再把“所有小 helper”都升级成正式单函数 Contract。
 
-用户确认前不得把 F01 标记 `IN_PROGRESS`，不得开始业务代码。
-
-## F01 单函数开发方式
-
-原函数顺序见：
+函数分三级：
 
 ```text
-docs/features/F01-create-project.md
+A级：核心业务 / Controller / DB-File状态变化 / Recovery
+→ 完整 Function Contract
+
+B级：Repository / Manifest / Frontend API / Store / 业务语义 helper
+→ 简化 Contract
+
+C级：日期格式、JSON小helper、表单reset、简单导航等
+→ 代码中文注释 + 必要测试，不单独写大段规格
 ```
 
-每个函数的详细业务作用、调用关系、输入输出、副作用、禁止行为、异常和测试见：
+主要调整：
 
 ```text
-docs/features/F01-function-contracts.md
+1. 删除 build_database_url() 正式 Contract。
+2. 删除 serialize_project_manifest() 正式函数。
+3. final/staging 两个路径函数合并为 build_project_paths()。
+4. validate_workspace_root() 改为 prepare_workspace_root()，明确它会创建目录/做写权限探针。
+5. ensure_database_schema() 改为 run_database_migrations()，明确会修改 Schema。
+6. create_app() 与 application_lifespan() 拆开。
+7. health_endpoint() 归 API 层。
+8. Repository 不再 commit/rollback，事务边界由 Service/Recovery 控制。
+9. 删除 F01 GET /projects/{id} 详情链路。
+10. 卡片点击、刷新、直接 URL 全部统一 POST /projects/{id}/open。
+11. openExistingProject + loadCurrentProject 合并为 openProjectById。
+12. loadRecentProjects 不再顺带请求 Project Defaults。
+13. Defaults 只在新建 Dialog 打开时懒加载。
+14. final Workspace 发布后，后续失败禁止自动删除 final。
+15. 新增 PROJECT_CREATE_FINALIZATION_PENDING 错误语义。
 ```
 
-以后仅列函数名和一句“单一职责”不视为完成规划。
-
-每个函数正式开发前必须能够回答：
+## 重要事务边界
 
 ```text
-1. 解决什么真实业务问题？
-2. 为什么需要独立成函数？
-3. 谁调用它？
-4. 它调用哪些下层函数？
-5. 输入是什么、谁保证输入合法？
-6. 输出是什么？
-7. 会修改 DB / 文件 / 前端状态吗？
-8. 明确禁止修改什么？
-9. 会抛哪些业务异常？
-10. 对应哪些测试？
+DB creating + COMMIT #1
+→ staging / manifest
+→ staging rename final          # FILE PUBLISH POINT
+→ DB ready + COMMIT #2
 ```
 
-执行原则：
+发布前失败可以安全回滚 staging + creating row。
+
+发布后失败：
 
 ```text
-函数 Contract 明确
-→ 函数实现
-→ 对应测试
-→ PASS
-→ 下一个函数
+保留 final
+保留 creating row
+返回 FINALIZATION_PENDING
+交给 startup recovery
 ```
 
-分组：
+禁止为了“回滚干净”删除已经发布的 final Project Workspace。
+
+---
+
+# F01 仍待用户确认的 12 项
 
 ```text
-Backend Foundation
-→ Project Validation / ID / Paths
-→ Manifest
-→ Repository
-→ Recovery / Service
-→ API Controller
-→ Frontend API / Store
-→ Frontend UI
-→ 前后端联调
-→ Restart / Recovery
-→ READY_FOR_REVIEW
-→ 用户验收
+1. 应用级单 SQLite app.db。
+2. 默认 Workspace Root = %USERPROFILE%/AI Drama Studio Projects。
+3. Project ID = PROJECT_<UUID4_HEX>。
+4. Final Workspace = <root>/<project_id>/。
+5. F01 只创建 project.json，不提前创建媒体目录。
+6. 浏览器开发期自定义路径使用文本输入。
+7. F01 暂不做删除/重命名/归档/导入导出。
+8. project_format_version = 1。
+9. lifecycle 仍为 creating/ready；invalid-final 自动恢复不了时保留 creating + 日志，F01 不做 repair UI。
+10. 所有进入 Workspace 的动作统一走 POST /open，并允许更新 last_opened_at。
+11. Create Project 成功 HTTP Status = 201 Created。
+12. final Workspace 一旦发布，后续失败不得自动删除，由 startup recovery 完成 DB finalization。
 ```
 
-禁止一次把整个 F01 堆完后再统一测试。
-
-## Controller 层特别规则
-
-Controller / Endpoint 是 HTTP 边界层，只允许：
+用户确认前：
 
 ```text
-读取 HTTP 输入
-→ Schema 校验
-→ 调用 Service
-→ 返回 DTO
-→ 映射 Domain Error
+不得把 F01 改为 IN_PROGRESS
+不得开始业务代码
+不得实现 F02
 ```
 
-Controller 禁止：
+---
 
-- 直接 SQL；
-- mkdir；
-- 读写 project.json；
-- 生成 Project ID；
-- 拼 Workspace 路径；
-- 编写创建事务和 Recovery；
-- 把 Service 业务逻辑复制进路由函数。
-
-## Approved Production Flow
-
-当前正式流程 = **35 Features**。
-
-完整说明：`docs/FEATURE_SEQUENCE.md`。
-
-关键新增/修正：
-
-- F18 AI 翻译与本土化对白；
-- F19 目标对白人工确认；
-- F20 目标对白时长约束；
-- F31 最终音频组装与混音；
-- F32 最终字幕组装；
-- F14 AI Casting 必须输出 Casting Profile + Candidates；
-- F01 从第一版保存 `project_format_version`。
-
-## 时间域
-
-```text
-Source Timeline     = 原片分析证据时间
-Shot-local Time     = 单 Shot 内部生产时间
-Production Timeline = 最终重制成片时间
-```
-
-Source 与 Production 不假设时长恒等。
-
-业务权威时间使用 integer microseconds。
-
-详细：`docs/MEDIA_TIMEBASE_CONTRACT.md`。
-
-## Feature 开发流程
-
-```text
-Contract
-→ Current Feature Tests
-→ Affected Stable Regression
-→ 真实素材测试
-→ READY_FOR_REVIEW
-→ 用户人工验收
-→ STABLE/FROZEN
-→ 下一 Feature
-```
-
-AI / Codex / Agent 只能自行推进到 `READY_FOR_REVIEW`。
-
-只有用户明确确认验收通过后才能 `STABLE/FROZEN`。
-
-## 文档权威顺序
-
-```text
-用户最新明确确认并写入仓库的决策
-→ Stable/Frozen Feature Contract
-→ SKILL.md + 适用全局/P0规则
-→ 当前 Feature Contract
-→ PROJECT_STATE
-→ 最新 Session Handoff
-→ 历史 Session / 旧讨论
-```
-
-## 当前核心工程规则
-
-- Dependency / Revision / Invalidation / Stale；
-- Source / Shot-local / Production Timebase；
-- Environment Baseline / Dependency Lock；
-- SQLite + File Recovery / Migration；
-- Provider idempotency / resume / duplicate-charge protection；
-- Simplified-Chinese code/database business comments；
-- Database Dictionary；
-- Stable Feature Regression；
-- Cross-conversation documentation continuity；
-- 单函数 Function Contract：业务意义/调用关系/副作用/异常/测试必须明确。
-
-## 当前技术方案
+# 当前技术方案
 
 ```text
 Frontend: Vue 3 + TypeScript + Vite + Pinia
-Backend: Python 3.11 + FastAPI + PyTorch
-Media: FFmpeg / FFprobe + OpenCV
+Backend: Python 3.11 + FastAPI
 Data: SQLite + SQLAlchemy + Alembic + Local Filesystem
-Desktop: Electron（后置）
-GPU: RTX 4060 Ti 16GB，开发期 concurrency = 1
-Strong VLM / Video / Premium TTS / Premium LipSync: Provider Adapter API
+Desktop: Electron 后置
 ```
 
-F01 实现时只安装 F01 实际需要的最小依赖；PyTorch/CUDA/OpenCV/AI 模型不在 F01 提前安装。
+F01 只安装本 Feature 真正需要的依赖，不提前安装 PyTorch/CUDA/OpenCV/AI 模型。
 
-## 当前代码/数据状态
+---
 
-- F01 主 Contract 文档已创建；
-- F01 单函数详细职责字典已创建；
-- 通用 Function Contract 模板已创建；
-- 无正式业务代码；
-- 无业务数据库；
-- 无 Migration；
-- 无 Stable/Frozen Feature。
-
-## 当前阻塞项
-
-唯一阻塞：
-
-> 等待用户审核 F01 主 Contract + Function Contracts，并确认关键设计后再进入编码。
-
-## 已知 Bug
-
-无业务代码，暂无运行 Bug。
-
-## 新对话最短恢复路径
+# 新对话最短恢复路径
 
 ```text
 AGENTS.md
@@ -274,17 +161,16 @@ AGENTS.md
 → docs/PROJECT_STATE.md
 → docs/features/F01-create-project.md
 → docs/features/F01-function-contracts.md
-→ 最新相关 Session Handoff
-→ 按 F01 Rule References 读取必要详细规范
+→ 最新 F01 Session Handoff
 ```
 
-不要无差别读取整个 `docs/`，也不要要求用户重新解释已记录的需求和技术决定。
+---
 
-## 下一步唯一动作
+# 下一步唯一动作
 
-> 用户审核 F01 主 Contract 与详细单函数职责。确认后把 F01 状态从 `PLANNED` 改为 `IN_PROGRESS`，然后从 B01 开始，每次严格按 Function Contract → 实现 → 测试 → PASS 的顺序开发；不擅自新建分支，不实现 F02。
+> 用户继续审核并确认 F01 V2 Contract 的 12 项关键决策。确认后将 F01 改为 `IN_PROGRESS`，再从 `INF-01 resolve_app_data_dir()` 开始正式编码和对应测试。
 
 ## 最近更新时间
 
-- 日期：2026-08-23 15:43 +08:00
-- 状态：补充 F01 单函数详细职责、Controller 边界和通用 Function Contract 模板，仍未开始业务编码。
+- 日期：2026-08-23 15:48 +08:00
+- 状态：完成 F01 第二轮函数职责审核与精简，仍未开始业务代码。
