@@ -1,0 +1,128 @@
+/*
+ * AI Drama Studio 桌面端可读性字号规范。
+ *
+ * 之前 styles.css 为了贴近缩略版设计稿，很多正文被压到 7–10px，
+ * 在真实 1920px Windows 桌面上阅读负担过大。
+ * 本文件只修正字号与少量行高，不改变 F01 页面结构、颜色和业务交互。
+ *
+ * 规则：
+ * - 主导航/按钮/正文：13–14px；
+ * - 辅助信息：原则上不低于 11–12px；
+ * - 技术型 Project ID：最低 10–11px；
+ * - 页面标题：20px+。
+ */
+
+body {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ---------- 左侧导航 ---------- */
+.brand-mark-core { font-size: 13px; }
+.brand-copy strong { font-size: 17px; }
+.brand-copy span { font-size: 11px; }
+.nav-item { font-size: 14px; }
+.nav-soon { font-size: 11px; }
+.project-nav-title > span { font-size: 11px; }
+.project-nav-title strong { font-size: 13px; }
+.project-flow-item { font-size: 13px; }
+.flow-number { font-size: 11px; }
+.local-badge strong { font-size: 12px; }
+.local-badge span:not(.status-dot) { font-size: 10px; line-height: 1.45; }
+
+/* ---------- 顶部工具栏 ---------- */
+.page-heading h1 { font-size: 22px; }
+.page-heading p { font-size: 12px; }
+.top-search input { font-size: 13px; }
+.avatar-button { font-size: 12px; }
+.primary-button,
+.secondary-button,
+.ghost-button { font-size: 13px; }
+.button-plus { font-size: 16px; }
+
+/* ---------- 首页统计与项目卡片 ---------- */
+.stat-icon { font-size: 17px; }
+.stat-copy > span { font-size: 13px; }
+.stat-copy strong { font-size: 29px; }
+.stat-copy small { font-size: 11px; }
+.section-heading h2 { font-size: 16px; }
+.section-heading p { font-size: 12px; }
+.section-count,
+.progress-summary { font-size: 11px; }
+.project-title-row strong { font-size: 14px; }
+.locale-chip { font-size: 10px; }
+.locale-chip.large { font-size: 11px; }
+.project-meta-row { font-size: 11px; }
+.project-id { font-size: 10px; line-height: 1.45; }
+.project-card-footer { font-size: 10px; }
+.project-status { font-size: 10px; }
+.project-arrow { font-size: 12px; }
+.empty-workbench h3,
+.empty-search strong { font-size: 16px; }
+.empty-workbench p,
+.empty-search p { font-size: 12px; }
+.inline-alert strong { font-size: 12px; }
+.inline-alert p { font-size: 11px; }
+.local-feature-list > div > span { font-size: 10px; }
+.local-feature-list strong { font-size: 12px; }
+.local-feature-list p { font-size: 11px; }
+.online-chip,
+.workspace-status-chip { font-size: 11px; }
+.quick-action strong { font-size: 13px; }
+.quick-action small { font-size: 11px; }
+.quick-action b { font-size: 15px; }
+
+/* ---------- 新建项目弹窗 ---------- */
+.dialog-eyebrow,
+.panel-eyebrow { font-size: 9px; }
+.dialog-header h2 { font-size: 22px; }
+.dialog-header p { font-size: 12px; }
+.create-project-type strong { font-size: 13px; }
+.create-project-type p { font-size: 11px; }
+.selected-chip { font-size: 10px; }
+.form-section-title > span { font-size: 10px; }
+.form-section-title strong { font-size: 13px; }
+.form-section-title small { font-size: 11px; }
+.field > span { font-size: 12px; }
+.field > small { font-size: 11px; line-height: 1.45; }
+.field input { font-size: 13px; }
+.input-with-prefix i { font-size: 11px; }
+.default-path-chip { font-size: 10px; }
+.dialog-security-note { font-size: 11px; }
+
+/* ---------- 项目总览 / Workspace ---------- */
+.workspace-loading strong { font-size: 15px; }
+.workspace-loading p { font-size: 12px; }
+.workspace-error-panel h2 { font-size: 20px; }
+.workspace-error-panel p { font-size: 13px; }
+.project-hero-title h2 { font-size: 24px; }
+.hero-info-grid span { font-size: 11px; }
+.hero-info-grid strong { font-size: 13px; }
+.hero-ready { font-size: 10px; }
+.process-step strong { font-size: 12px; }
+.process-step small { font-size: 11px; }
+.step-node { font-size: 10px; }
+.workspace-path-card span:not(.path-icon) { font-size: 11px; }
+.workspace-path-card strong { font-size: 11px; line-height: 1.5; }
+.manifest-row span { font-size: 11px; }
+.manifest-row strong { font-size: 12px; }
+.next-step-icon { font-size: 11px; }
+.next-step-panel h2 { font-size: 17px; }
+.next-step-panel > p { font-size: 12px; line-height: 1.75; }
+.next-step-note strong { font-size: 12px; }
+.next-step-note small { font-size: 11px; line-height: 1.55; }
+
+/* 1920px 桌面端保持信息密度，但不牺牲可读性。 */
+@media (min-width: 1400px) {
+  .studio-sidebar { width: auto; }
+  .project-flow-item { min-height: 38px; }
+  .hero-info-grid > div { padding: 12px; }
+  .manifest-row > div { padding: 11px; }
+}
+
+/* 窄屏可以略微收紧，但仍不回退到 7–9px。 */
+@media (max-width: 900px) {
+  .page-heading h1 { font-size: 20px; }
+  .section-heading h2 { font-size: 15px; }
+  .project-title-row strong { font-size: 13px; }
+}
