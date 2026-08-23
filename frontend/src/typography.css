@@ -89,6 +89,8 @@ body {
 .input-with-prefix i { font-size: 11px; }
 .default-path-chip { font-size: 10px; }
 .dialog-security-note { font-size: 11px; }
+/* CreateProjectDialog 内 select 有 scoped 样式，因此这里显式覆盖旧的 10px。 */
+.select-with-prefix select { font-size: 13px !important; }
 
 /* ---------- 项目总览 / Workspace ---------- */
 .workspace-loading strong { font-size: 15px; }
