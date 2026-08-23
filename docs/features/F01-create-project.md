@@ -23,7 +23,8 @@ Working Branch: main
 
 ```text
 [PASS] get_app_data_path()
-[NEXT] init_database()
+[PASS] init_database()
+[NEXT] generate_project_id()
 ```
 
 ---
@@ -207,7 +208,7 @@ CHECK(status IN ('creating', 'ready'))
 
 项目名称不唯一。
 
-SQLite 原生 COMMENT 能力有限，因此 SQLAlchemy 中文说明 + Migration 中文说明 + 本 Database Dictionary 共同构成字段说明。
+SQLite 原生 COMMENT 能力有限，因此 Migration 中文说明 + 本 Database Dictionary 共同构成字段说明；后续增加 SQLAlchemy Model 时必须继续保持一致。
 
 ---
 
@@ -307,15 +308,15 @@ PROJECT_MANIFEST_INVALID
 后端控制在约 9 个核心函数：
 
 ```text
-1. get_app_data_path()
-2. init_database()
-3. generate_project_id()
-4. create_project_workspace()
-5. create_project()
-6. list_projects()
-7. open_project()
-8. recover_creating_projects()
-9. create_app()
+1. get_app_data_path()             [PASS]
+2. init_database()                 [PASS]
+3. generate_project_id()           [NEXT]
+4. create_project_workspace()      [PLANNED]
+5. create_project()                [PLANNED]
+6. list_projects()                 [PLANNED]
+7. open_project()                  [PLANNED]
+8. recover_creating_projects()     [PLANNED]
+9. create_app()                    [PLANNED]
 ```
 
 Controller：
@@ -357,7 +358,7 @@ openProject()
 
 Controller 必须明确写出“不负责什么”。
 
-SQLAlchemy Model、字段和 Migration 必须有简体中文业务解释，不能只翻译字段名。
+数据库 Migration 必须为表和字段写简体中文业务解释，不能只翻译字段名。
 
 ---
 
@@ -418,36 +419,65 @@ creating / ready 状态含义
 
 ## 2026-08-23 — `get_app_data_path()`
 
-实现文件：
+实现：`engine/app/core/paths.py`  
+测试：`engine/tests/unit/test_paths.py`
 
-```text
-engine/app/core/paths.py
-```
-
-测试：
-
-```text
-engine/tests/unit/test_paths.py
-```
-
-覆盖：
-
-- `AI_DRAMA_APP_DATA_DIR` 覆盖优先；
-- 未覆盖时使用 `%LOCALAPPDATA%/AI Drama Studio`；
-- 空白覆盖值忽略；
-- 无法解析路径时明确失败；
-- 函数只解析路径，不偷偷创建目录。
-
-本地测试结果：
+结果：
 
 ```text
 4 passed
 ```
 
-说明：当前执行容器为 Python 3.13.5，仅用于本函数逻辑测试；项目正式环境基线仍按 Python 3.11，后续正式验收必须在目标环境再跑完整测试。
+覆盖测试/开发覆盖路径、Windows 默认路径、空白覆盖值、缺少环境路径时明确失败，并确认函数本身不创建目录。
+
+## 2026-08-23 — `init_database()`
+
+实现：
+
+```text
+engine/app/core/database.py
+engine/migrations/env.py
+engine/migrations/versions/0001_create_projects.py
+```
+
+测试：
+
+```text
+engine/tests/unit/test_database.py
+```
+
+新增最小依赖：
+
+```text
+SQLAlchemy==2.0.50
+alembic==1.18.4
+pytest==9.0.2
+```
+
+记录：`engine/requirements.txt`。
+
+数据库初始化统一走 Alembic，不使用临时 `create_all()`。
+
+本地实际测试：
+
+```text
+6 passed
+```
+
+测试覆盖：
+
+- 全新目录能创建 `app.db`；
+- 只创建 `alembic_version` 和 `projects`；
+- projects 10 个字段与 Database Dictionary 一致；
+- revision=`0001_create_projects`；
+- 重复调用安全；
+- 非法 status 被拒绝；
+- 重复 workspace_path 被拒绝。
+
+当前测试容器为 Python 3.13.5；项目正式基线仍为 Python 3.11，F01 完整验收前必须在目标 Python 3.11 环境重跑全部测试。
 
 下一函数：
 
 ```text
-init_database()
+generate_project_id()
 ```
