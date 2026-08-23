@@ -14,7 +14,7 @@ F01 Contract: CONFIRMED
 Stable Features: none
 Frozen Features: none
 Business Code: started
-Business DB/Migration: not started
+Business DB/Migration: started
 ```
 
 `main` 是唯一正式 Source of Truth。
@@ -34,7 +34,7 @@ docs/features/F01-create-project.md
 docs/features/F01-function-contracts.md
 ```
 
-简化版 F01 已由用户确认，不再等待 Contract 确认。
+简化版 F01 已由用户确认。
 
 ---
 
@@ -62,11 +62,7 @@ docs/features/F01-function-contracts.md
 %LOCALAPPDATA%/AI Drama Studio/app.db
 ```
 
-只建一张业务表：
-
-```text
-projects
-```
+只建一张业务表：`projects`。
 
 字段：
 
@@ -106,12 +102,12 @@ Controller 只负责 HTTP → Service → Response，不直接 SQL、不 mkdir�
 
 ---
 
-# F01 核心函数
+# F01 核心函数进度
 
 ```text
 1. get_app_data_path()             [TESTED / PASS]
-2. init_database()                 [NEXT]
-3. generate_project_id()           [PLANNED]
+2. init_database()                 [TESTED / PASS]
+3. generate_project_id()           [NEXT]
 4. create_project_workspace()      [PLANNED]
 5. create_project()                [PLANNED]
 6. list_projects()                 [PLANNED]
@@ -120,7 +116,7 @@ Controller 只负责 HTTP → Service → Response，不直接 SQL、不 mkdir�
 9. create_app()                    [PLANNED]
 ```
 
-前端主要动作：
+前端主要动作仍未开始：
 
 ```text
 apiRequest()
@@ -133,30 +129,8 @@ openProject()
 
 # 已完成：get_app_data_path()
 
-实现：
-
-```text
-engine/app/core/paths.py
-```
-
-测试：
-
-```text
-engine/tests/unit/test_paths.py
-```
-
-pytest 配置：
-
-```text
-pyproject.toml
-```
-
-函数语义：
-
-- 测试/开发可用 `AI_DRAMA_APP_DATA_DIR` 覆盖；
-- 正式 Windows 默认 `%LOCALAPPDATA%/AI Drama Studio`；
-- 只解析路径，不 mkdir；
-- 无法确定位置时明确失败，不偷偷写到当前目录。
+实现：`engine/app/core/paths.py`  
+测试：`engine/tests/unit/test_paths.py`
 
 实际测试：
 
@@ -164,7 +138,53 @@ pyproject.toml
 4 passed
 ```
 
-测试容器 Python 为 3.13.5，仅证明当前纯路径函数逻辑通过；项目正式环境基线仍是 Python 3.11，F01 完整验收前必须在目标环境再跑完整测试。
+---
+
+# 已完成：init_database()
+
+实现：
+
+```text
+engine/app/core/database.py
+engine/migrations/env.py
+engine/migrations/versions/0001_create_projects.py
+```
+
+测试：
+
+```text
+engine/tests/unit/test_database.py
+```
+
+依赖：
+
+```text
+SQLAlchemy==2.0.50
+alembic==1.18.4
+pytest==9.0.2
+```
+
+记录在：`engine/requirements.txt`。
+
+关键规则：
+
+- `init_database()` 统一通过 Alembic 初始化/升级 `app.db`；
+- 不使用另一套 `create_all()` 建表逻辑；
+- F01 当前只创建 `projects` 一张业务表；
+- Migration 中为表用途和每个字段写简体中文业务说明；
+- `status` 由 DB CHECK 约束为 `creating/ready`；
+- `workspace_path` 由 DB UNIQUE 约束防止两个项目指向同一个目录；
+- 重复调用 `init_database()` 安全。
+
+实际测试：
+
+```text
+6 passed
+```
+
+覆盖 app.db 创建、字段一致、Alembic revision、重复初始化、非法 status、重复 workspace_path。
+
+当前测试容器 Python 为 3.13.5；项目正式环境基线仍为 Python 3.11。F01 完整验收前必须在目标 Python 3.11 环境重跑全部测试。
 
 ---
 
@@ -174,17 +194,22 @@ pyproject.toml
 
 ```text
 engine/app/core/paths.py
+engine/app/core/database.py
+engine/migrations/env.py
+engine/migrations/versions/0001_create_projects.py
 engine/tests/unit/test_paths.py
+engine/tests/unit/test_database.py
+engine/requirements.txt
 pyproject.toml
 ```
 
-尚未存在：
+尚未实现：
 
 ```text
-app.db
-projects Model
-Migration
-FastAPI app
+Project ID 生成函数
+Project Workspace / project.json
+Project create/list/open 业务
+FastAPI app / Controller
 Vue frontend
 ```
 
@@ -215,11 +240,11 @@ AI / Agent 最多把 F01 推进到 `READY_FOR_REVIEW`；只有用户明确验收
 
 # 下一步唯一动作
 
-> 开发 `init_database()`：只完成 F01 的应用级 SQLite 初始化和 `projects` 表，不创建 Project Workspace，不写 project.json，不创建 F02 以后才需要的表。
+> 开发 `generate_project_id()`：只生成稳定 `PROJECT_<UUID4_HEX>` Project ID 并测试格式/唯一性，不创建 Workspace、不写数据库记录、不实现后续业务。
 
 不擅自新建分支，不实现 F02。
 
 ## 最近更新时间
 
-- 日期：2026-08-23 16:18 +08:00
-- 状态：用户已确认简化版 F01 Contract；F01 正式进入 IN_PROGRESS；第一个核心函数 `get_app_data_path()` 已实现并通过 4 个单测。
+- 日期：2026-08-23 16:24 +08:00
+- 状态：F01 持续 IN_PROGRESS；`get_app_data_path()` 4/4 PASS；`init_database()` 6/6 PASS；下一函数 `generate_project_id()`。
