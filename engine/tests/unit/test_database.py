@@ -1,0 +1,141 @@
+"""F01 init_database() 数据库初始化测试。"""
+
+from pathlib import Path
+import sqlite3
+
+from engine.app.core.database import init_database
+
+EXPECTED_PROJECT_COLUMNS = {
+    "id",
+    "name",
+    "source_language",
+    "target_language",
+    "target_region",
+    "workspace_path",
+    "project_format_version",
+    "status",
+    "created_at",
+    "last_opened_at",
+}
+
+
+def _read_table_names(database_path: Path) -> set[str]:
+    """读取当前 SQLite 的表名；只用于验证 F01 没有提前创建其它业务表。"""
+
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    return {row[0] for row in rows}
+
+
+def _insert_project(
+    connection: sqlite3.Connection,
+    project_id: str,
+    workspace_path: str,
+    status: str = "ready",
+) -> None:
+    """测试辅助：插入最小项目记录，用于验证数据库约束。"""
+
+    connection.execute(
+        """
+        INSERT INTO projects (
+            id, name, source_language, target_language, target_region,
+            workspace_path, project_format_version, status, created_at, last_opened_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            project_id,
+            "测试项目",
+            "zh",
+            "en",
+            "US",
+            workspace_path,
+            1,
+            status,
+            "2026-08-23T08:00:00+00:00",
+            None,
+        ),
+    )
+
+
+def test_init_database_creates_app_db_and_projects_table(tmp_path: Path) -> None:
+    """首次初始化必须只得到 Alembic 版本表和 F01 的 projects 业务表。"""
+
+    app_data_dir = tmp_path / "app-data"
+    database_path = init_database(app_data_dir)
+
+    assert database_path == (app_data_dir / "app.db").resolve()
+    assert database_path.is_file()
+    assert _read_table_names(database_path) == {"alembic_version", "projects"}
+
+
+def test_init_database_creates_exact_f01_project_columns(tmp_path: Path) -> None:
+    """projects 字段必须与已确认的 F01 Database Dictionary 完全一致。"""
+
+    database_path = init_database(tmp_path / "app-data")
+
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute("PRAGMA table_info(projects)").fetchall()
+
+    assert {row[1] for row in rows} == EXPECTED_PROJECT_COLUMNS
+
+
+def test_init_database_records_initial_alembic_revision(tmp_path: Path) -> None:
+    """数据库必须记录 0001 revision，确保后续升级可追踪。"""
+
+    database_path = init_database(tmp_path / "app-data")
+
+    with sqlite3.connect(database_path) as connection:
+        revision = connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone()
+
+    assert revision == ("0001_create_projects",)
+
+
+def test_init_database_is_safe_to_run_more_than_once(tmp_path: Path) -> None:
+    """软件多次启动时重复初始化不能重复建表或损坏数据库。"""
+
+    app_data_dir = tmp_path / "app-data"
+    first_path = init_database(app_data_dir)
+    second_path = init_database(app_data_dir)
+
+    assert second_path == first_path
+    assert _read_table_names(second_path) == {"alembic_version", "projects"}
+
+
+def test_projects_table_rejects_invalid_status(tmp_path: Path) -> None:
+    """F01 的 status 只允许 creating / ready，非法状态必须由数据库兜底拒绝。"""
+
+    database_path = init_database(tmp_path / "app-data")
+
+    with sqlite3.connect(database_path) as connection:
+        try:
+            _insert_project(
+                connection,
+                "PROJECT_A",
+                "C:/projects/a",
+                status="broken",
+            )
+        except sqlite3.IntegrityError:
+            pass
+        else:
+            raise AssertionError("projects.status 必须只允许 creating / ready")
+
+
+def test_projects_table_rejects_duplicate_workspace_path(tmp_path: Path) -> None:
+    """两个项目不能同时指向同一个 Workspace 路径。"""
+
+    database_path = init_database(tmp_path / "app-data")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_project(connection, "PROJECT_A", "C:/projects/same")
+        connection.commit()
+
+        try:
+            _insert_project(connection, "PROJECT_B", "C:/projects/same")
+        except sqlite3.IntegrityError:
+            pass
+        else:
+            raise AssertionError("不同项目不能指向同一个 workspace_path")
