@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     title: string
     subtitle?: string
@@ -20,13 +20,12 @@ const route = useRoute()
 const router = useRouter()
 
 const isHome = computed(() => route.path === '/')
-
-const globalNav = [
-  { label: '工作台', icon: 'home', enabled: true, active: () => isHome.value },
-  { label: '项目管理', icon: 'projects', enabled: true, active: () => !isHome.value },
-  { label: '任务中心', icon: 'tasks', enabled: false },
-  { label: '资产中心', icon: 'assets', enabled: false },
-]
+const globalNav = computed(() => [
+  { label: '工作台', icon: 'home', enabled: true, active: isHome.value },
+  { label: '项目管理', icon: 'projects', enabled: true, active: !isHome.value },
+  { label: '任务中心', icon: 'tasks', enabled: false, active: false },
+  { label: '资产中心', icon: 'assets', enabled: false, active: false },
+])
 
 const projectNav = [
   { label: '项目总览', step: '01', enabled: true },
@@ -64,7 +63,7 @@ function goGlobal(label: string): void {
           :key="item.label"
           type="button"
           class="nav-item"
-          :class="{ active: item.active?.(), disabled: !item.enabled }"
+          :class="{ active: item.active, disabled: !item.enabled }"
           :disabled="!item.enabled"
           @click="goGlobal(item.label)"
         >
