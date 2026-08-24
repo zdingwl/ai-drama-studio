@@ -3,39 +3,47 @@
 Status: CONFIRMED  
 Official Baseline: `main`
 
-> 本文件定义 **用户真正看到和操作的生产流程**。
-> `docs/FEATURE_SEQUENCE.md` 中的 Feature 继续作为内部工程能力、数据 Contract 和回归边界，但不再要求 `一个 Feature = 一个页面 = 用户点一次`。
+> 本文件定义用户真正看到和操作的生产流程。
+> 内部 Feature 继续作为工程能力、数据 Contract 和回归边界，但不再要求 `一个 Feature = 一个页面 = 用户点一次`。
+> 所有 Workflow 的重跑/历史/回退规则必须同时遵守 `docs/WORKFLOW_RUN_VERSIONING.md`。
 
 ---
 
 # 1. 核心原则
 
-正式原则：
-
 ```text
-Feature = 内部工程职责 / 数据边界
-Workflow = 用户操作步骤
+Feature  = 内部工程职责 / 数据边界
+Workflow = 用户生产步骤
 ```
 
-禁止继续使用：
-
-```text
-一个后端模块
-= 一个导航
-= 一个页面
-= 一次用户操作
-```
-
-正确方式：
+正确结构：
 
 ```text
 多个内部能力
 → Workflow Orchestrator
-→ 一个用户动作
-→ 一个连续工作区
+→ 一个连续用户工作区
 ```
 
-内部模块仍保持单一职责，用户流程必须尽量少步骤、少初始化、少技术概念。
+第二条同等重要的硬规则：
+
+```text
+任何 Workflow 都不能只执行一次。
+```
+
+必须支持：
+
+```text
+首次执行
+重新执行
+生成新 Run / Revision
+保留历史
+新版本成功后切换 current
+失败保留旧 current
+下游 stale
+版本历史 / 回退
+```
+
+“确认”只锁定当前 Revision，不允许锁死整个 Workflow。
 
 ---
 
@@ -48,24 +56,24 @@ V1 用户主流程固定为：
 ↓
 02 拉片
 ↓
-03 人物对白
+03 资产提取
 ↓
-04 剧本 / 重制设计
+04 人物对白
 ↓
-05 生成制作
+05 剧本 / 重制设计
 ↓
-06 最终合成 / 导出
+06 生成制作
+↓
+07 最终合成 / 导出
 ```
 
-左侧导航、项目总览和“下一步”按钮以后全部按照 Workflow，而不是按内部 Feature 编号组织。
+左侧导航、项目总览和“下一步”按钮全部按 Workflow 组织。
 
 ---
 
 # 3. Workflow 01 — 导入原片
 
-## 用户动作
-
-用户只操作一次：
+用户一次提交：
 
 ```text
 项目名称
@@ -78,273 +86,363 @@ V1 用户主流程固定为：
 [创建并导入]
 ```
 
-## 系统内部一次完成
+内部：
 
 ```text
-create_project()
-↓
-import_source_video()
-↓
-FFprobe / Source metadata
-↓
-preprocess_source_video()
-↓
-proxy.mp4
-+ audio.wav
-+ thumbnail.jpg
-+ Source/Proxy/Audio time mapping
-↓
-项目初始化完成
+Project
+→ Source Video
+→ FFprobe
+→ Proxy
+→ Audio WAV
+→ Thumbnail
+→ Source/Proxy/Audio Time Mapping
 ```
 
-内部能力对应旧：
+普通首次使用不再要求分别进入“创建项目 / 视频导入 / 视频预处理”。
+
+## 重跑
+
+必须支持：
 
 ```text
-F01 创建项目
-F02 上传原视频
-F03 视频预处理
+[重新导入原片]
 ```
 
-但用户不再进入三个页面分别操作。
+重新导入不能覆盖旧 Source，而是创建新的 Source Version + Preprocess Run。
+新 Source 成功切换为 current 后，所有依赖旧 Source 的下游默认 stale。
 
-## 进度 UI
+旧 F02 “一个 Project 永远只有一份 Source”规则将在版本化重构时升级为：
 
 ```text
-创建项目          ✓
-导入原视频        ✓
-读取媒体信息      ✓
-生成分析视频      ✓
-提取音频          ✓
-初始化完成        ✓
+一个 Project 可以有多个 Source Version
+但只有一个 current Source
 ```
 
-## 失败原则
-
-Workflow 必须记录当前阶段并可明确恢复/重试。
-
-不得因为后半段失败就留下一个用户不知道如何处理的“空项目”。
-
-底层 F01/F02/F03 的数据 Contract 和 Stable Snapshot 不因 Workflow 合并而失效。
+原片文件永远不原地覆盖。
 
 ---
 
 # 4. Workflow 02 — 拉片
 
-## 用户动作
+用户入口：
 
 ```text
 [开始拉片]
 ```
 
-## 系统内部
+内部：
 
 ```text
-F03 Proxy
+Current Proxy
 ↓
-F04 自动 Shot Detection
+自动 Shot Detection Run
 ↓
-自动创建 F05 Shot Edit Set / Final Shot Draft
+自动创建 Final Shot Draft Revision
 ↓
 直接进入三栏镜头工作台
 ↓
 人工调整
 ↓
-确认 Final Shots
+确认当前 Final Shot Revision
 ```
 
-用户不需要知道或点击：
+用户不需要理解 `initialize_shot_workbench()`。
+
+## 重跑
+
+必须同时支持：
 
 ```text
-initialize_shot_workbench()
+A. 重新自动拉片
+B. 不重跑模型，只基于当前 Final Shots 重新人工编辑
 ```
 
-它是 Workflow Orchestrator 的内部动作。
-
-## 用户页面
-
-自动检测完成以后直接进入同一个“拉片”工作区。
-
-页面允许：
+例：
 
 ```text
-播放
-查看自动切镜
-修改边界
-拆分
-合并
-确认
+Final Shots R1 confirmed
+↓
+[重新拉片]
+↓
+Detection V2
+↓
+Final Shots Draft R2
+↓
+Confirm R2
 ```
 
-不再设置独立的“自动拉片页面”和“镜头初始化页面”作为必须操作步骤。
+或者：
+
+```text
+Final Shots R1 confirmed
+↓
+[重新编辑]
+↓
+复制为 Draft R2
+↓
+只人工修正
+↓
+Confirm R2
+```
+
+R1 不删除。
 
 ---
 
-# 5. Workflow 03 — 人物对白
+# 5. Workflow 03 — 资产提取
 
-“人物对白”的最终产品不是 Character Candidate，而是：
+拉片完成后先提取稳定生产资产，而不是直接进入对白。
+
+第一版资产范围：
 
 ```text
-演员 / 角色视觉身份
-+
-该演员说了哪些对白
-+
-每句对白的 Source 时间
+人物资产
+场景资产
 ```
 
-## 自动分析链路
+## 人物资产
+
+输入：
 
 ```text
-confirmed Final Shots
-+ F03 Proxy
-+ F03 Audio
+Current Final Shots
++ Proxy
+```
+
+内部能力：
+
+```text
+Face Detection
+→ Face Track
+→ Face Embedding
+→ Cross-shot Actor Clustering
+→ Actor Candidate
+→ 人工合并/拆分/删除/命名/选 Reference
+→ Final Character Revision
+```
+
+当前已有 YuNet + SFace Candidate 原型降级为这里的 Actor Visual Evidence 能力，不再是独立用户 Workflow。
+
+## 场景资产
+
+输入：
+
+```text
+Current Final Shots
++ Shot Keyframes / Proxy
+```
+
+输出：
+
+```text
+Scene Candidate
+→ 人工合并/拆分/命名/Reference
+→ Final Scene Revision
+```
+
+第一版先不强制抽取道具/服装/车辆等二级资产；以后需要再加入资产中心。
+
+## 重跑
+
+必须允许局部重跑：
+
+```text
+[重新识别人物]
+[重新识别场景]
+[重新提取全部资产]
+```
+
+人物错误不能强迫场景重跑；场景错误也不能强迫人物重跑。
+
+人工资产确认后仍允许创建新的 Revision。
+
+---
+
+# 6. Workflow 04 — 人物对白
+
+前置条件：
+
+```text
+Current Final Characters
++ Current Final Shots
++ Current Audio
+```
+
+最终产品：
+
+```text
+演员 / 角色
++
+该角色说了哪些源对白
++
+每句对白 Source 时间
+```
+
+自动链路：
+
+```text
+Audio
 ↓
-A. 演员视觉识别
-   Face Detection
-   Face Track
-   Face Embedding
-   Cross-shot Actor Clustering
+Whisper ASR
 ↓
-B. 源对白识别
-   Whisper ASR
-   Dialogue start/end/text
+Dialogue Segments
 ↓
-C. Speaker 分离
-   Speaker Diarization / Voice Cluster
+Speaker Diarization / Voice Cluster
 ↓
-D. Speaker ↔ Actor 匹配
-   Dialogue time
-   + Final Shot
-   + Actor visual presence
-   + speaker continuity
-   + confidence
+Speaker ↔ Final Character Matching
 ↓
 Actor Dialogue Draft
 ```
 
-## 自动结果
-
-示例：
-
-```text
-演员 #01
-头像
-出现镜头：#002 #004 #005 ...
-
-对白：
-00:01.120 - 00:02.360  你怎么会在这里？
-00:07.480 - 00:09.020  我已经跟你说过很多次了。
-```
-
-## 未归属对白
-
-必须支持：
+低置信度必须进入：
 
 ```text
 未归属对白
 ```
 
-如果：
+不得强行绑定人物。
+
+人工工作区允许：
 
 ```text
-演员不在画面
-多人同时在画面
-Speaker/Actor 匹配置信度不足
-```
-
-不得强行绑定演员。
-
-## 人工确认
-
-人物和对白放在同一个人工工作区修正：
-
-```text
-合并/拆分演员
-删除误检/路人
-演员命名
 对白文字修改
-对白起止时间修改
-对白拆分/合并
-对白从演员 A 改到演员 B
+时间修改
+拆分 / 合并
+改说话人
 处理未归属对白
 最终确认
 ```
 
-因此原来 Candidate-only 的 F06 页面只能视为“演员视觉 Evidence 调试界面”，不能再作为人物对白 Workflow 的最终页面。
+人物资产的合并/拆分/命名主要属于 Workflow 03，不应再把 Character Candidate 当成人物对白页面的最终产品。
+
+## 重跑
+
+必须允许局部：
+
+```text
+[重新 ASR]
+[重新 Speaker 分离]
+[重新人物/说话人匹配]
+[全部重新分析]
+[基于当前对白重新编辑]
+```
+
+只有 ASR 错误时不必重新做人脸/场景。
+只有说话人绑定错误时不必重新跑 Whisper。
 
 ---
 
-# 6. Workflow 04 — 剧本 / 重制设计
+# 7. Workflow 05 — 剧本 / 重制设计
 
-后续详细 Contract 另行设计。
-
-目标输入至少包含：
+输入至少包括：
 
 ```text
 Final Shots
-Final Actor/Character
-Final Source Dialogue
-Scene / Story Context
+Final Characters
+Final Scenes
+Final Source Dialogues
 ```
 
-输出面向重制制作，而不是继续暴露底层分析步骤。
-
----
-
-# 7. Workflow 05 — 生成制作
-
-内部可以包含很多 Capability：
+内部可以继续拆分：
 
 ```text
-选角
+本土演员库 / 选角
 Character Bible
 Scene Bible
-本土化对白
+目标对白本土化
+对白时长约束
 Shot Specification
-视频生成
-TTS
-Lip Sync
-QC
 ```
 
-但页面应按生产工作流组织，不按每一个算法模块单独做左侧一级导航。
+但用户页面按重制设计工作流组织，不按算法模块逐个做一级导航。
+
+所有人工产物使用 Revision，新版本不得覆盖历史版本。
 
 ---
 
-# 8. Workflow 06 — 最终合成 / 导出
+# 8. Workflow 06 — 生成制作
 
-内部包括：
+内部：
 
 ```text
-音频组装
+单 Shot 生成
+Generation Versions
+Auto QC
+人工选择版本
+批量生成
+TTS
+Dialogue Fit
+Lip Sync
+```
+
+生成天然使用版本：
+
+```text
+Generation V1 / V2 / V3...
+Voice V1 / V2...
+LipSync V1 / V2...
+```
+
+任何一次重新生成都不能覆盖用户之前选择过的版本。
+
+---
+
+# 9. Workflow 07 — 最终合成 / 导出
+
+内部：
+
+```text
+音频组装 / 混音
 字幕
 最终合成
 整集 QC
 导出
 ```
 
-用户最终操作保持连续。
+必须支持：
+
+```text
+Audio Mix V1/V2
+Subtitle V1/V2
+Master Render V1/V2
+```
+
+旧 Master 保留，最终只选择一个 current approved Master 用于导出。
 
 ---
 
-# 9. Orchestrator 规则
+# 10. Orchestrator 规则
 
-建议新增业务编排层：
+建议用户级编排层：
 
 ```text
 ProjectImportWorkflow
 ShotAnalysisWorkflow
+AssetExtractionWorkflow
 CharacterDialogueWorkflow
+RemakeDesignWorkflow
+GenerationWorkflow
+FinalizationWorkflow
 ```
 
-Orchestrator 只负责编排已有业务函数、阶段状态和失败恢复。
+Orchestrator 只负责：
 
-禁止 Orchestrator：
+```text
+阶段编排
+Run / Revision 创建
+current 选择
+依赖快照
+stale 传播
+失败恢复
+```
+
+禁止：
 
 ```text
 复制底层 SQL
 复制 FFmpeg 算法
 复制模型推理
-破坏 F01-F05 已冻结数据 Contract
+覆盖历史业务结果
 ```
 
 典型结构：
@@ -352,48 +450,89 @@ Orchestrator 只负责编排已有业务函数、阶段状态和失败恢复。
 ```text
 Controller
 → Workflow Orchestrator
-→ Existing Feature Services
+→ Capability / Feature Services
 → DB / Media / Model
 ```
 
 ---
 
-# 10. 冻结能力如何处理
+# 11. UI 统一版本入口
 
-F01-F05 的 `STABLE / FROZEN` 表示：
-
-```text
-数据 Contract
-业务核心行为
-时间轴规则
-ID 规则
-安全重跑规则
-```
-
-已经稳定。
-
-Workflow 重构允许改变：
+每个 Workflow 页面必须能看到：
 
 ```text
-导航
-页面组合
-用户点击次数
-Controller 编排入口
-自动调用顺序
+当前版本：V2 / R3
+状态：当前 / 已过期 / 历史
 ```
 
-但不允许为了简化 UI 破坏已冻结底层 Contract。
+并按该 Workflow 能力提供：
+
+```text
+[重新执行]
+[基于当前版本重新编辑]
+[版本历史]
+```
+
+不是所有按钮每页都必须同时出现，但每个 Workflow 必须有明确的重做路径。
+
+上游改变导致下游 stale 时，UI 必须明确提示，不得静默使用。
 
 ---
 
-# 11. 当前重构优先级
+# 12. 不允许自动级联重跑
+
+上游新版本切换成功：
 
 ```text
-P0-1  导入原片 Workflow
-P0-2  拉片 Workflow
-P0-3  人物对白 Workflow 重新设计
+只标记下游 stale
 ```
 
-在 P0-1 / P0-2 完成前，不继续扩大 Candidate-only F06 页面。
+不能未经用户确认自动把所有 AI / 生成任务重新跑一遍。
 
-F06 当前算法代码可以保留作为 Actor Visual Evidence 能力，但其旧产品定义已被本文件取代。
+例如 Final Shots R2 confirmed：
+
+```text
+人物资产 stale
+场景资产 stale
+人物对白 stale / 部分 stale
+重制设计 stale
+生成结果 stale
+最终合成 stale
+```
+
+用户再决定：
+
+```text
+[重新提取受影响资产]
+```
+
+---
+
+# 13. 冻结能力如何处理
+
+已有 Stable Snapshot 继续保留其底层数据/时间轴/ID/安全规则。
+
+但如果旧规则与“生产流程必须支持重跑/版本化”发生冲突，必须通过新 Migration / 新 Revision 模型向前升级，不能以“以前冻结过”为理由拒绝用户重做。
+
+尤其需要升级：
+
+```text
+Source Video 单版本限制
+confirmed Final Shot 永久不可重开限制
+```
+
+升级方式必须保留旧数据，不原地破坏已存在项目。
+
+---
+
+# 14. 当前重构优先级
+
+```text
+P0-0  全局 Run / Revision / Current / Stale 基础规则
+P0-1  导入原片 Workflow + Source Versioning
+P0-2  拉片 Workflow + Final Shot Revision 重开/重跑
+P0-3  资产提取 Workflow（人物 + 场景）
+P0-4  人物对白 Workflow
+```
+
+在版本化底座未补齐前，不继续扩展后续生产功能。
