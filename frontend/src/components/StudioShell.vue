@@ -28,17 +28,33 @@ const globalNav = computed(() => [
   { label: '资产中心', icon: 'assets', enabled: false, active: false },
 ])
 
-// 侧栏仍用 8 个大工作区概括完整 35 Feature；第 06 大区从 F06 自动人物识别开始开放。
-// F06 当前只实现人物 Candidate，ASR / Speaker / 人工对白仍按 F08–F10 后续 Feature 进入该大区。
+// 用户侧栏只展示 Workflow，不再把内部 F01/F02/F03/F04/F05 直接当成用户步骤。
+// Workflow 01 在首页“导入原片”一次完成；进入项目后点击 01 可回到项目总览查看导入结果。
 const projectNav = computed(() => [
-  { label: '项目总览', step: '01', enabled: true, active: route.name === 'workspace', routeName: 'workspace' },
-  { label: '视频导入', step: '02', enabled: true, active: route.name === 'source-video', routeName: 'source-video' },
-  { label: '视频预处理', step: '03', enabled: true, active: route.name === 'preprocess', routeName: 'preprocess' },
-  { label: '自动拉片', step: '04', enabled: true, active: route.name === 'shot-detection', routeName: 'shot-detection' },
-  { label: '镜头修正', step: '05', enabled: true, active: route.name === 'shot-workbench', routeName: 'shot-workbench' },
-  { label: '人物对白', step: '06', enabled: true, active: route.name === 'character-detection', routeName: 'character-detection' },
-  { label: '生成制作', step: '07', enabled: false, active: false, routeName: '' },
-  { label: '最终合成', step: '08', enabled: false, active: false, routeName: '' },
+  {
+    label: '导入原片',
+    step: '01',
+    enabled: true,
+    active: ['workspace', 'source-video', 'preprocess'].includes(String(route.name || '')),
+    routeName: 'workspace',
+  },
+  {
+    label: '拉片',
+    step: '02',
+    enabled: true,
+    active: ['shot-detection', 'shot-workbench'].includes(String(route.name || '')),
+    routeName: 'shot-detection',
+  },
+  {
+    label: '人物对白',
+    step: '03',
+    enabled: true,
+    active: route.name === 'character-detection',
+    routeName: 'character-detection',
+  },
+  { label: '剧本 / 重制设计', step: '04', enabled: false, active: false, routeName: '' },
+  { label: '生成制作', step: '05', enabled: false, active: false, routeName: '' },
+  { label: '最终合成 / 导出', step: '06', enabled: false, active: false, routeName: '' },
 ])
 
 function goGlobal(label: string): void {
@@ -76,7 +92,7 @@ function goProject(routeName: string): void {
       </nav>
 
       <div v-if="projectMode" class="project-nav-section">
-        <div class="project-nav-title"><span>当前项目</span><strong :title="projectName">{{ projectName || '项目工作区' }}</strong></div>
+        <div class="project-nav-title"><span>生产工作流</span><strong :title="projectName">{{ projectName || '项目工作区' }}</strong></div>
         <div class="project-flow-nav">
           <button
             v-for="item in projectNav"
