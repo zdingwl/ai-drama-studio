@@ -12,19 +12,21 @@ Current Working Branch: main（用户未要求切换/新建其它分支）
 F01 — 创建项目:     STABLE / FROZEN
 F02 — 上传原视频:   STABLE / FROZEN
 F03 — 视频预处理:   STABLE / FROZEN
+F04 — 自动拉片:     READY_FOR_REVIEW
 
 Stable Features: F01, F02, F03
 Frozen Features: F01, F02, F03
 
 Current Feature: F04 — 自动拉片
-Feature Status: PLANNED
-F04 Contract: DRAFTED / WAITING_USER_CONFIRMATION
-F04 Function Contracts: DRAFTED / WAITING_USER_CONFIRMATION
-F04 Business Code: NOT STARTED
-F04 Frontend: NOT STARTED
-F04 User Acceptance: NOT STARTED
+F04 Contract: CONFIRMED
+F04 Function Contracts: CONFIRMED
+F04 Business Code: IMPLEMENTED
+F04 Database Migration: IMPLEMENTED (0005)
+F04 Frontend: IMPLEMENTED
+F04 Automated Test Files: IMPLEMENTED
+F04 User Acceptance: PENDING LOCAL WINDOWS / RTX 4060 Ti SMOKE TEST
 
-Next After F04: F05 — Shot 人工修正（NOT STARTED）
+Next After F04 Acceptance: F05 — Shot 人工修正（NOT STARTED）
 ```
 
 `main` 是唯一正式 Source of Truth。未经用户明确要求，不新建、切换、删除、重命名分支，也不创建或操作 PR。
@@ -42,6 +44,7 @@ AGENTS.md
 → docs/features/F03-stable-snapshot.md
 → docs/features/F04-auto-shot-detection.md
 → docs/features/F04-function-contracts.md
+→ docs/features/F04-database-dictionary.md
 → 最新相关 docs/sessions/*.md
 ```
 
@@ -63,7 +66,7 @@ docs/features/F03-stable-snapshot.md
 
 F04 不允许修改这些冻结规则。
 
-F03 向 F04 提供的正式输入：
+F03 向 F04 提供：
 
 ```text
 preprocess/SOURCE_xxx/proxy.mp4
@@ -81,210 +84,172 @@ Proxy 不强制 VFR→CFR
 source_us = proxy_us + proxy_to_source_offset_us
 ```
 
-因此 F04 不得使用 `frame_index / fps` 作为权威 Shot 时间。
+因此 F04 任何正式 Shot 时间都不得使用 `frame_index / fps`。
 
 ---
 
-# F04 权威规划文档
+# F04 正式技术方案
+
+用户在 2026-08-24 明确确认使用全本地自动拉片方案，F04 开发前的 FFmpeg SCDet 草案已经废弃。
+
+F04 V1：
 
 ```text
-docs/features/F04-auto-shot-detection.md
-docs/features/F04-function-contracts.md
+F03 proxy.mp4
+→ FFprobe 逐帧真实 PTS
+→ TransNetV2 raw transition prediction
+→ prediction index 与真实 PTS 一一对齐
+→ 连续 transition frames 归并
+→ transition 后第一帧真实 PTS 作为 Cut
+→ 120ms 近邻确定性去抖
+→ Proxy → Source integer microseconds
+→ 连续 Shot Candidate
+→ SQLite ready
 ```
 
-用户尚未确认，因此当前只是 PLANNED，禁止开始业务编码。
-
----
-
-# F04 当前规划
-
-目标：
+Detector Profile V1：
 
 ```text
-F03 ready Proxy
-→ 本地自动镜头切换检测
-→ 保存不可覆盖的 Auto Shot Candidate
-→ 同时保存 Proxy Timeline + Source Timeline
-→ 页面展示自动 Shot 结果
-→ F05 再做人工作业
-```
-
-F04 V1 Detector：
-
-```text
-FFmpeg scdet
-detector_profile_version = 1
-threshold = 10.0
+detector_name = transnetv2_pytorch
+transnetv2-pytorch = 1.0.5
+torch = 2.5.1
+threshold = 0.5
 min_boundary_gap_us = 120000
+preferred_device = auto
 ```
 
-原因：
-
-- 复用现有 FFmpeg，不新增 OpenCV / PySceneDetect / 云 Provider；
-- 使用真实 PTS，适配 F03 VFR Proxy；
-- 自动结果只是 Candidate，不直接成为 Final Shot；
-- F05 负责人工修正。
-
-SCDet score 只能解释为：
+模型与依赖身份：
 
 ```text
-切换强度 / boundary_score
+engine/requirements.txt
+config/models.yaml
+docs/ENVIRONMENT_BASELINE.md
 ```
 
-不得冒充概率置信度。
+---
+
+# F04 Scope Boundary
+
+F04 只负责：
+
+```text
+Shot Boundary Detection
+Auto Evidence
+Shot Candidate
+```
+
+F04 不做：
+
+```text
+F05 人工边界修正
+F06 人物识别
+F08 Whisper ASR
+F11 Scene 理解
+Qwen3-VL 镜头语义分析
+云端 Provider
+```
+
+这里必须和“完整本地技术栈”区分：Whisper / Qwen3-VL 可以在后续 Feature 使用，但不能为了方便提前塞进 F04。
 
 ---
 
 # F04 Time Contract
 
-F04 属于 Source Domain。
-
-权威时间：
+权威单位：
 
 ```text
 integer microseconds
 ```
 
-检测发生在 Proxy：
+模型 frame index 只表示“第几个解码帧像 transition”，不是时间。
+
+正式 Cut：
 
 ```text
-cut_proxy_us
+continuous transition [i..j]
+→ cut_proxy_us = actual PTS of frame j+1
 ```
 
-正式映射：
+严格禁止：
+
+```text
+frame_index / fps
+```
+
+Prediction 数与 FFprobe PTS 数不一致：
+
+```text
+SHOT_DETECTION_FRAME_ALIGNMENT_FAILED
+```
+
+不截短、不补齐、不按 FPS 猜。
+
+Source Mapping：
 
 ```text
 cut_source_us = cut_proxy_us + proxy_to_source_offset_us
 ```
 
-Shot Candidate 使用：
+Candidate 为半开区间：
 
 ```text
 [start_us, end_us)
 ```
 
-必须满足：
-
-```text
-无 gap
-无 overlap
-first.start == detection_start
-last.end == detection_end
-prev.end == next.start
-```
-
-无 Cut 也是合法结果：
-
-```text
-整个视频 = 1 个 Shot Candidate
-```
+必须无 gap、无 overlap、首尾覆盖完整检测区间。无任何 Cut 时整个视频生成 1 个 Candidate，属于合法结果。
 
 ---
 
-# F04 AI Evidence / Human Final
+# F04 Database
 
-F04 只保存自动原始证据：
+Migration：
+
+```text
+0005_create_shot_detection
+```
+
+新增：
+
+```text
+shot_detection_runs
+shot_candidates
+```
+
+不改写 0001–0004 冻结历史。
+
+详细字段语义：
+
+```text
+docs/features/F04-database-dictionary.md
+```
+
+Auto Evidence：
 
 ```text
 detected_proxy_start_us
 detected_proxy_end_us
 detected_start_us
 detected_end_us
-boundary_score
+end_boundary_score
 ```
 
 F05 禁止覆盖这些字段。
 
-F05 必须新增独立 Human Final Shot Contract，支持：
-
-```text
-边界调整
-拆分
-合并
-新增
-删除
-人工确认
-```
-
-但 F05 目前 NOT STARTED。
-
 ---
 
-# F04 Database Plan
+# F04 Backend / API
 
-计划新增：
-
-```text
-0005_create_shot_detection
-
-shot_detection_runs
-shot_candidates
-```
-
-Detection Run：
+核心业务：
 
 ```text
-SHOT_DETECTION_<UUID4>
-status = processing / ready
-1 Project → 1 F04 V1 ready run
+engine/app/shot_detection.py
 ```
 
-Candidate：
-
-```text
-SHOT_CANDIDATE_<UUID4>
-```
-
-Candidate 不是最终 `SHOT_<UUID>`；最终 Shot 身份由 F05 Contract 决定。
-
-0001–0004 已属于冻结 Migration 历史，不得改写。
-
----
-
-# F04 Recovery Plan
-
-F04 不产生新的正式媒体文件。
-
-流程：
-
-```text
-DB processing run
-→ FFmpeg scan
-→ 内存构造 Candidate
-→ 单 DB transaction 保存所有 Candidate + run ready
-```
-
-如果应用异常退出：
-
-```text
-旧 processing run
-→ 下次启动 recover_shot_detections()
-→ 清理 processing run / candidate
-→ 用户重新检测
-```
-
-ready 结果不会被 Recovery 删除。
-
-同一进程重复 POST：
-
-```text
-SHOT_DETECTION_IN_PROGRESS
-```
-
-ready 后重复 POST：
-
-```text
-SHOT_DETECTION_ALREADY_EXISTS
-```
-
----
-
-# F04 Core Functions Plan
-
-6 个核心后端函数：
+主要函数：
 
 ```text
 generate_shot_detection_id()
+inspect_proxy_timeline()
 detect_proxy_cut_events()
 build_shot_candidates()
 run_shot_detection()
@@ -292,134 +257,149 @@ get_shot_detection()
 recover_shot_detections()
 ```
 
-2 个 Controller：
-
-```text
-get_shot_detection_api()
-run_shot_detection_api()
-```
-
-详细职责：
-
-```text
-docs/features/F04-function-contracts.md
-```
-
----
-
-# F04 API Plan
+API：
 
 ```text
 GET  /api/projects/{project_id}/shot-detection
 POST /api/projects/{project_id}/shot-detection
 ```
 
-GET 支持：
+应用启动 Recovery 顺序：
 
 ```text
-null
-processing
-ready + candidates
+F01
+→ F02
+→ F03
+→ F04
 ```
 
-POST 成功：
-
-```text
-201 ready DetectionDTO
-```
+旧 `processing` F04 Run 会清理；`ready` 不自动删除、不静默覆盖重跑。
 
 ---
 
-# F04 Frontend Plan
+# F04 Frontend
 
-计划路由：
+页面：
 
 ```text
 /projects/:projectId/shot-detection
+frontend/src/views/ShotDetection.vue
 ```
 
-F03 未 ready：
+已实现：
 
 ```text
-阻止并引导视频预处理
+F03 未 ready → 阻止运行并引导 F03
+F03 ready → 显示固定本地 Profile
+开始自动拉片 → 真实 loading，不伪造百分比
+ready → 显示 Shot Count / Cut Count / frame count / runtime
+Candidate 表 → Source 起止 / 时长 / 边界类型 / 边界分数
+项目总览 → F04 状态与入口
+左侧导航 → 04 自动拉片已开放
+F05 编辑按钮 → 不存在
 ```
 
-未检测：
+边界分数只称：
 
 ```text
-展示 Proxy + 固定 Detector Profile V1
+boundary score / transition score
+```
+
+禁止称“准确率”。
+
+---
+
+# F04 Test Assets
+
+当前已增加：
+
+```text
+engine/tests/unit/test_shot_detection_f04.py
+engine/tests/unit/test_shot_detection_model_mapping_f04.py
+engine/tests/unit/test_database_migration_f04.py
+```
+
+覆盖：
+
+```text
+UUID4 business ID
+no-cut = one shot
+multiple cuts continuity
+exact duplicate cut
+120ms debounce
+edge cut filtering
+Source offset mapping
+VFR irregular PTS mapping
+continuous transition merge
+transition reaching video tail
+prediction/PTS count mismatch
+invalid score fail-closed
+0005 schema/head/score constraint
+```
+
+---
+
+# 当前验证边界
+
+当前 ChatGPT 工具容器：
+
+```text
+Python 3.13.5
+PyTorch 2.10.0 CPU
+FFmpeg / FFprobe 7.1.5
+transnetv2-pytorch 未安装
+```
+
+它不是用户 Windows + RTX 4060 Ti 项目环境。因此当前不能声称完成真实 TransNetV2 GPU smoke test，也不能因为工具容器与项目版本不同而改动固定依赖。
+
+用户本机最终验收必须执行：
+
+```text
+python -m pip install -r engine/requirements.txt
+python -m pytest engine/tests -q
+npm ci                       # frontend 目录
+npm run typecheck            # frontend 目录
+npm run build                # frontend 目录
+```
+
+然后启动后端/前端，用真实 F03 ready 项目进入：
+
+```text
+04 自动拉片
 → 开始自动拉片
+→ 检查 Shot 数与明显切镜点
+→ 关闭/重启应用
+→ 再次进入 F04
+→ ready 结果仍存在
 ```
 
-processing：
+同时记录：
 
 ```text
-正在分析镜头切换…
-不伪造百分比
+Python patch version
+PyTorch 2.5.1
+CUDA available
+GPU 名称
+TransNetV2 1.0.5
+FFmpeg / FFprobe 版本
+真实视频 Shot Count
 ```
-
-ready：
-
-```text
-Shot 数量
-Cut 数量
-检测区间
-Detector Profile
-只读 Shot Strip
-Candidate 时间表
-```
-
-F04 不提供拖边界或拆分/合并编辑器。
 
 ---
 
-# P0 Planning
+# Freeze Gate
+
+当前：
 
 ```text
-P0-01 Dependency / Revision: APPLICABLE / PENDING
-P0-02 Media Timebase:         APPLICABLE / PENDING
-P0-03 Environment:            APPLICABLE / PENDING
-P0-04 DB + Recovery:          APPLICABLE / PENDING
-P0-05 Provider Job:           N/A（本地 FFmpeg）
+F04 READY_FOR_REVIEW
+F04 NOT FROZEN
 ```
 
-详细填写在 `docs/features/F04-auto-shot-detection.md`。
-
----
-
-# 当前 Gate
-
-现在：
+只有用户明确反馈本机自动测试 + 真实视频运行通过后，才允许：
 
 ```text
-F04 = PLANNED
+创建 F04 Stable Snapshot
+标记 F04 STABLE / FROZEN
+开始 F05
 ```
-
-只有用户确认 F04 Contract 后才能：
-
-```text
-F04 → IN_PROGRESS
-```
-
-然后按计划开发：
-
-```text
-0005 Migration
-→ ID / SCDet parser
-→ PTS / Source Mapping
-→ Candidate builder + continuity validation
-→ Detection business flow
-→ Recovery
-→ GET / POST API
-→ Vue 自动拉片页
-→ F01/F02/F03/F04 tests
-→ 真实短剧测试
-→ READY_FOR_REVIEW
-```
-
-F04 未冻结前不得正式开发 F05。
-
-## 最近更新时间
-
-- 日期：2026-08-24 12:37 +08:00
-- 状态：用户明确开始 F04；F04 主 Contract 和详细函数职责已规划并提交 main，等待用户确认后进入编码。
