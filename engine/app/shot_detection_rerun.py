@@ -73,8 +73,9 @@ def rerun_shot_detection(*, project_id: str, app_data_path: Path | None = None) 
                     edit_sets.select().where(edit_sets.c.project_id == project_id)
                 ).mappings().first()
             if existing_edit is not None:
+                # 复用已对外稳定的 RERUN_CONFLICT 409，不为了 F05 额外扩散一个几乎同义错误码。
                 raise ShotDetectionError(
-                    "SHOT_DETECTION_RERUN_BLOCKED_BY_F05",
+                    "SHOT_DETECTION_RERUN_CONFLICT",
                     "当前项目已经进入 F05 镜头修正，不能再替换 F04 自动证据",
                 )
 
