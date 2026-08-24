@@ -343,8 +343,9 @@ def preprocess_source_video(*, project_id: str, app_data_path: Path | None = Non
     """执行 F03 完整预处理：Source Integrity → staging → 生成 → 校验 → publish → DB ready。
 
     这是 F03 唯一业务总调度。Controller 不决定 FFmpeg 参数、文件路径、DB transaction 或
-    Recovery 边界。final 发布前失败只清理本次明确拥有的 F03 staging；final 已发布后绝不
-    删除派生资产，数据库最终提交失败交给启动 Recovery。
+    Recovery 边界。Source 在开始处理和正式发布前都会核验 F02 size/SHA，避免长时间处理期间
+    原片被系统外替换后仍发布错误派生资产。final 发布前失败只清理本次明确拥有的 F03 staging；
+    final 已发布后绝不删除派生资产，数据库最终提交失败交给启动 Recovery。
     """
 
     database_path = init_database(app_data_path)
@@ -365,9 +366,7 @@ def preprocess_source_video(*, project_id: str, app_data_path: Path | None = Non
             raise PreprocessError("PREPROCESS_ALREADY_EXISTS", "当前项目已经存在视频预处理结果或处理中记录")
 
         source_path = _resolve_workspace_path(workspace, source.relative_path)
-        source_integrity = _hash_file(source_path)
-        if source_integrity.file_size_bytes != source.file_size_bytes or source_integrity.sha256 != source.sha256:
-            raise PreprocessError("SOURCE_VIDEO_INTEGRITY_MISMATCH", "原视频文件与 F02 导入记录不一致，已停止预处理")
+        source_integrity = _verify_source_integrity(source_path, source)
 
         relative_root = f"{PREPROCESS_DIRNAME}/{source.id}"
         proxy_relative_path = f"{relative_root}/{PROXY_FILENAME}"
@@ -434,6 +433,15 @@ def preprocess_source_video(*, project_id: str, app_data_path: Path | None = Non
                 proxy_path=proxy_staging,
                 audio_path=audio_staging,
                 thumbnail_path=thumbnail_staging,
+            )
+
+            # 转码可能持续数分钟甚至更久。正式发布前再次核验同一份 F02 Source，
+            # 防止用户/外部程序在处理期间替换原片，导致派生资产与 source_sha256_snapshot 不一致。
+            _verify_source_integrity(
+                source_path,
+                source,
+                expected_sha256=source_integrity.sha256,
+                during_processing=True,
             )
 
             if final_dir.exists():
@@ -553,14 +561,11 @@ def recover_source_preprocesses(*, app_data_path: Path | None = None) -> dict[st
                     continue
                 source = _source_row_to_record(source_row)
                 source_path = _resolve_workspace_path(workspace, source.relative_path)
-                source_integrity = _hash_file(source_path)
-                if (
-                    source_integrity.file_size_bytes != source.file_size_bytes
-                    or source_integrity.sha256 != source.sha256
-                    or source_integrity.sha256 != row["source_sha256_snapshot"]
-                ):
-                    stats["preserved"] += 1
-                    continue
+                _verify_source_integrity(
+                    source_path,
+                    source,
+                    expected_sha256=row["source_sha256_snapshot"],
+                )
             except (OSError, ProjectError, PreprocessError):
                 stats["preserved"] += 1
                 continue
@@ -748,6 +753,38 @@ def _hash_file(path: Path) -> FileIntegrity:
     return FileIntegrity(total, hasher.hexdigest())
 
 
+def _verify_source_integrity(
+    source_path: Path,
+    source_video: SourceVideoRecord,
+    *,
+    expected_sha256: str | None = None,
+    during_processing: bool = False,
+) -> FileIntegrity:
+    """核验当前磁盘 Source 仍与 F02 冻结记录及本次 F03 快照一致。
+
+    业务位置：F03 开始前建立可信 Source 快照；长时间 FFmpeg 处理完成、正式 publish 前再次
+    复核，避免原片在处理中被系统外替换。Recovery 也复用同一规则。
+
+    输入/输出：读取 Source 文件并返回真实 size/hash；只读，不修改 F02 数据或文件。
+    失败：任何 size/hash 不一致都停止 F03，绝不自动“修正” F02 的 SHA。
+    """
+
+    integrity = _hash_file(source_path)
+    matches_f02 = (
+        integrity.file_size_bytes == source_video.file_size_bytes
+        and integrity.sha256 == source_video.sha256
+    )
+    matches_snapshot = expected_sha256 is None or integrity.sha256 == expected_sha256
+    if not matches_f02 or not matches_snapshot:
+        message = (
+            "原视频在预处理过程中发生变化，已停止发布派生资产"
+            if during_processing
+            else "原视频文件与 F02 导入记录不一致，已停止预处理"
+        )
+        raise PreprocessError("SOURCE_VIDEO_INTEGRITY_MISMATCH", message)
+    return integrity
+
+
 def _require_nonempty_file(path: Path, code: str, message: str) -> None:
     try:
         if not path.is_file() or path.stat().st_size <= 0:
@@ -815,10 +852,15 @@ def _seconds_us(value: Any, fallback: int | None = None) -> int:
 
 
 def _duration_us(payload: dict[str, Any], stream: dict[str, Any]) -> int:
-    format_info = _format_info(payload)
-    raw = format_info.get("duration")
+    """读取当前选中媒体流的时长，流缺失时才回退容器时长。
+
+    为什么流优先：F03 Proxy 是给 F04 做视频分析，若容器中的 AAC 比视频稍长，使用
+    ``format.duration`` 会把音频尾巴错误算进 Proxy 视频时长。Audio 同理应优先自身流时长。
+    """
+
+    raw = stream.get("duration")
     if raw in (None, "", "N/A"):
-        raw = stream.get("duration")
+        raw = _format_info(payload).get("duration")
     duration = _seconds_us(raw)
     if duration <= 0:
         raise PreprocessError("PREPROCESS_VALIDATION_FAILED", "媒体时长必须大于 0")
