@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from fractions import Fraction
@@ -37,6 +38,9 @@ MAX_PROXY_WIDTH = 1280
 MAX_PROXY_HEIGHT = 720
 ANALYSIS_AUDIO_SAMPLE_RATE = 16000
 ANALYSIS_AUDIO_CHANNELS = 1
+# 用户重新点击“开始预处理”时，不能直接删除可能仍由 FFmpeg 写入的 processing 目录。
+# 只有目录内系统文件已经超过此时间没有变化，才视为可以安全清理的旧残留。
+PROCESSING_ACTIVITY_GRACE_SECONDS = 30
 
 
 class PreprocessError(RuntimeError):
@@ -342,10 +346,9 @@ def inspect_preprocess_assets(
 def preprocess_source_video(*, project_id: str, app_data_path: Path | None = None) -> SourcePreprocessRecord:
     """执行 F03 完整预处理：Source Integrity → staging → 生成 → 校验 → publish → DB ready。
 
-    这是 F03 唯一业务总调度。Controller 不决定 FFmpeg 参数、文件路径、DB transaction 或
-    Recovery 边界。Source 在开始处理和正式发布前都会核验 F02 size/SHA，避免长时间处理期间
-    原片被系统外替换后仍发布错误派生资产。final 发布前失败只清理本次明确拥有的 F03 staging；
-    final 已发布后绝不删除派生资产，数据库最终提交失败交给启动 Recovery。
+    如果发现上次遗留 ``processing``，会先做“当前项目定向安全恢复”：完整 final 恢复成 ready；
+    已停止写入且只有系统已知文件的 staging 自动清理后允许重试；最近仍有文件写入则认为任务
+    仍在运行，不删除；存在未知文件时保留现场并阻止重试。F02 Source 永远不会被删除。
     """
 
     database_path = init_database(app_data_path)
@@ -363,10 +366,37 @@ def preprocess_source_video(*, project_id: str, app_data_path: Path | None = Non
                 preprocess_table.select().where(preprocess_table.c.project_id == project_id)
             ).mappings().first()
         if existing is not None:
-            raise PreprocessError("PREPROCESS_ALREADY_EXISTS", "当前项目已经存在视频预处理结果或处理中记录")
+            if existing["status"] == "ready":
+                ready = get_source_preprocess(project_id=project_id, app_data_path=app_data_path)
+                if ready is not None:
+                    return ready
+                raise PreprocessError("PREPROCESS_ALREADY_EXISTS", "当前项目已经完成视频预处理")
+
+            retry_state = _resolve_processing_record_for_retry(
+                engine=engine,
+                preprocess_table=preprocess_table,
+                workspace=workspace,
+                source=source,
+                source_row=existing,
+            )
+            if retry_state == "ready":
+                ready = get_source_preprocess(project_id=project_id, app_data_path=app_data_path)
+                if ready is not None:
+                    return ready
+                raise PreprocessError("PREPROCESS_RECOVERY_REQUIRED", "旧预处理结果已恢复，但当前无法读取，请重新打开项目")
+            if retry_state == "active":
+                raise PreprocessError("PREPROCESS_IN_PROGRESS", "视频预处理仍在运行，请稍后再试")
+            if retry_state == "preserved":
+                raise PreprocessError(
+                    "PREPROCESS_RECOVERY_REQUIRED",
+                    "检测到上次预处理遗留的未知或异常文件，系统为避免误删已保留现场；请检查 preprocess 目录后再试",
+                )
+            # removed 表示旧 processing 已安全清理，可继续重新生成。
 
         source_path = _resolve_workspace_path(workspace, source.relative_path)
-        source_integrity = _verify_source_integrity(source_path, source)
+        source_integrity = _hash_file(source_path)
+        if source_integrity.file_size_bytes != source.file_size_bytes or source_integrity.sha256 != source.sha256:
+            raise PreprocessError("SOURCE_VIDEO_INTEGRITY_MISMATCH", "原视频文件与 F02 导入记录不一致，已停止预处理")
 
         relative_root = f"{PREPROCESS_DIRNAME}/{source.id}"
         proxy_relative_path = f"{relative_root}/{PROXY_FILENAME}"
@@ -396,7 +426,7 @@ def preprocess_source_video(*, project_id: str, app_data_path: Path | None = Non
                     )
                 )
         except IntegrityError as exc:
-            raise PreprocessError("PREPROCESS_ALREADY_EXISTS", "当前项目已经存在视频预处理记录") from exc
+            raise PreprocessError("PREPROCESS_IN_PROGRESS", "视频预处理记录已经存在，请稍后再试") from exc
         except SQLAlchemyError as exc:
             raise PreprocessError("PREPROCESS_PROCESSING_FAILED", "视频预处理数据库记录创建失败") from exc
 
@@ -435,14 +465,18 @@ def preprocess_source_video(*, project_id: str, app_data_path: Path | None = Non
                 thumbnail_path=thumbnail_staging,
             )
 
-            # 转码可能持续数分钟甚至更久。正式发布前再次核验同一份 F02 Source，
-            # 防止用户/外部程序在处理期间替换原片，导致派生资产与 source_sha256_snapshot 不一致。
-            _verify_source_integrity(
-                source_path,
-                source,
-                expected_sha256=source_integrity.sha256,
-                during_processing=True,
-            )
+            # 预处理可能耗时很长。开始时校验一次还不够，正式 publish 前必须再次确认
+            # F02 Source 没有在处理中被系统外替换，否则不能发布与快照不一致的派生资产。
+            source_integrity_before_publish = _hash_file(source_path)
+            if (
+                source_integrity_before_publish.file_size_bytes != source.file_size_bytes
+                or source_integrity_before_publish.sha256 != source.sha256
+                or source_integrity_before_publish.sha256 != source_integrity.sha256
+            ):
+                raise PreprocessError(
+                    "SOURCE_VIDEO_INTEGRITY_MISMATCH",
+                    "原视频在预处理过程中发生变化，已停止发布预处理结果",
+                )
 
             if final_dir.exists():
                 raise PreprocessError("PREPROCESS_PROCESSING_FAILED", "预处理正式目录已经存在，系统不会覆盖")
@@ -561,11 +595,14 @@ def recover_source_preprocesses(*, app_data_path: Path | None = None) -> dict[st
                     continue
                 source = _source_row_to_record(source_row)
                 source_path = _resolve_workspace_path(workspace, source.relative_path)
-                _verify_source_integrity(
-                    source_path,
-                    source,
-                    expected_sha256=row["source_sha256_snapshot"],
-                )
+                source_integrity = _hash_file(source_path)
+                if (
+                    source_integrity.file_size_bytes != source.file_size_bytes
+                    or source_integrity.sha256 != source.sha256
+                    or source_integrity.sha256 != row["source_sha256_snapshot"]
+                ):
+                    stats["preserved"] += 1
+                    continue
             except (OSError, ProjectError, PreprocessError):
                 stats["preserved"] += 1
                 continue
@@ -652,6 +689,146 @@ def recover_source_preprocesses(*, app_data_path: Path | None = None) -> dict[st
         return stats
     finally:
         engine.dispose()
+
+
+def _resolve_processing_record_for_retry(
+    *,
+    engine: sa.Engine,
+    preprocess_table: sa.Table,
+    workspace: Path,
+    source: SourceVideoRecord,
+    source_row: sa.RowMapping,
+) -> str:
+    """用户重试 F03 时，只处理当前项目旧 ``processing`` 记录。
+
+    返回值：
+    - ``ready``：发现完整 final 并成功恢复；
+    - ``removed``：确认是旧残留，已安全清理，可重新开始；
+    - ``active``：staging 最近仍在写入，可能有另一个 FFmpeg 正在运行；
+    - ``preserved``：存在未知/异常文件，不能自动删除。
+
+    这个 helper 不会触碰 F02 Source，也不会递归删除 preprocess 之外的任何目录。
+    """
+
+    if source_row["status"] != "processing":
+        return "preserved"
+
+    source_path = _resolve_workspace_path(workspace, source.relative_path)
+    source_integrity = _hash_file(source_path)
+    if (
+        source_integrity.file_size_bytes != source.file_size_bytes
+        or source_integrity.sha256 != source.sha256
+        or source_integrity.sha256 != source_row["source_sha256_snapshot"]
+    ):
+        return "preserved"
+
+    final_dir = workspace / PREPROCESS_DIRNAME / source.id
+    staging_dir = workspace / PREPROCESS_DIRNAME / PREPROCESS_STAGING_DIRNAME / source.id
+    expected_names = {PROXY_FILENAME, THUMBNAIL_FILENAME}
+    audio_path: Path | None = None
+    if source_row["audio_relative_path"] is not None:
+        expected_names.add(AUDIO_FILENAME)
+
+    if final_dir.is_dir():
+        if not _directory_contains_only(final_dir, expected_names):
+            return "preserved"
+        proxy_path = final_dir / PROXY_FILENAME
+        thumbnail_path = final_dir / THUMBNAIL_FILENAME
+        if source_row["audio_relative_path"] is not None:
+            audio_path = final_dir / AUDIO_FILENAME
+        try:
+            metadata = inspect_preprocess_assets(
+                source_path=source_path,
+                source_video=source,
+                proxy_path=proxy_path,
+                audio_path=audio_path,
+                thumbnail_path=thumbnail_path,
+            )
+            with engine.begin() as connection:
+                result = connection.execute(
+                    preprocess_table.update()
+                    .where(
+                        preprocess_table.c.source_video_id == source.id,
+                        preprocess_table.c.status == "processing",
+                    )
+                    .values(status="ready", completed_at=datetime.now(timezone.utc), **asdict(metadata))
+                )
+                if result.rowcount != 1:
+                    return "preserved"
+            return "ready"
+        except (OSError, SQLAlchemyError, PreprocessError):
+            return "preserved"
+
+    if final_dir.exists():
+        return "preserved"
+
+    if staging_dir.is_dir():
+        if not _directory_entries_subset(staging_dir, expected_names):
+            return "preserved"
+        if _directory_has_recent_activity(staging_dir, PROCESSING_ACTIVITY_GRACE_SECONDS):
+            return "active"
+        _cleanup_owned_staging(staging_dir, expected_names)
+        if staging_dir.exists():
+            return "preserved"
+        try:
+            with engine.begin() as connection:
+                connection.execute(
+                    preprocess_table.delete().where(
+                        preprocess_table.c.source_video_id == source.id,
+                        preprocess_table.c.status == "processing",
+                    )
+                )
+            return "removed"
+        except SQLAlchemyError:
+            return "preserved"
+
+    if staging_dir.exists():
+        return "preserved"
+
+    if _record_is_recent(source_row.get("created_at"), PROCESSING_ACTIVITY_GRACE_SECONDS):
+        return "active"
+
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                preprocess_table.delete().where(
+                    preprocess_table.c.source_video_id == source.id,
+                    preprocess_table.c.status == "processing",
+                )
+            )
+        return "removed"
+    except SQLAlchemyError:
+        return "preserved"
+
+
+def _directory_has_recent_activity(directory: Path, grace_seconds: int) -> bool:
+    """检查 staging 是否最近仍有写入，避免重试请求误删正在运行的 FFmpeg 输出。"""
+
+    now = time.time()
+    try:
+        entries = list(directory.iterdir())
+        if not entries:
+            return False
+        return any(now - entry.stat().st_mtime <= grace_seconds for entry in entries if entry.is_file())
+    except OSError:
+        return True
+
+
+def _record_is_recent(value: Any, grace_seconds: int) -> bool:
+    """没有 staging 时用 processing 创建时间保护极短的并发窗口。"""
+
+    if value is None:
+        return False
+    if isinstance(value, datetime):
+        created = value
+    else:
+        try:
+            created = datetime.fromisoformat(str(value))
+        except ValueError:
+            return False
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - created.astimezone(timezone.utc)).total_seconds() <= grace_seconds
 
 
 def _run_ffmpeg(command: list[str], failure_message: str) -> None:
@@ -753,38 +930,6 @@ def _hash_file(path: Path) -> FileIntegrity:
     return FileIntegrity(total, hasher.hexdigest())
 
 
-def _verify_source_integrity(
-    source_path: Path,
-    source_video: SourceVideoRecord,
-    *,
-    expected_sha256: str | None = None,
-    during_processing: bool = False,
-) -> FileIntegrity:
-    """核验当前磁盘 Source 仍与 F02 冻结记录及本次 F03 快照一致。
-
-    业务位置：F03 开始前建立可信 Source 快照；长时间 FFmpeg 处理完成、正式 publish 前再次
-    复核，避免原片在处理中被系统外替换。Recovery 也复用同一规则。
-
-    输入/输出：读取 Source 文件并返回真实 size/hash；只读，不修改 F02 数据或文件。
-    失败：任何 size/hash 不一致都停止 F03，绝不自动“修正” F02 的 SHA。
-    """
-
-    integrity = _hash_file(source_path)
-    matches_f02 = (
-        integrity.file_size_bytes == source_video.file_size_bytes
-        and integrity.sha256 == source_video.sha256
-    )
-    matches_snapshot = expected_sha256 is None or integrity.sha256 == expected_sha256
-    if not matches_f02 or not matches_snapshot:
-        message = (
-            "原视频在预处理过程中发生变化，已停止发布派生资产"
-            if during_processing
-            else "原视频文件与 F02 导入记录不一致，已停止预处理"
-        )
-        raise PreprocessError("SOURCE_VIDEO_INTEGRITY_MISMATCH", message)
-    return integrity
-
-
 def _require_nonempty_file(path: Path, code: str, message: str) -> None:
     try:
         if not path.is_file() or path.stat().st_size <= 0:
@@ -852,12 +997,8 @@ def _seconds_us(value: Any, fallback: int | None = None) -> int:
 
 
 def _duration_us(payload: dict[str, Any], stream: dict[str, Any]) -> int:
-    """读取当前选中媒体流的时长，流缺失时才回退容器时长。
-
-    为什么流优先：F03 Proxy 是给 F04 做视频分析，若容器中的 AAC 比视频稍长，使用
-    ``format.duration`` 会把音频尾巴错误算进 Proxy 视频时长。Audio 同理应优先自身流时长。
-    """
-
+    # F03 的调用者已经选定了主视频/主音频流。后续 F04/ASR 要的是该业务流自己的时长，
+    # 不能优先使用整个容器 duration（容器可能因另一条流尾巴更长而被拉长）。
     raw = stream.get("duration")
     if raw in (None, "", "N/A"):
         raw = _format_info(payload).get("duration")
