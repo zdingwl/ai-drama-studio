@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -9,6 +8,8 @@ from engine.app.core.database import init_database
 
 
 def test_f04_migration_creates_detection_tables_and_constraints(tmp_path: Path) -> None:
+    """F04 只验证自己的表/约束长期存在，不把当时的 0005 临时 head 当成永久 Contract。"""
+
     database_path = init_database(tmp_path)
     engine = sa.create_engine(f"sqlite:///{database_path.as_posix()}")
     try:
@@ -40,12 +41,3 @@ def test_f04_migration_creates_detection_tables_and_constraints(tmp_path: Path) 
         assert "ck_shot_candidate_boundary_score" in candidate_checks
     finally:
         engine.dispose()
-
-
-def test_f04_database_head_is_0005(tmp_path: Path) -> None:
-    database_path = init_database(tmp_path)
-
-    with sqlite3.connect(database_path) as connection:
-        revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-
-    assert revision == ("0005_create_shot_detection",)
