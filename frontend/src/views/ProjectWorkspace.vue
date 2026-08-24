@@ -12,12 +12,13 @@ const project = computed(() => store.currentProject)
 
 const steps = [
   { number: '01', label: '项目创建', state: 'done' },
-  { number: '02', label: '视频导入', state: 'future' },
-  { number: '03', label: '自动拉片', state: 'future' },
-  { number: '04', label: '人物对白', state: 'future' },
-  { number: '05', label: '本土选角', state: 'future' },
-  { number: '06', label: '生成制作', state: 'future' },
-  { number: '07', label: '最终合成', state: 'future' },
+  { number: '02', label: '视频导入', state: 'current' },
+  { number: '03', label: '视频预处理', state: 'future' },
+  { number: '04', label: '自动拉片', state: 'future' },
+  { number: '05', label: '人物对白', state: 'future' },
+  { number: '06', label: '本土选角', state: 'future' },
+  { number: '07', label: '生成制作', state: 'future' },
+  { number: '08', label: '最终合成', state: 'future' },
 ]
 
 onMounted(async () => {
@@ -86,9 +87,9 @@ onMounted(async () => {
         <div class="section-heading">
           <div>
             <h2>生产流程</h2>
-            <p>当前 F01 已完成项目容器创建，后续 Feature 将沿此流程逐步开放。</p>
+            <p>项目容器已完成，当前可以进入 F02 导入只读原视频。</p>
           </div>
-          <span class="progress-summary">1 / 7</span>
+          <span class="progress-summary">F02</span>
         </div>
         <div class="process-rail">
           <div
@@ -101,7 +102,7 @@ onMounted(async () => {
               <span>{{ step.state === 'done' ? '✓' : step.number }}</span>
             </div>
             <strong>{{ step.label }}</strong>
-            <small>{{ step.state === 'done' ? '已完成' : '待开放' }}</small>
+            <small>{{ step.state === 'done' ? '已完成' : step.state === 'current' ? '可进入' : '待开放' }}</small>
             <div v-if="index < steps.length - 1" class="step-line"></div>
           </div>
         </div>
@@ -129,13 +130,12 @@ onMounted(async () => {
 
         <article class="content-panel next-step-panel">
           <div class="next-step-icon">02</div>
-          <span class="panel-eyebrow">NEXT FEATURE</span>
-          <h2>项目已经准备好</h2>
-          <p>F01 只负责创建和重新打开项目。上传原视频将在 F02 完成，因此这里不会提前放一个不可用的上传按钮。</p>
-          <div class="next-step-note">
-            <span>✓</span>
-            <div><strong>当前项目容器已就绪</strong><small>可以安全关闭应用并在下次启动后重新打开。</small></div>
-          </div>
+          <span class="panel-eyebrow">CURRENT FEATURE</span>
+          <h2>导入原视频</h2>
+          <p>选择一份真实短剧原片，系统会复制进当前 Workspace、计算 SHA-256，并用 FFprobe 验证基础媒体信息。</p>
+          <button type="button" class="primary-button" @click="router.push(`/projects/${project.id}/source-video`)">
+            进入视频导入
+          </button>
         </article>
       </section>
     </template>
