@@ -1,17 +1,7 @@
 """F04「重新自动拉片」安全重跑业务。
 
-为什么单独存在：
-- F04 首次检测已经把当时的 PyTorch / device / Shot Candidate 保存成 Auto Evidence；
-- 用户升级 CUDA、修复模型环境或需要重新验证时，应当允许显式重跑；
-- 但不能为了重跑先删除旧 READY 结果，否则新推理失败会把已有证据一起丢失。
-
-因此本模块采用“先计算、后原子替换”：
-1. 旧 READY 结果在整个模型推理期间保持可用；
-2. 新 TransNetV2 结果全部完成、PTS 对齐、Proxy 双重完整性校验通过后；
-3. 在一个 SQLite transaction 中删除旧 Run/Candidates，并写入新的 READY Run/Candidates；
-4. 任意失败都会回滚事务，旧结果仍然存在。
-
-本模块不修改 F03 媒体，不产生新视频文件，也不创建 F05 Final Shot。
+旧 READY 结果会一直保留到新结果完整成功，再用单事务原子替换。
+F05 一旦建立 Final Shot Edit Set，本接口立即禁止重跑，避免替换 F05 正在追溯的 Auto Evidence。
 """
 
 from __future__ import annotations
@@ -51,20 +41,11 @@ from engine.app.shot_detection import (
 def rerun_shot_detection(*, project_id: str, app_data_path: Path | None = None) -> ShotDetectionRecord:
     """显式重新执行 F04，并在成功后原子替换旧 Auto Evidence。
 
-    输入：
-        project_id: 当前项目稳定业务 ID。
-        app_data_path: 测试时可覆盖 App Data；正常 UI 不传。
-
-    返回：
-        新一次 READY Detection Run，包含新的 runtime 快照和 Shot Candidates。
-
-    关键安全规则：
-    - 必须已经存在 READY F04；没有旧结果时应走普通“开始自动拉片”；
-    - 旧结果在新模型推理阶段不删除；
-    - 重新读取并校验 F03 Proxy，禁止对被替换的 Proxy 重跑；
-    - commit 前再次校验 Proxy，防止推理过程中媒体变化；
-    - 最终替换必须是单事务，失败即保留旧 READY 结果；
-    - 不允许传入 threshold/device/model path，仍使用冻结 Profile V1。
+    关键约束：
+    - 必须已有 READY F04；
+    - F05 尚未开始；一旦存在 `shot_edit_sets`，禁止替换其上游 Detection；
+    - 旧结果在新模型推理期间不删除；
+    - 新结果通过 PTS / Proxy 完整性校验后才在一个事务中替换。
     """
 
     old_detection = get_shot_detection(project_id=project_id, app_data_path=app_data_path)
@@ -83,6 +64,20 @@ def rerun_shot_detection(*, project_id: str, app_data_path: Path | None = None) 
     candidate_table = _table(engine, "shot_candidates")
 
     try:
+        # F05 Edit Set 保存 source_detection_id。进入 F05 后再替换 F04 会让 Final Shot 失去
+        # 可追溯的自动来源，因此在任何 GPU 推理之前直接拒绝，避免浪费计算资源。
+        if sa.inspect(engine).has_table("shot_edit_sets"):
+            edit_sets = _table(engine, "shot_edit_sets")
+            with engine.connect() as connection:
+                existing_edit = connection.execute(
+                    edit_sets.select().where(edit_sets.c.project_id == project_id)
+                ).mappings().first()
+            if existing_edit is not None:
+                raise ShotDetectionError(
+                    "SHOT_DETECTION_RERUN_BLOCKED_BY_F05",
+                    "当前项目已经进入 F05 镜头修正，不能再替换 F04 自动证据",
+                )
+
         workspace = _load_workspace(engine, projects, project_id)
         preprocess = get_source_preprocess(project_id=project_id, app_data_path=app_data_path)
         if preprocess is None:
@@ -129,8 +124,6 @@ def rerun_shot_detection(*, project_id: str, app_data_path: Path | None = None) 
         created_at = datetime.now(timezone.utc)
         completed_at = datetime.now(timezone.utc)
 
-        # 这里不先删除旧 READY。只有新结果已经完整计算后，才在同一事务里替换。
-        # 如果任意 INSERT/DELETE/约束失败，SQLite 会回滚，旧 Auto Evidence 继续可用。
         try:
             with engine.begin() as connection:
                 current = connection.execute(
@@ -142,9 +135,7 @@ def rerun_shot_detection(*, project_id: str, app_data_path: Path | None = None) 
                         "自动拉片结果在重新计算期间已发生变化，请刷新页面后再试",
                     )
 
-                connection.execute(
-                    candidate_table.delete().where(candidate_table.c.detection_id == old_detection.id)
-                )
+                connection.execute(candidate_table.delete().where(candidate_table.c.detection_id == old_detection.id))
                 deleted = connection.execute(
                     runs.delete().where(
                         runs.c.id == old_detection.id,
