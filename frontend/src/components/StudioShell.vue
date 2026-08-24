@@ -20,6 +20,7 @@ const route = useRoute()
 const router = useRouter()
 
 const isHome = computed(() => route.path === '/')
+const projectId = computed(() => String(route.params.projectId || ''))
 const globalNav = computed(() => [
   { label: '工作台', icon: 'home', enabled: true, active: isHome.value },
   { label: '项目管理', icon: 'projects', enabled: true, active: !isHome.value },
@@ -27,20 +28,26 @@ const globalNav = computed(() => [
   { label: '资产中心', icon: 'assets', enabled: false, active: false },
 ])
 
-const projectNav = [
-  { label: '项目总览', step: '01', enabled: true },
-  { label: '视频导入', step: '02', enabled: false },
-  { label: '自动拉片', step: '03', enabled: false },
-  { label: '人物对白', step: '04', enabled: false },
-  { label: '本土选角', step: '05', enabled: false },
-  { label: '生成制作', step: '06', enabled: false },
-  { label: '最终合成', step: '07', enabled: false },
-]
+const projectNav = computed(() => [
+  { label: '项目总览', step: '01', enabled: true, active: route.name === 'workspace', routeName: 'workspace' },
+  { label: '视频导入', step: '02', enabled: true, active: route.name === 'source-video', routeName: 'source-video' },
+  { label: '视频预处理', step: '03', enabled: false, active: false, routeName: '' },
+  { label: '自动拉片', step: '04', enabled: false, active: false, routeName: '' },
+  { label: '人物对白', step: '05', enabled: false, active: false, routeName: '' },
+  { label: '本土选角', step: '06', enabled: false, active: false, routeName: '' },
+  { label: '生成制作', step: '07', enabled: false, active: false, routeName: '' },
+  { label: '最终合成', step: '08', enabled: false, active: false, routeName: '' },
+])
 
 function goGlobal(label: string): void {
   if (label === '工作台' || label === '项目管理') {
     void router.push('/')
   }
+}
+
+function goProject(routeName: string): void {
+  if (!routeName || !projectId.value) return
+  void router.push({ name: routeName, params: { projectId: projectId.value } })
 }
 </script>
 
@@ -80,12 +87,13 @@ function goGlobal(label: string): void {
         </div>
         <div class="project-flow-nav">
           <button
-            v-for="(item, index) in projectNav"
+            v-for="item in projectNav"
             :key="item.label"
             type="button"
             class="project-flow-item"
-            :class="{ active: index === 0, disabled: !item.enabled }"
+            :class="{ active: item.active, disabled: !item.enabled }"
             :disabled="!item.enabled"
+            @click="goProject(item.routeName)"
           >
             <span class="flow-number">{{ item.step }}</span>
             <span class="flow-label">{{ item.label }}</span>
