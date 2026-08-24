@@ -2,10 +2,11 @@
 
 Feature ID: F05  
 Feature Name: 镜头人工修正 / 三栏拉片工作台  
-Status: IN DEVELOPMENT  
+Status: STABLE / FROZEN  
 Contract Status: CONFIRMED BY USER  
 Official Baseline: main  
-Upstream: F04 Auto Shot Candidate（F04 当前仍 READY_FOR_REVIEW，用户已明确允许提前开始 F05）
+Upstream: F04 Auto Shot Candidate（F04 已 STABLE / FROZEN）  
+Stable Snapshot: `docs/features/F05-stable-snapshot.md`
 
 ## 1. 目标
 
@@ -128,10 +129,11 @@ Final Shot 保存 `origin_candidate_ids_json` 作为追溯信息。拆分会继�
 
 - 所有 Final Shot；
 - 镜头号；
-- 首帧缩略图；
+- 镜头中间位置缩略图；
 - Source 起点；
 - 时长；
 - 当前播放 Shot 自动高亮；
+- 当前 Shot 自动滚动并保留上下可视空间；
 - 点击 Shot -> 播放器跳到该 Shot 开始。
 
 ### 中栏
@@ -177,7 +179,7 @@ F05 V1 真正可编辑：
 叙事作用
 ```
 
-## 7. 媒体接口
+## 7. 媒体接口与缓存
 
 F05 新增只读媒体入口：
 
@@ -193,8 +195,23 @@ Frame endpoint：
 - 输入 Source time；
 - 使用 Edit Set source start 映射为播放器相对时间；
 - FFmpeg 只抽单帧 JPEG；
-- 缓存在 Project Workspace `.cache/f05/frames/`；
-- 缓存不是业务资产，删除后可重新生成。
+- 缓存在 Project Workspace `.cache/f05/frames/<source_time_us>.jpg`；
+- 已有非空 JPEG 时必须直接复用，禁止再次启动 FFmpeg；
+- 边界未变化时不批量重生成；
+- 边界调整 / 拆分 / 合并只为新时间点补图；
+- HTTP 返回长期浏览器缓存；
+- 缓存不是业务资产，人工删除后允许重新生成。
+
+播放器 / 预览调度：
+
+```text
+Proxy metadata / 播放优先
+当前 Shot 5 张关键帧 = 高优先级，播放中允许串行加载/生成
+整集缩略图 = 低优先级，播放中暂停
+暂停/结束后继续补齐缩略图
+```
+
+禁止同一 Shot 并发启动多个 FFmpeg 关键帧进程。
 
 ## 8. API
 
@@ -228,6 +245,8 @@ final_shots
 
 不改写 0001–0005。
 
+数据库初始化并发保护已经纳入冻结实现：同一进程、同一 database path 只执行一次 Alembic Migration，避免关键帧并发请求触发 `KeyError: 'config'`。
+
 ## 10. 不在 F05 做
 
 - 人物识别；
@@ -240,3 +259,15 @@ final_shots
 - 云端 API。
 
 F05 的任务是把自动 Shot 变成可靠、人工可确认、后续可长期引用的 Final Shot。
+
+## 11. Freeze
+
+用户已经完成真实页面最终回归并明确确认通过。
+
+冻结事实以：
+
+```text
+docs/features/F05-stable-snapshot.md
+```
+
+为准。
