@@ -101,6 +101,30 @@ def _create_f02_database(app_data_dir: Path) -> Path:
     return database_path
 
 
+def _insert_minimal_ready_source(connection: sqlite3.Connection) -> None:
+    """为 Constraint 测试建立最小 F01 Project + F02 ready Source。"""
+
+    connection.execute(
+        """
+        INSERT INTO projects (
+            id, name, target_language, target_region,
+            workspace_path, project_format_version, status, created_at
+        ) VALUES ('PROJECT_A', 'A', 'en', 'US', 'C:/a', 1, 'ready', '2026-08-24')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO source_videos (
+            id, project_id, original_filename, relative_path,
+            file_size_bytes, sha256, status, container_format,
+            duration_us, video_stream_index, video_codec, width, height, created_at
+        ) VALUES ('SOURCE_A', 'PROJECT_A', 'a.mp4', 'source/SOURCE_A/original.mp4',
+            100, ?, 'ready', 'mp4', 1000000, 0, 'h264', 1280, 720, '2026-08-24')
+        """,
+        ("b" * 64,),
+    )
+
+
 def test_upgrade_0002_to_0003_is_additive_and_preserves_frozen_data(tmp_path: Path) -> None:
     """升级 F03 后 F01 Project 和 F02 Source 数据必须原样保留。"""
 
@@ -154,30 +178,12 @@ def test_upgrade_0002_to_0003_creates_one_safe_backup(tmp_path: Path) -> None:
 
 
 def test_processing_row_can_exist_before_preprocess_outputs_are_known(tmp_path: Path) -> None:
-    """processing 恢复锚点只保存已知 Source 快照和目标路径，不伪造媒体 metadata。"""
+    """processing 恢复锚点允许先保存 Proxy/Thumbnail 目标路径，媒体 metadata 暂空。"""
 
     database_path = init_database(tmp_path / "app-data")
 
     with sqlite3.connect(database_path) as connection:
-        connection.execute(
-            """
-            INSERT INTO projects (
-                id, name, source_language, target_language, target_region,
-                workspace_path, project_format_version, status, created_at, last_opened_at
-            ) VALUES ('PROJECT_A', 'A', 'zh', 'en', 'US', 'C:/a', 1, 'ready', '2026-08-24', NULL)
-            """
-        )
-        connection.execute(
-            """
-            INSERT INTO source_videos (
-                id, project_id, original_filename, relative_path,
-                file_size_bytes, sha256, status, container_format,
-                duration_us, video_stream_index, video_codec, width, height, created_at
-            ) VALUES ('SOURCE_A', 'PROJECT_A', 'a.mp4', 'source/SOURCE_A/original.mp4',
-                100, ?, 'ready', 'mp4', 1000000, 0, 'h264', 1280, 720, '2026-08-24')
-            """,
-            ("b" * 64,),
-        )
+        _insert_minimal_ready_source(connection)
         connection.execute(
             """
             INSERT INTO source_preprocess (
@@ -197,32 +203,40 @@ def test_processing_row_can_exist_before_preprocess_outputs_are_known(tmp_path: 
     assert row == ("processing", None, None)
 
 
+def test_processing_with_audio_target_path_can_wait_for_audio_metadata(tmp_path: Path) -> None:
+    """有音频 Source 在 processing 时可以先确定 audio.wav 路径，不能被 ready 约束提前拒绝。"""
+
+    database_path = init_database(tmp_path / "app-data")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_minimal_ready_source(connection)
+        connection.execute(
+            """
+            INSERT INTO source_preprocess (
+                source_video_id, project_id, status, profile_version,
+                source_sha256_snapshot, proxy_relative_path,
+                audio_relative_path, thumbnail_relative_path, created_at
+            ) VALUES ('SOURCE_A', 'PROJECT_A', 'processing', 1, ?,
+                'preprocess/SOURCE_A/proxy.mp4',
+                'preprocess/SOURCE_A/audio.wav',
+                'preprocess/SOURCE_A/thumbnail.jpg', '2026-08-24')
+            """,
+            ("b" * 64,),
+        )
+        row = connection.execute(
+            "SELECT audio_relative_path, audio_sha256 FROM source_preprocess"
+        ).fetchone()
+
+    assert row == ("preprocess/SOURCE_A/audio.wav", None)
+
+
 def test_ready_row_requires_proxy_thumbnail_and_mapping_metadata(tmp_path: Path) -> None:
     """缺少 Proxy/Thumbnail/Timeline Mapping 时不能冒充 ready。"""
 
     database_path = init_database(tmp_path / "app-data")
 
     with sqlite3.connect(database_path) as connection:
-        connection.execute(
-            """
-            INSERT INTO projects (
-                id, name, target_language, target_region,
-                workspace_path, project_format_version, status, created_at
-            ) VALUES ('PROJECT_A', 'A', 'en', 'US', 'C:/a', 1, 'ready', '2026-08-24')
-            """
-        )
-        connection.execute(
-            """
-            INSERT INTO source_videos (
-                id, project_id, original_filename, relative_path,
-                file_size_bytes, sha256, status, container_format,
-                duration_us, video_stream_index, video_codec, width, height, created_at
-            ) VALUES ('SOURCE_A', 'PROJECT_A', 'a.mp4', 'source/SOURCE_A/original.mp4',
-                100, ?, 'ready', 'mp4', 1000000, 0, 'h264', 1280, 720, '2026-08-24')
-            """,
-            ("b" * 64,),
-        )
-
+        _insert_minimal_ready_source(connection)
         try:
             connection.execute(
                 """
@@ -242,47 +256,38 @@ def test_ready_row_requires_proxy_thumbnail_and_mapping_metadata(tmp_path: Path)
             raise AssertionError("ready Preprocess 必须具备 Proxy/Thumbnail/Mapping 核心元数据")
 
 
-def test_audio_metadata_must_be_all_null_or_all_complete(tmp_path: Path) -> None:
-    """不能只保存 audio.wav 路径却缺少分析 WAV 的时长/Hash/采样率等元数据。"""
+def test_ready_audio_path_requires_complete_analysis_audio_metadata(tmp_path: Path) -> None:
+    """ready 时若声明 audio.wav，就必须同时具备 size/hash/duration/16k/mono/offset。"""
 
     database_path = init_database(tmp_path / "app-data")
 
     with sqlite3.connect(database_path) as connection:
-        connection.execute(
-            """
-            INSERT INTO projects (
-                id, name, target_language, target_region,
-                workspace_path, project_format_version, status, created_at
-            ) VALUES ('PROJECT_A', 'A', 'en', 'US', 'C:/a', 1, 'ready', '2026-08-24')
-            """
-        )
-        connection.execute(
-            """
-            INSERT INTO source_videos (
-                id, project_id, original_filename, relative_path,
-                file_size_bytes, sha256, status, container_format,
-                duration_us, video_stream_index, video_codec, width, height, created_at
-            ) VALUES ('SOURCE_A', 'PROJECT_A', 'a.mp4', 'source/SOURCE_A/original.mp4',
-                100, ?, 'ready', 'mp4', 1000000, 0, 'h264', 1280, 720, '2026-08-24')
-            """,
-            ("b" * 64,),
-        )
-
+        _insert_minimal_ready_source(connection)
         try:
             connection.execute(
                 """
                 INSERT INTO source_preprocess (
                     source_video_id, project_id, status, profile_version,
-                    source_sha256_snapshot, proxy_relative_path,
-                    audio_relative_path, thumbnail_relative_path, created_at
-                ) VALUES ('SOURCE_A', 'PROJECT_A', 'processing', 1, ?,
-                    'preprocess/SOURCE_A/proxy.mp4',
+                    source_sha256_snapshot,
+                    proxy_relative_path, proxy_file_size_bytes, proxy_sha256,
+                    proxy_duration_us, proxy_video_time_base_num, proxy_video_time_base_den,
+                    proxy_to_source_offset_us,
+                    audio_relative_path,
+                    thumbnail_relative_path, thumbnail_file_size_bytes, thumbnail_sha256,
+                    thumbnail_source_time_us,
+                    source_video_time_base_num, source_video_time_base_den,
+                    created_at, completed_at
+                ) VALUES (
+                    'SOURCE_A', 'PROJECT_A', 'ready', 1, ?,
+                    'preprocess/SOURCE_A/proxy.mp4', 100, ?, 1000000, 1, 90000, 0,
                     'preprocess/SOURCE_A/audio.wav',
-                    'preprocess/SOURCE_A/thumbnail.jpg', '2026-08-24')
+                    'preprocess/SOURCE_A/thumbnail.jpg', 50, ?, 100000,
+                    1, 90000, '2026-08-24', '2026-08-24'
+                )
                 """,
-                ("b" * 64,),
+                ("b" * 64, "c" * 64, "d" * 64),
             )
         except sqlite3.IntegrityError:
             pass
         else:
-            raise AssertionError("Audio metadata 必须全空或全完整")
+            raise AssertionError("ready Audio 不能只有路径而缺少完整分析音频 metadata")
