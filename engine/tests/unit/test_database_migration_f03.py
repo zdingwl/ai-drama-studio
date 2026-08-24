@@ -1,4 +1,4 @@
-"""F03 0003 Migration 与 F01/F02 Additive 兼容性测试。"""
+"""F03 Migration 与 F01/F02 Additive 兼容性测试。"""
 
 from pathlib import Path
 import sqlite3
@@ -6,6 +6,8 @@ import sqlite3
 from alembic import command
 
 from engine.app.core.database import _build_alembic_config, init_database
+
+CURRENT_F03_HEAD = "0004_repair_source_preprocess_audio_constraint"
 
 EXPECTED_PREPROCESS_COLUMNS = {
     "source_video_id",
@@ -125,8 +127,8 @@ def _insert_minimal_ready_source(connection: sqlite3.Connection) -> None:
     )
 
 
-def test_upgrade_0002_to_0003_is_additive_and_preserves_frozen_data(tmp_path: Path) -> None:
-    """升级 F03 后 F01 Project 和 F02 Source 数据必须原样保留。"""
+def test_upgrade_0002_to_f03_head_is_additive_and_preserves_frozen_data(tmp_path: Path) -> None:
+    """升级到当前 F03 head 后，F01 Project 和 F02 Source 数据必须原样保留。"""
 
     app_data_dir = tmp_path / "app-data"
     database_path = _create_f02_database(app_data_dir)
@@ -136,7 +138,7 @@ def test_upgrade_0002_to_0003_is_additive_and_preserves_frozen_data(tmp_path: Pa
     with sqlite3.connect(database_path) as connection:
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
-        ).fetchone() == ("0003_create_source_preprocess",)
+        ).fetchone() == (CURRENT_F03_HEAD,)
         assert connection.execute(
             "SELECT name FROM projects WHERE id='PROJECT_F03'"
         ).fetchone() == ("F03 Migration 测试",)
@@ -150,8 +152,8 @@ def test_upgrade_0002_to_0003_is_additive_and_preserves_frozen_data(tmp_path: Pa
     assert {column[1] for column in columns} == EXPECTED_PREPROCESS_COLUMNS
 
 
-def test_upgrade_0002_to_0003_creates_one_safe_backup(tmp_path: Path) -> None:
-    """已存在 F02 数据库升级 0003 前必须使用共享 SQLite Backup Gate。"""
+def test_upgrade_0002_to_f03_head_creates_one_safe_backup(tmp_path: Path) -> None:
+    """已存在 F02 数据库升级到当前 F03 head 前只创建一次 SQLite 安全备份。"""
 
     app_data_dir = tmp_path / "app-data"
     database_path = _create_f02_database(app_data_dir)
@@ -174,7 +176,7 @@ def test_upgrade_0002_to_0003_creates_one_safe_backup(tmp_path: Path) -> None:
     with sqlite3.connect(database_path) as upgraded_connection:
         assert upgraded_connection.execute(
             "SELECT version_num FROM alembic_version"
-        ).fetchone() == ("0003_create_source_preprocess",)
+        ).fetchone() == (CURRENT_F03_HEAD,)
 
 
 def test_processing_row_can_exist_before_preprocess_outputs_are_known(tmp_path: Path) -> None:
