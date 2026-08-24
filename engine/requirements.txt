@@ -1,9 +1,10 @@
-# F01 当前实际使用的最小后端依赖。
-# 后续 Feature 只能按实际需要追加，不允许为了“以后可能用到”提前安装 AI/视频依赖。
+# F01/F02 当前实际使用的最小后端依赖。
+# 只按已经开发的 Feature 追加；不提前安装 OpenCV、PyTorch、Whisper 等后续依赖。
 fastapi==0.128.2
 uvicorn==0.48.0
 pydantic==2.13.4
 SQLAlchemy==2.0.50
 alembic==1.18.4
+python-multipart==0.0.29
 httpx==0.28.1
 pytest==9.0.2
