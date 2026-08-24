@@ -174,8 +174,8 @@ async function rerunDetection(): Promise<void> {
     :project-name="project?.name || ''"
   >
     <template #topbar>
-      <span v-if="detection?.status === 'ready'" class="workspace-status-chip"><i></i> F06 · READY</span>
-      <span v-else-if="characterStore.processing || detection?.status === 'processing'" class="workspace-status-chip"><i></i> F06 · PROCESSING</span>
+      <span v-if="detection?.status === 'ready'" class="workspace-status-chip"><i></i> AUTO RUN READY · {{ detection.profile_version }}</span>
+      <span v-else-if="characterStore.processing || detection?.status === 'processing'" class="workspace-status-chip"><i></i> AUTO RUN PROCESSING</span>
       <button type="button" class="secondary-button compact-button" @click="router.push(`/projects/${projectId}/shot-workbench`)">查看 Final Shots</button>
     </template>
 
