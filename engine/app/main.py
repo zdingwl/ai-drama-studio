@@ -1,8 +1,8 @@
 """AI Drama Studio V2 FastAPI 入口。
 
 当前可用范围：
-F01 项目管理、F02 多剧集导入与排序、F03 视频预处理、F04 自动拉片与 Reference Clip。
-F05-F13 的数据实体已经预留，但不会用占位按钮伪装为已实现能力。
+F01 项目管理、F02 多剧集导入与排序、F03 视频预处理、F04 自动拉片与 Reference Clip、
+F05 智能内容识别第一版。
 """
 from __future__ import annotations
 
@@ -14,6 +14,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from engine.app.content_analysis_v2 import (
+    ContentAnalysisError,
+    content_model_status,
+    get_analysis_run,
+    get_candidate_cover,
+    get_current_analysis,
+    run_content_analysis,
+)
+from engine.app.content_models_v2 import ContentModelError, prepare_models
 from engine.app.media_v2 import MediaPipelineError, detect_episode_shots, preprocess_episode
 from engine.app.studio_v2 import (
     create_project,
@@ -32,11 +41,12 @@ from engine.app.studio_v2 import (
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # content_analysis_v2 在本模块顶层已经导入，因此 F05 新表也会进入同一个 Base metadata。
     init_database()
     yield
 
 
-app = FastAPI(title="AI Drama Studio", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="AI Drama Studio", version="2.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -67,7 +77,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "architecture": "reference-video-v2"}
+    return {"status": "ok", "architecture": "reference-video-v2", "app_version": "2.1.0"}
 
 
 @app.get("/api/projects")
@@ -210,4 +220,66 @@ def api_shot_thumbnail(shot_id: str) -> FileResponse:
     path = get_shot_path(shot_id, "thumbnail")
     if path is None or not path.is_file():
         raise _not_found("镜头缩略图不存在")
+    return FileResponse(path, media_type="image/jpeg", filename=path.name)
+
+
+# ---------------------------- F05 智能内容识别 ----------------------------
+
+
+@app.get("/api/models/f05/status")
+def api_f05_model_status() -> dict[str, object]:
+    """查看 YuNet/SFace 是否已经在本机准备完成。"""
+    return content_model_status()
+
+
+@app.post("/api/models/f05/prepare")
+def api_prepare_f05_models() -> dict[str, object]:
+    """显式下载并校验 F05 固定人物视觉模型。运行分析时不会静默联网下载。"""
+    try:
+        return prepare_models()
+    except ContentModelError as exc:
+        raise _bad_request(exc) from exc
+
+
+@app.post("/api/projects/{project_id}/content-analysis")
+def api_run_content_analysis(project_id: str) -> dict[str, Any]:
+    """按 Episode.sort_order 顺序对整个 Project 执行 F05，跨集建立统一人物候选。"""
+    if get_project(project_id) is None:
+        raise _not_found("项目不存在")
+    try:
+        return run_content_analysis(project_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+    except (ContentAnalysisError, ContentModelError, ValueError, OSError) as exc:
+        raise _bad_request(exc) from exc
+
+
+@app.get("/api/projects/{project_id}/content-analysis/current")
+def api_current_content_analysis(project_id: str) -> dict[str, Any] | None:
+    if get_project(project_id) is None:
+        raise _not_found("项目不存在")
+    return get_current_analysis(project_id)
+
+
+@app.get("/api/content-analysis/{run_id}")
+def api_get_content_analysis(run_id: str) -> dict[str, Any]:
+    payload = get_analysis_run(run_id)
+    if payload is None:
+        raise _not_found("F05 分析 Run 不存在")
+    return payload
+
+
+@app.get("/api/content-analysis/characters/{candidate_id}/cover")
+def api_character_candidate_cover(candidate_id: str) -> FileResponse:
+    path = get_candidate_cover(candidate_id, "character")
+    if path is None or not path.is_file():
+        raise _not_found("人物候选封面不存在")
+    return FileResponse(path, media_type="image/jpeg", filename=path.name)
+
+
+@app.get("/api/content-analysis/scenes/{candidate_id}/cover")
+def api_scene_candidate_cover(candidate_id: str) -> FileResponse:
+    path = get_candidate_cover(candidate_id, "scene")
+    if path is None or not path.is_file():
+        raise _not_found("场景候选封面不存在")
     return FileResponse(path, media_type="image/jpeg", filename=path.name)
