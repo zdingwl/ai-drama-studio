@@ -32,8 +32,15 @@ def test_f05_migration_creates_final_shot_tables(tmp_path: Path) -> None:
         engine.dispose()
 
 
-def test_f05_database_head_is_0006(tmp_path: Path) -> None:
+def test_f05_revision_is_preserved_under_newer_database_head(tmp_path: Path) -> None:
+    """F06+ 可以推进 Alembic head，但不能让 F05 表/迁移历史消失。"""
+
     database_path = init_database(tmp_path)
     with sqlite3.connect(database_path) as connection:
-        revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-    assert revision == ("0006_create_final_shots",)
+        current_head = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        f05_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='final_shots'"
+        ).fetchone()
+    assert current_head is not None
+    assert current_head[0] >= "0006_create_final_shots"
+    assert f05_table == ("final_shots",)
