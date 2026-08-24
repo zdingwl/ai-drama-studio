@@ -232,6 +232,8 @@ def create_app() -> FastAPI:
         status_map = {
             "PREPROCESS_SOURCE_REQUIRED": 409,
             "PREPROCESS_ALREADY_EXISTS": 409,
+            "PREPROCESS_IN_PROGRESS": 409,
+            "PREPROCESS_RECOVERY_REQUIRED": 409,
             "SOURCE_VIDEO_INTEGRITY_MISMATCH": 409,
             "PREPROCESS_FFMPEG_UNAVAILABLE": 503,
             "PREPROCESS_FFPROBE_UNAVAILABLE": 503,
