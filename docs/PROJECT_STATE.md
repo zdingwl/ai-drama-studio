@@ -9,12 +9,12 @@ Project: AI Drama Studio
 Official Baseline: main
 Current Working Branch: main（用户未要求切换/新建其它分支）
 Current Feature: F03 — 视频预处理
-Feature Status: IN_PROGRESS
+Feature Status: READY_FOR_REVIEW
 F03 Contract: CONFIRMED
 F03 Function Contracts: CONFIRMED
-F03 0003 Migration: IMPLEMENTED / TARGETED TEST PASS
-F03 Media Time Utilities: IMPLEMENTED / TARGETED TEST PASS
-Business Code: IN_PROGRESS
+F03 Business Code: COMPLETE
+F03 Frontend: COMPLETE
+F03 User Acceptance: PENDING
 F01 — 创建项目: STABLE / FROZEN
 F02 — 上传原视频: STABLE / FROZEN
 Stable Features: F01, F02
@@ -36,12 +36,15 @@ AGENTS.md
 → docs/features/F02-stable-snapshot.md
 → docs/features/F03-video-preprocessing.md
 → docs/features/F03-function-contracts.md
+→ docs/features/F03-implementation-log.md
 → 最新相关 docs/sessions/*.md
 ```
 
 ---
 
-# F01 / F02 冻结基线
+# 冻结上游
+
+F01、F02 已由用户实际测试并冻结。
 
 权威快照：
 
@@ -50,130 +53,61 @@ docs/features/F01-stable-snapshot.md
 docs/features/F02-stable-snapshot.md
 ```
 
-F03 只能 Additive 扩展，特别不得：
+F03 只做 Additive 扩展，没有改变：
 
 ```text
-覆盖 F02 original.<ext>
-改变 Source ID
-改变 F02 source_videos 既有字段语义
-把 Proxy Timeline 直接当 Source Timeline
-用 float 秒替代 integer microseconds
-用 frame_index / fps 作为 VFR 唯一定位
-改变 F01/F02 已验收 StudioShell 基线
+Project ID
+Source ID
+projects 既有字段语义
+source_videos 既有字段语义
+F02 source/SOURCE_xxx/original.ext 路径
+F02 ready Source 只读规则
+F01/F02 既有 API 语义
+integer microseconds / rational FPS
+正式 StudioShell UI 基线
 ```
 
 ---
 
-# F03 权威文档
-
-```text
-docs/features/F03-video-preprocessing.md
-docs/features/F03-function-contracts.md
-```
-
-用户已通过“继续”明确确认 F03 当前规划并允许进入编码，因此 F03 已从 PLANNED 切换为 IN_PROGRESS。
-
----
-
-# F03 目标
+# F03 已完成业务闭环
 
 ```text
 F02 ready Source
-→ Source integrity check
-→ proxy.mp4
-→ audio.wav（有音频时）
-→ thumbnail.jpg
-→ validate/hash/metadata
-→ Source ↔ Proxy / Audio Mapping
-→ source_preprocess ready
+→ 重新校验实际 size + SHA-256
+→ DB source_preprocess = processing
+→ preprocess/.staging/SOURCE_xxx/
+→ FFmpeg 生成 proxy.mp4
+→ Source 有音频时生成 audio.wav
+→ 从 Proxy 生成 thumbnail.jpg
+→ FFprobe / size / SHA-256 / Profile 校验
+→ 读取 Source/Proxy/Audio 实际 stream start timestamp
+→ 计算 Source ↔ Proxy / Audio offset
+→ staging 发布 preprocess/SOURCE_xxx/
+→ DB source_preprocess = ready
+→ 页面展示预处理资产和 Timeline Mapping
 → 重启后仍可读取
 ```
 
 F03 不做：
 
 ```text
-Shot Detection
-Shot Boundary
+Shot Detection / Shot Boundary
 ASR
 人物识别
 Scene
-AI
+任何 AI
 GPU/NVENC 优化
-多 Profile
+多 Proxy Profile
 Source 替换/覆盖
 ```
 
-F04 仍未开始。
+F04 尚未开始。
 
 ---
 
-# F03 Preprocess Profile V1
+# F03 Database / Migration
 
-Proxy：
-
-```text
-MP4
-H.264 / libx264
-CRF 23
-preset fast
-yuv420p
-最大装入 1280×720
-保持比例
-不放大小视频
-不强制 CFR
-保留 presentation timestamp 节奏
-Source 有音频时 Proxy 携带 AAC 128k
-```
-
-Analysis Audio：
-
-```text
-audio.wav
-PCM s16le
-16000 Hz
-mono
-```
-
-Source 无音频时不生成假静音 WAV。
-
-Thumbnail：
-
-```text
-thumbnail.jpg
-thumbnail_proxy_time_us = min(proxy_duration_us / 10, 5_000_000)
-同时保存 thumbnail_source_time_us
-```
-
----
-
-# F03 Workspace
-
-```text
-<workspace>/preprocess/
-├── .staging/
-│   └── SOURCE_<UUID>/
-│       ├── proxy.mp4
-│       ├── audio.wav      # 可选
-│       └── thumbnail.jpg
-└── SOURCE_<UUID>/
-    ├── proxy.mp4
-    ├── audio.wav          # 可选
-    └── thumbnail.jpg
-```
-
-F02 Source 保持：
-
-```text
-source/SOURCE_<UUID>/original.<ext>
-```
-
-F03 绝不覆盖原片。
-
----
-
-# F03 Database / Migration — 已完成底座
-
-新增 Migration：
+Migration：
 
 ```text
 0003_create_source_preprocess
@@ -192,74 +126,67 @@ processing
 ready
 ```
 
-F03 V1：
+关键规则：
 
-```text
-1 Source Video → 0 或 1 个 Preprocess Asset Set
-```
+- processing 阶段允许尚未生成的媒体 metadata 为 NULL；
+- 有音频 Source 在 processing 阶段可以先保存 `audio.wav` 目标路径；
+- ready 时 Proxy + Thumbnail + Timeline Mapping 必须完整；
+- ready 若有 Audio，则 path / size / SHA / duration / 16000Hz / mono / offset 必须全部完整；
+- Source 无音频时 Audio 字段全部为空，不伪造静音 WAV；
+- Migration 前继续复用 F02 已冻结 SQLite `Connection.backup()` 安全升级 Gate。
 
-主要保存：
-
-```text
-Source SHA snapshot
-Proxy path / size / hash / duration / timebase / fps
-Proxy→Source offset
-Audio path / size / hash / duration / sample rate / channels
-Audio→Source offset
-Thumbnail path / size / hash / Source timestamp
-created_at / completed_at
-```
-
-数据库规则：
-
-```text
-processing
-→ 只要求已知 Source snapshot + 目标路径
-→ 输出 metadata 可以 NULL
-
-ready
-→ Proxy + Thumbnail 核心 metadata 必须完整
-→ Source/Proxy time_base + mapping 必须存在
-
-Audio
-→ 全部 NULL（无音频）
-或
-→ path/size/hash/duration/16000Hz/mono/offset 全部完整
-```
-
-F01/F02 的 `projects` / `source_videos` 既有字段没有修改。
+开发收尾时修复了一个数据库约束问题：旧 0003 草案会错误拒绝“processing + 已知 audio 目标路径 + metadata 尚未知”。现在 Audio 完整性约束只在 `ready` 时强制，并增加对应回归测试。
 
 ---
 
-# F03 Migration Backup Gate — 已验证
+# F03 Preprocess Profile V1
 
-真实升级路径验证：
+Proxy：
 
 ```text
-0002 app.db
-→ init_database()
-→ backups/app_<UTC>_0002_create_source_videos.db
-→ backup revision = 0002
-→ Alembic upgrade 0003
-→ source_preprocess 存在
-→ 第二次 init_database() 不重复生成 backup
+proxy.mp4
+H.264 / libx264
+CRF 23
+preset fast
+yuv420p
+最大 1280×720
+保持原始画面比例
+不放大小视频
+-fps_mode passthrough
+不强制 VFR → CFR
+有音频时 AAC 128k
+faststart
 ```
 
-结果：PASS。
+Analysis Audio：
 
-共享备份机制仍来自 F02 已冻结的 SQLite `Connection.backup()` Gate，没有重新发明第二套 Migration 流程。
+```text
+audio.wav
+PCM s16le
+16000 Hz
+mono
+```
+
+Thumbnail：
+
+```text
+thumbnail.jpg
+thumbnail_proxy_time_us = min(proxy_duration_us / 10, 5_000_000)
+```
+
+所有派生文件都先写 staging、验证后再发布 final；F02 original 永不覆盖。
 
 ---
 
-# F03 公共 Media Time Utility — 已完成底座
+# F03 Time Contract
 
-新增：
+公共模块：
 
 ```text
 engine/app/core/media_time.py
 ```
 
-公共能力：
+已实现：
 
 ```text
 seconds_to_microseconds()
@@ -269,81 +196,7 @@ derived_to_source_microseconds()
 source_to_derived_microseconds()
 ```
 
-规则：
-
-```text
-FFprobe 十进制秒
-→ Decimal
-→ integer microseconds
-
-PTS + rational time_base
-→ Fraction
-→ integer microseconds
-
-Proxy/Audio Mapping
-source_us = derived_us + offset_us
-derived_us = source_us - offset_us
-```
-
-支持负 PTS，不把媒体起始时间强制裁成 0。
-
-禁止 F03/F04/F08 后续自己重复写 `int(seconds * 1000)` / `frame_index / fps` 作为权威时间逻辑。
-
-针对性测试：
-
-```text
-Decimal 秒值 / half-up                 PASS
-NaN 拒绝                              PASS
-1/90000 PTS round-trip                PASS
-负 PTS round-trip                     PASS
-Source↔Derived integer offset round-trip PASS
-非法 time_base 拒绝                   PASS
-```
-
-Media Time：6 passed。
-
-Migration/Constraint：3 passed。
-
-当前底座针对性合计：
-
-```text
-9 passed
-```
-
-完整 F01 + F02 + F03 回归仍在 F03 后续开发完成后执行，当前不能把 Feature 标成 READY_FOR_REVIEW。
-
----
-
-# F03 核心函数进度
-
-正式 7 个核心函数：
-
-```text
-generate_proxy_video()         NEXT
-extract_analysis_audio()       NOT STARTED
-generate_thumbnail()           NOT STARTED
-inspect_preprocess_assets()    NOT STARTED
-preprocess_source_video()      NOT STARTED
-get_source_preprocess()        NOT STARTED
-recover_source_preprocesses()  NOT STARTED
-```
-
-Controller：
-
-```text
-GET  /api/projects/{project_id}/preprocess   NOT STARTED
-POST /api/projects/{project_id}/preprocess   NOT STARTED
-```
-
-详细职责见 `docs/features/F03-function-contracts.md`。
-
----
-
-# F03 Timebase Contract
-
-F03 属于 Source Domain。
-
-权威单位：
+权威时间：
 
 ```text
 integer microseconds
@@ -362,45 +215,262 @@ Audio Mapping：
 source_us = audio_us + audio_to_source_offset_us
 ```
 
-VFR：
+Offset 来自实际 Source / Derived stream start timestamp，不假设 `Proxy 0 == Source 0`。
+
+VFR 规则：
 
 ```text
 不强制 CFR
-不使用 frame_index / fps 作为唯一定位
-后续使用 timestamp mapping
+不使用 frame_index / fps 作为唯一权威定位
+后续 F04 必须消费 timestamp / mapping
 ```
-
-媒体映射目标误差：
-
-```text
-<= 1 ms
-```
-
-超过时不得静默进入 F04。
 
 ---
 
-# 当前下一步
+# F03 7 个核心函数 — 全部完成
 
 ```text
-0003 Migration                 DONE / targeted PASS
-Media Time Utility            DONE / targeted PASS
-→ generate_proxy_video()
-→ extract_analysis_audio()
-→ generate_thumbnail()
-→ inspect_preprocess_assets()
-→ preprocess / get / recovery
-→ 2 个 API
-→ Vue F03 页面
-→ F01 + F02 + F03 全量自动回归
-→ Windows 真实短剧视频验收
-→ READY_FOR_REVIEW
-→ 用户验收
+generate_proxy_video()          DONE
+aextract_analysis_audio()       DONE
+generate_thumbnail()            DONE
+inspect_preprocess_assets()     DONE
+preprocess_source_video()       DONE
+get_source_preprocess()         DONE
+recover_source_preprocesses()   DONE
 ```
 
-F03 未通过用户验收前不得进入 F04。
+> 上面 `aextract_analysis_audio()` 仅为本状态文档的显示笔误风险提示；正式代码函数名为 `extract_analysis_audio()`，权威代码见 `engine/app/preprocess.py`。
+
+正式代码函数：
+
+```text
+generate_proxy_video()
+extract_analysis_audio()
+generate_thumbnail()
+inspect_preprocess_assets()
+preprocess_source_video()
+get_source_preprocess()
+recover_source_preprocesses()
+```
+
+主文件：
+
+```text
+engine/app/preprocess.py
+```
+
+Recovery：
+
+```text
+processing + 合法 final
+→ 重新 inspect → ready
+
+processing + 只有本 Source 明确拥有的 staging
+→ 安全清理 + 删除 processing
+
+processing + 无文件
+→ 删除 processing
+
+损坏 final / unknown file / 归属不明确
+→ 保留现场
+```
+
+F03 Recovery 永远不能删除 F02 Source。
+
+---
+
+# F03 API — 全部完成
+
+```text
+GET  /api/projects/{project_id}/preprocess
+POST /api/projects/{project_id}/preprocess
+```
+
+GET：
+
+```text
+无 ready F03 → 200 null
+ready → 200 SourcePreprocessDTO
+```
+
+POST：
+
+```text
+不上传文件
+只传 Project ID
+成功 → 201 Created
+```
+
+Controller 继续遵守：
+
+```text
+HTTP → Business → Response
+```
+
+不直接执行 SQL、FFmpeg、FFprobe、Hash、mkdir、publish 或 Recovery。
+
+---
+
+# F03 Frontend — 全部完成
+
+新增：
+
+```text
+frontend/src/types/preprocess.ts
+frontend/src/api/preprocess.ts
+frontend/src/stores/preprocess.ts
+frontend/src/views/VideoPreprocess.vue
+frontend/src/preprocess.css
+```
+
+修改：
+
+```text
+frontend/src/router/index.ts
+frontend/src/components/StudioShell.vue
+frontend/src/views/ProjectWorkspace.vue
+frontend/src/main.ts
+```
+
+路由：
+
+```text
+/projects/:projectId/preprocess
+```
+
+交互：
+
+```text
+没有 Source
+→ 明确阻止并返回 F02
+
+有 Source / 无 F03
+→ 展示 Source 摘要 + 固定 Profile
+→ “开始视频预处理”
+
+处理中
+→ 显示真实 processing 状态
+→ 不伪造百分比
+
+Ready
+→ Proxy / Audio / Thumbnail
+→ size / duration / FPS / timebase
+→ Timeline Mapping
+→ Source SHA Snapshot
+→ F04 尚未开放提示
+```
+
+项目左侧导航已正式开放 `03 视频预处理`，`04 自动拉片` 继续禁用。
+项目总览会根据真实 Source / Preprocess 数据判断当前阶段，不硬编码 F02。
+流程栏已修为 8 列，避免第 8 阶段换行。
+
+---
+
+# 自动验证记录
+
+## 已实际执行
+
+F03 Foundation：
+
+```text
+Media Time targeted tests            6 PASS
+0003 Migration/Constraint tests      3 PASS
+0002 → backup → 0003 Upgrade         PASS
+```
+
+开发后实际媒体技术链路（FFmpeg/FFprobe 7.1.5 Debian build）：
+
+```text
+1920×1080 + audio
+→ Proxy + 16k mono WAV + Thumbnail + inspect     PASS
+
+Source 无音频
+→ Proxy + Thumbnail，不生成静音 WAV              PASS
+
+Source stream start_time = 2s
+→ proxy_to_source_offset_us = 2,000,000          PASS
+```
+
+VFR 技术样本：
+
+```text
+Source 同时包含约 33ms / 66ms / 100ms 帧间隔
+→ F03 Proxy 仍保留多种 PTS 间隔
+→ 未被强制转为单一 CFR                         PASS
+```
+
+公共媒体代码：
+
+```text
+python -m py_compile preprocess.py media_time.py  PASS
+```
+
+数据库 Audio 生命周期约束：
+
+```text
+processing + audio target path + metadata NULL   PASS
+ready + audio path + metadata 不完整             REJECT / PASS
+```
+
+## 已加入仓库的 F03 测试
+
+```text
+engine/tests/unit/test_database_migration_f03.py
+engine/tests/unit/test_media_time_f03.py
+engine/tests/unit/test_preprocess_f03.py
+engine/tests/unit/test_preprocess_vfr_f03.py
+```
+
+覆盖 Source Integrity、业务发布、无音频、重复预处理、Recovery、unknown file 保护、HTTP GET/POST、真实 FFmpeg 和 VFR。
+
+## 当前工具环境限制
+
+当前执行容器无法通过网络完整 clone 当前 GitHub 仓库，因此本轮没有冒充执行：
+
+```text
+整个 engine/tests 的最终 pytest 全量回归
+frontend npm ci / vue-tsc / vite build
+```
+
+这两项作为用户 Windows 最终 Review Gate 执行。
+
+---
+
+# F03 User Review Gate
+
+代码已经完整提交 `main`，当前允许的最高状态：
+
+```text
+READY_FOR_REVIEW
+```
+
+只有用户实际测试并明确确认通过，才允许：
+
+```text
+F03 → STABLE / FROZEN
+```
+
+用户最终需要验证：
+
+```text
+1. git pull origin main
+2. 后端启动 8080
+3. npm ci / npm run typecheck / npm run build
+4. 打开已有 F02 ready 项目
+5. 左侧进入“03 视频预处理”
+6. 点击开始预处理
+7. 检查 proxy.mp4 / audio.wav（有音频时）/ thumbnail.jpg
+8. 页面 metadata / Timeline Mapping 正常
+9. Source 原片 SHA/文件不被修改
+10. 重启后 F03 结果仍存在
+11. 无音频视频不产生假的 audio.wav
+12. 再次 POST/重复执行被阻止
+13. F01 创建/打开、F02 Source 页面仍正常
+```
+
+F03 未经用户验收不得进入 F04 正式开发。
 
 ## 最近更新时间
 
-- 日期：2026-08-24 10:56 +08:00
-- 状态：用户确认 F03 规划并进入开发；0003 Migration + 公共媒体时间换算底座已实现，针对性 9 tests PASS；下一核心函数为 `generate_proxy_video()`。
+- 日期：2026-08-24 11:03 +08:00
+- 状态：用户要求直接完成 F03 全部开发；F03 后端、API、Recovery、Vue 页面和测试已全部落到 main，当前 READY_FOR_REVIEW，等待用户 Windows 真实视频验收。
