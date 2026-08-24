@@ -1,7 +1,7 @@
-"""AI Drama Studio 本地 FastAPI 应用与 F01–F04 HTTP Controller。
+"""AI Drama Studio 本地 FastAPI 应用与 F01–F05 HTTP Controller。
 
-Controller 只做 HTTP 边界：接收请求、调用业务函数、返回响应。
-不在本文件直接执行项目/媒体 SQL、mkdir、写 project.json、转码、Hash、FFprobe、模型推理或 Recovery。
+Controller 只负责 HTTP 边界：接收请求、调用业务函数、返回响应。
+不在本文件直接执行 SQL、媒体处理、模型推理、Hash 或业务状态转换。
 """
 
 from __future__ import annotations
@@ -10,10 +10,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
 
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from engine.app.core.database import init_database
@@ -37,6 +37,17 @@ from engine.app.shot_detection import (
     run_shot_detection,
 )
 from engine.app.shot_detection_rerun import rerun_shot_detection
+from engine.app.shot_workbench import (
+    ShotWorkbenchError,
+    adjust_shot_boundary,
+    confirm_final_shots,
+    get_shot_workbench,
+    get_workbench_proxy_path,
+    initialize_shot_workbench,
+    merge_final_shots,
+    render_workbench_frame,
+    split_final_shot,
+)
 from engine.app.source_videos import (
     SourceVideoError,
     get_source_video,
@@ -46,7 +57,6 @@ from engine.app.source_videos import (
 
 # F01 创建项目只允许保存下面这些稳定代码。
 # 前端使用下拉框限制普通用户，API Schema 再限制直接请求，形成双层保护。
-# 以后若新增支持语言/地区，必须同时更新前端 project-options.ts、这里的类型和相关测试。
 LanguageCode = Literal["zh", "en", "ja", "ko", "es", "pt", "fr", "de", "id", "th", "vi"]
 RegionCode = Literal["US", "GB", "JP", "KR", "ES", "BR", "FR", "DE", "ID", "TH", "VN", "TW", "SG"]
 
@@ -182,9 +192,61 @@ class ShotDetectionResponse(BaseModel):
     candidates: list[ShotCandidateResponse]
 
 
+class FinalShotResponse(BaseModel):
+    """F05 人工工作区中的生产级 Final Shot。"""
+
+    id: str = Field(description="稳定 Final Shot ID；边界微调不会改变该 ID")
+    edit_set_id: str
+    project_id: str
+    ordinal: int
+    final_start_us: int = Field(description="人工最终 Source 起点，integer microseconds")
+    final_end_us: int = Field(description="人工最终 Source 终点，integer microseconds")
+    duration_us: int
+    origin_kind: str
+    origin_candidate_ids: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class ShotWorkbenchResponse(BaseModel):
+    """F05 三栏拉片工作台完整状态。"""
+
+    id: str
+    project_id: str
+    source_detection_id: str
+    status: str = Field(description="editing 可修改；confirmed 已人工确认锁定")
+    revision: int
+    source_start_us: int
+    source_end_us: int
+    created_at: datetime
+    updated_at: datetime
+    confirmed_at: datetime | None
+    shots: list[FinalShotResponse]
+
+
+class AdjustBoundaryRequest(BaseModel):
+    """移动两个相邻 Final Shot 的公共边界。"""
+
+    left_shot_id: str = Field(description="公共边界左侧 Final Shot ID")
+    boundary_us: int = Field(description="新的 Source Domain 公共边界，integer microseconds")
+
+
+class SplitShotRequest(BaseModel):
+    """在一个 Final Shot 内拆分新增镜头。"""
+
+    shot_id: str
+    split_us: int = Field(description="严格位于当前 Shot 内部的 Source Domain 拆分点")
+
+
+class MergeShotsRequest(BaseModel):
+    """删除左 Shot 与其下一 Shot 的公共边界。"""
+
+    left_shot_id: str
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
-    """启动时升级数据库，并按依赖顺序恢复 F01、F02、F03、F04 中断状态。"""
+    """启动时升级数据库，并按依赖顺序恢复 F01–F04 可恢复状态。"""
 
     init_database()
     recover_creating_projects()
@@ -195,17 +257,11 @@ async def _lifespan(_: FastAPI):
 
 
 def create_app() -> FastAPI:
-    """创建 AI Drama Studio 当前本地 FastAPI Application。
+    """创建 AI Drama Studio 本地 FastAPI Application。"""
 
-    F01–F03 已冻结 Controller 语义保持不变；F04 Additive 新增自动拉片 GET/POST 与显式重跑 POST。
-    模型、PTS 对齐、完整性校验、DB 事务和 Recovery 全部由 F04 业务层负责。
-    """
-
-    app = FastAPI(title="AI Drama Studio", version="0.4.0", lifespan=_lifespan)
+    app = FastAPI(title="AI Drama Studio", version="0.5.0", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
-        # Vite 开发服务器在 5173 被占用时会自动切到其它端口。
-        # 本地开发只允许 localhost / 127.0.0.1，不开放任意外部 Origin。
         allow_origins=[],
         allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
         allow_credentials=False,
@@ -215,17 +271,17 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-        """把 Pydantic/FastAPI 请求格式错误转换成统一 error envelope。"""
+        """把 FastAPI/Pydantic 请求格式错误转换成当前 Feature 的统一错误码。"""
 
         if request.url.path.endswith("/source-video"):
             return JSONResponse(
                 status_code=422,
-                content={
-                    "error": {
-                        "code": "SOURCE_VIDEO_REQUEST_INVALID",
-                        "message": "原视频上传请求格式不正确",
-                    }
-                },
+                content={"error": {"code": "SOURCE_VIDEO_REQUEST_INVALID", "message": "原视频上传请求格式不正确"}},
+            )
+        if "/shot-workbench/" in request.url.path:
+            return JSONResponse(
+                status_code=422,
+                content={"error": {"code": "SHOT_WORKBENCH_REQUEST_INVALID", "message": "镜头修正请求格式不正确"}},
             )
 
         invalid_fields = {str(error["loc"][-1]) for error in exc.errors() if error.get("loc")}
@@ -237,13 +293,10 @@ def create_app() -> FastAPI:
             code, message = "PROJECT_TARGET_REGION_UNSUPPORTED", "目标地区不是系统支持的标准地区"
         else:
             code, message = "PROJECT_REQUEST_INVALID", "创建项目请求格式不正确"
-
         return JSONResponse(status_code=422, content={"error": {"code": code, "message": message}})
 
     @app.exception_handler(ProjectError)
     async def project_error_handler(_: Request, exc: ProjectError) -> JSONResponse:
-        """把 F01 项目业务错误统一转换成前端可识别 JSON。"""
-
         status_map = {
             "PROJECT_NAME_REQUIRED": 422,
             "PROJECT_NAME_TOO_LONG": 422,
@@ -255,15 +308,10 @@ def create_app() -> FastAPI:
             "PROJECT_WORKSPACE_MISSING": 409,
             "PROJECT_MANIFEST_INVALID": 409,
         }
-        return JSONResponse(
-            status_code=status_map.get(exc.code, 500),
-            content={"error": {"code": exc.code, "message": exc.message}},
-        )
+        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
 
     @app.exception_handler(SourceVideoError)
     async def source_video_error_handler(_: Request, exc: SourceVideoError) -> JSONResponse:
-        """把 F02 Source Video 业务错误转换成稳定 HTTP 状态与 error envelope。"""
-
         status_map = {
             "SOURCE_VIDEO_ALREADY_EXISTS": 409,
             "SOURCE_VIDEO_EMPTY": 422,
@@ -274,15 +322,10 @@ def create_app() -> FastAPI:
             "SOURCE_VIDEO_FINALIZATION_PENDING": 500,
             "SOURCE_VIDEO_FILE_MISSING": 409,
         }
-        return JSONResponse(
-            status_code=status_map.get(exc.code, 500),
-            content={"error": {"code": exc.code, "message": exc.message}},
-        )
+        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
 
     @app.exception_handler(PreprocessError)
     async def preprocess_error_handler(_: Request, exc: PreprocessError) -> JSONResponse:
-        """把 F03 预处理业务错误转换成稳定 HTTP 状态与统一 error envelope。"""
-
         status_map = {
             "PREPROCESS_SOURCE_REQUIRED": 409,
             "PREPROCESS_ALREADY_EXISTS": 409,
@@ -297,15 +340,10 @@ def create_app() -> FastAPI:
             "PREPROCESS_FINALIZATION_PENDING": 500,
             "PREPROCESS_FILE_MISSING": 409,
         }
-        return JSONResponse(
-            status_code=status_map.get(exc.code, 500),
-            content={"error": {"code": exc.code, "message": exc.message}},
-        )
+        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
 
     @app.exception_handler(ShotDetectionError)
     async def shot_detection_error_handler(_: Request, exc: ShotDetectionError) -> JSONResponse:
-        """把 F04 本地模型/PTS/完整性/显式重跑错误转换成稳定 HTTP error envelope。"""
-
         status_map = {
             "SHOT_DETECTION_PREPROCESS_REQUIRED": 409,
             "SHOT_DETECTION_ALREADY_EXISTS": 409,
@@ -321,111 +359,139 @@ def create_app() -> FastAPI:
             "SHOT_DETECTION_INVALID_RESULT": 500,
             "SHOT_DETECTION_FAILED": 500,
         }
-        return JSONResponse(
-            status_code=status_map.get(exc.code, 500),
-            content={"error": {"code": exc.code, "message": exc.message}},
-        )
+        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
+
+    @app.exception_handler(ShotWorkbenchError)
+    async def shot_workbench_error_handler(_: Request, exc: ShotWorkbenchError) -> JSONResponse:
+        """把 F05 Final Shot/媒体错误映射为稳定 HTTP 状态。"""
+
+        status_map = {
+            "SHOT_WORKBENCH_DETECTION_REQUIRED": 409,
+            "SHOT_WORKBENCH_INVALID_UPSTREAM": 409,
+            "SHOT_WORKBENCH_UPSTREAM_CHANGED": 409,
+            "SHOT_WORKBENCH_NOT_INITIALIZED": 409,
+            "SHOT_WORKBENCH_CONFIRMED": 409,
+            "SHOT_WORKBENCH_SHOT_NOT_FOUND": 404,
+            "SHOT_WORKBENCH_BOUNDARY_INVALID": 422,
+            "SHOT_WORKBENCH_SPLIT_INVALID": 422,
+            "SHOT_WORKBENCH_MERGE_INVALID": 422,
+            "SHOT_WORKBENCH_FRAME_TIME_INVALID": 422,
+            "SHOT_WORKBENCH_MEDIA_MISSING": 409,
+            "SHOT_WORKBENCH_FFMPEG_UNAVAILABLE": 503,
+            "SHOT_WORKBENCH_FRAME_FAILED": 500,
+            "SHOT_WORKBENCH_INITIALIZE_FAILED": 500,
+            "SHOT_WORKBENCH_INVALID_RESULT": 500,
+        }
+        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
 
     @app.get("/api/health")
     def health_api() -> dict[str, str]:
-        """后端健康检查入口；只说明 FastAPI 已可响应。"""
         return {"status": "ok"}
 
     @app.get("/api/projects", response_model=list[ProjectResponse])
     def list_projects_api() -> list[dict]:
-        """项目列表 HTTP 入口：只调用 list_projects()，不直接查询数据库。"""
         return [project.to_dict() for project in list_projects()]
 
     @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
     def create_project_api(payload: CreateProjectRequest) -> dict:
-        """新建项目 HTTP 入口；不直接生成 ID、mkdir、SQL 或写 Manifest。"""
         return create_project(**payload.model_dump(mode="json")).to_dict()
 
     @app.post("/api/projects/{project_id}/open", response_model=ProjectResponse)
     def open_project_api(project_id: str) -> dict:
-        """打开项目 HTTP 入口：调用 open_project() 做完整性检查和打开时间更新。"""
         return open_project(project_id=project_id).to_dict()
 
-    @app.get(
-        "/api/projects/{project_id}/source-video",
-        response_model=SourceVideoResponse | None,
-    )
+    @app.get("/api/projects/{project_id}/source-video", response_model=SourceVideoResponse | None)
     def get_source_video_api(project_id: str) -> dict | None:
-        """读取当前项目已完成原片的 HTTP 入口。"""
         source_video = get_source_video(project_id=project_id)
         return source_video.to_dict() if source_video else None
 
-    @app.post(
-        "/api/projects/{project_id}/source-video",
-        response_model=SourceVideoResponse,
-        status_code=201,
-    )
+    @app.post("/api/projects/{project_id}/source-video", response_model=SourceVideoResponse, status_code=201)
     async def import_source_video_api(project_id: str, file: UploadFile = File(...)) -> dict:
-        """原视频 multipart 上传 HTTP 入口；不在 Controller 搬运/Hash/FFprobe 文件。"""
         try:
-            source_video = await import_source_video(
-                project_id=project_id,
-                upload_file=file,
-                original_filename=file.filename or "source-video",
-            )
+            source_video = await import_source_video(project_id=project_id, upload_file=file, original_filename=file.filename or "source-video")
             return source_video.to_dict()
         finally:
             await file.close()
 
-    @app.get(
-        "/api/projects/{project_id}/preprocess",
-        response_model=SourcePreprocessResponse | None,
-    )
+    @app.get("/api/projects/{project_id}/preprocess", response_model=SourcePreprocessResponse | None)
     def get_source_preprocess_api(project_id: str) -> dict | None:
-        """F03 页面读取 ready 预处理资产的 HTTP 入口；无结果返回 200 null。"""
         record = get_source_preprocess(project_id=project_id)
         return record.to_dict() if record else None
 
-    @app.post(
-        "/api/projects/{project_id}/preprocess",
-        response_model=SourcePreprocessResponse,
-        status_code=201,
-    )
+    @app.post("/api/projects/{project_id}/preprocess", response_model=SourcePreprocessResponse, status_code=201)
     def preprocess_source_video_api(project_id: str) -> dict:
-        """F03 开始预处理 HTTP 入口。
-
-        Controller 只传 Project ID。FFmpeg 参数、Source Integrity、staging、publish、DB ready
-        和失败恢复全部由 preprocess_source_video() 负责。
-        """
         return preprocess_source_video(project_id=project_id).to_dict()
 
-    @app.get(
-        "/api/projects/{project_id}/shot-detection",
-        response_model=ShotDetectionResponse | None,
-    )
+    @app.get("/api/projects/{project_id}/shot-detection", response_model=ShotDetectionResponse | None)
     def get_shot_detection_api(project_id: str) -> dict | None:
-        """F04 页面读取自动拉片结果；无 Detection Run 返回 200 null。"""
-
         record = get_shot_detection(project_id=project_id)
         return record.to_dict() if record else None
 
-    @app.post(
-        "/api/projects/{project_id}/shot-detection",
-        response_model=ShotDetectionResponse,
-        status_code=201,
-    )
+    @app.post("/api/projects/{project_id}/shot-detection", response_model=ShotDetectionResponse, status_code=201)
     def run_shot_detection_api(project_id: str) -> dict:
-        """F04 首次自动拉片入口；ready 后重复 POST 仍然拒绝，不把重复请求当成重跑。"""
-
         return run_shot_detection(project_id=project_id).to_dict()
 
-    @app.post(
-        "/api/projects/{project_id}/shot-detection/rerun",
-        response_model=ShotDetectionResponse,
-    )
+    @app.post("/api/projects/{project_id}/shot-detection/rerun", response_model=ShotDetectionResponse)
     def rerun_shot_detection_api(project_id: str) -> dict:
-        """F04 显式重新自动拉片入口。
-
-        只有用户主动点击“重新自动拉片”才调用本接口。旧 READY 结果会保留到新结果完整成功，
-        最后由单一数据库事务原子替换，因此 GPU/模型失败不会把现有 Auto Evidence 删除。
-        """
-
         return rerun_shot_detection(project_id=project_id).to_dict()
+
+    @app.get("/api/projects/{project_id}/shot-workbench", response_model=ShotWorkbenchResponse | None)
+    def get_shot_workbench_api(project_id: str) -> dict | None:
+        """读取 F05 Final Shot 工作区；尚未初始化返回 200 null。"""
+
+        record = get_shot_workbench(project_id=project_id)
+        return record.to_dict() if record else None
+
+    @app.post("/api/projects/{project_id}/shot-workbench/initialize", response_model=ShotWorkbenchResponse, status_code=201)
+    def initialize_shot_workbench_api(project_id: str) -> dict:
+        """把 F04 Auto Candidate 复制成独立 Final Shot Draft。"""
+
+        return initialize_shot_workbench(project_id=project_id).to_dict()
+
+    @app.post("/api/projects/{project_id}/shot-workbench/boundary", response_model=ShotWorkbenchResponse)
+    def adjust_shot_boundary_api(project_id: str, payload: AdjustBoundaryRequest) -> dict:
+        """移动相邻镜头公共边界；后端同时更新左右 Shot。"""
+
+        return adjust_shot_boundary(
+            project_id=project_id,
+            left_shot_id=payload.left_shot_id,
+            boundary_us=payload.boundary_us,
+        ).to_dict()
+
+    @app.post("/api/projects/{project_id}/shot-workbench/split", response_model=ShotWorkbenchResponse)
+    def split_final_shot_api(project_id: str, payload: SplitShotRequest) -> dict:
+        """在指定播放点拆分当前 Shot（新增镜头）。"""
+
+        return split_final_shot(project_id=project_id, shot_id=payload.shot_id, split_us=payload.split_us).to_dict()
+
+    @app.post("/api/projects/{project_id}/shot-workbench/merge", response_model=ShotWorkbenchResponse)
+    def merge_final_shots_api(project_id: str, payload: MergeShotsRequest) -> dict:
+        """删除左 Shot 与其下一 Shot 的公共边界（合并镜头）。"""
+
+        return merge_final_shots(project_id=project_id, left_shot_id=payload.left_shot_id).to_dict()
+
+    @app.post("/api/projects/{project_id}/shot-workbench/confirm", response_model=ShotWorkbenchResponse)
+    def confirm_final_shots_api(project_id: str) -> dict:
+        """人工确认并锁定 Final Shot Timeline。"""
+
+        return confirm_final_shots(project_id=project_id).to_dict()
+
+    @app.get("/api/projects/{project_id}/shot-workbench/media/proxy")
+    def shot_workbench_proxy_api(project_id: str) -> FileResponse:
+        """把 F03 Proxy 作为本地播放器媒体返回；不生成新视频副本。"""
+
+        path = get_workbench_proxy_path(project_id=project_id)
+        return FileResponse(path, media_type="video/mp4")
+
+    @app.get("/api/projects/{project_id}/shot-workbench/frame")
+    def shot_workbench_frame_api(
+        project_id: str,
+        source_time_us: int = Query(description="Source Domain integer microseconds"),
+    ) -> FileResponse:
+        """按 Source 时间返回 F05 工作台缩略图/关键帧 JPEG。"""
+
+        path = render_workbench_frame(project_id=project_id, source_time_us=source_time_us)
+        return FileResponse(path, media_type="image/jpeg")
 
     return app
 
