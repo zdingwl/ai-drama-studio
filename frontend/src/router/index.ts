@@ -5,6 +5,7 @@ import SourceVideoImport from '../views/SourceVideoImport.vue'
 import VideoPreprocess from '../views/VideoPreprocess.vue'
 import ShotDetection from '../views/ShotDetection.vue'
 import ShotWorkbench from '../views/ShotWorkbench.vue'
+import CharacterDetection from '../views/CharacterDetection.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -15,5 +16,6 @@ export const router = createRouter({
     { path: '/projects/:projectId/preprocess', name: 'preprocess', component: VideoPreprocess },
     { path: '/projects/:projectId/shot-detection', name: 'shot-detection', component: ShotDetection },
     { path: '/projects/:projectId/shot-workbench', name: 'shot-workbench', component: ShotWorkbench },
+    { path: '/projects/:projectId/character-detection', name: 'character-detection', component: CharacterDetection },
   ],
 })
