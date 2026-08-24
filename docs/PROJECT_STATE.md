@@ -14,6 +14,7 @@ F03 Contract: CONFIRMED
 F03 Function Contracts: CONFIRMED
 F03 Business Code: COMPLETE
 F03 Frontend: COMPLETE
+F03 Pre-Acceptance Audit: COMPLETE
 F03 User Acceptance: PENDING
 
 F01 — 创建项目: STABLE / FROZEN
@@ -73,7 +74,7 @@ docs/features/F03-implementation-log.md
 
 ```text
 F02 ready Source
-→ 重新核验 Source size + SHA-256
+→ 开始前核验 Source size + SHA-256
 → DB source_preprocess = processing
 → preprocess/.staging/SOURCE_xxx/
 → proxy.mp4
@@ -81,6 +82,7 @@ F02 ready Source
 → thumbnail.jpg
 → FFprobe / size / SHA / Profile 校验
 → Source↔Proxy / Audio 时间映射
+→ publish 前再次核验 Source size + SHA-256 未在处理中变化
 → staging publish final
 → DB source_preprocess = ready
 → Vue 页面展示资产和 Timeline Mapping
@@ -179,6 +181,46 @@ Offset 来自实际 stream start timestamp，不假设 `Proxy 0 == Source 0`。
 
 VFR Proxy 不强制 CFR；F04 不得把 `frame_index / fps` 当作唯一 Source Timeline 定位方式。
 
+F03 媒体时长现在固定：
+
+```text
+selected stream.duration
+→ 缺失时 format.duration
+```
+
+避免容器中更长的音频尾巴误扩大 Proxy 视频分析时长。
+
+---
+
+# F03 Source Integrity Contract
+
+开始 F03：
+
+```text
+磁盘 Source size/hash
+== F02 source_videos size/hash
+```
+
+FFmpeg/inspect 完成、正式 publish 前：
+
+```text
+再次计算磁盘 Source size/hash
+== F02 source_videos size/hash
+== 本次 source_sha256_snapshot
+```
+
+处理中发生外部替换：
+
+```text
+SOURCE_VIDEO_INTEGRITY_MISMATCH
+→ 不发布 final
+→ 清理本次已知 staging
+→ 删除 processing row
+→ 不自动修改 F02 Source 数据
+```
+
+Recovery 也复用相同完整性规则。
+
 ---
 
 # F03 Core / API
@@ -240,13 +282,13 @@ frontend/src/preprocess.css
 
 # Verification
 
-已经实际执行：
+已经实际执行的开发阶段验证：
 
 ```text
 Media Time targeted tests                         6 PASS
 0003 Migration / Constraint targeted tests       3 PASS
 0002 → backup → 0003 Upgrade                     PASS
-Python preprocess.py / media_time.py py_compile PASS
+Python preprocess.py / media_time.py py_compile PASS（早期实现阶段）
 1920×1080 + Audio 实际 FFmpeg 链路               PASS
 No-Audio 实际 FFmpeg 链路                        PASS
 Source start_time=2s → Proxy offset=2,000,000us PASS
@@ -262,9 +304,18 @@ engine/tests/unit/test_database_migration_f03.py
 engine/tests/unit/test_media_time_f03.py
 engine/tests/unit/test_preprocess_f03.py
 engine/tests/unit/test_preprocess_vfr_f03.py
+engine/tests/unit/test_preprocess_integrity_f03.py
 ```
 
-当前工具容器无法联网完整 clone 仓库，因此本轮没有冒充执行完整 `pytest engine/tests`、`npm ci`、`vue-tsc`、`vite build`。这些由用户 Windows 工作副本完成最终 Review Gate。
+最新增加覆盖：
+
+```text
+Source 在长时间预处理过程中被替换 → 禁止 publish
+selected stream.duration 优先于 container duration
+stream.duration 缺失 → 安全回退 format.duration
+```
+
+当前工具容器无法联网完整 clone 最新仓库，因此没有冒充执行最新 main 的完整 `pytest engine/tests`、`npm ci`、`vue-tsc`、`vite build`。这些由用户 Windows 工作副本完成最终 Review Gate。
 
 ---
 
@@ -303,5 +354,5 @@ F03 未通过用户验收前不得进入 F04 正式开发。
 
 ## 最近更新时间
 
-- 日期：2026-08-24 11:03 +08:00
-- 状态：F03 全部规划代码、API、Recovery、Vue 页面和自动测试已提交 main；当前 READY_FOR_REVIEW，等待用户 Windows 真实视频验收。
+- 日期：2026-08-24 11:31 +08:00
+- 状态：F03 全部开发完成；验收前二次代码审查补强 Source 二次 SHA 防护与 stream-duration 语义；仍为 READY_FOR_REVIEW，等待用户 Windows 实际验收。
