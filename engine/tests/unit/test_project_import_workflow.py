@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -93,8 +94,7 @@ def _preprocess() -> SourcePreprocessRecord:
     )
 
 
-@pytest.mark.asyncio
-async def test_import_project_source_workflow_only_orchestrates_f01_f02_f03(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_import_project_source_workflow_only_orchestrates_f01_f02_f03(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, object]] = []
     project = _project()
     source = _source()
@@ -116,15 +116,18 @@ async def test_import_project_source_workflow_only_orchestrates_f01_f02_f03(monk
     monkeypatch.setattr(workflow, "import_source_video", fake_import_source_video)
     monkeypatch.setattr(workflow, "preprocess_source_video", fake_preprocess_source_video)
 
-    result = await workflow.import_project_source_workflow(
-        name="测试项目",
-        source_language="zh",
-        target_language="en",
-        target_region="US",
-        workspace_root=Path("D:/projects"),
-        upload_file=FakeUpload(),
-        original_filename="source.mp4",
-    )
+    async def run_workflow():
+        return await workflow.import_project_source_workflow(
+            name="测试项目",
+            source_language="zh",
+            target_language="en",
+            target_region="US",
+            workspace_root=Path("D:/projects"),
+            upload_file=FakeUpload(),
+            original_filename="source.mp4",
+        )
+
+    result = asyncio.run(run_workflow())
 
     assert result.status == "ready"
     assert result.project.id == project.id
