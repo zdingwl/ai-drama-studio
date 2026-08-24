@@ -8,5 +8,6 @@ import './source-video.css'
 import './preprocess.css'
 import './shot-detection.css'
 import './shot-workbench.css'
+import './character-detection.css'
 
 createApp(App).use(createPinia()).use(router).mount('#app')
