@@ -1,7 +1,7 @@
-"""AI Drama Studio 本地 FastAPI 应用与 F01/F02 HTTP Controller。
+"""AI Drama Studio 本地 FastAPI 应用与 F01–F03 HTTP Controller。
 
 Controller 只做 HTTP 边界：接收请求、调用业务函数、返回响应。
-不在本文件直接执行项目/媒体 SQL、mkdir、写 project.json、写原视频或调用 FFprobe。
+不在本文件直接执行项目/媒体 SQL、mkdir、写 project.json、转码、Hash、FFprobe 或 Recovery。
 """
 
 from __future__ import annotations
@@ -17,6 +17,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from engine.app.core.database import init_database
+from engine.app.preprocess import (
+    PreprocessError,
+    get_source_preprocess,
+    preprocess_source_video,
+    recover_source_preprocesses,
+)
 from engine.app.projects import (
     ProjectError,
     create_project,
@@ -89,24 +95,59 @@ class SourceVideoResponse(BaseModel):
     created_at: datetime
 
 
+class SourcePreprocessResponse(BaseModel):
+    """F03 返回给前端的 ready 预处理派生资产集。"""
+
+    source_video_id: str
+    project_id: str
+    status: str
+    profile_version: int
+    source_sha256_snapshot: str
+    proxy_relative_path: str
+    proxy_file_size_bytes: int
+    proxy_sha256: str
+    proxy_duration_us: int
+    proxy_video_time_base_num: int
+    proxy_video_time_base_den: int
+    proxy_fps_num: int | None
+    proxy_fps_den: int | None
+    proxy_to_source_offset_us: int
+    audio_relative_path: str | None
+    audio_file_size_bytes: int | None
+    audio_sha256: str | None
+    audio_duration_us: int | None
+    audio_sample_rate: int | None
+    audio_channels: int | None
+    audio_to_source_offset_us: int | None
+    thumbnail_relative_path: str
+    thumbnail_file_size_bytes: int
+    thumbnail_sha256: str
+    thumbnail_source_time_us: int
+    source_video_time_base_num: int
+    source_video_time_base_den: int
+    created_at: datetime
+    completed_at: datetime
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
-    """启动时初始化/升级数据库，并恢复 F01 Project 与 F02 Source 导入中断状态。"""
+    """启动时升级数据库，并按依赖顺序恢复 F01、F02、F03 中断状态。"""
 
     init_database()
     recover_creating_projects()
     recover_source_video_imports()
+    recover_source_preprocesses()
     yield
 
 
 def create_app() -> FastAPI:
     """创建 AI Drama Studio 当前本地 FastAPI Application。
 
-    F01 Controller 保持冻结语义；F02 只 Additive 新增 Source Video 的 GET/POST 接口。
-    具体视频写盘、Hash、FFprobe、Recovery 都由 source_videos.py 业务层负责。
+    F01/F02 Controller 保持冻结语义；F03 只 Additive 新增预处理 GET/POST 接口。
+    具体 FFmpeg、文件校验、时间映射、DB 状态和 Recovery 由 preprocess.py 业务层负责。
     """
 
-    app = FastAPI(title="AI Drama Studio", version="0.2.0", lifespan=_lifespan)
+    app = FastAPI(title="AI Drama Studio", version="0.3.0", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
         # Vite 开发服务器在 5173 被占用时会自动切到其它端口。
@@ -184,6 +225,27 @@ def create_app() -> FastAPI:
             content={"error": {"code": exc.code, "message": exc.message}},
         )
 
+    @app.exception_handler(PreprocessError)
+    async def preprocess_error_handler(_: Request, exc: PreprocessError) -> JSONResponse:
+        """把 F03 预处理业务错误转换成稳定 HTTP 状态与统一 error envelope。"""
+
+        status_map = {
+            "PREPROCESS_SOURCE_REQUIRED": 409,
+            "PREPROCESS_ALREADY_EXISTS": 409,
+            "SOURCE_VIDEO_INTEGRITY_MISMATCH": 409,
+            "PREPROCESS_FFMPEG_UNAVAILABLE": 503,
+            "PREPROCESS_FFPROBE_UNAVAILABLE": 503,
+            "PREPROCESS_GENERATION_FAILED": 500,
+            "PREPROCESS_PROCESSING_FAILED": 500,
+            "PREPROCESS_VALIDATION_FAILED": 500,
+            "PREPROCESS_FINALIZATION_PENDING": 500,
+            "PREPROCESS_FILE_MISSING": 409,
+        }
+        return JSONResponse(
+            status_code=status_map.get(exc.code, 500),
+            content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
     @app.get("/api/health")
     def health_api() -> dict[str, str]:
         """后端健康检查入口；只说明 FastAPI 已可响应。"""
@@ -209,10 +271,7 @@ def create_app() -> FastAPI:
         response_model=SourceVideoResponse | None,
     )
     def get_source_video_api(project_id: str) -> dict | None:
-        """读取当前项目已完成原片的 HTTP 入口。
-
-        无 Source Video 时返回 200 null；Controller 不自己 SQL、检查文件或重新 FFprobe。
-        """
+        """读取当前项目已完成原片的 HTTP 入口。"""
         source_video = get_source_video(project_id=project_id)
         return source_video.to_dict() if source_video else None
 
@@ -222,11 +281,7 @@ def create_app() -> FastAPI:
         status_code=201,
     )
     async def import_source_video_api(project_id: str, file: UploadFile = File(...)) -> dict:
-        """原视频 multipart 上传 HTTP 入口。
-
-        只把 FastAPI UploadFile、原文件名和 Project ID 交给 import_source_video()。
-        Controller 不读完整文件、不算 Hash、不 mkdir、不跑 FFprobe、不管理 DB transaction。
-        """
+        """原视频 multipart 上传 HTTP 入口；不在 Controller 搬运/Hash/FFprobe 文件。"""
         try:
             source_video = await import_source_video(
                 project_id=project_id,
@@ -236,6 +291,28 @@ def create_app() -> FastAPI:
             return source_video.to_dict()
         finally:
             await file.close()
+
+    @app.get(
+        "/api/projects/{project_id}/preprocess",
+        response_model=SourcePreprocessResponse | None,
+    )
+    def get_source_preprocess_api(project_id: str) -> dict | None:
+        """F03 页面读取 ready 预处理资产的 HTTP 入口；无结果返回 200 null。"""
+        record = get_source_preprocess(project_id=project_id)
+        return record.to_dict() if record else None
+
+    @app.post(
+        "/api/projects/{project_id}/preprocess",
+        response_model=SourcePreprocessResponse,
+        status_code=201,
+    )
+    def preprocess_source_video_api(project_id: str) -> dict:
+        """F03 开始预处理 HTTP 入口。
+
+        Controller 只传 Project ID。FFmpeg 参数、Source Integrity、staging、publish、DB ready
+        和失败恢复全部由 preprocess_source_video() 负责。
+        """
+        return preprocess_source_video(project_id=project_id).to_dict()
 
     return app
 
