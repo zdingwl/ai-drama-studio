@@ -46,10 +46,10 @@ const canSubmit = computed(() => {
 })
 
 const stageLabel = computed(() => {
-  if (props.stage === 'creating') return '正在创建项目工作区…'
-  if (props.stage === 'uploading') return `正在导入原片… ${props.uploadProgress}%`
-  if (props.stage === 'initializing') return '正在生成 Proxy、分析音频和缩略图…'
+  if (props.stage === 'uploading') return `正在发送原片到本地后端… ${props.uploadProgress}%`
+  if (props.stage === 'initializing') return '正在创建项目、导入原片并生成分析资产…'
   if (props.stage === 'ready') return '导入和初始化完成'
+  if (props.stage === 'creating') return '正在初始化项目…'
   return ''
 })
 
@@ -251,12 +251,12 @@ function submit(): void {
           <section v-if="submitting" class="import-progress-panel" aria-live="polite">
             <div class="import-progress-head">
               <span class="button-spinner"></span>
-              <div><strong>{{ stageLabel }}</strong><small>请保持本地后端运行，不需要再进入其它初始化页面。</small></div>
+              <div><strong>{{ stageLabel }}</strong><small>这是一个连续 Workflow，不需要再进入其它初始化页面。</small></div>
             </div>
             <div class="workflow-progress-line">
-              <span :class="{ done: ['uploading', 'initializing', 'ready'].includes(stage) }">创建项目</span>
-              <span :class="{ done: ['initializing', 'ready'].includes(stage) }">导入原片</span>
-              <span :class="{ done: stage === 'ready' }">生成分析资产</span>
+              <span :class="{ done: ['initializing', 'ready'].includes(stage), active: stage === 'uploading' }">发送原片</span>
+              <span :class="{ done: stage === 'ready', active: stage === 'initializing' }">本地初始化</span>
+              <span :class="{ done: stage === 'ready' }">完成</span>
             </div>
             <div v-if="stage === 'uploading'" class="upload-progress-track">
               <i :style="{ width: `${uploadProgress}%` }"></i>
@@ -401,9 +401,14 @@ function submit(): void {
   font-size: 9px;
 }
 
-.workflow-progress-line span.done {
+.workflow-progress-line span.active {
   border-top-color: #737fff;
-  color: #b9c0ff;
+  color: #d8dcff;
+}
+
+.workflow-progress-line span.done {
+  border-top-color: #4fba83;
+  color: #90d7b2;
 }
 
 .upload-progress-track {
