@@ -11,6 +11,7 @@ Current Working Branch: main（用户未要求切换/新建其它分支）
 Current Feature: F02 — 上传原视频
 Feature Status: PLANNED
 F02 Contract: DRAFTED / WAITING_USER_CONFIRMATION
+F02 Function Contracts: DETAILED / WAITING_USER_CONFIRMATION
 Business Code: NOT STARTED
 F01 — 创建项目: STABLE / FROZEN
 Stable Features: F01
@@ -60,6 +61,17 @@ creating/ready
 
 ```text
 docs/features/F02-upload-source-video.md
+docs/features/F02-function-contracts.md
+```
+
+其中：
+
+```text
+F02-upload-source-video.md
+→ 负责 Feature 范围、数据、文件、API、UI、Recovery、测试和验收
+
+F02-function-contracts.md
+→ 负责把 6 个核心后端函数 + 2 个 Controller 的真实业务职责讲透
 ```
 
 当前只完成 Contract 规划，没有写 F02 业务代码。
@@ -173,11 +185,17 @@ GET 无 Source：`200 null`。
 
 Controller 继续遵守 F01 冻结职责：HTTP → Schema → Business → Response，不直接 SQL/文件/FFprobe/hash。
 
+详细 Controller 职责见：
+
+```text
+docs/features/F02-function-contracts.md
+```
+
 ---
 
 # F02 核心函数 Draft
 
-只保留真正影响文件/DB/媒体边界的核心函数：
+只保留真正影响文件/DB/媒体边界的 6 个核心函数：
 
 ```text
 generate_source_video_id()
@@ -186,6 +204,23 @@ probe_source_video()
 import_source_video()
 get_source_video()
 recover_source_video_imports()
+```
+
+并且只新增 2 个 Controller：
+
+```text
+get_source_video_api()
+import_source_video_api()
+```
+
+用户已指出“仅列函数名和路由仍然看不懂”。因此当前正式要求是：
+
+> 每个核心函数和 Controller 必须明确解释：真实业务作用、为什么存在、谁调用、输入、输出、DB/文件副作用、失败边界、明确禁止行为、测试。
+
+上述 8 个入口的完整说明已写入：
+
+```text
+docs/features/F02-function-contracts.md
 ```
 
 不再把简单格式化/helper 拆成大量正式 Contract。
@@ -278,5 +313,5 @@ F02 → IN_PROGRESS
 
 ## 最近更新时间
 
-- 日期：2026-08-23 22:39 +08:00
-- 状态：用户明确开始 F02；F02 上传原视频详细 Contract 已起草，当前等待用户确认关键设计后再编码。
+- 日期：2026-08-24 09:10 +08:00
+- 状态：F02 主 Contract 已起草；根据用户反馈补充了 6 个核心函数 + 2 个 Controller 的详细职责 Contract；仍等待用户审核确认后再编码。
