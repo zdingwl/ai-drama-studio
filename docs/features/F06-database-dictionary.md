@@ -212,7 +212,7 @@ normalized vector
 ```text
 expected dimension
 byte length
-afinite values
+finite values
 norm within tolerance
 ```
 
