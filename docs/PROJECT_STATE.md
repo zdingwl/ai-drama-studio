@@ -1,7 +1,7 @@
 # AI Drama Studio — Project State
 
-> 新对话恢复当前项目状态的第一入口。  
-> 用户流程以 `docs/WORKFLOW_ARCHITECTURE.md` 为最高优先级；内部 Feature Contract / Stable Snapshot 继续作为工程与数据边界。
+> 新对话恢复当前项目状态的第一入口。
+> 用户流程以 `docs/WORKFLOW_ARCHITECTURE.md` 为最高优先级；所有 Workflow 重跑/版本/回退必须遵守 `docs/WORKFLOW_RUN_VERSIONING.md`。
 
 ## 当前状态
 
@@ -10,350 +10,278 @@ Project: AI Drama Studio
 Official Baseline: main
 Current Working Branch: main
 
-F01 — 创建项目:       STABLE / FROZEN
-F02 — 上传原视频:     STABLE / FROZEN
-F03 — 视频预处理:     STABLE / FROZEN
-F04 — 自动拉片:       STABLE / FROZEN
-F05 — 镜头人工修正:   STABLE / FROZEN
-
-Workflow 01 — 导入原片: IMPLEMENTED / READY FOR LOCAL TEST
-Workflow 02 — 拉片:     NEXT REFACTOR
-Workflow 03 — 人物对白: CONTRACT REWORK REQUIRED
-
+F01-F05 Existing Capability: STABLE BASELINE
 Actor Visual Evidence Prototype: EXISTS / NOT ACCEPTED
+
+Current Product Work:
+WORKFLOW VERSIONING REFACTOR
 ```
 
-当前产品已经从“Feature 页面驱动”切换成 **Workflow 驱动**。
+当前不继续向后堆新 Feature。
+
+用户已经确认两个架构修正：
+
+```text
+1. Feature != 用户页面；产品改成 Workflow 驱动
+2. 每个 Workflow 必须可重复执行并保留版本
+```
 
 ---
 
-# 1. 当前最高优先级规则
-
-正式原则：
-
-```text
-Feature = 内部工程职责 / 数据 Contract
-Workflow = 用户操作步骤
-```
-
-用户主流程：
+# 1. 当前用户主流程
 
 ```text
 01 导入原片
 ↓
 02 拉片
 ↓
-03 人物对白
+03 资产提取
+   ├ 人物
+   └ 场景
 ↓
-04 剧本 / 重制设计
+04 人物对白
 ↓
-05 生成制作
+05 剧本 / 重制设计
 ↓
-06 最终合成 / 导出
+06 生成制作
+↓
+07 最终合成 / 导出
 ```
 
 详细见：
 
 ```text
 docs/WORKFLOW_ARCHITECTURE.md
+docs/WORKFLOW_RUN_VERSIONING.md
 ```
 
-`docs/FEATURE_SEQUENCE.md` 继续保留作为内部能力拆分参考，不再代表前端导航和用户必须逐步点击的页面顺序。
+`docs/FEATURE_SEQUENCE.md` 只保留为内部能力拆分参考，不再代表前端一级导航。
 
 ---
 
-# 2. Workflow 01 — 导入原片
+# 2. 全局版本化硬规则
 
-## 用户动作
-
-用户只做一次：
+任何 Workflow 都必须支持：
 
 ```text
-选择原片文件
-+ 项目名称
-+ 原片语言
-+ 目标语言 / 地区
-+ 保存位置
-↓
-[创建并导入]
+首次执行
+重新执行
+新 Run / Revision
+旧版本保留
+新版本成功后切 current
+新版本失败时旧 current 不受影响
+历史版本读取
+回退 / 重新选择
+下游 stale
+重新计算下游
 ```
 
-## 当前已实现
+确认规则改为：
 
-后端编排：
+```text
+confirmed/approved = 当前 Revision 被锁定
+!= 整个 Workflow 永远禁止重做
+```
+
+需要修改时创建新的 Draft / Revision，不原地解锁旧 confirmed 版本。
+
+---
+
+# 3. Workflow 01 — 导入原片
+
+当前已有一次性编排实现：
 
 ```text
 POST /api/project-imports
-↓
-import_project_source_workflow()
-↓
-create_project()
-↓
-import_source_video()
-↓
-preprocess_source_video()
-↓
-Project + Source + Proxy + WAV + Thumbnail + Time Mapping
+→ create_project()
+→ import_source_video()
+→ preprocess_source_video()
 ```
 
-同步 Project / FFmpeg 工作通过 Starlette threadpool 执行，避免长视频初始化堵死 FastAPI event loop。
+前端已经是一张“导入原片”表单。
 
-前端：
+但当前旧底层仍存在：
 
 ```text
-首页“新建项目”改为“导入原片”
-↓
-一个弹窗选择原片 + 填项目资料
-↓
-一次 multipart 请求
-↓
-发送原片进度
-↓
-本地初始化
-↓
-成功后直接进入项目
+一个 Project 只能有一个 Source Video
 ```
 
-新增：
+这个限制现在被认定为不满足生产需求。
+
+下一版必须升级为：
 
 ```text
-engine/app/project_import_workflow.py
-engine/tests/unit/test_project_import_workflow.py
-frontend/src/api/project-import.ts
-frontend/src/types/project-import.ts
+Source V1 / V2 / ...
+只有一个 current Source
+旧 Source 永不覆盖
 ```
 
-旧接口仍保留：
+重新导入 Source 后，旧 Shot / Asset / Dialogue / Design / Generation / Render 默认 stale。
+
+---
+
+# 4. Workflow 02 — 拉片
+
+用户体验目标已经确定：
 
 ```text
-POST /api/projects
-POST /api/projects/{id}/source-video
-POST /api/projects/{id}/preprocess
+开始拉片
+→ Auto Shot Detection
+→ 自动创建 Final Shot Draft
+→ 直接进入镜头工作台
+→ 人工确认
 ```
 
-但它们现在只是：
+旧 F04 技术结果页不再作为必须停留的用户步骤。
+
+但当前旧 F05 规则：
 
 ```text
-内部 Feature 能力
-历史项目恢复
-调试入口
+confirmed 后永久禁止边界/拆分/合并
 ```
 
-普通用户主流程不再逐个调用。
+只能用于保护“该 Revision 不被修改”，不能再用于禁止整个拉片 Workflow 重做。
 
-F01/F02/F03 底层数据 Contract 和 Stable Snapshot 完全保持冻结。
-
-## 当前 Gate
+必须升级为：
 
 ```text
-READY FOR LOCAL TEST
-NOT YET WORKFLOW-FROZEN
-```
-
-本机必须验证：
-
-```text
-新首页点击“导入原片”
-→ 只提交一次
-→ 自动完成创建 / Source / Proxy / WAV / Thumbnail
-→ 成功进入项目总览
-→ 项目总览 Workflow 01 显示已完成
+Final Shots R1 confirmed
+↓
+重新自动拉片 / 基于 R1 重新编辑
+↓
+Final Shots Draft R2
+↓
+Confirm R2
+↓
+R1 historical
+R2 current
 ```
 
 ---
 
-# 3. Workflow 02 — 拉片
+# 5. Workflow 03 — 资产提取
 
-下一步重构目标：
-
-```text
-用户点击“开始拉片”
-↓
-F04 Shot Detection
-↓
-自动 initialize F05 Final Shot Draft
-↓
-直接进入三栏镜头工作台
-↓
-人工调整
-↓
-Confirm Final Shots
-```
-
-用户不再需要分别进入：
+拉片完成后先提取资产：
 
 ```text
-自动拉片页面
-镜头初始化页面
+人物资产
+场景资产
 ```
 
-`initialize_shot_workbench()` 变成 Workflow 内部编排动作。
+人物和场景必须分别支持：
 
-当前 F04/F05 冻结业务和数据语义不改。
+```text
+自动 Run V1/V2/...
+人工 Final Revision R1/R2/...
+重新执行
+基于当前结果重新编辑
+版本历史
+```
+
+人物重跑不强制场景重跑；场景重跑不强制人物重跑。
+
+当前 YuNet + SFace 代码保留为：
+
+```text
+AssetExtractionWorkflow
+└ Actor Visual Evidence capability
+```
+
+Candidate-only 页面不是最终产品。
 
 ---
 
-# 4. Workflow 03 — 人物对白
+# 6. Workflow 04 — 人物对白
 
-旧的 Candidate-only F06 产品定义已被替代。
-
-正确目标：
+前置：
 
 ```text
-先获取演员 / 角色视觉身份
-→ 获取全部源对白
-→ Speaker 分离
-→ Speaker ↔ Actor 匹配
-→ 输出“演员 + 该演员对白”
+Current Final Characters
++ Current Final Shots
++ Current Audio
 ```
 
-自动链路：
+内部允许局部重跑：
 
 ```text
-Final Shots + Proxy + Audio
-↓
-Actor Visual Evidence
-↓
-Whisper ASR
-↓
-Speaker Diarization / Voice Cluster
-↓
-Actor/Speaker Matching
-↓
-Actor Dialogue Draft
+ASR Run
+Speaker Run
+Speaker ↔ Character Mapping Run
+Final Dialogue Revision
 ```
 
-必须支持：
+可以只重跑其中一个，不强制全部从头执行。
 
-```text
-未归属对白
-```
-
-低置信度不得强行绑定演员。
-
-人物合并/拆分/命名和对白修正以后放在同一个“人物对白”人工工作区完成。
+必须支持未归属对白，低置信度不得强行绑定人物。
 
 ---
 
-# 5. 当前演员视觉代码如何处理
+# 7. 下游失效规则
 
-仓库已经存在演员视觉识别原型能力：
-
-```text
-OpenCV YuNet
-SFace Embedding
-Shot-local Track
-Cross-shot Candidate Clustering
-character_detection_runs / candidates / tracks
-```
-
-这部分代码不删除，它降级为：
+继续遵守：
 
 ```text
-CharacterDialogueWorkflow
-└─ Actor Visual Evidence capability
+docs/DEPENDENCY_AND_INVALIDATION_RULES.md
 ```
 
-真实素材已经证明 Candidate 聚类结果仍需要改进，因此：
+上游 current 变化：
 
 ```text
-NOT READY_FOR_REVIEW
-NOT FROZEN
+旧下游保留
+→ stale
+→ 禁止静默作为 fresh current 使用
 ```
 
-禁止把 `AUTO RUN READY` 理解成整个“人物对白”工作流已验收。
+禁止自动级联重跑所有昂贵任务。
 
 ---
 
-# 6. 用户导航当前事实
+# 8. 现有 Stable Snapshot 如何理解
 
-项目侧栏已经切换成：
-
-```text
-01 导入原片
-02 拉片
-03 人物对白
-04 剧本 / 重制设计
-05 生成制作
-06 最终合成 / 导出
-```
-
-旧：
+F01-F05 Stable Snapshot 仍然是重要底层基线：
 
 ```text
-视频导入
-视频预处理
-自动拉片
-镜头修正
+ID
+时间轴
+文件安全
+Auto Evidence
+Final Shot 数据语义
 ```
 
-不再作为并列主导航。
+但是其中与“整个 Workflow 永久不可重做”冲突的限制，需要通过新 Migration / 新 Version Model 向前升级。
 
-旧 route 暂时保留，供旧项目中断恢复和开发调试使用。
+冻结不能成为拒绝生产需求的理由。
+
+必须保留旧数据兼容，不原地破坏现有项目。
 
 ---
 
-# 7. Stable Snapshots
+# 9. 当前开发优先级
+
+立即暂停继续扩展资产/对白算法，先补版本化底座：
 
 ```text
-docs/features/F01-stable-snapshot.md
-docs/features/F02-stable-snapshot.md
-docs/features/F03-stable-snapshot.md
-docs/features/F04-stable-snapshot.md
-docs/features/F05-stable-snapshot.md
-```
-
-这些仍然有效。
-
----
-
-# 8. F04 / F05 冻结事实
-
-F04：
-
-```text
-F03 proxy.mp4
-→ FFprobe 逐帧真实 PTS
-→ TransNetV2 1.0.5
-→ transition merge
-→ 120ms debounce
-→ Proxy -> Source integer microseconds
-→ Shot Candidate
-```
-
-F05：
-
-```text
-F04 shot_candidates = Auto Evidence
-F05 final_shots      = 后续生产级 Shot
-```
-
-共同时间规则：
-
-```text
-Source Domain integer microseconds
-[start_us, end_us)
-禁止 frame_index / fps 作为正式时间
-```
-
-Final Shots confirmed 后边界 / 拆分 / 合并锁定。
-
----
-
-# 9. 当前开发顺序
-
-```text
-P0-1 ProjectImportWorkflow
-     = IMPLEMENTED / READY FOR LOCAL TEST
-
-通过用户本机验收后：
+P0-0  Run / Revision / Current / Stale 通用规则
 ↓
-P0-2 ShotAnalysisWorkflow
+P0-1  Source Versioning + 导入原片重跑
 ↓
-P0-3 CharacterDialogueWorkflow 新 Contract
+P0-2  Final Shot Revision + 拉片重跑/重新编辑
+↓
+P0-3  资产提取 Workflow（人物 + 场景）
+↓
+P0-4  人物对白 Workflow
 ```
 
-在 Workflow 01 本机通过前，不把它标记 STABLE / FROZEN。
+以后任何 Workflow 要验收，必须同时验证：
+
+```text
+第一次执行
+第二次重新执行
+失败不破坏旧版本
+历史可读取
+current 可切换
+下游 stale 正确
+```
 
 ---
 
@@ -364,11 +292,9 @@ AGENTS.md
 → SKILL.md
 → docs/PROJECT_STATE.md
 → docs/WORKFLOW_ARCHITECTURE.md
-→ docs/features/F01-stable-snapshot.md
-→ docs/features/F02-stable-snapshot.md
-→ docs/features/F03-stable-snapshot.md
-→ docs/features/F04-stable-snapshot.md
-→ docs/features/F05-stable-snapshot.md
+→ docs/WORKFLOW_RUN_VERSIONING.md
+→ docs/DEPENDENCY_AND_INVALIDATION_RULES.md
+→ F01-F05 Stable Snapshots
 → 当前 Workflow Session
 ```
 
