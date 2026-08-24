@@ -1,21 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import ProjectHome from '../views/ProjectHome.vue'
-import ProjectWorkspace from '../views/ProjectWorkspace.vue'
-import SourceVideoImport from '../views/SourceVideoImport.vue'
-import VideoPreprocess from '../views/VideoPreprocess.vue'
-import ShotDetection from '../views/ShotDetection.vue'
-import ShotWorkbench from '../views/ShotWorkbench.vue'
-import CharacterDetection from '../views/CharacterDetection.vue'
+import ProjectList from '../views/ProjectList.vue'
+import ProjectStudio from '../views/ProjectStudio.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'projects', component: ProjectHome },
-    { path: '/projects/:projectId', name: 'workspace', component: ProjectWorkspace },
-    { path: '/projects/:projectId/source-video', name: 'source-video', component: SourceVideoImport },
-    { path: '/projects/:projectId/preprocess', name: 'preprocess', component: VideoPreprocess },
-    { path: '/projects/:projectId/shot-detection', name: 'shot-detection', component: ShotDetection },
-    { path: '/projects/:projectId/shot-workbench', name: 'shot-workbench', component: ShotWorkbench },
-    { path: '/projects/:projectId/character-detection', name: 'character-detection', component: CharacterDetection },
+    { path: '/', name: 'projects', component: ProjectList },
+    { path: '/projects/:projectId', name: 'studio', component: ProjectStudio },
+    { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
