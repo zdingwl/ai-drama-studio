@@ -64,6 +64,7 @@ Source size/hash Integrity Gate
 → Thumbnail
 → FFprobe / size / SHA / Profile 校验
 → Source↔Proxy/Audio Mapping
+→ 再次核验 Source size/SHA 未在处理中变化
 → staging publish final
 → DB ready
 ```
@@ -152,7 +153,59 @@ VFR：
 - 不允许 F04 使用 `frame_index / fps` 作为唯一 Source 定位；
 - 下游必须使用 timestamp + mapping。
 
-## 4. 已实际执行的验证
+媒体时长语义：
+
+```text
+优先选中 video/audio stream.duration
+→ 缺失时才回退 format.duration
+```
+
+原因：容器中音频尾巴可能比视频稍长，F04 的 Proxy 视频时长不能被更长的容器音频错误扩大。
+
+## 4. 验收前二次代码审查修复
+
+2026-08-24 在用户正式验收前再次审查 F03，补了两个正确性边界：
+
+### 4.1 Source 处理中变化保护
+
+原有逻辑只在 F03 开始前核验 Source size/SHA。对于长视频，FFmpeg 可能运行数分钟；如果用户或外部程序在处理中替换 `source/SOURCE_xxx/original.ext`，理论上可能生成与初始 SHA 快照不一致的派生资产。
+
+现在流程改为：
+
+```text
+开始前核验 F02 size + SHA
+→ 建立 source_sha256_snapshot
+→ 生成/inspect Proxy/WAV/Thumbnail
+→ publish 前再次核验 F02 size + SHA + 本次 snapshot
+→ 一致才允许 publish
+```
+
+处理中发生变化：
+
+```text
+SOURCE_VIDEO_INTEGRITY_MISMATCH
+→ 不发布 final
+→ 清理本次已知 staging
+→ 删除 processing row
+→ 不修改 F02 Source 记录
+```
+
+Recovery 也复用同一 Source Integrity helper。
+
+### 4.2 Stream Duration 优先
+
+原实现 `_duration_us()` 优先使用 `format.duration`。如果容器 AAC 音频比视频多几十毫秒，会让 Proxy 的“视频时长”被容器尾巴扩大。
+
+现在固定为：
+
+```text
+stream.duration
+→ 缺失时 format.duration
+```
+
+Video / Audio 都以当前选中流自身时长为第一权威。
+
+## 5. 已实际执行的验证
 
 Foundation：
 
@@ -182,7 +235,7 @@ Synthetic VFR Source
 Python：
 
 ```text
-preprocess.py + media_time.py py_compile          PASS
+preprocess.py + media_time.py py_compile          PASS（早期实现阶段）
 ```
 
 数据库生命周期约束：
@@ -192,13 +245,16 @@ processing + audio target path + NULL metadata   PASS
 ready + incomplete Audio metadata                REJECT / PASS
 ```
 
-## 5. 已加入自动测试
+说明：验收前二次审查新增的 Source 二次 SHA 与 stream-duration 测试已经写入仓库；当前工具环境无法完整 clone 最新仓库，因此不虚构本轮新增测试的执行结果，仍以用户 Windows 全量 pytest 作为最终 Gate。
+
+## 6. 已加入自动测试
 
 ```text
 engine/tests/unit/test_database_migration_f03.py
 engine/tests/unit/test_media_time_f03.py
 engine/tests/unit/test_preprocess_f03.py
 engine/tests/unit/test_preprocess_vfr_f03.py
+engine/tests/unit/test_preprocess_integrity_f03.py
 ```
 
 覆盖：
@@ -207,6 +263,8 @@ engine/tests/unit/test_preprocess_vfr_f03.py
 - processing / ready Constraint；
 - integer microseconds / PTS / rational time base；
 - Source Integrity mismatch；
+- Source 在长时间预处理过程中被替换时禁止 publish；
+- selected stream duration 优先于 container duration；
 - 正常发布；
 - 无音频；
 - duplicate；
@@ -217,7 +275,7 @@ engine/tests/unit/test_preprocess_vfr_f03.py
 - 非零 Source start；
 - VFR cadence。
 
-## 6. 当前执行环境限制
+## 7. 当前执行环境限制
 
 当前工具容器无法联网完整 clone 当前 GitHub 仓库，因此没有声称本轮已经执行完整：
 
@@ -232,7 +290,7 @@ npm run build
 
 这不影响 F03 代码完整性状态，但在用户验收前不得标记 STABLE / FROZEN。
 
-## 7. 用户最终验收
+## 8. 用户最终验收
 
 ```powershell
 cd E:\ai-drama-studio
