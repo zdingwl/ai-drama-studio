@@ -1,699 +1,213 @@
-"""AI Drama Studio 本地 FastAPI 应用与内部 Feature / 用户 Workflow HTTP Controller。
+"""AI Drama Studio V2 FastAPI 入口。
 
-Controller 只负责 HTTP 边界：接收请求、调用业务函数、返回响应。
-不在本文件直接执行 SQL、媒体处理、模型推理、Hash 或业务状态转换。
+当前可用范围：
+F01 项目管理、F02 多剧集导入与排序、F03 视频预处理、F04 自动拉片与 Reference Clip。
+F05-F13 的数据实体已经预留，但不会用占位按钮伪装为已实现能力。
 """
-
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import Literal
+from typing import Any
 
-from fastapi import FastAPI, File, Form, Query, Request, UploadFile
-from fastapi.exceptions import RequestValidationError
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from engine.app.character_detection import (
-    CharacterDetectionError,
-    get_character_detection,
-    recover_character_detections,
-    render_character_candidate_cover,
-    rerun_character_detection,
-    run_character_detection,
-)
-from engine.app.core.database import init_database
-from engine.app.preprocess import (
-    PreprocessError,
-    get_source_preprocess,
-    preprocess_source_video,
-    recover_source_preprocesses,
-)
-from engine.app.project_import_workflow import import_project_source_workflow
-from engine.app.projects import (
-    ProjectError,
+from engine.app.media_v2 import MediaPipelineError, detect_episode_shots, preprocess_episode
+from engine.app.studio_v2 import (
     create_project,
+    delete_episode,
+    get_episode,
+    get_project,
+    get_shot_path,
+    import_episode,
+    init_database,
+    list_episode_records,
     list_projects,
-    open_project,
-    recover_creating_projects,
+    list_shots,
+    reorder_episodes,
 )
-from engine.app.shot_detection import (
-    ShotDetectionError,
-    get_shot_detection,
-    recover_shot_detections,
-    run_shot_detection,
-)
-from engine.app.shot_detection_rerun import rerun_shot_detection
-from engine.app.shot_workbench import (
-    ShotWorkbenchError,
-    adjust_shot_boundary,
-    confirm_final_shots,
-    get_shot_workbench,
-    get_workbench_proxy_path,
-    initialize_shot_workbench,
-    merge_final_shots,
-    render_workbench_frame,
-    split_final_shot,
-)
-from engine.app.source_videos import (
-    SourceVideoError,
-    get_source_video,
-    import_source_video,
-    recover_source_video_imports,
-)
-
-# 项目与 Workflow 01 只允许保存下面这些稳定代码。
-# 前端使用下拉框限制普通用户，API Schema/Form 再限制直接请求，形成双层保护。
-LanguageCode = Literal["zh", "en", "ja", "ko", "es", "pt", "fr", "de", "id", "th", "vi"]
-RegionCode = Literal["US", "GB", "JP", "KR", "ES", "BR", "FR", "DE", "ID", "TH", "VN", "TW", "SG"]
-
-# F05/F06 预览 URL 都由稳定业务 ID / Source 时间唯一确定；Evidence 不变时内容不变，
-# 浏览器可以长期复用，避免每次打开工作台重新请求或重新裁图。
-F05_PREVIEW_CACHE_HEADERS = {"Cache-Control": "private, max-age=31536000, immutable"}
-F06_PREVIEW_CACHE_HEADERS = {"Cache-Control": "private, max-age=31536000, immutable"}
-
-
-class CreateProjectRequest(BaseModel):
-    """内部 F01 单独创建项目接口允许提交的基础字段。"""
-
-    name: str = Field(description="用户看到的项目名称")
-    source_language: LanguageCode | None = Field(default=None, description="原片标准语言代码；可为空表示暂不指定")
-    target_language: LanguageCode = Field(description="重制目标标准语言代码，例如 en")
-    target_region: RegionCode = Field(description="本土化目标标准地区代码，例如 US")
-    workspace_root: str | None = Field(default=None, description="项目保存根目录；为空使用默认路径")
-
-
-class ProjectResponse(BaseModel):
-    """F01 返回给前端的项目基础信息。"""
-
-    id: str
-    name: str
-    source_language: str | None
-    target_language: str
-    target_region: str
-    workspace_path: str
-    project_format_version: int
-    status: str
-    created_at: datetime
-    last_opened_at: datetime | None
-
-
-class SourceVideoResponse(BaseModel):
-    """F02 返回给前端的 ready Source Video 基础信息。"""
-
-    id: str
-    project_id: str
-    original_filename: str
-    relative_path: str
-    file_size_bytes: int
-    sha256: str
-    status: str
-    container_format: str
-    duration_us: int
-    source_start_time_us: int | None
-    video_stream_index: int
-    video_codec: str
-    width: int
-    height: int
-    fps_num: int | None
-    fps_den: int | None
-    audio_stream_index: int | None
-    audio_codec: str | None
-    audio_sample_rate: int | None
-    audio_channels: int | None
-    created_at: datetime
-
-
-class SourcePreprocessResponse(BaseModel):
-    """F03 返回给前端的 ready 预处理派生资产集。"""
-
-    source_video_id: str
-    project_id: str
-    status: str
-    profile_version: int
-    source_sha256_snapshot: str
-    proxy_relative_path: str
-    proxy_file_size_bytes: int
-    proxy_sha256: str
-    proxy_duration_us: int
-    proxy_video_time_base_num: int
-    proxy_video_time_base_den: int
-    proxy_fps_num: int | None
-    proxy_fps_den: int | None
-    proxy_to_source_offset_us: int
-    audio_relative_path: str | None
-    audio_file_size_bytes: int | None
-    audio_sha256: str | None
-    audio_duration_us: int | None
-    audio_sample_rate: int | None
-    audio_channels: int | None
-    audio_to_source_offset_us: int | None
-    thumbnail_relative_path: str
-    thumbnail_file_size_bytes: int
-    thumbnail_sha256: str
-    thumbnail_source_time_us: int
-    source_video_time_base_num: int
-    source_video_time_base_den: int
-    created_at: datetime
-    completed_at: datetime
-
-
-class ProjectImportWorkflowResponse(BaseModel):
-    """Workflow 01 一次完成后的完整结果；不创建重复业务身份。"""
-
-    status: str
-    project: ProjectResponse
-    source_video: SourceVideoResponse
-    preprocess: SourcePreprocessResponse
-
-
-class ShotCandidateResponse(BaseModel):
-    """F04 返回的单个自动 Shot Candidate；detected_* 永远表示自动证据。"""
-
-    id: str
-    detection_id: str
-    project_id: str
-    ordinal: int
-    detected_proxy_start_us: int
-    detected_proxy_end_us: int
-    detected_start_us: int
-    detected_end_us: int
-    duration_us: int
-    end_boundary_kind: str
-    end_boundary_score: float | None
-
-
-class ShotDetectionResponse(BaseModel):
-    """F04 一次 Detection Run 与全部自动候选镜头。"""
-
-    id: str
-    project_id: str
-    source_video_id: str
-    status: str
-    detector_name: str
-    detector_profile_version: int
-    detector_threshold: float
-    min_boundary_gap_us: int
-    detector_package_version: str
-    torch_version: str | None
-    detector_device: str | None
-    ffprobe_version: str | None
-    preprocess_profile_version: int
-    proxy_sha256_snapshot: str
-    proxy_to_source_offset_us: int
-    proxy_start_us: int | None
-    proxy_end_us: int | None
-    source_start_us: int | None
-    source_end_us: int | None
-    analyzed_frame_count: int | None
-    detected_cut_count: int | None
-    shot_count: int | None
-    created_at: datetime
-    completed_at: datetime | None
-    candidates: list[ShotCandidateResponse]
-
-
-class FinalShotResponse(BaseModel):
-    """F05 人工工作区中的生产级 Final Shot。"""
-
-    id: str = Field(description="稳定 Final Shot ID；边界微调不会改变该 ID")
-    edit_set_id: str
-    project_id: str
-    ordinal: int
-    final_start_us: int = Field(description="人工最终 Source 起点，integer microseconds")
-    final_end_us: int = Field(description="人工最终 Source 终点，integer microseconds")
-    duration_us: int
-    origin_kind: str
-    origin_candidate_ids: list[str]
-    created_at: datetime
-    updated_at: datetime
-
-
-class ShotWorkbenchResponse(BaseModel):
-    """F05 三栏拉片工作台完整状态。"""
-
-    id: str
-    project_id: str
-    source_detection_id: str
-    status: str = Field(description="editing 可修改；confirmed 已人工确认锁定")
-    revision: int
-    source_start_us: int
-    source_end_us: int
-    created_at: datetime
-    updated_at: datetime
-    confirmed_at: datetime | None
-    shots: list[FinalShotResponse]
-
-
-class AdjustBoundaryRequest(BaseModel):
-    """移动两个相邻 Final Shot 的公共边界。"""
-
-    left_shot_id: str = Field(description="公共边界左侧 Final Shot ID")
-    boundary_us: int = Field(description="新的 Source Domain 公共边界，integer microseconds")
-
-
-class SplitShotRequest(BaseModel):
-    """在一个 Final Shot 内拆分新增镜头。"""
-
-    shot_id: str
-    split_us: int = Field(description="严格位于当前 Shot 内部的 Source Domain 拆分点")
-
-
-class MergeShotsRequest(BaseModel):
-    """删除左 Shot 与其下一 Shot 的公共边界。"""
-
-    left_shot_id: str
-
-
-class CharacterTrackSampleResponse(BaseModel):
-    """F06 Track 的单帧轻量 Evidence；不包含 embedding/JPEG。"""
-
-    source_time_us: int = Field(description="FFprobe PTS 映射后的 Source integer microseconds")
-    bbox: list[int] = Field(description="人脸矩形 [x,y,w,h]，单位为 Proxy 像素")
-    detection_score: float
-    face_quality: float
-
-
-class CharacterTrackResponse(BaseModel):
-    """F06 一个 Final Shot 内的人物 Track Evidence。"""
-
-    id: str
-    run_id: str
-    project_id: str
-    final_shot_id: str
-    final_shot_ordinal: int
-    candidate_id: str
-    track_ordinal_in_shot: int
-    start_us: int
-    end_us: int
-    representative_source_us: int
-    representative_bbox: list[int]
-    sample_count: int
-    mean_face_quality: float
-    max_face_quality: float
-    samples: list[CharacterTrackSampleResponse]
-
-
-class CharacterCandidateResponse(BaseModel):
-    """F06 自动聚类的人物候选；不是最终人物。"""
-
-    id: str
-    run_id: str
-    project_id: str
-    ordinal: int
-    track_count: int
-    shot_count: int
-    first_seen_us: int
-    last_seen_us: int
-    cover_track_id: str
-    cover_source_us: int
-    cover_bbox: list[int]
-    cluster_score: float | None
-    tracks: list[CharacterTrackResponse]
-
-
-class CharacterDetectionResponse(BaseModel):
-    """演员视觉识别子能力的一次 Run 与全部 Character Candidate。"""
-
-    id: str
-    project_id: str
-    source_edit_set_id: str
-    source_edit_set_revision: int
-    source_start_us: int
-    source_end_us: int
-    status: str
-    is_current: bool
-    profile_version: str
-    sampling_profile: dict[str, object]
-    detector_model_id: str
-    detector_model_sha256: str
-    recognizer_model_id: str
-    recognizer_model_sha256: str
-    opencv_version: str
-    runtime_device: str
-    sampled_frame_count: int
-    face_observation_count: int
-    track_count: int
-    candidate_count: int
-    started_at: datetime
-    completed_at: datetime | None
-    error_code: str | None
-    error_message: str | None
-    candidates: list[CharacterCandidateResponse]
 
 
 @asynccontextmanager
-async def _lifespan(_: FastAPI):
-    """启动时升级数据库，并按依赖顺序恢复内部 Feature 的可恢复状态。"""
-
+async def lifespan(_: FastAPI):
     init_database()
-    recover_creating_projects()
-    recover_source_video_imports()
-    recover_source_preprocesses()
-    recover_shot_detections()
-    recover_character_detections()
     yield
 
 
-def create_app() -> FastAPI:
-    """创建 AI Drama Studio 本地 FastAPI Application。"""
+app = FastAPI(title="AI Drama Studio", version="2.0.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    app = FastAPI(title="AI Drama Studio", version="0.6.1", lifespan=_lifespan)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[],
-        allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
-        allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type"],
-    )
 
-    @app.exception_handler(RequestValidationError)
-    async def request_validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-        """把 FastAPI/Pydantic/Form 请求格式错误转换成稳定错误码。"""
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    source_language: str = Field(min_length=1, max_length=32)
+    target_language: str = Field(min_length=1, max_length=32)
+    target_region: str = Field(min_length=1, max_length=64)
 
-        invalid_fields = {str(error["loc"][-1]) for error in exc.errors() if error.get("loc")}
 
-        if request.url.path == "/api/project-imports":
-            if "source_language" in invalid_fields:
-                code, message = "PROJECT_SOURCE_LANGUAGE_UNSUPPORTED", "原片语言不是系统支持的标准语言"
-            elif "target_language" in invalid_fields:
-                code, message = "PROJECT_TARGET_LANGUAGE_UNSUPPORTED", "目标语言不是系统支持的标准语言"
-            elif "target_region" in invalid_fields:
-                code, message = "PROJECT_TARGET_REGION_UNSUPPORTED", "目标地区不是系统支持的标准地区"
-            elif "file" in invalid_fields:
-                code, message = "PROJECT_IMPORT_FILE_REQUIRED", "请选择要导入的原片视频"
-            else:
-                code, message = "PROJECT_IMPORT_REQUEST_INVALID", "导入原片请求格式不正确"
-            return JSONResponse(status_code=422, content={"error": {"code": code, "message": message}})
+class EpisodeReorder(BaseModel):
+    episode_ids: list[str]
 
-        if request.url.path.endswith("/source-video"):
-            return JSONResponse(
-                status_code=422,
-                content={"error": {"code": "SOURCE_VIDEO_REQUEST_INVALID", "message": "原视频上传请求格式不正确"}},
-            )
-        if "/shot-workbench/" in request.url.path:
-            return JSONResponse(
-                status_code=422,
-                content={"error": {"code": "SHOT_WORKBENCH_REQUEST_INVALID", "message": "镜头修正请求格式不正确"}},
-            )
 
-        if "source_language" in invalid_fields:
-            code, message = "PROJECT_SOURCE_LANGUAGE_UNSUPPORTED", "原片语言不是系统支持的标准语言"
-        elif "target_language" in invalid_fields:
-            code, message = "PROJECT_TARGET_LANGUAGE_UNSUPPORTED", "目标语言不是系统支持的标准语言"
-        elif "target_region" in invalid_fields:
-            code, message = "PROJECT_TARGET_REGION_UNSUPPORTED", "目标地区不是系统支持的标准地区"
-        else:
-            code, message = "PROJECT_REQUEST_INVALID", "创建项目请求格式不正确"
-        return JSONResponse(status_code=422, content={"error": {"code": code, "message": message}})
+def _not_found(message: str) -> HTTPException:
+    return HTTPException(status_code=404, detail=message)
 
-    @app.exception_handler(ProjectError)
-    async def project_error_handler(_: Request, exc: ProjectError) -> JSONResponse:
-        status_map = {
-            "PROJECT_NAME_REQUIRED": 422,
-            "PROJECT_NAME_TOO_LONG": 422,
-            "PROJECT_TARGET_LANGUAGE_REQUIRED": 422,
-            "PROJECT_TARGET_REGION_REQUIRED": 422,
-            "PROJECT_WORKSPACE_INVALID": 409,
-            "PROJECT_CREATE_FAILED": 500,
-            "PROJECT_NOT_FOUND": 404,
-            "PROJECT_WORKSPACE_MISSING": 409,
-            "PROJECT_MANIFEST_INVALID": 409,
-        }
-        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
 
-    @app.exception_handler(SourceVideoError)
-    async def source_video_error_handler(_: Request, exc: SourceVideoError) -> JSONResponse:
-        status_map = {
-            "SOURCE_VIDEO_ALREADY_EXISTS": 409,
-            "SOURCE_VIDEO_EMPTY": 422,
-            "SOURCE_VIDEO_FFPROBE_UNAVAILABLE": 503,
-            "SOURCE_VIDEO_PROBE_FAILED": 422,
-            "SOURCE_VIDEO_UNSUPPORTED": 422,
-            "SOURCE_VIDEO_IMPORT_FAILED": 500,
-            "SOURCE_VIDEO_FINALIZATION_PENDING": 500,
-            "SOURCE_VIDEO_FILE_MISSING": 409,
-        }
-        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
+def _bad_request(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(exc))
 
-    @app.exception_handler(PreprocessError)
-    async def preprocess_error_handler(_: Request, exc: PreprocessError) -> JSONResponse:
-        status_map = {
-            "PREPROCESS_SOURCE_REQUIRED": 409,
-            "PREPROCESS_ALREADY_EXISTS": 409,
-            "PREPROCESS_IN_PROGRESS": 409,
-            "PREPROCESS_RECOVERY_REQUIRED": 409,
-            "SOURCE_VIDEO_INTEGRITY_MISMATCH": 409,
-            "PREPROCESS_FFMPEG_UNAVAILABLE": 503,
-            "PREPROCESS_FFPROBE_UNAVAILABLE": 503,
-            "PREPROCESS_GENERATION_FAILED": 500,
-            "PREPROCESS_PROCESSING_FAILED": 500,
-            "PREPROCESS_VALIDATION_FAILED": 500,
-            "PREPROCESS_FINALIZATION_PENDING": 500,
-            "PREPROCESS_FILE_MISSING": 409,
-        }
-        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
 
-    @app.exception_handler(ShotDetectionError)
-    async def shot_detection_error_handler(_: Request, exc: ShotDetectionError) -> JSONResponse:
-        status_map = {
-            "SHOT_DETECTION_PREPROCESS_REQUIRED": 409,
-            "SHOT_DETECTION_ALREADY_EXISTS": 409,
-            "SHOT_DETECTION_IN_PROGRESS": 409,
-            "SHOT_DETECTION_RERUN_NOT_READY": 409,
-            "SHOT_DETECTION_RERUN_CONFLICT": 409,
-            "SHOT_DETECTION_PROXY_INTEGRITY_MISMATCH": 409,
-            "SHOT_DETECTION_UPSTREAM_CHANGED": 409,
-            "SHOT_DETECTION_MODEL_UNAVAILABLE": 503,
-            "SHOT_DETECTION_MODEL_INVALID": 503,
-            "SHOT_DETECTION_FFPROBE_UNAVAILABLE": 503,
-            "SHOT_DETECTION_FRAME_ALIGNMENT_FAILED": 500,
-            "SHOT_DETECTION_INVALID_RESULT": 500,
-            "SHOT_DETECTION_FAILED": 500,
-        }
-        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
+@app.get("/api/health")
+def health() -> dict[str, str]:
+    return {"status": "ok", "architecture": "reference-video-v2"}
 
-    @app.exception_handler(ShotWorkbenchError)
-    async def shot_workbench_error_handler(_: Request, exc: ShotWorkbenchError) -> JSONResponse:
-        """把 Final Shot/媒体错误映射为稳定 HTTP 状态。"""
 
-        status_map = {
-            "SHOT_WORKBENCH_DETECTION_REQUIRED": 409,
-            "SHOT_WORKBENCH_INVALID_UPSTREAM": 409,
-            "SHOT_WORKBENCH_UPSTREAM_CHANGED": 409,
-            "SHOT_WORKBENCH_NOT_INITIALIZED": 409,
-            "SHOT_WORKBENCH_CONFIRMED": 409,
-            "SHOT_WORKBENCH_SHOT_NOT_FOUND": 404,
-            "SHOT_WORKBENCH_BOUNDARY_INVALID": 422,
-            "SHOT_WORKBENCH_SPLIT_INVALID": 422,
-            "SHOT_WORKBENCH_MERGE_INVALID": 422,
-            "SHOT_WORKBENCH_FRAME_TIME_INVALID": 422,
-            "SHOT_WORKBENCH_MEDIA_MISSING": 409,
-            "SHOT_WORKBENCH_FFMPEG_UNAVAILABLE": 503,
-            "SHOT_WORKBENCH_FRAME_FAILED": 500,
-            "SHOT_WORKBENCH_INITIALIZE_FAILED": 500,
-            "SHOT_WORKBENCH_INVALID_RESULT": 500,
-        }
-        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
+@app.get("/api/projects")
+def api_list_projects() -> list[dict[str, Any]]:
+    return list_projects()
 
-    @app.exception_handler(CharacterDetectionError)
-    async def character_detection_error_handler(_: Request, exc: CharacterDetectionError) -> JSONResponse:
-        """把演员视觉识别模型/上游/算法错误映射成稳定 HTTP 状态。"""
 
-        status_map = {
-            "CHARACTER_DETECTION_FINAL_SHOTS_REQUIRED": 409,
-            "CHARACTER_DETECTION_PROXY_REQUIRED": 409,
-            "CHARACTER_DETECTION_ALREADY_EXISTS": 409,
-            "CHARACTER_DETECTION_IN_PROGRESS": 409,
-            "CHARACTER_DETECTION_RERUN_NOT_READY": 409,
-            "CHARACTER_DETECTION_UPSTREAM_CHANGED": 409,
-            "CHARACTER_DETECTION_NOT_READY": 409,
-            "CHARACTER_CANDIDATE_NOT_FOUND": 404,
-            "CHARACTER_DETECTION_PROJECT_NOT_FOUND": 404,
-            "CHARACTER_DETECTION_WORKSPACE_MISSING": 409,
-            "CHARACTER_MODEL_MISSING": 503,
-            "CHARACTER_MODEL_INVALID": 503,
-            "CHARACTER_MODEL_DOWNLOAD_FAILED": 503,
-            "CHARACTER_DETECTION_RUNTIME_UNAVAILABLE": 503,
-            "CHARACTER_DETECTION_RUNTIME_INVALID": 503,
-            "CHARACTER_DETECTION_PTS_FAILED": 500,
-            "CHARACTER_DETECTION_VIDEO_OPEN_FAILED": 500,
-            "CHARACTER_DETECTION_MODEL_FAILED": 500,
-            "CHARACTER_DETECTION_FRAME_ALIGNMENT_FAILED": 500,
-            "CHARACTER_DETECTION_PERSIST_FAILED": 500,
-            "CHARACTER_DETECTION_SCHEMA_MISSING": 500,
-            "CHARACTER_COVER_RENDER_FAILED": 500,
-            "CHARACTER_DETECTION_INVALID_RESULT": 500,
-            "CHARACTER_DETECTION_FAILED": 500,
-        }
-        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
+@app.post("/api/projects", status_code=201)
+def api_create_project(payload: ProjectCreate) -> dict[str, Any]:
+    try:
+        return create_project(**payload.model_dump())
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
 
-    @app.get("/api/health")
-    def health_api() -> dict[str, str]:
-        return {"status": "ok"}
 
-    @app.post("/api/project-imports", response_model=ProjectImportWorkflowResponse, status_code=201)
-    async def import_project_source_workflow_api(
-        name: str = Form(...),
-        source_language: LanguageCode | None = Form(default=None),
-        target_language: LanguageCode = Form(...),
-        target_region: RegionCode = Form(...),
-        workspace_root: str | None = Form(default=None),
-        file: UploadFile = File(...),
-    ) -> dict:
-        """Workflow 01：用户一次提交，完成 Project + Source + Preprocess。"""
+@app.get("/api/projects/{project_id}")
+def api_get_project(project_id: str) -> dict[str, Any]:
+    project = get_project(project_id)
+    if project is None:
+        raise _not_found("项目不存在")
+    return project
 
+
+@app.post("/api/projects/{project_id}/episodes", status_code=201)
+def api_import_episode(project_id: str, file: UploadFile = File(...), title: str | None = Form(default=None)) -> dict[str, Any]:
+    try:
+        return import_episode(project_id=project_id, upload=file, title=title)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+    except (ValueError, OSError) as exc:
+        raise _bad_request(exc) from exc
+
+
+@app.post("/api/projects/{project_id}/episodes/batch", status_code=201)
+def api_import_episodes(project_id: str, files: list[UploadFile] = File(...)) -> list[dict[str, Any]]:
+    if not files:
+        raise HTTPException(status_code=400, detail="至少选择一个视频")
+    results: list[dict[str, Any]] = []
+    for upload in files:
         try:
-            record = await import_project_source_workflow(
-                name=name,
-                source_language=source_language,
-                target_language=target_language,
-                target_region=target_region,
-                workspace_root=workspace_root,
-                upload_file=file,
-                original_filename=file.filename or "source-video",
-            )
-            return record.to_dict()
-        finally:
-            await file.close()
+            results.append(import_episode(project_id=project_id, upload=upload))
+        except LookupError as exc:
+            raise _not_found(str(exc)) from exc
+        except (ValueError, OSError) as exc:
+            raise _bad_request(exc) from exc
+    return results
 
-    # 下面 F01/F02/F03 单独 API 继续保留作为内部能力、历史项目恢复和调试入口；
-    # 新普通用户流程不再要求逐个调用。
-    @app.get("/api/projects", response_model=list[ProjectResponse])
-    def list_projects_api() -> list[dict]:
-        return [project.to_dict() for project in list_projects()]
 
-    @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
-    def create_project_api(payload: CreateProjectRequest) -> dict:
-        return create_project(**payload.model_dump(mode="json")).to_dict()
+@app.patch("/api/projects/{project_id}/episodes/reorder")
+def api_reorder_episodes(project_id: str, payload: EpisodeReorder) -> list[dict[str, Any]]:
+    try:
+        return reorder_episodes(project_id=project_id, episode_ids=payload.episode_ids)
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
 
-    @app.post("/api/projects/{project_id}/open", response_model=ProjectResponse)
-    def open_project_api(project_id: str) -> dict:
-        return open_project(project_id=project_id).to_dict()
 
-    @app.get("/api/projects/{project_id}/source-video", response_model=SourceVideoResponse | None)
-    def get_source_video_api(project_id: str) -> dict | None:
-        source_video = get_source_video(project_id=project_id)
-        return source_video.to_dict() if source_video else None
+@app.delete("/api/episodes/{episode_id}", status_code=204)
+def api_delete_episode(episode_id: str) -> None:
+    try:
+        delete_episode(episode_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
 
-    @app.post("/api/projects/{project_id}/source-video", response_model=SourceVideoResponse, status_code=201)
-    async def import_source_video_api(project_id: str, file: UploadFile = File(...)) -> dict:
+
+@app.get("/api/episodes/{episode_id}")
+def api_get_episode(episode_id: str) -> dict[str, Any]:
+    episode = get_episode(episode_id)
+    if episode is None:
+        raise _not_found("剧集不存在")
+    return episode
+
+
+@app.post("/api/episodes/{episode_id}/preprocess")
+def api_preprocess_episode(episode_id: str) -> dict[str, Any]:
+    try:
+        return preprocess_episode(episode_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+    except MediaPipelineError as exc:
+        raise _bad_request(exc) from exc
+
+
+@app.post("/api/projects/{project_id}/preprocess-batch")
+def api_preprocess_project(project_id: str) -> dict[str, Any]:
+    if get_project(project_id) is None:
+        raise _not_found("项目不存在")
+    results: list[dict[str, Any]] = []
+    for episode in list_episode_records(project_id):
         try:
-            source_video = await import_source_video(project_id=project_id, upload_file=file, original_filename=file.filename or "source-video")
-            return source_video.to_dict()
-        finally:
-            await file.close()
-
-    @app.get("/api/projects/{project_id}/preprocess", response_model=SourcePreprocessResponse | None)
-    def get_source_preprocess_api(project_id: str) -> dict | None:
-        record = get_source_preprocess(project_id=project_id)
-        return record.to_dict() if record else None
-
-    @app.post("/api/projects/{project_id}/preprocess", response_model=SourcePreprocessResponse, status_code=201)
-    def preprocess_source_video_api(project_id: str) -> dict:
-        return preprocess_source_video(project_id=project_id).to_dict()
-
-    @app.get("/api/projects/{project_id}/shot-detection", response_model=ShotDetectionResponse | None)
-    def get_shot_detection_api(project_id: str) -> dict | None:
-        record = get_shot_detection(project_id=project_id)
-        return record.to_dict() if record else None
-
-    @app.post("/api/projects/{project_id}/shot-detection", response_model=ShotDetectionResponse, status_code=201)
-    def run_shot_detection_api(project_id: str) -> dict:
-        return run_shot_detection(project_id=project_id).to_dict()
-
-    @app.post("/api/projects/{project_id}/shot-detection/rerun", response_model=ShotDetectionResponse)
-    def rerun_shot_detection_api(project_id: str) -> dict:
-        return rerun_shot_detection(project_id=project_id).to_dict()
-
-    @app.get("/api/projects/{project_id}/shot-workbench", response_model=ShotWorkbenchResponse | None)
-    def get_shot_workbench_api(project_id: str) -> dict | None:
-        """读取 Final Shot 工作区；尚未初始化返回 200 null。"""
-
-        record = get_shot_workbench(project_id=project_id)
-        return record.to_dict() if record else None
-
-    @app.post("/api/projects/{project_id}/shot-workbench/initialize", response_model=ShotWorkbenchResponse, status_code=201)
-    def initialize_shot_workbench_api(project_id: str) -> dict:
-        """把自动 Shot Candidate 复制成独立 Final Shot Draft。"""
-
-        return initialize_shot_workbench(project_id=project_id).to_dict()
-
-    @app.post("/api/projects/{project_id}/shot-workbench/boundary", response_model=ShotWorkbenchResponse)
-    def adjust_shot_boundary_api(project_id: str, payload: AdjustBoundaryRequest) -> dict:
-        """移动相邻镜头公共边界；后端同时更新左右 Shot。"""
-
-        return adjust_shot_boundary(
-            project_id=project_id,
-            left_shot_id=payload.left_shot_id,
-            boundary_us=payload.boundary_us,
-        ).to_dict()
-
-    @app.post("/api/projects/{project_id}/shot-workbench/split", response_model=ShotWorkbenchResponse)
-    def split_final_shot_api(project_id: str, payload: SplitShotRequest) -> dict:
-        """在指定播放点拆分当前 Shot（新增镜头）。"""
-
-        return split_final_shot(project_id=project_id, shot_id=payload.shot_id, split_us=payload.split_us).to_dict()
-
-    @app.post("/api/projects/{project_id}/shot-workbench/merge", response_model=ShotWorkbenchResponse)
-    def merge_final_shots_api(project_id: str, payload: MergeShotsRequest) -> dict:
-        """删除左 Shot 与其下一 Shot 的公共边界（合并镜头）。"""
-
-        return merge_final_shots(project_id=project_id, left_shot_id=payload.left_shot_id).to_dict()
-
-    @app.post("/api/projects/{project_id}/shot-workbench/confirm", response_model=ShotWorkbenchResponse)
-    def confirm_final_shots_api(project_id: str) -> dict:
-        """人工确认并锁定 Final Shot Timeline。"""
-
-        return confirm_final_shots(project_id=project_id).to_dict()
-
-    @app.get("/api/projects/{project_id}/shot-workbench/media/proxy")
-    def shot_workbench_proxy_api(project_id: str) -> FileResponse:
-        """把 F03 Proxy 作为本地播放器媒体返回；不生成新视频副本。"""
-
-        path = get_workbench_proxy_path(project_id=project_id)
-        return FileResponse(path, media_type="video/mp4")
-
-    @app.get("/api/projects/{project_id}/shot-workbench/frame")
-    def shot_workbench_frame_api(
-        project_id: str,
-        source_time_us: int = Query(description="Source Domain integer microseconds"),
-    ) -> FileResponse:
-        """按 Source 时间返回拉片工作台缩略图/关键帧 JPEG。"""
-
-        path = render_workbench_frame(project_id=project_id, source_time_us=source_time_us)
-        return FileResponse(path, media_type="image/jpeg", headers=F05_PREVIEW_CACHE_HEADERS)
-
-    @app.get("/api/projects/{project_id}/character-detection", response_model=CharacterDetectionResponse | None)
-    def get_character_detection_api(project_id: str) -> dict | None:
-        """读取人物对白 Workflow 中当前演员视觉识别 Evidence。"""
-
-        record = get_character_detection(project_id=project_id)
-        return record.to_dict() if record else None
-
-    @app.post("/api/projects/{project_id}/character-detection", response_model=CharacterDetectionResponse, status_code=201)
-    def run_character_detection_api(project_id: str) -> dict:
-        """首次运行演员视觉识别；已有 current ready 时禁止静默覆盖。"""
-
-        return run_character_detection(project_id=project_id).to_dict()
-
-    @app.post("/api/projects/{project_id}/character-detection/rerun", response_model=CharacterDetectionResponse)
-    def rerun_character_detection_api(project_id: str) -> dict:
-        """显式创建新的演员视觉识别 Run；成功后才原子替换 current。"""
-
-        return rerun_character_detection(project_id=project_id).to_dict()
-
-    @app.get("/api/projects/{project_id}/character-detection/candidates/{candidate_id}/cover")
-    def character_candidate_cover_api(project_id: str, candidate_id: str) -> FileResponse:
-        """返回当前 Character Candidate 的自动人脸 Cover JPEG。"""
-
-        path = render_character_candidate_cover(project_id=project_id, candidate_id=candidate_id)
-        return FileResponse(path, media_type="image/jpeg", headers=F06_PREVIEW_CACHE_HEADERS)
-
-    return app
+            info = preprocess_episode(episode.id)
+            results.append({"episode_id": episode.id, "status": "READY", "media": info})
+        except Exception as exc:
+            results.append({"episode_id": episode.id, "status": "FAILED", "error": str(exc)})
+            break
+    return {"mode": "sequential", "results": results}
 
 
-app = create_app()
+@app.post("/api/episodes/{episode_id}/shots/analyze")
+def api_analyze_episode_shots(episode_id: str) -> list[dict[str, Any]]:
+    try:
+        return detect_episode_shots(episode_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+    except MediaPipelineError as exc:
+        raise _bad_request(exc) from exc
+
+
+@app.post("/api/projects/{project_id}/shots/analyze-batch")
+def api_analyze_project_shots(project_id: str) -> dict[str, Any]:
+    if get_project(project_id) is None:
+        raise _not_found("项目不存在")
+    results: list[dict[str, Any]] = []
+    for episode in list_episode_records(project_id):
+        try:
+            shots = detect_episode_shots(episode.id)
+            results.append({"episode_id": episode.id, "status": "READY", "shot_count": len(shots)})
+        except Exception as exc:
+            results.append({"episode_id": episode.id, "status": "FAILED", "error": str(exc)})
+            break
+    return {"mode": "sequential", "results": results}
+
+
+@app.get("/api/episodes/{episode_id}/shots")
+def api_list_episode_shots(episode_id: str) -> list[dict[str, Any]]:
+    if get_episode(episode_id) is None:
+        raise _not_found("剧集不存在")
+    return list_shots(episode_id)
+
+
+@app.get("/api/shots/{shot_id}/reference")
+def api_reference_clip(shot_id: str) -> FileResponse:
+    path = get_shot_path(shot_id, "reference")
+    if path is None or not path.is_file():
+        raise _not_found("Reference Clip 不存在")
+    return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+
+@app.get("/api/shots/{shot_id}/thumbnail")
+def api_shot_thumbnail(shot_id: str) -> FileResponse:
+    path = get_shot_path(shot_id, "thumbnail")
+    if path is None or not path.is_file():
+        raise _not_found("镜头缩略图不存在")
+    return FileResponse(path, media_type="image/jpeg", filename=path.name)
