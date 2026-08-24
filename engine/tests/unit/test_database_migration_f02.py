@@ -1,4 +1,4 @@
-"""F02 0002 Migration 与升级前 SQLite 备份测试。"""
+"""F02 0002 Migration 与共享升级前 SQLite 备份回归测试。"""
 
 from pathlib import Path
 import sqlite3
@@ -30,6 +30,8 @@ EXPECTED_SOURCE_VIDEO_COLUMNS = {
     "audio_channels",
     "created_at",
 }
+
+CURRENT_HEAD = "0003_create_source_preprocess"
 
 
 def _create_f01_database(app_data_dir: Path) -> Path:
@@ -68,21 +70,25 @@ def _insert_f01_project(database_path: Path) -> None:
         connection.commit()
 
 
-def test_fresh_database_reaches_0002_without_creating_backup(tmp_path: Path) -> None:
-    """全新安装没有旧数据需要保护，因此直接建到 0002，不制造无意义备份。"""
+def test_fresh_database_reaches_current_head_without_creating_backup(tmp_path: Path) -> None:
+    """全新安装直接建到当前 head，不制造无意义备份，同时必须包含 F02 表。"""
 
     app_data_dir = tmp_path / "app-data"
     database_path = init_database(app_data_dir)
 
     with sqlite3.connect(database_path) as connection:
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        source_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='source_videos'"
+        ).fetchone()
 
-    assert revision == ("0002_create_source_videos",)
+    assert revision == (CURRENT_HEAD,)
+    assert source_table == ("source_videos",)
     assert not (app_data_dir / "backups").exists()
 
 
-def test_upgrade_from_0001_creates_safe_backup_before_0002(tmp_path: Path) -> None:
-    """真实 F01 数据库升级前必须保留一份仍停留在 0001 的一致性 SQLite 快照。"""
+def test_upgrade_from_0001_creates_safe_backup_before_current_head(tmp_path: Path) -> None:
+    """真实 F01 数据库升级当前 head 前必须保留一份仍停留在 0001 的一致性 SQLite 快照。"""
 
     app_data_dir = tmp_path / "app-data"
     database_path = _create_f01_database(app_data_dir)
@@ -107,14 +113,17 @@ def test_upgrade_from_0001_creates_safe_backup_before_0002(tmp_path: Path) -> No
     with sqlite3.connect(database_path) as upgraded_connection:
         assert upgraded_connection.execute(
             "SELECT version_num FROM alembic_version"
-        ).fetchone() == ("0002_create_source_videos",)
+        ).fetchone() == (CURRENT_HEAD,)
         assert upgraded_connection.execute(
             "SELECT name FROM projects WHERE id = 'PROJECT_F01_EXISTING'"
         ).fetchone() == ("F01 已有项目",)
+        assert upgraded_connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='source_videos'"
+        ).fetchone() == ("source_videos",)
 
 
 def test_database_at_current_head_does_not_repeat_backup(tmp_path: Path) -> None:
-    """0001→0002 只备份一次；已经是 0002 时再次启动不能不断生成备份。"""
+    """旧库升级只备份一次；到达当前 head 后重复启动不能不断生成备份。"""
 
     app_data_dir = tmp_path / "app-data"
     database_path = _create_f01_database(app_data_dir)
@@ -130,7 +139,7 @@ def test_database_at_current_head_does_not_repeat_backup(tmp_path: Path) -> None
 
 
 def test_source_videos_table_has_exact_f02_columns(tmp_path: Path) -> None:
-    """0002 必须创建 F02 Contract 中定义的 Source Video 字段。"""
+    """后续 Additive Migration 后仍必须保留 F02 Contract 定义的 Source Video 字段。"""
 
     database_path = init_database(tmp_path / "app-data")
 
