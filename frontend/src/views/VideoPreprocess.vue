@@ -205,8 +205,9 @@ function formatFps(num: number | null, den: number | null): string {
             <div class="next-step-icon">04</div>
             <span class="panel-eyebrow">NEXT FEATURE</span>
             <h2>可以进入自动拉片阶段</h2>
-            <p>F03 已经完成分析素材和 Source 时间映射。F04「自动拉片」尚未开发，因此当前不会提前生成 Shot 边界。</p>
+            <p>F03 已经完成分析素材和 Source 时间映射。F04 将使用本地 TransNetV2 检测镜头边界，并用真实 PTS 生成连续 Shot Candidate。</p>
             <div class="next-step-note"><span>✓</span><div><strong>F03 输入已经就绪</strong><small>Proxy、Audio、Thumbnail 和 Timeline Mapping 均已落盘并持久化。</small></div></div>
+            <button type="button" class="primary-button" @click="router.push(`/projects/${projectId}/shot-detection`)">进入自动拉片</button>
           </article>
         </section>
       </template>
