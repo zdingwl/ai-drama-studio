@@ -1,0 +1,32 @@
+# AI Drama Studio 本地模型清单。
+# 这里只记录可复现模型身份与运行约束，不提交模型缓存本身。
+models:
+  - logical_id: shot_boundary.transnetv2.v1
+    feature: F04
+    name: TransNetV2
+    implementation: transnetv2-pytorch
+    implementation_version: 1.0.5
+    source:
+      project: https://pypi.org/project/transnetv2-pytorch/1.0.5/
+      original_repository: https://github.com/soCzech/TransNetV2
+      license: MIT
+    distribution:
+      filename: transnetv2_pytorch-1.0.5-py3-none-any.whl
+      sha256: 9f8e72085526aaa95383d219b6750b1fa45b865fd10d840cafa12ef78ab3bf27
+    weights:
+      filename: transnetv2-pytorch-weights.pth
+      packaging: bundled-with-fixed-python-distribution
+      note: F04 运行时必须确认该权重文件存在且非空；权重缺失时禁止随机初始化推理。
+    runtime:
+      torch: 2.5.1
+      preferred_device: auto
+      gpu_concurrency: 1
+      baseline_gpu: NVIDIA RTX 4060 Ti 16GB
+      cpu_fallback: true
+    detector_profile:
+      version: 1
+      transition_threshold: 0.5
+      min_boundary_gap_us: 120000
+    time_contract:
+      authoritative_timestamps: ffprobe-real-frame-pts
+      frame_index_div_fps_forbidden: true
