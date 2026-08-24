@@ -43,6 +43,20 @@ async function startDetection(): Promise<void> {
   }
 }
 
+async function rerunDetection(): Promise<void> {
+  if (!preprocess.value || shotStore.processing || detection.value?.status !== 'ready') return
+  const confirmed = window.confirm(
+    '重新自动拉片会使用当前本机的 TransNetV2 / PyTorch / CUDA 环境重新计算。\n\n新结果完整成功前，当前 Auto Evidence 会一直保留；如果重跑失败，旧结果不会丢失。\n\n确定继续吗？',
+  )
+  if (!confirmed) return
+
+  try {
+    await shotStore.rerunShotDetection(projectId.value)
+  } catch {
+    // 错误文案由 Store 保存；后端保证失败时旧 READY 结果继续存在。
+  }
+}
+
 function formatTimecode(value: number | null): string {
   if (value === null) return '—'
   const totalMs = Math.round(value / 1000)
@@ -130,7 +144,17 @@ function formatScore(value: number | null): string {
               <h2>自动拉片完成</h2>
               <p>自动证据已经锁定。F05 人工修正会另存 Final Shot，不覆盖这里的 detected_* 结果。</p>
             </div>
-            <span class="shot-lock-badge">Auto Evidence</span>
+            <div class="topbar-actions">
+              <span class="shot-lock-badge">Auto Evidence</span>
+              <button
+                type="button"
+                class="secondary-button compact-button"
+                :disabled="shotStore.processing"
+                @click="rerunDetection"
+              >
+                {{ shotStore.processing ? '正在重新检测…' : '重新自动拉片' }}
+              </button>
+            </div>
           </div>
 
           <div class="shot-stat-grid">
