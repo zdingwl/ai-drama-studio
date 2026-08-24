@@ -34,17 +34,17 @@ const targetCount = computed(
 onMounted(() => store.loadProjects())
 
 function openCreateDialog(): void {
-  store.errorMessage = ''
+  store.resetImportWorkflowState()
   dialogOpen.value = true
 }
 
-async function handleCreate(payload: CreateProjectPayload): Promise<void> {
+async function handleCreate(payload: CreateProjectPayload, file: File): Promise<void> {
   try {
-    const project = await store.submitCreateProject(payload)
+    const project = await store.submitCreateAndImport(payload, file)
     dialogOpen.value = false
     await router.push(`/projects/${project.id}`)
   } catch {
-    // 错误文案已经由 Store 写入 errorMessage，Dialog 直接展示。
+    // 错误和当前 Workflow 阶段已经由 Store 保存，Dialog 直接展示。
   }
 }
 
@@ -63,7 +63,7 @@ async function handleOpen(projectId: string): Promise<void> {
       </label>
       <button type="button" class="primary-button top-create-button" @click="openCreateDialog">
         <span class="button-plus">＋</span>
-        新建项目
+        导入原片
       </button>
     </template>
 
@@ -128,9 +128,9 @@ async function handleOpen(projectId: string): Promise<void> {
         <div class="empty-visual">
           <span class="empty-film">▶</span>
         </div>
-        <h3>创建你的第一个短剧项目</h3>
-        <p>项目数据和工作区都会保存在本机，后续生产流程将在当前项目中逐步完成。</p>
-        <button type="button" class="primary-button" @click="openCreateDialog">＋ 新建项目</button>
+        <h3>导入你的第一部短剧原片</h3>
+        <p>选择原片后，系统会一次完成项目创建、视频导入、Proxy、分析音频和缩略图初始化。</p>
+        <button type="button" class="primary-button" @click="openCreateDialog">＋ 导入原片</button>
       </div>
 
       <div v-else-if="filteredProjects.length === 0" class="empty-search">
@@ -153,15 +153,15 @@ async function handleOpen(projectId: string): Promise<void> {
       <article class="content-panel local-panel">
         <div class="section-heading compact">
           <div>
-            <h2>本地工作区</h2>
-            <p>项目文件直接保存在你的电脑</p>
+            <h2>本地工作流</h2>
+            <p>用户只操作 Workflow，内部 Feature 自动编排</p>
           </div>
           <span class="online-chip"><i></i> 本地可用</span>
         </div>
         <div class="local-feature-list">
-          <div><span>01</span><div><strong>SQLite 项目索引</strong><p>重启软件后仍可恢复项目列表。</p></div></div>
-          <div><span>02</span><div><strong>独立 Project Workspace</strong><p>每个项目使用稳定 Project ID 独立保存。</p></div></div>
-          <div><span>03</span><div><strong>project.json</strong><p>项目目录自带基础身份和本土化信息。</p></div></div>
+          <div><span>01</span><div><strong>导入原片</strong><p>创建项目、导入视频和初始化分析资产一次完成。</p></div></div>
+          <div><span>02</span><div><strong>拉片</strong><p>自动切镜后直接进入人工镜头工作台。</p></div></div>
+          <div><span>03</span><div><strong>人物对白</strong><p>演员、对白和说话人绑定在一个连续工作区处理。</p></div></div>
         </div>
       </article>
 
@@ -169,12 +169,12 @@ async function handleOpen(projectId: string): Promise<void> {
         <div class="section-heading compact">
           <div>
             <h2>快速开始</h2>
-            <p>从项目容器开始后续生产流程</p>
+            <p>从一部原片直接开始完整生产流程</p>
           </div>
         </div>
         <button type="button" class="quick-action" @click="openCreateDialog">
           <span class="quick-icon">＋</span>
-          <span><strong>新建项目</strong><small>创建新的本地短剧重制工作区</small></span>
+          <span><strong>导入原片</strong><small>创建项目并自动完成分析资产初始化</small></span>
           <b>→</b>
         </button>
       </article>
@@ -184,6 +184,8 @@ async function handleOpen(projectId: string): Promise<void> {
       :open="dialogOpen"
       :submitting="store.creating"
       :error-message="dialogOpen ? store.errorMessage : ''"
+      :stage="store.importStage"
+      :upload-progress="store.importProgress"
       @close="dialogOpen = false"
       @submit="handleCreate"
     />
