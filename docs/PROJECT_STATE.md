@@ -13,7 +13,8 @@ Feature Status: IN_PROGRESS
 F02 Contract: CONFIRMED
 F02 Function Contracts: CONFIRMED
 F02 Migration Backup Gate: IMPLEMENTED / ISOLATED TEST PASS
-Business Code: STARTED
+F02 generate_source_video_id(): IMPLEMENTED / TEST PASS
+Business Code: IN_PROGRESS
 F01 — 创建项目: STABLE / FROZEN
 Stable Features: F01
 Frozen Features: F01
@@ -104,14 +105,7 @@ importing
 ready
 ```
 
-开发时发现并修正了一个 Contract 内部矛盾：
-
-```text
-DB importing 必须先于文件写入存在
-→ 此时 SHA / size / FFprobe metadata 尚未知
-```
-
-因此 `file_size_bytes / sha256 / container_format / duration_us / video stream / codec / width / height` 等字段在 `importing` 阶段允许 NULL；数据库 CHECK 强制 `ready` 时核心媒体元数据必须完整合法。禁止为满足 NOT NULL 伪造未知值。
+开发时发现并修正了一个 Contract 内部矛盾：DB `importing` 必须先于文件写入存在，因此 SHA / size / FFprobe metadata 在此阶段尚未知。当前设计允许这些导入后字段在 `importing` 阶段为 NULL，并用数据库 CHECK 强制 `ready` 时核心媒体元数据必须完整合法，禁止伪造未知值。
 
 ---
 
@@ -142,7 +136,7 @@ engine/tests/unit/test_database.py
 engine/tests/unit/test_database_migration_f02.py
 ```
 
-隔离工作副本实际验证：
+隔离工作副本验证：
 
 ```text
 fresh DB → 0002，无 backup                  PASS
@@ -155,37 +149,50 @@ importing 可先保存空 metadata              PASS
 ready 缺核心 metadata 被 DB CHECK 拒绝     PASS
 ```
 
-另执行针对性 pytest：
-
-```text
-3 passed
-```
-
-完整仓库 F01+F02 pytest 仍需在后续整体验证 Gate 执行。
-
 ---
 
-# F02 核心函数
+# F02 核心函数进度
 
-只保留 6 个：
-
-```text
-generate_source_video_id()
-copy_upload_to_staging()
-probe_source_video()
-import_source_video()
-get_source_video()
-recover_source_video_imports()
-```
-
-Controller 只有：
+只保留 6 个核心函数：
 
 ```text
-get_source_video_api()
-import_source_video_api()
+generate_source_video_id()       DONE / PASS
+copy_upload_to_staging()         NEXT
+probe_source_video()             NOT STARTED
+import_source_video()            NOT STARTED
+get_source_video()               NOT STARTED
+recover_source_video_imports()   NOT STARTED
 ```
 
-详细业务职责见 `docs/features/F02-function-contracts.md`，禁止 Controller 复制 SQL/文件/hash/FFprobe/Recovery 逻辑。
+Controller：
+
+```text
+get_source_video_api()           NOT STARTED
+import_source_video_api()        NOT STARTED
+```
+
+`generate_source_video_id()` 当前实现：
+
+```text
+engine/app/source_videos.py
+engine/tests/unit/test_source_video_id.py
+```
+
+固定输出：
+
+```text
+SOURCE_<32位UUID4小写hex>
+```
+
+明确不访问数据库、不创建目录、不读视频、不调用 FFprobe。
+
+隔离工作副本把 Migration 针对性测试和 Source ID 测试一起执行：
+
+```text
+6 passed
+```
+
+这不是完整仓库最终回归结果；完整 F01+F02 pytest 仍需在整体验证 Gate 执行。
 
 ---
 
@@ -197,6 +204,8 @@ POST /api/projects/{project_id}/source-video
 ```
 
 GET 无 Source → `200 null`；POST multipart file 成功 → `201 Created`。
+
+Controller 禁止复制 SQL/文件/hash/FFprobe/Recovery 逻辑。详细职责见 `docs/features/F02-function-contracts.md`。
 
 ---
 
@@ -218,7 +227,7 @@ Python 只新增 multipart 上传必需依赖；不提前安装 OpenCV/PyTorch/W
 
 ```text
 Migration Backup Gate       DONE / isolated PASS
-→ generate_source_video_id()
+generate_source_video_id()  DONE / PASS
 → copy_upload_to_staging()
 → probe_source_video()
 → import / get / recovery
@@ -234,5 +243,5 @@ F02 未通过用户验收前不得进入 F03。
 
 ## 最近更新时间
 
-- 日期：2026-08-24 09:40 +08:00
-- 状态：用户确认 F02 Contract；F02 已进入 IN_PROGRESS；0002 + Migration 前 SQLite 安全备份已实现并完成隔离验证，下一步开发 Source ID。
+- 日期：2026-08-24 09:42 +08:00
+- 状态：F02 已进入 IN_PROGRESS；0002 + Migration 前 SQLite 安全备份通过隔离验证；Source ID 已实现并测试通过；下一步是大文件流式 staging 写入。
