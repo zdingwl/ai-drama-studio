@@ -16,6 +16,7 @@ F03 Business Code: COMPLETE
 F03 Frontend: COMPLETE
 F03 Pre-Acceptance Audit: COMPLETE
 F03 Retry Recovery Fix: COMPLETE
+F03 0004 Compatibility Migration Fix: COMPLETE
 F03 User Acceptance: PENDING
 
 F01 — 创建项目: STABLE / FROZEN
@@ -97,9 +98,11 @@ F03 不做 Shot Detection、ASR、人物识别、Scene 或任何 AI。F04 尚未
 # F03 Database / Migration
 
 ```text
-Migration: 0003_create_source_preprocess
-Table:     source_preprocess
-Status:    processing / ready
+0003_create_source_preprocess
+→ 0004_repair_source_preprocess_audio_constraint   ← 当前 head
+
+Table:  source_preprocess
+Status: processing / ready
 ```
 
 规则：
@@ -108,7 +111,37 @@ Status:    processing / ready
 - ready 时 Proxy + Thumbnail + Timeline Mapping 必须完整；
 - ready 若有 Audio，则 path / size / hash / duration / 16000Hz / mono / offset 必须全部完整；
 - Source 无音频时 Audio 字段为空，不生成假静音 WAV；
-- 0002→0003 升级继续使用 SQLite `Connection.backup()` 安全备份。
+- 所有已存在数据库升级仍使用 SQLite `Connection.backup()` 安全备份。
+
+### 0004 为什么必须存在
+
+用户真实 Windows 数据库已经执行过早期 0003。早期 0003 的 Audio CHECK 是：
+
+```text
+Audio 字段必须“全空或全完整”
+```
+
+但合法 F03 processing 阶段会出现：
+
+```text
+audio_relative_path 已知
+size/hash/duration 尚未生成
+```
+
+因此旧数据库会把正常 INSERT 拒绝。之后只修改仓库里的 0003 文件并不能修复已经执行过 0003 的 app.db，因为 Alembic 不会重复运行同一 revision。
+
+现在由正式兼容 Migration 处理：
+
+```text
+0003 旧数据库
+→ init_database() 先创建一致性 backup
+→ 0004 检测 ck_source_preprocess_audio_all_or_none
+→ SQLite batch rebuild source_preprocess
+→ 替换为 ck_source_preprocess_audio_ready_consistency
+→ F01/F02/F03 已有数据保留
+```
+
+如果是全新数据库，当前 0003 已经包含正确约束，0004 检测后不重复重建，只推进 revision。
 
 ---
 
@@ -275,12 +308,14 @@ Source start_time=2s → Proxy offset=2,000,000us PASS
 Synthetic VFR → Proxy 仍保留多种 PTS 间隔        PASS
 processing Audio 路径允许 metadata 暂空          PASS
 ready Audio metadata 不完整被拒绝                PASS
+0004 SQLite/Alembic batch constraint replacement PASS（隔离机制验证）
 ```
 
 已加入仓库测试：
 
 ```text
 engine/tests/unit/test_database_migration_f03.py
+engine/tests/unit/test_database_migration_f03_compat.py
 engine/tests/unit/test_media_time_f03.py
 engine/tests/unit/test_preprocess_f03.py
 engine/tests/unit/test_preprocess_vfr_f03.py
@@ -291,6 +326,10 @@ engine/tests/unit/test_preprocess_retry_recovery_f03.py
 最新增加覆盖：
 
 ```text
+真实旧 0003 Audio CHECK → 0004 自动修复
+0004 前自动备份仍是旧 0003
+修复后 processing + audio target path 可以落库
+全新正确 0003 → 0004 不重复重建
 旧 processing 无文件 → 自动清理并允许重试
 最近仍写 staging → 不误删
 未知 staging 文件 → 保留现场
@@ -298,7 +337,7 @@ Source 在处理中被替换 → 禁止 publish
 stream.duration 优先于 container duration
 ```
 
-当前工具容器无法联网完整 clone 最新仓库，因此最终全量 `pytest engine/tests`、`npm run typecheck`、`npm run build` 仍由用户 Windows 工作副本完成。
+当前工具环境无法完整 clone 最新仓库，因此最终全量 `pytest engine/tests`、`npm run typecheck`、`npm run build` 仍由用户 Windows 工作副本完成。
 
 ---
 
@@ -321,14 +360,15 @@ F03 → STABLE / FROZEN
 ```text
 git pull origin main
 重启 FastAPI
+启动时 app.db 应从 0003 自动升级到 0004
 进入原项目 F03
 再次点击“开始视频预处理”
-旧 processing 应被安全恢复/清理，而不是继续报“已经存在”
+有音频 Source 不应再因旧 Audio CHECK 返回 409
 ```
 
 F03 未通过用户验收前不得进入 F04 正式开发。
 
 ## 最近更新时间
 
-- 日期：2026-08-24 11:45 +08:00
-- 状态：F03 READY_FOR_REVIEW；已修复用户真实验收发现的 stale processing 无法重试问题，等待复测。
+- 日期：2026-08-24 11:57 +08:00
+- 状态：F03 READY_FOR_REVIEW；已新增 0004 正式兼容迁移修复用户已部署旧 0003 Audio CHECK，等待 Windows 复测。
