@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { fetchShotDetection, startShotDetection } from '../api/shot-detection'
+import { fetchShotDetection, rerunShotDetection, startShotDetection } from '../api/shot-detection'
 import type { ShotDetection } from '../types/shot-detection'
 
 interface ShotDetectionState {
@@ -49,6 +49,28 @@ export const useShotDetectionStore = defineStore('shot-detection', {
         return result
       } catch (error) {
         this.errorMessage = error instanceof Error ? error.message : '自动拉片失败'
+        throw error
+      } finally {
+        this.processing = false
+      }
+    },
+
+    /**
+     * 用户在 READY 页面明确点击“重新自动拉片”后的动作。
+     * 前端继续显示旧结果，直到后端新结果完整成功；重跑失败时旧 Auto Evidence 不会被清空。
+     */
+    async rerunShotDetection(projectId: string): Promise<ShotDetection> {
+      if (this.processing) throw new Error('自动拉片正在运行，请勿重复提交')
+      if (this.currentDetection?.status !== 'ready') throw new Error('当前项目没有可重新运行的自动拉片结果')
+
+      this.processing = true
+      this.errorMessage = ''
+      try {
+        const result = await rerunShotDetection(projectId)
+        this.currentDetection = result
+        return result
+      } catch (error) {
+        this.errorMessage = error instanceof Error ? error.message : '重新自动拉片失败，旧结果已保留'
         throw error
       } finally {
         this.processing = false
