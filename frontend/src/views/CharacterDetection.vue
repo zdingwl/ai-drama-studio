@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StudioShell from '../components/StudioShell.vue'
 import { characterCandidateCoverUrl } from '../api/character-detection'
-import { shotWorkbenchProxyUrl } from '../api/shot-workbench'
+import { fetchShotWorkbench, shotWorkbenchProxyUrl } from '../api/shot-workbench'
 import { useCharacterDetectionStore } from '../stores/character-detection'
 import { useProjectStore } from '../stores/project'
 import { useShotWorkbenchStore } from '../stores/shot-workbench'
@@ -18,6 +18,8 @@ const videoRef = ref<HTMLVideoElement | null>(null)
 const selectedCandidateId = ref('')
 const selectedTrackId = ref('')
 const currentSourceUs = ref(0)
+const upstreamLoading = ref(false)
+const upstreamError = ref('')
 
 const projectId = computed(() => String(route.params.projectId || ''))
 const project = computed(() => projectStore.currentProject)
@@ -33,21 +35,28 @@ const selectedTrack = computed<CharacterTrack | null>(() => {
   return candidate.tracks.find((item) => item.id === selectedTrackId.value) ?? candidate.tracks[0] ?? null
 })
 const proxyUrl = computed(() => shotWorkbenchProxyUrl(projectId.value))
-const fatalError = computed(() => projectStore.errorMessage || workbenchStore.errorMessage)
+const fatalError = computed(() => projectStore.errorMessage || upstreamError.value)
 
 onMounted(async () => {
   characterStore.resetCharacterDetectionState()
   workbenchStore.reset()
+  upstreamLoading.value = true
+  upstreamError.value = ''
   try {
     if (projectStore.currentProject?.id !== projectId.value) await projectStore.openProject(projectId.value)
-    const result = await workbenchStore.loadOrInitialize(projectId.value)
-    if (result.status === 'confirmed') {
+
+    // F06 只能读取 F05，绝不能调用 loadOrInitialize() 帮用户创建或修改上游 Final Shot。
+    const result = await fetchShotWorkbench(projectId.value)
+    workbenchStore.currentWorkbench = result
+    if (result?.status === 'confirmed') {
       const current = await characterStore.loadCharacterDetection(projectId.value)
       if (current?.candidates.length) selectCandidate(current.candidates[0], false)
       currentSourceUs.value = current?.source_start_us ?? result.source_start_us
     }
-  } catch {
-    // Store 已保存可展示错误。
+  } catch (error) {
+    upstreamError.value = error instanceof Error ? error.message : 'F05 Final Shot 状态读取失败'
+  } finally {
+    upstreamLoading.value = false
   }
 })
 
@@ -123,7 +132,7 @@ async function startDetection(): Promise<void> {
 }
 
 async function rerunDetection(): Promise<void> {
-  if (!window.confirm('重新自动识别人​​物？旧 Ready 结果会保留到新 Run 完整成功。')) return
+  if (!window.confirm('重新自动识别人物？旧 Ready 结果会保留到新 Run 完整成功。')) return
   try {
     const result = await characterStore.rerunCharacterDetection(projectId.value)
     if (result.candidates.length) selectCandidate(result.candidates[0])
@@ -146,7 +155,7 @@ async function rerunDetection(): Promise<void> {
       <button type="button" class="secondary-button compact-button" @click="router.push(`/projects/${projectId}/shot-workbench`)">查看 Final Shots</button>
     </template>
 
-    <div v-if="projectStore.opening || workbenchStore.loading || characterStore.loading" class="workspace-loading">
+    <div v-if="projectStore.opening || upstreamLoading || characterStore.loading" class="workspace-loading">
       <div class="loading-ring"></div><strong>正在打开人物识别工作区</strong><p>校验 F05 Final Shots，并读取已有 Character Candidate…</p>
     </div>
 
@@ -155,7 +164,7 @@ async function rerunDetection(): Promise<void> {
     </div>
 
     <section v-else-if="workbench?.status !== 'confirmed'" class="content-panel character-blocked-panel">
-      <span class="panel-eyebrow">F05 REQUIRED</span><h2>请先确认 Final Shots</h2><p>F06 只读取已 confirmed 的生产级 Final Shot ID 和 Source Timeline。</p><button type="button" class="primary-button" @click="router.push(`/projects/${projectId}/shot-workbench`)">进入镜头修正</button>
+      <span class="panel-eyebrow">F05 REQUIRED</span><h2>请先确认 Final Shots</h2><p>F06 只读取已 confirmed 的生产级 Final Shot ID 和 Source Timeline，不会自动创建或修改 F05。</p><button type="button" class="primary-button" @click="router.push(`/projects/${projectId}/shot-workbench`)">进入镜头修正</button>
     </section>
 
     <template v-else>
@@ -175,12 +184,12 @@ async function rerunDetection(): Promise<void> {
         </div>
         <div class="character-model-note"><strong>首次使用需要准备固定模型</strong><code>python -m engine.app.character_models</code><small>模型下载后做固定大小 + SHA-256 校验，推理本身完全在本机执行。</small></div>
         <button type="button" class="primary-button" :disabled="characterStore.processing" @click="startDetection">
-          {{ characterStore.processing ? '正在识别人​​物…' : detection?.status === 'failed' ? '重新尝试人物识别' : '开始自动人物识别' }}
+          {{ characterStore.processing ? '正在识别人物…' : detection?.status === 'failed' ? '重新尝试人物识别' : '开始自动人物识别' }}
         </button>
       </section>
 
       <section v-else-if="characterStore.processing || detection.status === 'processing'" class="content-panel character-start-panel">
-        <div class="loading-ring"></div><span class="panel-eyebrow">PROCESSING</span><h2>正在本地识别人​​物</h2><p>顺序解码 Proxy，并逐个 Final Shot 建立人脸 Evidence。请不要重复提交。</p>
+        <div class="loading-ring"></div><span class="panel-eyebrow">PROCESSING</span><h2>正在本地识别人物</h2><p>顺序解码 Proxy，并逐个 Final Shot 建立人脸 Evidence。请不要重复提交。</p>
       </section>
 
       <template v-else-if="detection.status === 'ready'">
@@ -234,7 +243,7 @@ async function rerunDetection(): Promise<void> {
                 <span><strong>Shot #{{ String(track.final_shot_ordinal).padStart(3, '0') }}</strong><small>{{ formatTimecode(track.representative_source_us) }}</small></span><em>{{ track.sample_count }} samples · Q {{ (track.max_face_quality * 100).toFixed(0) }}</em>
               </button>
             </div>
-            <div class="character-f07-note"><strong>F07 再做人​​工人物确认</strong><p>当前页故意没有命名、合并、拆分、删除或主角标签按钮，避免人工 Final 覆盖 F06 自动证据。</p></div>
+            <div class="character-f07-note"><strong>F07 再做人工人物确认</strong><p>当前页故意没有命名、合并、拆分、删除或主角标签按钮，避免人工 Final 覆盖 F06 自动证据。</p></div>
             <button type="button" class="secondary-button character-rerun-button" :disabled="characterStore.processing" @click="rerunDetection">重新自动识别</button>
           </aside>
         </section>
