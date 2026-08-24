@@ -31,7 +31,7 @@ const globalNav = computed(() => [
 const projectNav = computed(() => [
   { label: '项目总览', step: '01', enabled: true, active: route.name === 'workspace', routeName: 'workspace' },
   { label: '视频导入', step: '02', enabled: true, active: route.name === 'source-video', routeName: 'source-video' },
-  { label: '视频预处理', step: '03', enabled: false, active: false, routeName: '' },
+  { label: '视频预处理', step: '03', enabled: true, active: route.name === 'preprocess', routeName: 'preprocess' },
   { label: '自动拉片', step: '04', enabled: false, active: false, routeName: '' },
   { label: '人物对白', step: '05', enabled: false, active: false, routeName: '' },
   { label: '本土选角', step: '06', enabled: false, active: false, routeName: '' },
