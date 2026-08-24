@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import StudioShell from '../components/StudioShell.vue'
 import { usePreprocessStore } from '../stores/preprocess'
 import { useProjectStore } from '../stores/project'
+import { useShotDetectionStore } from '../stores/shot-detection'
 import { useSourceVideoStore } from '../stores/source-video'
 
 const route = useRoute()
@@ -11,23 +12,26 @@ const router = useRouter()
 const projectStore = useProjectStore()
 const sourceStore = useSourceVideoStore()
 const preprocessStore = usePreprocessStore()
+const shotStore = useShotDetectionStore()
 
 const project = computed(() => projectStore.currentProject)
 const sourceVideo = computed(() => sourceStore.currentSourceVideo)
 const preprocess = computed(() => preprocessStore.currentPreprocess)
+const shotDetection = computed(() => shotStore.currentDetection)
 
 const steps = computed(() => [
   { number: '01', label: '项目创建', state: 'done' },
   { number: '02', label: '视频导入', state: sourceVideo.value ? 'done' : 'current' },
   { number: '03', label: '视频预处理', state: preprocess.value ? 'done' : sourceVideo.value ? 'current' : 'future' },
-  { number: '04', label: '自动拉片', state: preprocess.value ? 'current' : 'future' },
-  { number: '05', label: '人物对白', state: 'future' },
-  { number: '06', label: '本土选角', state: 'future' },
+  { number: '04', label: '自动拉片', state: shotDetection.value?.status === 'ready' ? 'done' : preprocess.value ? 'current' : 'future' },
+  { number: '05', label: '镜头修正', state: shotDetection.value?.status === 'ready' ? 'current' : 'future' },
+  { number: '06', label: '人物对白', state: 'future' },
   { number: '07', label: '生成制作', state: 'future' },
   { number: '08', label: '最终合成', state: 'future' },
 ])
 
 const currentFeatureLabel = computed(() => {
+  if (shotDetection.value?.status === 'ready') return 'F05'
   if (preprocess.value) return 'F04'
   if (sourceVideo.value) return 'F03'
   return 'F02'
@@ -42,6 +46,11 @@ onMounted(async () => {
       await preprocessStore.loadPreprocess(projectId)
     } else {
       preprocessStore.resetPreprocessState()
+    }
+    if (preprocessStore.currentPreprocess) {
+      await shotStore.loadShotDetection(projectId)
+    } else {
+      shotStore.resetShotDetectionState()
     }
   } catch {
     // 对应 Store 已保存具体错误；页面按当前能确认的状态展示。
@@ -61,10 +70,10 @@ onMounted(async () => {
       <button type="button" class="secondary-button compact-button" @click="router.push('/')">返回工作台</button>
     </template>
 
-    <div v-if="projectStore.opening || sourceStore.loading || preprocessStore.loading" class="workspace-loading">
+    <div v-if="projectStore.opening || sourceStore.loading || preprocessStore.loading || shotStore.loading" class="workspace-loading">
       <div class="loading-ring"></div>
       <strong>正在打开项目</strong>
-      <p>校验 Project、Source Video 和预处理状态…</p>
+      <p>校验 Project、Source Video、预处理和自动拉片状态…</p>
     </div>
 
     <div v-else-if="projectStore.errorMessage" class="workspace-error-panel">
@@ -78,9 +87,9 @@ onMounted(async () => {
     </div>
 
     <template v-else-if="project">
-      <div v-if="sourceStore.errorMessage || preprocessStore.errorMessage" class="inline-alert error-alert">
+      <div v-if="sourceStore.errorMessage || preprocessStore.errorMessage || shotStore.errorMessage" class="inline-alert error-alert">
         <span>!</span>
-        <div><strong>项目媒体状态异常</strong><p>{{ sourceStore.errorMessage || preprocessStore.errorMessage }}</p></div>
+        <div><strong>项目媒体状态异常</strong><p>{{ sourceStore.errorMessage || preprocessStore.errorMessage || shotStore.errorMessage }}</p></div>
       </div>
 
       <section class="project-hero content-panel">
@@ -138,6 +147,7 @@ onMounted(async () => {
             <div><span>project.json</span><strong>已创建</strong></div>
             <div><span>Source Video</span><strong>{{ sourceVideo ? 'ready' : '未导入' }}</strong></div>
             <div><span>视频预处理</span><strong>{{ preprocess ? 'ready' : '未完成' }}</strong></div>
+            <div><span>自动拉片</span><strong>{{ shotDetection?.status === 'ready' ? 'ready' : '未完成' }}</strong></div>
           </div>
         </article>
 
@@ -157,12 +167,21 @@ onMounted(async () => {
           <button type="button" class="primary-button" @click="router.push(`/projects/${project.id}/preprocess`)">进入视频预处理</button>
         </article>
 
-        <article v-else class="content-panel next-step-panel">
+        <article v-else-if="shotDetection?.status !== 'ready'" class="content-panel next-step-panel">
           <div class="next-step-icon">04</div>
+          <span class="panel-eyebrow">CURRENT FEATURE</span>
+          <h2>开始自动拉片</h2>
+          <p>F03 分析 Proxy 已经就绪。现在用本地 TransNetV2 检测镜头边界，并以真实 PTS 生成连续 Shot Candidate。</p>
+          <button type="button" class="primary-button" @click="router.push(`/projects/${project.id}/shot-detection`)">进入自动拉片</button>
+        </article>
+
+        <article v-else class="content-panel next-step-panel">
+          <div class="next-step-icon">05</div>
           <span class="panel-eyebrow">NEXT FEATURE</span>
-          <h2>预处理已经完成</h2>
-          <p>F03 分析素材已经就绪。F04「自动拉片」尚未开发，因此这里不会提前生成 Shot。</p>
-          <div class="next-step-note"><span>✓</span><div><strong>F03 ready</strong><small>可以安全关闭并在下次启动后继续。</small></div></div>
+          <h2>自动拉片已经完成</h2>
+          <p>F04 已保存 {{ shotDetection.shot_count || shotDetection.candidates.length }} 个自动 Shot Candidate。下一步由 F05 做人工边界修正，不覆盖自动证据。</p>
+          <div class="next-step-note"><span>✓</span><div><strong>F04 ready</strong><small>可以安全关闭并在下次启动后继续。</small></div></div>
+          <button type="button" class="secondary-button" @click="router.push(`/projects/${project.id}/shot-detection`)">查看自动拉片结果</button>
         </article>
       </section>
     </template>
