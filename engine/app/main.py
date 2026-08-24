@@ -1,7 +1,7 @@
-"""AI Drama Studio 本地 FastAPI 应用与 F01–F03 HTTP Controller。
+"""AI Drama Studio 本地 FastAPI 应用与 F01–F04 HTTP Controller。
 
 Controller 只做 HTTP 边界：接收请求、调用业务函数、返回响应。
-不在本文件直接执行项目/媒体 SQL、mkdir、写 project.json、转码、Hash、FFprobe 或 Recovery。
+不在本文件直接执行项目/媒体 SQL、mkdir、写 project.json、转码、Hash、FFprobe、模型推理或 Recovery。
 """
 
 from __future__ import annotations
@@ -29,6 +29,12 @@ from engine.app.projects import (
     list_projects,
     open_project,
     recover_creating_projects,
+)
+from engine.app.shot_detection import (
+    ShotDetectionError,
+    get_shot_detection,
+    recover_shot_detections,
+    run_shot_detection,
 )
 from engine.app.source_videos import (
     SourceVideoError,
@@ -129,25 +135,72 @@ class SourcePreprocessResponse(BaseModel):
     completed_at: datetime
 
 
+class ShotCandidateResponse(BaseModel):
+    """F04 返回的单个自动 Shot Candidate；detected_* 永远表示自动证据。"""
+
+    id: str
+    detection_id: str
+    project_id: str
+    ordinal: int
+    detected_proxy_start_us: int
+    detected_proxy_end_us: int
+    detected_start_us: int
+    detected_end_us: int
+    duration_us: int
+    end_boundary_kind: str
+    end_boundary_score: float | None
+
+
+class ShotDetectionResponse(BaseModel):
+    """F04 一次 Detection Run 与全部自动候选镜头。"""
+
+    id: str
+    project_id: str
+    source_video_id: str
+    status: str
+    detector_name: str
+    detector_profile_version: int
+    detector_threshold: float
+    min_boundary_gap_us: int
+    detector_package_version: str
+    torch_version: str | None
+    detector_device: str | None
+    ffprobe_version: str | None
+    preprocess_profile_version: int
+    proxy_sha256_snapshot: str
+    proxy_to_source_offset_us: int
+    proxy_start_us: int | None
+    proxy_end_us: int | None
+    source_start_us: int | None
+    source_end_us: int | None
+    analyzed_frame_count: int | None
+    detected_cut_count: int | None
+    shot_count: int | None
+    created_at: datetime
+    completed_at: datetime | None
+    candidates: list[ShotCandidateResponse]
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
-    """启动时升级数据库，并按依赖顺序恢复 F01、F02、F03 中断状态。"""
+    """启动时升级数据库，并按依赖顺序恢复 F01、F02、F03、F04 中断状态。"""
 
     init_database()
     recover_creating_projects()
     recover_source_video_imports()
     recover_source_preprocesses()
+    recover_shot_detections()
     yield
 
 
 def create_app() -> FastAPI:
     """创建 AI Drama Studio 当前本地 FastAPI Application。
 
-    F01/F02 Controller 保持冻结语义；F03 只 Additive 新增预处理 GET/POST 接口。
-    具体 FFmpeg、文件校验、时间映射、DB 状态和 Recovery 由 preprocess.py 业务层负责。
+    F01–F03 已冻结 Controller 语义保持不变；F04 Additive 新增自动拉片 GET/POST。
+    模型、PTS 对齐、完整性校验、DB 事务和 Recovery 全部由 shot_detection.py 负责。
     """
 
-    app = FastAPI(title="AI Drama Studio", version="0.3.0", lifespan=_lifespan)
+    app = FastAPI(title="AI Drama Studio", version="0.4.0", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
         # Vite 开发服务器在 5173 被占用时会自动切到其它端口。
@@ -248,6 +301,28 @@ def create_app() -> FastAPI:
             content={"error": {"code": exc.code, "message": exc.message}},
         )
 
+    @app.exception_handler(ShotDetectionError)
+    async def shot_detection_error_handler(_: Request, exc: ShotDetectionError) -> JSONResponse:
+        """把 F04 本地模型/PTS/完整性错误转换成稳定 HTTP error envelope。"""
+
+        status_map = {
+            "SHOT_DETECTION_PREPROCESS_REQUIRED": 409,
+            "SHOT_DETECTION_ALREADY_EXISTS": 409,
+            "SHOT_DETECTION_IN_PROGRESS": 409,
+            "SHOT_DETECTION_PROXY_INTEGRITY_MISMATCH": 409,
+            "SHOT_DETECTION_UPSTREAM_CHANGED": 409,
+            "SHOT_DETECTION_MODEL_UNAVAILABLE": 503,
+            "SHOT_DETECTION_MODEL_INVALID": 503,
+            "SHOT_DETECTION_FFPROBE_UNAVAILABLE": 503,
+            "SHOT_DETECTION_FRAME_ALIGNMENT_FAILED": 500,
+            "SHOT_DETECTION_INVALID_RESULT": 500,
+            "SHOT_DETECTION_FAILED": 500,
+        }
+        return JSONResponse(
+            status_code=status_map.get(exc.code, 500),
+            content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
     @app.get("/api/health")
     def health_api() -> dict[str, str]:
         """后端健康检查入口；只说明 FastAPI 已可响应。"""
@@ -315,6 +390,26 @@ def create_app() -> FastAPI:
         和失败恢复全部由 preprocess_source_video() 负责。
         """
         return preprocess_source_video(project_id=project_id).to_dict()
+
+    @app.get(
+        "/api/projects/{project_id}/shot-detection",
+        response_model=ShotDetectionResponse | None,
+    )
+    def get_shot_detection_api(project_id: str) -> dict | None:
+        """F04 页面读取自动拉片结果；无 Detection Run 返回 200 null。"""
+
+        record = get_shot_detection(project_id=project_id)
+        return record.to_dict() if record else None
+
+    @app.post(
+        "/api/projects/{project_id}/shot-detection",
+        response_model=ShotDetectionResponse,
+        status_code=201,
+    )
+    def run_shot_detection_api(project_id: str) -> dict:
+        """F04 开始自动拉片入口；Controller 不接收阈值/device/model path 等自由参数。"""
+
+        return run_shot_detection(project_id=project_id).to_dict()
 
     return app
 
