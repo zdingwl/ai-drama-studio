@@ -1,7 +1,7 @@
-"""F01 的最小 FastAPI 应用与 HTTP Controller。
+"""AI Drama Studio 本地 FastAPI 应用与 F01/F02 HTTP Controller。
 
-Controller 只做 HTTP 边界：接收请求、调用项目业务函数、返回响应。
-不在本文件直接执行项目 SQL、mkdir 或写 project.json。
+Controller 只做 HTTP 边界：接收请求、调用业务函数、返回响应。
+不在本文件直接执行项目/媒体 SQL、mkdir、写 project.json、写原视频或调用 FFprobe。
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -24,6 +24,12 @@ from engine.app.projects import (
     open_project,
     recover_creating_projects,
 )
+from engine.app.source_videos import (
+    SourceVideoError,
+    get_source_video,
+    import_source_video,
+    recover_source_video_imports,
+)
 
 # F01 创建项目只允许保存下面这些稳定代码。
 # 前端使用下拉框限制普通用户，API Schema 再限制直接请求，形成双层保护。
@@ -33,11 +39,7 @@ RegionCode = Literal["US", "GB", "JP", "KR", "ES", "BR", "FR", "DE", "ID", "TH",
 
 
 class CreateProjectRequest(BaseModel):
-    """前端创建项目时允许提交的 F01 基础字段。
-
-    语言和地区使用固定 Literal，而不是任意字符串。
-    这样即使绕过前端直接调用 API，也无法写入 English、usa、中文等非标准值。
-    """
+    """前端创建项目时允许提交的 F01 基础字段。"""
 
     name: str = Field(description="用户看到的项目名称")
     source_language: LanguageCode | None = Field(default=None, description="原片标准语言代码；可为空表示暂不指定")
@@ -61,28 +63,54 @@ class ProjectResponse(BaseModel):
     last_opened_at: datetime | None
 
 
+class SourceVideoResponse(BaseModel):
+    """F02 返回给前端的 ready Source Video 基础信息。"""
+
+    id: str
+    project_id: str
+    original_filename: str
+    relative_path: str
+    file_size_bytes: int
+    sha256: str
+    status: str
+    container_format: str
+    duration_us: int
+    source_start_time_us: int | None
+    video_stream_index: int
+    video_codec: str
+    width: int
+    height: int
+    fps_num: int | None
+    fps_den: int | None
+    audio_stream_index: int | None
+    audio_codec: str | None
+    audio_sample_rate: int | None
+    audio_channels: int | None
+    created_at: datetime
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
-    """应用启动时先初始化数据库，并恢复简单 creating 状态。"""
+    """启动时初始化/升级数据库，并恢复 F01 Project 与 F02 Source 导入中断状态。"""
 
     init_database()
     recover_creating_projects()
+    recover_source_video_imports()
     yield
 
 
 def create_app() -> FastAPI:
-    """创建 F01 最小 FastAPI Application。
+    """创建 AI Drama Studio 当前本地 FastAPI Application。
 
-    只负责注册中间件、异常处理和 4 个 Controller；启动阶段初始化数据库与简单恢复。
-    不负责创建任何具体 Project，也不实现 F02 业务。
+    F01 Controller 保持冻结语义；F02 只 Additive 新增 Source Video 的 GET/POST 接口。
+    具体视频写盘、Hash、FFprobe、Recovery 都由 source_videos.py 业务层负责。
     """
 
-    app = FastAPI(title="AI Drama Studio", version="0.1.0", lifespan=_lifespan)
+    app = FastAPI(title="AI Drama Studio", version="0.2.0", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
-        # Vite 开发服务器在 5173 被占用时会自动切到 5174/5175。
-        # F01 是本机工具，因此开发阶段允许 localhost / 127.0.0.1 的任意端口，
-        # 但不使用 allow_origins=['*']，避免把非本机来源也一起放开。
+        # Vite 开发服务器在 5173 被占用时会自动切到其它端口。
+        # 本地开发只允许 localhost / 127.0.0.1，不开放任意外部 Origin。
         allow_origins=[],
         allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
         allow_credentials=False,
@@ -91,12 +119,19 @@ def create_app() -> FastAPI:
     )
 
     @app.exception_handler(RequestValidationError)
-    async def request_validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
-        """把 Schema 枚举/格式错误转换成前端统一 error envelope。
+    async def request_validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        """把 Pydantic/FastAPI 请求格式错误转换成统一 error envelope。"""
 
-        语言和地区虽然已经由下拉框限制，但 API 仍必须独立防御非法请求。
-        本处理器不修正用户输入，只明确拒绝非标准值。
-        """
+        if request.url.path.endswith("/source-video"):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": {
+                        "code": "SOURCE_VIDEO_REQUEST_INVALID",
+                        "message": "原视频上传请求格式不正确",
+                    }
+                },
+            )
 
         invalid_fields = {str(error["loc"][-1]) for error in exc.errors() if error.get("loc")}
         if "source_language" in invalid_fields:
@@ -112,7 +147,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ProjectError)
     async def project_error_handler(_: Request, exc: ProjectError) -> JSONResponse:
-        """把业务错误统一转换成前端可识别的 JSON；不处理项目业务本身。"""
+        """把 F01 项目业务错误统一转换成前端可识别 JSON。"""
 
         status_map = {
             "PROJECT_NAME_REQUIRED": 422,
@@ -124,6 +159,25 @@ def create_app() -> FastAPI:
             "PROJECT_NOT_FOUND": 404,
             "PROJECT_WORKSPACE_MISSING": 409,
             "PROJECT_MANIFEST_INVALID": 409,
+        }
+        return JSONResponse(
+            status_code=status_map.get(exc.code, 500),
+            content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
+    @app.exception_handler(SourceVideoError)
+    async def source_video_error_handler(_: Request, exc: SourceVideoError) -> JSONResponse:
+        """把 F02 Source Video 业务错误转换成稳定 HTTP 状态与 error envelope。"""
+
+        status_map = {
+            "SOURCE_VIDEO_ALREADY_EXISTS": 409,
+            "SOURCE_VIDEO_EMPTY": 422,
+            "SOURCE_VIDEO_FFPROBE_UNAVAILABLE": 503,
+            "SOURCE_VIDEO_PROBE_FAILED": 422,
+            "SOURCE_VIDEO_UNSUPPORTED": 422,
+            "SOURCE_VIDEO_IMPORT_FAILED": 500,
+            "SOURCE_VIDEO_FINALIZATION_PENDING": 500,
+            "SOURCE_VIDEO_FILE_MISSING": 409,
         }
         return JSONResponse(
             status_code=status_map.get(exc.code, 500),
@@ -142,17 +196,46 @@ def create_app() -> FastAPI:
 
     @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
     def create_project_api(payload: CreateProjectRequest) -> dict:
-        """新建项目 HTTP 入口。
-
-        只负责接收前端请求、调用 create_project() 并返回结果。
-        不负责生成 Project ID、创建目录、写 project.json 或直接执行 SQL。
-        """
+        """新建项目 HTTP 入口；不直接生成 ID、mkdir、SQL 或写 Manifest。"""
         return create_project(**payload.model_dump(mode="json")).to_dict()
 
     @app.post("/api/projects/{project_id}/open", response_model=ProjectResponse)
     def open_project_api(project_id: str) -> dict:
-        """打开项目 HTTP 入口：调用 open_project() 完成完整性检查和打开时间更新。"""
+        """打开项目 HTTP 入口：调用 open_project() 做完整性检查和打开时间更新。"""
         return open_project(project_id=project_id).to_dict()
+
+    @app.get(
+        "/api/projects/{project_id}/source-video",
+        response_model=SourceVideoResponse | None,
+    )
+    def get_source_video_api(project_id: str) -> dict | None:
+        """读取当前项目已完成原片的 HTTP 入口。
+
+        无 Source Video 时返回 200 null；Controller 不自己 SQL、检查文件或重新 FFprobe。
+        """
+        source_video = get_source_video(project_id=project_id)
+        return source_video.to_dict() if source_video else None
+
+    @app.post(
+        "/api/projects/{project_id}/source-video",
+        response_model=SourceVideoResponse,
+        status_code=201,
+    )
+    async def import_source_video_api(project_id: str, file: UploadFile = File(...)) -> dict:
+        """原视频 multipart 上传 HTTP 入口。
+
+        只把 FastAPI UploadFile、原文件名和 Project ID 交给 import_source_video()。
+        Controller 不读完整文件、不算 Hash、不 mkdir、不跑 FFprobe、不管理 DB transaction。
+        """
+        try:
+            source_video = await import_source_video(
+                project_id=project_id,
+                upload_file=file,
+                original_filename=file.filename or "source-video",
+            )
+            return source_video.to_dict()
+        finally:
+            await file.close()
 
     return app
 
