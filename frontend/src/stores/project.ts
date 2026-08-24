@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
-import { startSourcePreprocess } from '../api/preprocess'
+import { importProjectSource } from '../api/project-import'
 import { createProject, fetchProjects, openProjectRequest } from '../api/projects'
-import { uploadSourceVideo } from '../api/source-videos'
 import type { CreateProjectPayload, Project } from '../types/project'
 
 export type ProjectImportStage = 'idle' | 'creating' | 'uploading' | 'initializing' | 'ready'
@@ -64,37 +63,38 @@ export const useProjectStore = defineStore('project', {
     },
 
     /**
-     * Workflow 01「导入原片」的前端单一动作。
-     *
-     * 用户只提交一次表单；内部按已冻结能力顺序执行：
-     * createProject → uploadSourceVideo → startSourcePreprocess。
-     * 页面不再要求用户分别进入“视频导入”和“视频预处理”两个页面点击。
+     * Workflow 01「导入原片」的前端唯一提交动作。
      *
      * 输入：项目基础字段 + 用户选择的原片 File。
+     * HTTP：只调用 POST /api/project-imports 一次。
+     * 后端内部：create_project → import_source_video → preprocess_source_video。
      * 输出：已经完成 Project / Source / Proxy / WAV / Thumbnail 初始化的 Project。
-     * 为什么存在：把工程 Feature 边界隐藏在一个连续 Workflow 后面。
+     * 为什么存在：用户不再感知 F01/F02/F03，也不会被要求连续点击三个页面。
      */
     async submitCreateAndImport(payload: CreateProjectPayload, file: File): Promise<Project> {
       if (this.creating) throw new Error('原片正在导入并初始化，请勿重复提交')
       this.creating = true
       this.errorMessage = ''
-      this.importStage = 'creating'
+      this.importStage = 'uploading'
       this.importProgress = 0
 
       try {
-        const project = await createProject(payload)
+        const result = await importProjectSource(
+          payload,
+          file,
+          (progress) => {
+            this.importProgress = progress.percent
+          },
+          () => {
+            // 浏览器已经把 multipart 请求体发送完；接下来等待本地后端创建项目并生成分析资产。
+            this.importStage = 'initializing'
+            this.importProgress = 100
+          },
+        )
+
+        const project = result.project
         this.currentProject = project
         this.projects = [project, ...this.projects.filter((item) => item.id !== project.id)]
-
-        this.importStage = 'uploading'
-        await uploadSourceVideo(project.id, file, (progress) => {
-          this.importProgress = progress.percent
-        })
-
-        this.importStage = 'initializing'
-        this.importProgress = 100
-        await startSourcePreprocess(project.id)
-
         this.importStage = 'ready'
         return project
       } catch (error) {
