@@ -131,17 +131,21 @@ engine/tests/v2
 
 F03-F05 除单元测试外必须在用户 Windows 本机用真实短剧素材验证；特别关注 Reference Clip、body-only Track、跨 Shot 人物聚类、Scene 聚类和 ASR 时间绑定。
 
-## 8. Git
+## 8. Git 工作方式
 
-`main` 仍是正式发布基线。
-
-当前重建开发分支：
+用户已明确要求：**不要为日常开发新建分支，直接在默认分支 `main` 开发。**
 
 ```text
-rebuild/reference-video-v2
+Default Branch: main
+Current Development Branch: main
 ```
 
-未经用户要求，不创建 PR、不合并到 main、不删除分支。
+规则：
+- 后续代码、文档、测试直接提交到 `main`；
+- 不主动创建 feature/rebuild 分支；
+- 不主动创建 PR；
+- 已存在的 `rebuild/reference-video-v2` 仅作为历史分支保留，不再作为开发入口；
+- 只有用户以后明确要求时，才改变这一 Git 工作方式。
 
 ## 9. 最重要的判断标准
 
