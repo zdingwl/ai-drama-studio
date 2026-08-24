@@ -15,6 +15,7 @@ F03 Function Contracts: CONFIRMED
 F03 Business Code: COMPLETE
 F03 Frontend: COMPLETE
 F03 Pre-Acceptance Audit: COMPLETE
+F03 Retry Recovery Fix: COMPLETE
 F03 User Acceptance: PENDING
 
 F01 — 创建项目: STABLE / FROZEN
@@ -109,8 +110,6 @@ Status:    processing / ready
 - Source 无音频时 Audio 字段为空，不生成假静音 WAV；
 - 0002→0003 升级继续使用 SQLite `Connection.backup()` 安全备份。
 
-收尾审查已修复 Audio Constraint：有音频 Source 在 processing 阶段可以先保存 `audio.wav` 目标路径，不会因为 size/hash 尚未知而被数据库错误拒绝。
-
 ---
 
 # F03 Preprocess Profile V1
@@ -152,23 +151,7 @@ F02 `original.<ext>` 永不覆盖。
 
 ---
 
-# F03 Time Contract
-
-公共模块：
-
-```text
-engine/app/core/media_time.py
-```
-
-公共函数：
-
-```text
-seconds_to_microseconds()
-pts_to_microseconds()
-microseconds_to_pts()
-derived_to_source_microseconds()
-source_to_derived_microseconds()
-```
+# F03 Time / Source Integrity
 
 Mapping：
 
@@ -179,53 +162,69 @@ source_us = audio_us + audio_to_source_offset_us
 
 Offset 来自实际 stream start timestamp，不假设 `Proxy 0 == Source 0`。
 
-VFR Proxy 不强制 CFR；F04 不得把 `frame_index / fps` 当作唯一 Source Timeline 定位方式。
-
-F03 媒体时长现在固定：
+媒体时长：
 
 ```text
 selected stream.duration
 → 缺失时 format.duration
 ```
 
-避免容器中更长的音频尾巴误扩大 Proxy 视频分析时长。
+Source 完整性：
+
+```text
+开始前：磁盘 size/hash == F02 DB
+publish 前：磁盘 size/hash == F02 DB == source_sha256_snapshot
+```
+
+处理中 Source 发生外部替换时禁止发布。
 
 ---
 
-# F03 Source Integrity Contract
+# F03 processing 重试规则
 
-开始 F03：
+用户真实验收曾出现：页面没有 ready 结果，但 DB 留有旧 `processing`，旧实现导致再次点击统一报“当前项目已经存在视频预处理记录”。该问题已修复。
 
-```text
-磁盘 Source size/hash
-== F02 source_videos size/hash
-```
-
-FFmpeg/inspect 完成、正式 publish 前：
+现在规则：
 
 ```text
-再次计算磁盘 Source size/hash
-== F02 source_videos size/hash
-== 本次 source_sha256_snapshot
+已有 ready
+→ PREPROCESS_ALREADY_EXISTS
+→ 仍然禁止重复预处理
+
+已有 processing + 完整 final
+→ 校验后自动恢复 ready
+
+已有 processing + staging 最近 30 秒仍在写
+→ PREPROCESS_IN_PROGRESS
+→ 不删除，避免误伤正在运行的 FFmpeg
+
+已有 processing + staging 已停止写入且只有系统已知文件
+→ 安全清理 staging + processing
+→ 当前点击继续重新预处理
+
+已有 processing + 无 staging/final 且记录已过保护窗口
+→ 删除旧 processing
+→ 当前点击继续重新预处理
+
+存在未知文件 / 异常 final / Source Hash 不一致
+→ PREPROCESS_RECOVERY_REQUIRED
+→ 保留现场，不自动删除
 ```
 
-处理中发生外部替换：
+新增 HTTP 409 状态：
 
 ```text
-SOURCE_VIDEO_INTEGRITY_MISMATCH
-→ 不发布 final
-→ 清理本次已知 staging
-→ 删除 processing row
-→ 不自动修改 F02 Source 数据
+PREPROCESS_IN_PROGRESS
+PREPROCESS_RECOVERY_REQUIRED
 ```
 
-Recovery 也复用相同完整性规则。
+上述重试/清理永远不得修改或删除 F02 Source Video。
 
 ---
 
 # F03 Core / API
 
-7 个核心函数全部完成：
+7 个核心函数：
 
 ```text
 generate_proxy_video()
@@ -237,36 +236,18 @@ get_source_preprocess()
 recover_source_preprocesses()
 ```
 
-主文件：
-
-```text
-engine/app/preprocess.py
-```
-
-2 个 API 全部完成：
+2 个 API：
 
 ```text
 GET  /api/projects/{project_id}/preprocess
 POST /api/projects/{project_id}/preprocess
 ```
 
-Controller 只做 `HTTP → Business → Response`，不直接 SQL、FFmpeg、FFprobe、Hash、文件发布或 Recovery。
+Controller 只做 `HTTP → Business → Response`。
 
 ---
 
 # F03 Frontend
-
-已完成：
-
-```text
-frontend/src/types/preprocess.ts
-frontend/src/api/preprocess.ts
-frontend/src/stores/preprocess.ts
-frontend/src/views/VideoPreprocess.vue
-frontend/src/preprocess.css
-```
-
-并更新 Router、StudioShell、ProjectWorkspace、main.ts。
 
 路由：
 
@@ -288,7 +269,6 @@ frontend/src/preprocess.css
 Media Time targeted tests                         6 PASS
 0003 Migration / Constraint targeted tests       3 PASS
 0002 → backup → 0003 Upgrade                     PASS
-Python preprocess.py / media_time.py py_compile PASS（早期实现阶段）
 1920×1080 + Audio 实际 FFmpeg 链路               PASS
 No-Audio 实际 FFmpeg 链路                        PASS
 Source start_time=2s → Proxy offset=2,000,000us PASS
@@ -305,17 +285,20 @@ engine/tests/unit/test_media_time_f03.py
 engine/tests/unit/test_preprocess_f03.py
 engine/tests/unit/test_preprocess_vfr_f03.py
 engine/tests/unit/test_preprocess_integrity_f03.py
+engine/tests/unit/test_preprocess_retry_recovery_f03.py
 ```
 
 最新增加覆盖：
 
 ```text
-Source 在长时间预处理过程中被替换 → 禁止 publish
-selected stream.duration 优先于 container duration
-stream.duration 缺失 → 安全回退 format.duration
+旧 processing 无文件 → 自动清理并允许重试
+最近仍写 staging → 不误删
+未知 staging 文件 → 保留现场
+Source 在处理中被替换 → 禁止 publish
+stream.duration 优先于 container duration
 ```
 
-当前工具容器无法联网完整 clone 最新仓库，因此没有冒充执行最新 main 的完整 `pytest engine/tests`、`npm ci`、`vue-tsc`、`vite build`。这些由用户 Windows 工作副本完成最终 Review Gate。
+当前工具容器无法联网完整 clone 最新仓库，因此最终全量 `pytest engine/tests`、`npm run typecheck`、`npm run build` 仍由用户 Windows 工作副本完成。
 
 ---
 
@@ -333,26 +316,19 @@ READY_FOR_REVIEW
 F03 → STABLE / FROZEN
 ```
 
-最终验收重点：
+本次用户需要优先复测：
 
 ```text
-pytest engine/tests -q
-npm ci
-npm run typecheck
-npm run build
-真实短剧原片预处理
-Proxy / WAV / Thumbnail 正确
-Timeline Mapping 正确
-Source 原片未改变
-无音频不产生假 WAV
-重启后结果仍存在
-重复预处理被阻止
-F01 / F02 回归正常
+git pull origin main
+重启 FastAPI
+进入原项目 F03
+再次点击“开始视频预处理”
+旧 processing 应被安全恢复/清理，而不是继续报“已经存在”
 ```
 
 F03 未通过用户验收前不得进入 F04 正式开发。
 
 ## 最近更新时间
 
-- 日期：2026-08-24 11:31 +08:00
-- 状态：F03 全部开发完成；验收前二次代码审查补强 Source 二次 SHA 防护与 stream-duration 语义；仍为 READY_FOR_REVIEW，等待用户 Windows 实际验收。
+- 日期：2026-08-24 11:45 +08:00
+- 状态：F03 READY_FOR_REVIEW；已修复用户真实验收发现的 stale processing 无法重试问题，等待复测。
