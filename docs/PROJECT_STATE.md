@@ -13,7 +13,7 @@ F01 — 创建项目:     STABLE / FROZEN
 F02 — 上传原视频:   STABLE / FROZEN
 F03 — 视频预处理:   STABLE / FROZEN
 F04 — 自动拉片:     STABLE / FROZEN
-F05 — 镜头人工修正: IN DEVELOPMENT / READY FOR LOCAL TEST
+F05 — 镜头人工修正: READY FOR FINAL REGRESSION（NOT FROZEN）
 
 Current Feature: F05 — 三栏拉片工作台 / Final Shot
 ```
@@ -23,6 +23,8 @@ F04 Stable Snapshot：
 ```text
 docs/features/F04-stable-snapshot.md
 ```
+
+F05 目前**没有 Stable Snapshot**。曾在用户点击 Final Shots 确认后短暂创建过 F05 Stable Snapshot，但随后真实页面发现播放器回归，因此已经删除该 Snapshot，必须重新通过最终回归后才能冻结。
 
 ---
 
@@ -86,17 +88,11 @@ shot_candidates.detected_* 永远是只读 Auto Evidence
 F05 已存在 shot_edit_sets 后禁止 F04 rerun
 ```
 
-详细权威语义：
-
-```text
-docs/features/F04-stable-snapshot.md
-```
-
 ---
 
-# F05 正式目标
+# F05 核心 Contract
 
-F05 不做普通结果表，而是三栏生产工作台：
+F05 是三栏生产工作台：
 
 ```text
 左：Final Shot 列表 / 缩略图 / 时间 / 当前 Shot 高亮
@@ -104,35 +100,26 @@ F05 不做普通结果表，而是三栏生产工作台：
 右：Final Start/End / 拆分 / 合并 / 确认 / 后续语义占位
 ```
 
-核心原则：
+核心数据关系：
 
 ```text
 F04 shot_candidates = Auto Evidence（永远只读）
 F05 final_shots      = Human Final Draft / Final
 ```
 
-F05 初始化时为每个 Candidate 创建新的稳定：
+Final Shot ID：
 
 ```text
 SHOT_<UUID4>
 ```
 
-这些 Final Shot ID 才是后续人物、对白、Scene、生成、QC 应关联的生产身份。
+这些 ID 才是后续人物、对白、Scene、生成、QC 应关联的生产身份。
 
----
-
-# F05 Time Contract
-
-继续使用：
+时间 Contract：
 
 ```text
 Source Domain integer microseconds
 [start_us, end_us)
-```
-
-必须始终满足：
-
-```text
 first.start == edit_set.source_start_us
 last.end == edit_set.source_end_us
 prev.end == next.start
@@ -141,26 +128,136 @@ ordinal = 1..N
 无 overlap
 ```
 
-调整一个边界必须同时更新：
-
-```text
-left.final_end_us
-right.final_start_us
-```
-
-拆分 = 新增镜头；合并 = 删除公共边界。F05 不维护重复的“新增/删除镜头”第二套算法。
-
-浏览器播放器与 FFmpeg `-ss` 使用媒体相对时间：
+播放器 / FFmpeg 媒体相对时间：
 
 ```text
 relative_seconds = (source_us - edit_set.source_start_us) / 1_000_000
 ```
 
-禁止把 Source absolute timestamp 直接当 `video.currentTime`。
+---
+
+# F05 当前真实数据状态
+
+用户已经在真实项目中点击：
+
+```text
+确认 Final Shots
+```
+
+因此当前测试项目的 `shot_edit_sets.status` 已为：
+
+```text
+confirmed
+```
+
+这意味着该项目的边界修改 / 拆分 / 合并已经按设计锁定。
+
+注意：
+
+```text
+业务数据 confirmed ≠ Feature 代码 STABLE / FROZEN
+```
+
+由于确认后真实页面发现播放器/预览并发回归，F05 Feature 仍需最终回归验证。
 
 ---
 
-# F05 Database
+# F05 已修复的真实回归
+
+## 1. 缩略图破图 / 当前 Shot 不滚动
+
+已改为：
+
+```text
+缩略图取镜头中间帧
+前端队列加载
+失败自动重试一次
+当前 Shot 自动 scrollIntoView
+```
+
+## 2. 视频播放与预览抢资源
+
+正式调度策略：
+
+```text
+播放器 Proxy metadata 优先
+当前 Shot 5 张关键帧 = 高优先级，播放中也允许串行加载/生成
+整集 Shot 缩略图 = 低优先级，播放期间暂停
+暂停后继续补齐缩略图
+```
+
+禁止一个 Shot 同时并发启动多个 FFmpeg 关键帧进程。
+
+## 3. Alembic `KeyError: 'config'`
+
+真实 Windows 日志曾出现：
+
+```text
+render_workbench_frame
+→ init_database
+→ alembic.command.upgrade
+→ KeyError: 'config'
+```
+
+根因：多个 FastAPI worker thread 同时调用 `init_database()`，Alembic `EnvironmentContext` 进程级代理不支持并发 upgrade。
+
+已修：
+
+```text
+init_database()
+→ 进程级 RLock
+→ 每个数据库路径只在当前进程第一次执行 Migration
+→ 成功后加入 initialized set
+→ 后续请求直接返回 app.db Path
+```
+
+新增：
+
+```text
+engine/tests/unit/test_database_concurrency.py
+```
+
+## 4. 关键帧缓存
+
+后端缓存：
+
+```text
+<Project Workspace>/.cache/f05/frames/<source_time_us>.jpg
+```
+
+规则：
+
+```text
+缓存文件存在且非空
+→ 直接返回
+→ 禁止再次运行 FFmpeg
+
+边界没变
+→ 原时间点永久复用
+
+边界调整 / 拆分 / 合并
+→ 只产生新 source_time_us
+→ 只补新时间点
+→ 其它镜头缓存不动
+```
+
+`GET /shot-workbench/frame` 已增加长期浏览器缓存：
+
+```text
+Cache-Control: private, max-age=31536000, immutable
+```
+
+新增防回归测试：
+
+```text
+test_render_workbench_frame_reuses_existing_cache_without_ffmpeg
+```
+
+测试会在缓存 JPEG 已存在时强制禁止 `subprocess.run()` 被调用。
+
+---
+
+# F05 Database / API
 
 Migration：
 
@@ -168,43 +265,11 @@ Migration：
 0006_create_final_shots
 ```
 
-新增：
+表：
 
 ```text
 shot_edit_sets
 final_shots
-```
-
-Edit Set：
-
-```text
-editing
-confirmed
-```
-
-confirmed 后 F05 写接口拒绝修改。
-
----
-
-# F05 Backend / API
-
-核心业务：
-
-```text
-engine/app/shot_workbench.py
-```
-
-公开职责：
-
-```text
-initialize_shot_workbench()  F04 Candidate -> Final Shot Draft
-get_shot_workbench()         读取并验证完整 Final Timeline
-adjust_shot_boundary()       同时移动相邻两 Shot 的公共边界
-split_final_shot()           拆分 / 新增镜头
-merge_final_shots()          合并 / 删除公共边界
-confirm_final_shots()        人工确认并锁定
-get_workbench_proxy_path()   播放 F03 Proxy
-render_workbench_frame()     按 Source 时间抽 UI 预览帧
 ```
 
 API：
@@ -222,75 +287,53 @@ GET  /api/projects/{project_id}/shot-workbench/frame?source_time_us=...
 
 ---
 
-# F05 Frontend
+# F05 最终回归要求
 
-Route：
-
-```text
-/projects/:projectId/shot-workbench
-```
-
-已实现：
-
-```text
-左侧 05 镜头修正导航
-项目总览 F05 入口
-Shot 缩略图列表
-点击 Shot -> player seek
-播放时间 -> 当前 Shot 自动高亮
-按时长比例 Shot Timeline
-首/25%/中/75%/尾关键帧
-Final Start / End 公共边界编辑
-播放点拆分
-与前/后一镜合并
-Final Shots 确认锁定
-人物/场景/景别/运镜/动作/对白占位（不伪造结果）
-```
-
----
-
-# F05 Tests / 验收
-
-新增：
-
-```text
-engine/tests/unit/test_database_migration_f05.py
-engine/tests/unit/test_shot_workbench_f05.py
-```
-
-用户 Windows 本机需继续执行：
+用户 Windows 本机拉最新 `main`：
 
 ```powershell
 cd D:\ai-drama-studio
 git pull
+
+.\.venv\Scripts\Activate.ps1
 python -m pytest engine/tests -q
 
 cd frontend
-npm ci
 npm run typecheck
 npm run build
 ```
 
-真实 F05 验收：
+因为数据库并发修复改了 Python，必须重启后端：
 
-```text
-进入 05 镜头修正
-→ 首次从当前已冻结 F04 创建 31 个 Final Shot
-→ 左侧缩略图正常
-→ Proxy 可播放
-→ 点击 Shot 正确跳转
-→ 播放时当前 Shot 自动高亮
-→ 修改一个公共边界
-→ 在播放点拆分一个镜头
-→ 再合并回来
-→ 刷新页面数据仍存在
-→ 最后测试确认锁定
+```powershell
+cd D:\ai-drama-studio
+python -m uvicorn engine.app.main:app --host 127.0.0.1 --port 8080
 ```
 
-F05 当前：
+最终页面回归：
 
 ```text
-IN DEVELOPMENT / READY FOR LOCAL TEST
+1. 打开已 confirmed 的 F05
+2. Proxy 视频能正常播放 / seek
+3. 播放跨 Shot 时左侧当前 Shot 自动高亮并滚动
+4. 播放过程中当前 Shot 的 5 张关键帧可逐张出现
+5. 播放过程中整集后台缩略图不会大量抢资源
+6. 暂停后剩余缩略图继续补齐
+7. 刷新页面后已缓存关键帧快速复用，不重新 FFmpeg 抽取
+8. 后端不再出现 Alembic KeyError: 'config'
+9. confirmed 状态下边界 / 拆分 / 合并继续保持锁定
+```
+
+全部通过后才能重新创建：
+
+```text
+docs/features/F05-stable-snapshot.md
+```
+
+当前结论：
+
+```text
+F05 READY FOR FINAL REGRESSION
 NOT STABLE
 NOT FROZEN
 ```
