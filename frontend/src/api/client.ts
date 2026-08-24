@@ -1,4 +1,4 @@
-import type { Episode, Project, ProjectCreatePayload, Shot } from '../types/studio'
+import type { ContentAnalysisRun, Episode, F05ModelStatus, Project, ProjectCreatePayload, Shot } from '../types/studio'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options)
@@ -36,4 +36,10 @@ export const api = {
   analyzeEpisodeShots: (episodeId: string) => request<Shot[]>(`/api/episodes/${episodeId}/shots/analyze`, { method: 'POST' }),
   analyzeBatchShots: (projectId: string) => request(`/api/projects/${projectId}/shots/analyze-batch`, { method: 'POST' }),
   listShots: (episodeId: string) => request<Shot[]>(`/api/episodes/${episodeId}/shots`),
+
+  getF05ModelStatus: () => request<F05ModelStatus>('/api/models/f05/status'),
+  prepareF05Models: () => request<F05ModelStatus>('/api/models/f05/prepare', { method: 'POST' }),
+  runContentAnalysis: (projectId: string) => request<ContentAnalysisRun>(`/api/projects/${projectId}/content-analysis`, { method: 'POST' }),
+  getCurrentContentAnalysis: (projectId: string) => request<ContentAnalysisRun | null>(`/api/projects/${projectId}/content-analysis/current`),
+  getContentAnalysis: (runId: string) => request<ContentAnalysisRun>(`/api/content-analysis/${runId}`),
 }
