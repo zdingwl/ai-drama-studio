@@ -12,6 +12,7 @@ export function importProjectSource(
   payload: CreateProjectPayload,
   file: File,
   onProgress?: (progress: ProjectImportProgress) => void,
+  onUploadComplete?: () => void,
 ): Promise<ProjectImportWorkflowResult> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -26,6 +27,7 @@ export function importProjectSource(
         percent: Math.min(100, Math.round((event.loaded / event.total) * 100)),
       })
     }
+    xhr.upload.onload = () => onUploadComplete?.()
 
     xhr.onerror = () => reject(new Error('导入原片失败，请检查本地后端是否正常运行'))
     xhr.onabort = () => reject(new Error('导入原片已取消'))
