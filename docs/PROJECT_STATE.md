@@ -8,12 +8,16 @@
 Project: AI Drama Studio
 Official Baseline: main
 Current Working Branch: main（用户未要求切换/新建其它分支）
-Current Feature: none（等待用户开始 F03）
+Current Feature: F03 — 视频预处理
+Feature Status: PLANNED
+F03 Contract: DRAFTED / WAITING_USER_CONFIRMATION
+F03 Function Contracts: DRAFTED / WAITING_USER_CONFIRMATION
+Business Code: NOT STARTED
 F01 — 创建项目: STABLE / FROZEN
 F02 — 上传原视频: STABLE / FROZEN
 Stable Features: F01, F02
 Frozen Features: F01, F02
-Next Feature: F03 — 视频预处理（NOT STARTED）
+Next After F03: F04 — 自动拉片（NOT STARTED）
 ```
 
 `main` 是唯一正式 Source of Truth。未经用户明确要求，不新建、切换、删除、重命名分支，也不创建或操作 PR。
@@ -22,273 +26,388 @@ Next Feature: F03 — 视频预处理（NOT STARTED）
 
 # 当前恢复顺序
 
-新对话继续开发时按以下顺序读取：
-
 ```text
 AGENTS.md
 → SKILL.md
 → docs/PROJECT_STATE.md
 → docs/features/F01-stable-snapshot.md
 → docs/features/F02-stable-snapshot.md
-→ 当前要开发 Feature 的 Contract / Function Contracts
+→ docs/features/F03-video-preprocessing.md
+→ docs/features/F03-function-contracts.md
 → 最新相关 docs/sessions/*.md
 ```
 
-F01 / F02 已冻结，不再以它们开发阶段 Contract 顶部的旧状态字段作为当前 Feature 状态；冻结快照优先级更高。
-
 ---
 
-# F01 冻结基线
+# F01 / F02 冻结基线
 
 权威快照：
 
 ```text
 docs/features/F01-stable-snapshot.md
-```
-
-F01 冻结：
-
-```text
-Project ID = PROJECT_<UUID4_HEX>
-app.db
-projects 基础表和字段语义
-Project Workspace
-project.json V1
-创建 / 列表 / 打开 API
-creating → ready
-固定语言/地区选择 + 后端白名单
-正式 StudioShell UI 基线
-```
-
-后续 Feature 只能兼容性扩展；改变 F01 冻结 Contract 必须先 Change Request。
-
----
-
-# F02 冻结基线
-
-用户于 2026-08-24 明确确认：
-
-```text
-测试通过
-```
-
-因此：
-
-```text
-F02 = STABLE / FROZEN
-```
-
-权威冻结快照：
-
-```text
 docs/features/F02-stable-snapshot.md
 ```
 
-历史规划 / 实现文档：
+F03 只能做兼容性 Additive 扩展，特别不得：
 
 ```text
-docs/features/F02-upload-source-video.md
-docs/features/F02-function-contracts.md
-docs/features/F02-implementation-log.md
-```
-
-其中冻结状态、最终 Contract 和后续变更规则以 `F02-stable-snapshot.md` 为准。
-
----
-
-# F02 冻结能力
-
-完整闭环：
-
-```text
-项目进入“视频导入”
-→ 选择 / 拖拽本地视频
-→ 导入前允许重新选择
-→ multipart 上传到本机 FastAPI
-→ 1 MiB 分块写 staging
-→ 同时计算 file_size_bytes + SHA-256
-→ FFprobe 验证真实视频并读取基础媒体信息
-→ staging 发布成正式 Source 原片
-→ source_videos = ready
-→ 页面展示 metadata
-→ 软件重启后仍可读取
-```
-
-Source Contract：
-
-```text
-1 Project → 0 或 1 个 Source Video
-Source ID = SOURCE_<32位UUID4小写hex>
-ready 后只读，不提供替换/删除
-```
-
-正式 Workspace：
-
-```text
-<workspace>/
-├── project.json
-└── source/
-    └── SOURCE_<UUID>/
-        └── original.<ext>
-```
-
-导入 staging：
-
-```text
-<workspace>/source/.staging/SOURCE_<UUID>/original.<ext>
+覆盖 F02 original.<ext>
+改变 Source ID
+改变 F02 source_videos 既有字段语义
+把 Proxy Timeline 直接当 Source Timeline
+用 float 秒替代 integer microseconds
+用 frame_index / fps 作为 VFR 唯一定位
+改变 F01/F02 已验收 StudioShell 基线
 ```
 
 ---
 
-# F02 Database / Time Contract
-
-F02 新增：
+# F03 权威规划文档
 
 ```text
-0002_create_source_videos
-source_videos
+docs/features/F03-video-preprocessing.md
+docs/features/F03-function-contracts.md
+```
+
+当前尚未获得用户对 F03 Contract 的最终确认，因此：
+
+```text
+F03 = PLANNED
+Business Code = NOT STARTED
+```
+
+---
+
+# F03 目标
+
+```text
+F02 ready Source
+→ Source integrity check
+→ proxy.mp4
+→ audio.wav（有音频时）
+→ thumbnail.jpg
+→ validate/hash/metadata
+→ Source ↔ Proxy / Audio Mapping
+→ source_preprocess ready
+→ 重启后仍可读取
+```
+
+F03 不做：
+
+```text
+Shot Detection
+Shot Boundary
+ASR
+人物识别
+Scene
+AI
+GPU/NVENC 优化
+多 Profile
+Source 替换/覆盖
+```
+
+F04 仍未开始。
+
+---
+
+# F03 Preprocess Profile V1 Draft
+
+Proxy：
+
+```text
+MP4
+H.264 / libx264
+CRF 23
+preset fast
+yuv420p
+最大装入 1280×720
+保持比例
+不放大小视频
+保留 presentation timestamp 节奏
+不强制 CFR
+Source 有音频时 Proxy 携带 AAC 128k
+```
+
+Analysis Audio：
+
+```text
+audio.wav
+PCM s16le
+16000 Hz
+mono
+```
+
+Source 无音频时：
+
+```text
+不生成假静音 WAV
+```
+
+Thumbnail：
+
+```text
+thumbnail.jpg
+从 Proxy 固定时间点抽取
+同时记录 thumbnail_source_time_us
+```
+
+---
+
+# F03 Workspace Draft
+
+```text
+<workspace>/preprocess/
+├── .staging/
+│   └── SOURCE_<UUID>/
+│       ├── proxy.mp4
+│       ├── audio.wav      # 可选
+│       └── thumbnail.jpg
+└── SOURCE_<UUID>/
+    ├── proxy.mp4
+    ├── audio.wav          # 可选
+    └── thumbnail.jpg
+```
+
+F02 Source 保持：
+
+```text
+source/SOURCE_<UUID>/original.<ext>
+```
+
+F03 绝不覆盖原片。
+
+---
+
+# F03 Database Draft
+
+计划 Migration：
+
+```text
+0003_create_source_preprocess
+```
+
+计划新增：
+
+```text
+source_preprocess
 ```
 
 状态：
 
 ```text
-importing
+processing
 ready
 ```
 
-冻结时间规则：
+F03 V1：
 
 ```text
-duration_us           integer microseconds
-source_start_time_us  integer microseconds / nullable
-fps_num / fps_den     rational FPS
+1 Source Video → 0 或 1 个 ready Preprocess Asset Set
 ```
 
-ready 前数据库 CHECK 强制核心媒体 metadata 完整合法。
+保存：
+
+```text
+Source SHA snapshot
+Proxy path / size / hash / duration / timebase / fps
+Proxy→Source offset
+Audio path / size / hash / duration / sample rate / channels
+Audio→Source offset
+Thumbnail path / size / hash / Source timestamp
+created_at / completed_at
+```
+
+Migration 继续复用已经冻结的 SQLite Upgrade Backup Gate。
 
 ---
 
-# F02 Core Functions / API
+# F03 Timebase Draft
 
-冻结 6 个核心函数：
-
-```text
-generate_source_video_id()
-copy_upload_to_staging()
-probe_source_video()
-import_source_video()
-get_source_video()
-recover_source_video_imports()
-```
-
-冻结 2 个 API：
+F03 属于：
 
 ```text
-GET  /api/projects/{project_id}/source-video
-POST /api/projects/{project_id}/source-video
+Source Domain
 ```
 
-Controller 继续保持：
+权威单位：
 
 ```text
-HTTP → Business → Response
+integer microseconds
 ```
 
-不直接 SQL、写文件、Hash、FFprobe 或 Recovery。
+Proxy Mapping：
+
+```text
+source_us = proxy_us + proxy_to_source_offset_us
+proxy_us  = source_us - proxy_to_source_offset_us
+```
+
+Audio Mapping：
+
+```text
+source_us = audio_us + audio_to_source_offset_us
+```
+
+VFR：
+
+```text
+不强制 CFR
+不使用 frame_index / fps 作为唯一定位
+后续使用 timestamp mapping
+```
+
+目标媒体映射误差：
+
+```text
+<= 1 ms
+```
+
+超过时不得静默进入 F04。
 
 ---
 
-# F02 Recovery / Safety
-
-冻结规则：
+# F03 Processing / Recovery Draft
 
 ```text
-Final 发布前失败
-→ 只清理本 Source staging + importing row
-
-Final 已发布但 DB ready 失败
-→ 保留 final + importing
-→ 启动 Recovery 恢复
-
-未知文件 / 归属不明确 / 损坏 final
-→ 保留现场，不递归删除
-```
-
-Ready Source 不能被后续 Feature 覆盖。
-
-已有 `app.db` 做 pending Migration 时继续遵守：
-
-```text
-SQLite Connection.backup()
-→ backup 成功
-→ Alembic upgrade
-```
-
----
-
-# F02 验收基线
-
-开发自动验证记录：
-
-```text
-27 passed
-```
-
-覆盖 F01 Regression + F02 Migration / Source ID / streaming / SHA / FFprobe / import / GET / duplicate / rollback / Recovery / API。
-
-开发环境还完成真实媒体技术链路：
-
-```text
-视频
-→ multipart
+验证 Project + F02 Source
+→ Source size/hash
+→ DB processing
 → staging
-→ FFprobe
-→ final
+→ Proxy
+→ Audio（可选）
+→ Thumbnail
+→ inspect
+→ publish staging → final
 → DB ready
-→ GET
 ```
 
-用户随后在 Windows 本机完成实际测试并明确确认通过，所以 F02 User Acceptance Gate 已关闭。
+Final 发布前失败：
+
+```text
+清理本次 F03 known staging
++ processing row
+```
+
+Final 发布后 DB finalization 失败：
+
+```text
+保留 final
+保留 processing
+→ Startup Recovery
+```
+
+Unknown file / invalid final：
+
+```text
+保留现场
+不递归删除
+```
+
+Recovery 永远不能删除 F02 Source。
 
 ---
 
-# F03 状态
+# F03 核心函数 Draft
+
+7 个：
 
 ```text
-F03 — 视频预处理
-Status: NOT STARTED
+generate_proxy_video()
+extract_analysis_audio()
+generate_thumbnail()
+inspect_preprocess_assets()
+preprocess_source_video()
+get_source_preprocess()
+recover_source_preprocesses()
 ```
 
-未经用户明确说“开始”或等价指令，不自动开发 F03。
-
-F03 后续只能以 F01 + F02 两个冻结快照为上游基线，特别不能：
+2 个 Controller：
 
 ```text
-覆盖 F02 original.<ext>
-改变 Source ID
-把 Proxy 时间直接当 Source Timeline
-把 float 秒替代整数微秒权威时间
-绕过 Source Video 的只读 Contract
+GET  /api/projects/{project_id}/preprocess
+POST /api/projects/{project_id}/preprocess
+```
+
+每个函数的具体业务作用、调用关系、输入输出、副作用、失败行为、禁止行为和测试要求见：
+
+```text
+docs/features/F03-function-contracts.md
 ```
 
 ---
 
-# Frozen Change Rule
+# F03 UI Draft
 
-F01 / F02 冻结后，如确实需要改变既有 Contract：
+路由：
 
 ```text
-Change Request
-→ 影响分析
-→ 数据迁移 / V2 设计
-→ 用户明确批准
-→ 实现
-→ F01 + F02 Regression
+/projects/:projectId/preprocess
 ```
 
-Agent 不能因为后续 Feature 开发方便而静默修改冻结规则。
+项目流程：
+
+```text
+01 项目总览      已完成
+02 视频导入      已完成
+03 视频预处理    当前开放
+04 自动拉片      禁用
+```
+
+页面：
+
+```text
+Source summary
+→ 固定 Preprocess Profile
+→ 开始视频预处理
+→ Processing（不伪造百分比）
+→ Ready：Proxy / Audio / Thumbnail / Timeline Mapping
+```
+
+Ready 后 F03 V1 不提供“重新预处理”按钮。
+
+---
+
+# Environment Gate Draft
+
+F03 用户 Windows 环境需要确认：
+
+```powershell
+ffmpeg -version
+ffmpeg -hide_banner -encoders | findstr /I "libx264 aac pcm_s16le"
+ffprobe -version
+```
+
+F03 不新增 PyTorch / OpenCV / Shot Detection 依赖。
+
+---
+
+# 当前下一步
+
+等待用户审核：
+
+```text
+F03 主 Contract
++
+F03 7 个核心函数 / 2 个 Controller 详细职责
+```
+
+如果用户确认：
+
+```text
+F03 → IN_PROGRESS
+→ 0003 Migration + F01/F02 Regression
+→ 公共 media-time mapping utility
+→ Proxy / WAV / Thumbnail
+→ inspect + Recovery
+→ API
+→ Vue 页面
+→ 自动测试 + 真实短剧视频测试
+→ READY_FOR_REVIEW
+```
+
+未经用户确认不开始 F03 业务代码。
 
 ## 最近更新时间
 
-- 日期：2026-08-24 10:44 +08:00
-- 状态：用户确认 F02 测试通过；F02 正式 STABLE / FROZEN；等待用户决定是否开始 F03。
+- 日期：2026-08-24 10:46 +08:00
+- 状态：用户已明确开始 F03；F03 主 Contract + 详细函数职责已起草并写入 main，等待用户确认后进入编码。
