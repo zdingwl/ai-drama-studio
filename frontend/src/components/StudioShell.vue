@@ -28,13 +28,15 @@ const globalNav = computed(() => [
   { label: '资产中心', icon: 'assets', enabled: false, active: false },
 ])
 
+// 项目侧栏只开放已经真正有页面和后端 Contract 的阶段。
+// F04 已进入开发验收，因此“自动拉片”可以导航；F05 以后仍保持禁用，避免 UI 假装能力已经存在。
 const projectNav = computed(() => [
   { label: '项目总览', step: '01', enabled: true, active: route.name === 'workspace', routeName: 'workspace' },
   { label: '视频导入', step: '02', enabled: true, active: route.name === 'source-video', routeName: 'source-video' },
   { label: '视频预处理', step: '03', enabled: true, active: route.name === 'preprocess', routeName: 'preprocess' },
-  { label: '自动拉片', step: '04', enabled: false, active: false, routeName: '' },
-  { label: '人物对白', step: '05', enabled: false, active: false, routeName: '' },
-  { label: '本土选角', step: '06', enabled: false, active: false, routeName: '' },
+  { label: '自动拉片', step: '04', enabled: true, active: route.name === 'shot-detection', routeName: 'shot-detection' },
+  { label: '镜头修正', step: '05', enabled: false, active: false, routeName: '' },
+  { label: '人物对白', step: '06', enabled: false, active: false, routeName: '' },
   { label: '生成制作', step: '07', enabled: false, active: false, routeName: '' },
   { label: '最终合成', step: '08', enabled: false, active: false, routeName: '' },
 ])
