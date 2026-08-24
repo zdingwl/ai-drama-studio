@@ -1,147 +1,116 @@
-# AI Drama Studio — Agent Entry Rules
+# AI Drama Studio — Agent Entry Rules (Reference Video V2)
 
-本文件是 ChatGPT、Codex、人工开发者进入项目时的最短入口。
+本仓库已经于 2026-08-24 按用户明确决策重建为 **Reference Video 驱动的短剧本地化重制工作台**。
 
-## 1. 新对话强制读取顺序
+## 1. 当前唯一产品基线
 
-不要一开始无差别读取整个仓库文档。按以下顺序恢复：
+读取顺序：
 
 ```text
 1. AGENTS.md
 2. SKILL.md
 3. docs/PROJECT_STATE.md
-4. 当前 Feature 文档 docs/features/FXX-*.md
-5. 最新与当前 Feature 相关的 docs/sessions/*.md
-6. 根据当前 Feature 标记的 Rule References / P0 Checklist，再读取必要的详细规则
+4. docs/REFERENCE_VIDEO_V2_ARCHITECTURE.md
+5. 当前正在开发的 V2 代码 / 测试
 ```
 
-目标：在聊天上下文有限的情况下，快速恢复当前真实状态，而不是重新分析整个项目。
+旧的 35 Feature、F01-F06 Frozen Snapshot、Workflow Versioning Refactor、旧 Source Video / Shot Candidate / Final Shot 设计都属于 **Legacy History**，不能覆盖 V2 决策。
 
----
-
-## 2. Source of Truth
-
-`main` 是最近一次已经正式确认的项目基线。
-
-分支/PR 中的内容属于：开发中、审核中或待合并状态。
-
-如果当前任务明确要求继续某个尚未合并的分支，则读取该分支；否则默认以 `main` 为正式基线。
-
----
-
-## 3. 文档冲突时的优先级
+## 2. V2 核心原则
 
 ```text
-1. 用户最新明确确认并写入仓库的决策
-2. 已 STABLE/FROZEN Feature Contract
-3. SKILL.md + 适用的全局/P0 Contract
-4. 当前 Feature Contract
-5. docs/PROJECT_STATE.md
-6. 最新 Session Handoff
-7. 历史 Session / 旧讨论
+Project
+→ 多个 Episode（可拖动排序）
+→ Preprocess
+→ Shot
+→ 每个 Shot 保存独立 Reference Clip
+→ 人物 / 场景 / 关键道具 / Dialogue / Track / Mask 绑定 Shot
+→ 替换资产 + Voice + 本地化 Dialogue
+→ 按 Shot 选择重制策略
+→ Reference Video 驱动视频生成
+→ 弹性 Production Timeline
+→ QC / Export
 ```
 
-发现冲突：必须指出冲突并按优先级处理，禁止静默选一个版本。
+原镜头本身承担动作、构图、机位、人物空间关系、镜头运动和大部分节奏信息，因此 V2 不追求把这些信息全部转换成高成本文字描述。
 
----
-
-## 4. Feature 开发强制规则
-
-- 一次只正式开发一个业务 Feature。
-- 未定义 Contract，不开始编码。
-- 不允许为了下游方便修改 Stable/Frozen 上游 Contract。
-- 如必须改变 Frozen Contract，先做影响分析、迁移/V2 方案并取得用户确认。
-- 每个 Feature 编码前填写 `templates/P0_FEATURE_CHECKLIST.md`。
-- AI 原始结果与人工 Final 结果分离。
-- 上游语义变化后按 Revision / Stale 规则处理下游。
-- 涉及媒体时间时遵守 Source Timeline / Shot-local Time / Production Timeline + integer microseconds。
-- 调用计费异步 Provider 时必须防重复提交/重复扣费。
-- SQLite + 媒体文件写入必须考虑 staging、校验、事务和恢复。
-- 新增/升级依赖必须锁定版本，不依赖 `latest`。
-- 新增/修改的业务代码、数据库表、字段、Migration、API Schema 必须有足够的简体中文业务注释。
-- 涉及数据库的 Feature 文档必须维护 Database Dictionary。
-- 修改共享代码后必须运行受影响 Stable Feature 的回归测试。
-
----
-
-## 5. Git 操作权限边界
-
-Git 分支、PR 和引用结构属于**用户控制范围**，Agent 不得自行决定。
-
-未经用户明确要求，AI / Codex / Agent **禁止**：
-
-- 新建分支；
-- 切换到其它分支并继续开发；
-- 删除分支；
-- 重命名分支；
-- 移动/强制更新 branch ref；
-- 擅自创建 PR；
-- 擅自关闭、合并或重新打开 PR；
-- 擅自修改 PR 的 base/head；
-- 为“规范流程”自行创建 `feature/*`、`fix/*`、`docs/*` 等分支。
-
-默认原则：
+## 3. 正式阶段
 
 ```text
-用户明确指定分支
-→ 只在该分支工作
-
-用户未要求创建/切换分支
-→ 不执行任何分支结构变更
+F01 项目管理
+F02 剧集导入与排序
+F03 视频预处理
+F04 自动拉片 / Reference Clip
+F05 人物 / 场景 / 道具 / 台词智能识别
+F06 拉片审核与人工修正
+F07 替换素材与资产绑定
+F08 翻译 / 本地化 / Voice / TTS
+F09 重制任务规划
+F10 Reference Video 视频重制
+F11 弹性时间轴 / 整集合成
+F12 质量检查
+F13 导出
 ```
 
-`main` 是正式 Source of Truth，但这**不等于 Agent 有权擅自创建新分支或改变 Git 流程**。
+当前代码基线只把 F01-F04 实现为可操作功能；F05-F13 只能在其真实业务实现完成后标记可用，不允许把旧页面接回来冒充实现。
 
-如果当前任务需要修改仓库内容，优先遵守用户当前已指定的 Git 工作方式；没有得到明确授权时，不以“最佳实践”为理由替用户创建分支。
+## 4. 数据原则
 
----
+- 项目允许多个 Episode。
+- `Episode.sort_order` 是所有批量任务的唯一顺序依据。
+- 批量预处理、批量拉片和后续 GPU 重任务默认 **顺序执行，concurrency = 1**。
+- 所有正式媒体时间使用 integer microseconds。
+- Shot 是核心生产单元。
+- Reference Clip 是正式资产，不是临时缓存。
+- Character / Scene / Prop 是项目级实体，Shot 引用实体 ID。
+- Dialogue 必须区分 `dialogue / narration / inner_monologue`。
+- 人物识别不能只依赖人脸；后续需要 Face + Body ReID + Track，Mask 作为高价值能力。
+- 新语言时长不要求等于原语言时长；最终使用 Production Timeline。
 
-## 6. Agent 权限边界
+## 5. 代码边界
 
-AI / Codex / 自动化 Agent 可以将 Feature 推进到：
+V2 主入口：
 
 ```text
-READY_FOR_REVIEW
+engine/app/main.py
+engine/app/studio_v2.py
+engine/app/media_v2.py
+frontend/src/views/ProjectList.vue
+frontend/src/views/ProjectStudio.vue
+frontend/src/api/client.ts
+frontend/src/types/studio.ts
 ```
 
-但不能自行宣布：
+旧业务模块仍可能暂时存在于仓库中作为历史代码，但不得被 V2 `main.py` / Router 重新引用，除非用户明确决定复用其中某个算法实现。
+
+## 6. 测试基线
+
+默认 pytest 只运行：
 
 ```text
-STABLE
-FROZEN
+engine/tests/v2
 ```
 
-只有用户明确确认“验收通过”后才能进入 STABLE/FROZEN，并继续下一个依赖 Feature。
+旧 `engine/tests/unit` 验证的是废弃架构，不是 V2 Release Gate。
 
----
+开发 F04 及以后真实媒体能力时，除单元测试外必须在用户本机用真实短剧素材验证。
 
-## 7. 每次实际开发结束必须更新
+## 7. Git
 
-至少：
+`main` 仍是正式发布基线。
 
-1. 当前 `docs/features/FXX-*.md`；
-2. `docs/PROJECT_STATE.md`；
-3. 新建 `docs/sessions/YYYY-MM-DD_HHMM_FXX_topic.md`。
+当前重建开发分支：
 
-代码改了但文档未更新：视为开发未完成。
+```text
+rebuild/reference-video-v2
+```
 
----
+未经用户要求，不创建 PR、不合并到 main、不删除分支。
 
-## 8. 详细规则索引
+## 8. 最重要的判断标准
 
-按需读取：
+任何新功能都先问：
 
-- `docs/FEATURE_SEQUENCE.md`
-- `docs/P0_RULES_INDEX.md`
-- `docs/DEPENDENCY_AND_INVALIDATION_RULES.md`
-- `docs/MEDIA_TIMEBASE_CONTRACT.md`
-- `docs/ENVIRONMENT_BASELINE.md`
-- `docs/DATA_RECOVERY_AND_MIGRATION_RULES.md`
-- `docs/PROVIDER_JOB_RULES.md`
-- `docs/CODE_AND_DATABASE_COMMENT_RULES.md`
-- `docs/TESTING_AND_REGRESSION_RULES.md`
-- `docs/CONTINUATION_PROTOCOL.md`
-- `docs/DATA_AND_FREEZE_RULES.md`
-- `docs/TECH_STACK.md`
+> 这个数据是否是未来重制 Shot 时 Reference Video 无法可靠提供、但系统必须知道的信息？
 
-当前项目正式生产流程为 **35 个 Feature**，以 `docs/FEATURE_SEQUENCE.md` 为准。
+如果 Reference Video 已经天然包含，而且结构化后没有明显编辑/绑定/生成价值，就不要为了“拉片看起来详细”而增加高成本字段。
