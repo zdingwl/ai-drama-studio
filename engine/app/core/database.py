@@ -6,6 +6,11 @@ F01 数据库从 0001 升级到 0002，因此本文件在不改变 F01 对外 Co
 
 公开入口仍只有 ``init_database()``。下面的私有 helper 只是把配置、版本判断和备份
 细节拆开，避免业务层或 Controller 自己处理数据库升级。
+
+并发规则：FastAPI 的同步 endpoint 会在线程池中执行。Alembic ``EnvironmentContext``
+内部使用进程级代理对象，不允许多个线程同时执行 ``command.upgrade()``。因此数据库
+Migration 必须由本模块串行执行，并且同一进程中每个数据库只初始化一次；业务请求
+后续只复用已经完成 Migration 的 ``app.db``。
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
+import threading
 
 from alembic import command
 from alembic.config import Config
@@ -26,6 +32,12 @@ DATABASE_FILENAME = "app.db"
 MIGRATION_HEAD = "head"
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 BACKUPS_DIRNAME = "backups"
+
+# Alembic EnvironmentContext 不是线程安全的。F05 页面可能同时读取播放器、缩略图和关键帧，
+# 这些同步 FastAPI endpoint 会进入不同 worker thread。如果每个业务函数都重新执行 upgrade，
+# 会出现 alembic.runtime.environment._remove_proxy() 的 KeyError: 'config'。
+_DATABASE_INIT_LOCK = threading.RLock()
+_INITIALIZED_DATABASE_PATHS: set[Path] = set()
 
 
 def _build_alembic_config(database_path: Path) -> Config:
@@ -102,7 +114,9 @@ def init_database(app_data_path: Path | None = None) -> Path:
     2. 固定使用 ``app.db``；
     3. 新数据库直接通过 Alembic 升级到当前 head；
     4. 已存在数据库如果 revision 落后于代码 head，先使用 SQLite backup API 保存快照；
-    5. 备份成功后才执行 Alembic upgrade。
+    5. 备份成功后才执行 Alembic upgrade；
+    6. 同一 Python 进程中，同一个数据库完成 Migration 后直接复用，不在每个 HTTP 请求中
+       重复运行 Alembic；并发首次访问由线程锁串行化。
 
     F01 兼容性：
     - 返回值仍然是 ``app.db`` Path；
@@ -112,6 +126,12 @@ def init_database(app_data_path: Path | None = None) -> Path:
     F02 为什么需要升级前备份：
     F02 新增 ``0002_create_source_videos``，这是第一次升级用户已经实际使用过的 F01
     数据库。如果 Migration 失败，必须保留升级前可恢复快照，不能让用户只剩半升级状态。
+
+    并发安全：
+    - FastAPI 启动 lifespan 会首先调用本函数；正常请求随后命中进程内缓存；
+    - 如果多个线程同时首次调用，只有第一个线程执行 revision 检查/备份/upgrade；
+    - Migration 成功以后才写入缓存，失败不会把数据库错误标记为“已初始化”；
+    - 开发时代码 reload 会启动新 Python 进程，因此新 Migration 仍会在新进程启动时检查。
 
     安全边界：
     - 只处理应用级 ``app.db`` 和 ``backups/``；
@@ -134,19 +154,26 @@ def init_database(app_data_path: Path | None = None) -> Path:
 
     data_dir = (app_data_path or get_app_data_path()).expanduser().resolve(strict=False)
     data_dir.mkdir(parents=True, exist_ok=True)
+    database_path = (data_dir / DATABASE_FILENAME).resolve(strict=False)
 
-    database_path = data_dir / DATABASE_FILENAME
-    database_existed = database_path.is_file() and database_path.stat().st_size > 0
-    alembic_config = _build_alembic_config(database_path)
+    # 即使绝大多数请求都已初始化，也必须让“检查缓存 + 首次初始化”保持一个原子区间。
+    # RLock 开销远小于 SQLite/Alembic；后续请求只进入几条 Python 指令就立即返回。
+    with _DATABASE_INIT_LOCK:
+        if database_path in _INITIALIZED_DATABASE_PATHS:
+            return database_path
 
-    if database_existed:
-        current_revision, head_revision = _read_database_revision(database_path, alembic_config)
-        if current_revision != head_revision:
-            _backup_database_before_upgrade(
-                database_path=database_path,
-                app_data_dir=data_dir,
-                current_revision=current_revision,
-            )
+        database_existed = database_path.is_file() and database_path.stat().st_size > 0
+        alembic_config = _build_alembic_config(database_path)
 
-    command.upgrade(alembic_config, MIGRATION_HEAD)
-    return database_path
+        if database_existed:
+            current_revision, head_revision = _read_database_revision(database_path, alembic_config)
+            if current_revision != head_revision:
+                _backup_database_before_upgrade(
+                    database_path=database_path,
+                    app_data_dir=data_dir,
+                    current_revision=current_revision,
+                )
+
+        command.upgrade(alembic_config, MIGRATION_HEAD)
+        _INITIALIZED_DATABASE_PATHS.add(database_path)
+        return database_path
