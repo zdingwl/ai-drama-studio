@@ -1,4 +1,4 @@
-"""AI Drama Studio 本地 FastAPI 应用与 F01–F05 HTTP Controller。
+"""AI Drama Studio 本地 FastAPI 应用与 F01–F06 HTTP Controller。
 
 Controller 只负责 HTTP 边界：接收请求、调用业务函数、返回响应。
 不在本文件直接执行 SQL、媒体处理、模型推理、Hash 或业务状态转换。
@@ -16,6 +16,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+from engine.app.character_detection import (
+    CharacterDetectionError,
+    get_character_detection,
+    recover_character_detections,
+    render_character_candidate_cover,
+    rerun_character_detection,
+    run_character_detection,
+)
 from engine.app.core.database import init_database
 from engine.app.preprocess import (
     PreprocessError,
@@ -60,9 +68,10 @@ from engine.app.source_videos import (
 LanguageCode = Literal["zh", "en", "ja", "ko", "es", "pt", "fr", "de", "id", "th", "vi"]
 RegionCode = Literal["US", "GB", "JP", "KR", "ES", "BR", "FR", "DE", "ID", "TH", "VN", "TW", "SG"]
 
-# F05 预览帧 URL 由 project_id + Source 时间唯一确定。F03/F05 时间轴没有变化时，
-# 同一 URL 的 JPEG 内容不会改变，因此允许浏览器长期复用，避免每次打开工作台重新请求。
+# F05/F06 预览 URL 都由稳定业务 ID / Source 时间唯一确定；Evidence 不变时内容不变，
+# 浏览器可以长期复用，避免每次打开工作台重新请求或重新裁图。
 F05_PREVIEW_CACHE_HEADERS = {"Cache-Control": "private, max-age=31536000, immutable"}
+F06_PREVIEW_CACHE_HEADERS = {"Cache-Control": "private, max-age=31536000, immutable"}
 
 
 class CreateProjectRequest(BaseModel):
@@ -248,22 +257,100 @@ class MergeShotsRequest(BaseModel):
     left_shot_id: str
 
 
+class CharacterTrackSampleResponse(BaseModel):
+    """F06 Track 的单帧轻量 Evidence；不包含 embedding/JPEG。"""
+
+    source_time_us: int = Field(description="FFprobe PTS 映射后的 Source integer microseconds")
+    bbox: list[int] = Field(description="人脸矩形 [x,y,w,h]，单位为 Proxy 像素")
+    detection_score: float
+    face_quality: float
+
+
+class CharacterTrackResponse(BaseModel):
+    """F06 一个 Final Shot 内的人物 Track Evidence。"""
+
+    id: str
+    run_id: str
+    project_id: str
+    final_shot_id: str
+    final_shot_ordinal: int
+    candidate_id: str
+    track_ordinal_in_shot: int
+    start_us: int
+    end_us: int
+    representative_source_us: int
+    representative_bbox: list[int]
+    sample_count: int
+    mean_face_quality: float
+    max_face_quality: float
+    samples: list[CharacterTrackSampleResponse]
+
+
+class CharacterCandidateResponse(BaseModel):
+    """F06 自动聚类的人物候选；不是 F07 Final Character。"""
+
+    id: str
+    run_id: str
+    project_id: str
+    ordinal: int
+    track_count: int
+    shot_count: int
+    first_seen_us: int
+    last_seen_us: int
+    cover_track_id: str
+    cover_source_us: int
+    cover_bbox: list[int]
+    cluster_score: float | None
+    tracks: list[CharacterTrackResponse]
+
+
+class CharacterDetectionResponse(BaseModel):
+    """F06 一次自动人物识别 Run 与全部 Character Candidate。"""
+
+    id: str
+    project_id: str
+    source_edit_set_id: str
+    source_edit_set_revision: int
+    source_start_us: int
+    source_end_us: int
+    status: str
+    is_current: bool
+    profile_version: str
+    sampling_profile: dict[str, object]
+    detector_model_id: str
+    detector_model_sha256: str
+    recognizer_model_id: str
+    recognizer_model_sha256: str
+    opencv_version: str
+    runtime_device: str
+    sampled_frame_count: int
+    face_observation_count: int
+    track_count: int
+    candidate_count: int
+    started_at: datetime
+    completed_at: datetime | None
+    error_code: str | None
+    error_message: str | None
+    candidates: list[CharacterCandidateResponse]
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
-    """启动时升级数据库，并按依赖顺序恢复 F01–F04 可恢复状态。"""
+    """启动时升级数据库，并按依赖顺序恢复 F01–F06 可恢复状态。"""
 
     init_database()
     recover_creating_projects()
     recover_source_video_imports()
     recover_source_preprocesses()
     recover_shot_detections()
+    recover_character_detections()
     yield
 
 
 def create_app() -> FastAPI:
     """创建 AI Drama Studio 本地 FastAPI Application。"""
 
-    app = FastAPI(title="AI Drama Studio", version="0.5.0", lifespan=_lifespan)
+    app = FastAPI(title="AI Drama Studio", version="0.6.0", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[],
@@ -388,6 +475,38 @@ def create_app() -> FastAPI:
         }
         return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
 
+    @app.exception_handler(CharacterDetectionError)
+    async def character_detection_error_handler(_: Request, exc: CharacterDetectionError) -> JSONResponse:
+        """把 F06 模型/上游/算法错误映射成稳定 HTTP 状态。"""
+
+        status_map = {
+            "CHARACTER_DETECTION_FINAL_SHOTS_REQUIRED": 409,
+            "CHARACTER_DETECTION_PROXY_REQUIRED": 409,
+            "CHARACTER_DETECTION_ALREADY_EXISTS": 409,
+            "CHARACTER_DETECTION_IN_PROGRESS": 409,
+            "CHARACTER_DETECTION_RERUN_NOT_READY": 409,
+            "CHARACTER_DETECTION_UPSTREAM_CHANGED": 409,
+            "CHARACTER_DETECTION_NOT_READY": 409,
+            "CHARACTER_CANDIDATE_NOT_FOUND": 404,
+            "CHARACTER_DETECTION_PROJECT_NOT_FOUND": 404,
+            "CHARACTER_DETECTION_WORKSPACE_MISSING": 409,
+            "CHARACTER_MODEL_MISSING": 503,
+            "CHARACTER_MODEL_INVALID": 503,
+            "CHARACTER_MODEL_DOWNLOAD_FAILED": 503,
+            "CHARACTER_DETECTION_RUNTIME_UNAVAILABLE": 503,
+            "CHARACTER_DETECTION_RUNTIME_INVALID": 503,
+            "CHARACTER_DETECTION_PTS_FAILED": 500,
+            "CHARACTER_DETECTION_VIDEO_OPEN_FAILED": 500,
+            "CHARACTER_DETECTION_MODEL_FAILED": 500,
+            "CHARACTER_DETECTION_FRAME_ALIGNMENT_FAILED": 500,
+            "CHARACTER_DETECTION_PERSIST_FAILED": 500,
+            "CHARACTER_DETECTION_SCHEMA_MISSING": 500,
+            "CHARACTER_COVER_RENDER_FAILED": 500,
+            "CHARACTER_DETECTION_INVALID_RESULT": 500,
+            "CHARACTER_DETECTION_FAILED": 500,
+        }
+        return JSONResponse(status_code=status_map.get(exc.code, 500), content={"error": {"code": exc.code, "message": exc.message}})
+
     @app.get("/api/health")
     def health_api() -> dict[str, str]:
         return {"status": "ok"}
@@ -496,6 +615,32 @@ def create_app() -> FastAPI:
 
         path = render_workbench_frame(project_id=project_id, source_time_us=source_time_us)
         return FileResponse(path, media_type="image/jpeg", headers=F05_PREVIEW_CACHE_HEADERS)
+
+    @app.get("/api/projects/{project_id}/character-detection", response_model=CharacterDetectionResponse | None)
+    def get_character_detection_api(project_id: str) -> dict | None:
+        """读取 F06 当前 processing/current ready/最近 failed 状态。"""
+
+        record = get_character_detection(project_id=project_id)
+        return record.to_dict() if record else None
+
+    @app.post("/api/projects/{project_id}/character-detection", response_model=CharacterDetectionResponse, status_code=201)
+    def run_character_detection_api(project_id: str) -> dict:
+        """首次运行 F06；已有 current ready 时禁止静默覆盖。"""
+
+        return run_character_detection(project_id=project_id).to_dict()
+
+    @app.post("/api/projects/{project_id}/character-detection/rerun", response_model=CharacterDetectionResponse)
+    def rerun_character_detection_api(project_id: str) -> dict:
+        """显式创建新的 F06 Run；成功后才原子替换 current。"""
+
+        return rerun_character_detection(project_id=project_id).to_dict()
+
+    @app.get("/api/projects/{project_id}/character-detection/candidates/{candidate_id}/cover")
+    def character_candidate_cover_api(project_id: str, candidate_id: str) -> FileResponse:
+        """返回当前 Character Candidate 的自动人脸 Cover JPEG。"""
+
+        path = render_character_candidate_cover(project_id=project_id, candidate_id=candidate_id)
+        return FileResponse(path, media_type="image/jpeg", headers=F06_PREVIEW_CACHE_HEADERS)
 
     return app
 
