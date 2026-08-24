@@ -367,9 +367,6 @@ def preprocess_source_video(*, project_id: str, app_data_path: Path | None = Non
             ).mappings().first()
         if existing is not None:
             if existing["status"] == "ready":
-                ready = get_source_preprocess(project_id=project_id, app_data_path=app_data_path)
-                if ready is not None:
-                    return ready
                 raise PreprocessError("PREPROCESS_ALREADY_EXISTS", "当前项目已经完成视频预处理")
 
             retry_state = _resolve_processing_record_for_retry(
