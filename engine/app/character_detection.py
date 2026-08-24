@@ -57,7 +57,7 @@ from engine.app.shot_workbench import (
     render_workbench_frame,
 )
 
-PROFILE_VERSION = "f06-v1"
+PROFILE_VERSION = "f06-v2"
 OPENCV_PACKAGE = "opencv-python"
 OPENCV_PACKAGE_VERSION = "4.11.0.86"
 RUNTIME_DEVICE = "cpu"
@@ -67,7 +67,8 @@ MIN_SAMPLES_PER_SHOT = 3
 MAX_SAMPLES_PER_SHOT = 12
 SAMPLE_EDGE_MARGIN_US = 40_000
 
-FACE_SCORE_THRESHOLD = 0.80
+# V2：真实短剧回归发现 0.80 会放进较多低质量/边缘人脸；恢复 Contract 的 0.90。
+FACE_SCORE_THRESHOLD = 0.90
 FACE_NMS_THRESHOLD = 0.30
 FACE_TOP_K = 5000
 MIN_FACE_EDGE_PX = 32
@@ -79,8 +80,9 @@ TRACK_MIN_IOU = 0.02
 TRACK_MAX_CENTER_DISTANCE_IN_FACE_WIDTHS = 1.75
 TRACK_MAX_GAP_US = 800_000
 
-# SFace 官方 same-identity cosine 参考为 0.363；F06 V1 故意提高到 0.50，宁可拆开留给 F07 合并。
-CLUSTER_MIN_COSINE = 0.50
+# V2：真实素材显示 0.50 对侧脸/角度变化过于严格，造成同一人物被拆成多个 Candidate。
+# 恢复已确认 Contract 的 0.45；cannot-link 仍负责阻止同镜共现人物自动合并。
+CLUSTER_MIN_COSINE = 0.45
 
 EMBEDDING_NORM_TOLERANCE = 1e-3
 F06_PREVIEW_JPEG_QUALITY = 92
