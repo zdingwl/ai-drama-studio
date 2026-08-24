@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StudioShell from '../components/StudioShell.vue'
 import { shotWorkbenchFrameUrl, shotWorkbenchProxyUrl } from '../api/shot-workbench'
@@ -15,10 +15,16 @@ const detectionStore = useShotDetectionStore()
 const workbenchStore = useShotWorkbenchStore()
 
 const videoRef = ref<HTMLVideoElement | null>(null)
+const finalShotListRef = ref<HTMLElement | null>(null)
 const selectedShotId = ref('')
 const currentSourceUs = ref(0)
 const draftStartSeconds = ref(0)
 const draftEndSeconds = ref(0)
+const previewUrls = ref<Record<string, string>>({})
+const previewStates = ref<Record<string, 'loading' | 'ready' | 'error'>>({})
+const previewErrorMessage = ref('')
+let thumbnailQueueGeneration = 0
+let keyframeQueueGeneration = 0
 
 const projectId = computed(() => String(route.params.projectId || ''))
 const project = computed(() => projectStore.currentProject)
@@ -42,14 +48,34 @@ onMounted(async () => {
       selectedShotId.value = result.shots[0]?.id ?? ''
       currentSourceUs.value = result.source_start_us
       syncDraftInputs()
+      await nextTick()
+      scrollSelectedShotIntoView()
+      void loadSelectedKeyframes()
+      void loadShotThumbnails()
     }
   } catch {
     // Store 保存可展示错误；页面不猜测数据库/媒体修复方式。
   }
 })
 
-watch(selectedShotId, () => syncDraftInputs())
-watch(() => workbench.value?.revision, () => syncDraftInputs())
+onBeforeUnmount(() => {
+  thumbnailQueueGeneration += 1
+  keyframeQueueGeneration += 1
+  for (const url of Object.values(previewUrls.value)) URL.revokeObjectURL(url)
+})
+
+watch(selectedShotId, async () => {
+  syncDraftInputs()
+  await nextTick()
+  scrollSelectedShotIntoView()
+  void loadSelectedKeyframes()
+})
+
+watch(() => workbench.value?.revision, () => {
+  syncDraftInputs()
+  void loadSelectedKeyframes()
+  void loadShotThumbnails()
+})
 
 function syncDraftInputs(): void {
   const shot = selectedShot.value
@@ -77,18 +103,105 @@ function frameUrl(sourceTimeUs: number): string {
   return shotWorkbenchFrameUrl(projectId.value, sourceTimeUs)
 }
 
+function previewKey(sourceTimeUs: number): string {
+  return String(Math.trunc(sourceTimeUs))
+}
+
+function previewUrl(sourceTimeUs: number): string {
+  return previewUrls.value[previewKey(sourceTimeUs)] ?? ''
+}
+
+function previewState(sourceTimeUs: number): 'loading' | 'ready' | 'error' | 'idle' {
+  return previewStates.value[previewKey(sourceTimeUs)] ?? 'idle'
+}
+
+/**
+ * Shot 列表缩略图取镜头中间位置，不贴着自动切点抽帧。
+ * 这样既更有代表性，也避开转场边缘/解码边界造成的空帧。
+ */
 function thumbnailTime(shot: FinalShot): number {
-  const offset = Math.min(50_000, Math.max(0, Math.floor(shot.duration_us / 10)))
-  return Math.min(shot.final_end_us - 1, shot.final_start_us + offset)
+  return Math.min(shot.final_end_us - 1_000, shot.final_start_us + Math.floor(shot.duration_us / 2))
 }
 
 function keyframeTimes(shot: FinalShot): Array<{ label: string; timeUs: number }> {
+  const safeMarginUs = Math.min(40_000, Math.max(1_000, Math.floor(shot.duration_us / 20)))
+  const safeStartUs = Math.min(shot.final_end_us - 1_000, shot.final_start_us + safeMarginUs)
+  const safeEndUs = Math.max(safeStartUs, shot.final_end_us - safeMarginUs)
+  const spanUs = Math.max(0, safeEndUs - safeStartUs)
   const fractions = [0, 0.25, 0.5, 0.75, 1]
   const labels = ['首帧', '25%', '中帧', '75%', '尾帧']
   return fractions.map((fraction, index) => ({
     label: labels[index],
-    timeUs: Math.min(shot.final_end_us - 1, shot.final_start_us + Math.floor(shot.duration_us * fraction)),
+    timeUs: safeStartUs + Math.floor(spanUs * fraction),
   }))
+}
+
+/**
+ * F05 一页可能同时出现几十张预览图。浏览器直接给每个 <img> URL 会瞬间并发几十个
+ * FFmpeg 进程，Windows 本地环境很容易出现预览失败。这里统一通过队列预取并转成 blob URL；
+ * 同一个 Source 时间只生成一次，失败会自动重试一次。
+ */
+async function ensurePreview(sourceTimeUs: number): Promise<void> {
+  const key = previewKey(sourceTimeUs)
+  if (previewStates.value[key] === 'ready' || previewStates.value[key] === 'loading') return
+  previewStates.value[key] = 'loading'
+
+  let lastError = ''
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(frameUrl(sourceTimeUs))
+      if (!response.ok) {
+        let detail = `HTTP ${response.status}`
+        try {
+          const payload = await response.json() as { error?: { message?: string } }
+          detail = payload.error?.message || detail
+        } catch {
+          // 非 JSON 错误响应保留 HTTP 状态即可。
+        }
+        throw new Error(detail)
+      }
+      const blob = await response.blob()
+      if (!blob.size) throw new Error('预览帧为空')
+      const oldUrl = previewUrls.value[key]
+      if (oldUrl) URL.revokeObjectURL(oldUrl)
+      previewUrls.value[key] = URL.createObjectURL(blob)
+      previewStates.value[key] = 'ready'
+      return
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : '未知错误'
+      if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 250))
+    }
+  }
+
+  previewStates.value[key] = 'error'
+  if (!previewErrorMessage.value) {
+    previewErrorMessage.value = `预览图生成失败：${lastError}。播放器不受影响；请把后端对应 frame 请求日志发给我。`
+  }
+}
+
+async function loadShotThumbnails(): Promise<void> {
+  const generation = ++thumbnailQueueGeneration
+  for (const shot of shots.value) {
+    if (generation !== thumbnailQueueGeneration) return
+    await ensurePreview(thumbnailTime(shot))
+  }
+}
+
+async function loadSelectedKeyframes(): Promise<void> {
+  const shot = selectedShot.value
+  if (!shot) return
+  const generation = ++keyframeQueueGeneration
+  for (const frame of keyframeTimes(shot)) {
+    if (generation !== keyframeQueueGeneration) return
+    await ensurePreview(frame.timeUs)
+  }
+}
+
+function scrollSelectedShotIntoView(): void {
+  const container = finalShotListRef.value
+  if (!container || !selectedShotId.value) return
+  const card = container.querySelector<HTMLElement>(`[data-shot-id="${selectedShotId.value}"]`)
+  card?.scrollIntoView({ block: 'nearest' })
 }
 
 function playerSecondsFromSource(sourceUs: number): number {
@@ -222,13 +335,27 @@ async function confirmTimeline(): Promise<void> {
       <div v-if="workbenchStore.errorMessage" class="inline-alert error-alert shot-workbench-alert">
         <span>!</span><div><strong>修改未保存</strong><p>{{ workbenchStore.errorMessage }}</p></div>
       </div>
+      <div v-if="previewErrorMessage" class="inline-alert error-alert shot-workbench-alert">
+        <span>!</span><div><strong>部分预览图未生成</strong><p>{{ previewErrorMessage }}</p></div>
+      </div>
 
       <section class="shot-workbench-grid">
         <aside class="content-panel shot-list-column">
           <div class="shot-column-header"><div><span class="panel-eyebrow">SHOT LIST</span><h3>镜头列表</h3></div><span>{{ shots.length }}</span></div>
-          <div class="final-shot-list">
-            <button v-for="shot in shots" :key="shot.id" type="button" class="final-shot-card" :class="{ active: shot.id === selectedShotId, manual: shot.origin_kind === 'manual' }" @click="selectShot(shot)">
-              <img :src="frameUrl(thumbnailTime(shot))" loading="lazy" alt="" />
+          <div ref="finalShotListRef" class="final-shot-list">
+            <button
+              v-for="shot in shots"
+              :key="shot.id"
+              type="button"
+              class="final-shot-card"
+              :data-shot-id="shot.id"
+              :class="{ active: shot.id === selectedShotId, manual: shot.origin_kind === 'manual' }"
+              @click="selectShot(shot)"
+            >
+              <img v-if="previewUrl(thumbnailTime(shot))" :src="previewUrl(thumbnailTime(shot))" alt="" />
+              <span v-else class="shot-preview-placeholder" :class="{ failed: previewState(thumbnailTime(shot)) === 'error' }">
+                {{ previewState(thumbnailTime(shot)) === 'error' ? '预览失败' : '生成中' }}
+              </span>
               <span class="final-shot-copy"><strong>#{{ String(shot.ordinal).padStart(3, '0') }}</strong><small>{{ formatTimecode(shot.final_start_us) }}</small><em>{{ formatDuration(shot.duration_us) }}</em></span>
               <span v-if="shot.origin_kind === 'manual'" class="manual-dot" title="已人工修改"></span>
             </button>
@@ -253,7 +380,11 @@ async function confirmTimeline(): Promise<void> {
             <div class="shot-column-header"><div><span class="panel-eyebrow">KEYFRAMES</span><h3>当前镜头关键帧</h3></div><span>5 FRAMES</span></div>
             <div class="shot-keyframe-grid">
               <button v-for="frame in keyframeTimes(selectedShot)" :key="frame.label" type="button" @click="videoRef && (videoRef.currentTime = playerSecondsFromSource(frame.timeUs))">
-                <img :src="frameUrl(frame.timeUs)" loading="lazy" alt="" /><span>{{ frame.label }}</span><small>{{ formatTimecode(frame.timeUs) }}</small>
+                <img v-if="previewUrl(frame.timeUs)" :src="previewUrl(frame.timeUs)" alt="" />
+                <span v-else class="shot-keyframe-placeholder" :class="{ failed: previewState(frame.timeUs) === 'error' }">
+                  {{ previewState(frame.timeUs) === 'error' ? '预览失败' : '生成中' }}
+                </span>
+                <span>{{ frame.label }}</span><small>{{ formatTimecode(frame.timeUs) }}</small>
               </button>
             </div>
           </section>
