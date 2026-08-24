@@ -1,6 +1,6 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.1.0
+version: 3.2.0
 description: AI Drama Studio Reference Video 驱动的本地短剧本地化重制工作台开发规则。
 ---
 
@@ -225,6 +225,23 @@ V2 主代码：
 - `engine/app/main.py`
 - `frontend/src/views/ProjectList.vue`
 - `frontend/src/views/ProjectStudio.vue`
+
+## Git 工作方式
+
+用户当前明确要求直接在默认分支开发：
+
+```text
+Default Branch: main
+Development Branch: main
+```
+
+后续默认：
+- 直接提交 `main`；
+- 不新建 feature/rebuild 分支；
+- 不主动创建 PR；
+- 历史 `rebuild/reference-video-v2` 分支只保留为历史记录，不再作为开发入口。
+
+除非用户以后明确改变这一规则，否则必须一直遵守。
 
 ## Legacy 规则
 
