@@ -1,5 +1,9 @@
 import { defineStore } from 'pinia'
-import { fetchShotDetection, rerunShotDetection, startShotDetection } from '../api/shot-detection'
+import {
+  fetchShotDetection,
+  rerunShotDetection as requestShotDetectionRerun,
+  startShotDetection,
+} from '../api/shot-detection'
 import type { ShotDetection } from '../types/shot-detection'
 
 interface ShotDetectionState {
@@ -66,7 +70,7 @@ export const useShotDetectionStore = defineStore('shot-detection', {
       this.processing = true
       this.errorMessage = ''
       try {
-        const result = await rerunShotDetection(projectId)
+        const result = await requestShotDetectionRerun(projectId)
         this.currentDetection = result
         return result
       } catch (error) {
