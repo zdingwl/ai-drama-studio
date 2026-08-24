@@ -21,7 +21,7 @@ models:
       torch: 2.5.1
       preferred_device: auto
       gpu_concurrency: 1
-      baseline_gpu: NVIDIA RTX 4060 Ti 16GB
+      baseline_gpu: NVIDIA GeForce RTX 3060 Ti
       cpu_fallback: true
     detector_profile:
       version: 1
@@ -30,3 +30,50 @@ models:
     time_contract:
       authoritative_timestamps: ffprobe-real-frame-pts
       frame_index_div_fps_forbidden: true
+
+  - logical_id: face_detection.yunet.2023mar
+    feature: F06
+    name: YuNet Face Detection
+    implementation: OpenCV FaceDetectorYN
+    implementation_version: opencv-python-4.11.0.86
+    source:
+      repository: https://github.com/opencv/opencv_zoo
+      commit: 47534e27c9851bb1128ccc0102f1145e27f23f98
+      path: models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+      license: MIT
+    weights:
+      filename: face_detection_yunet_2023mar.onnx
+      size_bytes: 232589
+      sha256: 8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4
+      storage: app-data/models/f06
+    runtime:
+      device: cpu
+      backend: opencv-dnn
+    detector_profile:
+      score_threshold: 0.80
+      nms_threshold: 0.30
+      top_k: 5000
+      minimum_face_edge_px: 32
+
+  - logical_id: face_recognition.sface.2021dec
+    feature: F06
+    name: SFace Face Recognition
+    implementation: OpenCV FaceRecognizerSF
+    implementation_version: opencv-python-4.11.0.86
+    source:
+      repository: https://github.com/opencv/opencv_zoo
+      commit: 47534e27c9851bb1128ccc0102f1145e27f23f98
+      path: models/face_recognition_sface/face_recognition_sface_2021dec.onnx
+      license: Apache-2.0
+    weights:
+      filename: face_recognition_sface_2021dec.onnx
+      size_bytes: 38696353
+      sha256: 0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79
+      storage: app-data/models/f06
+    runtime:
+      device: cpu
+      backend: opencv-dnn
+    recognizer_profile:
+      embedding_dimension: 128
+      official_cosine_same_identity_reference: 0.363
+      f06_conservative_cluster_threshold: 0.50
