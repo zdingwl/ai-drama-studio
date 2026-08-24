@@ -13,8 +13,6 @@ def use_temp_database(monkeypatch, tmp_path: Path) -> None:
     studio_v2.Base.metadata.create_all(engine)
     monkeypatch.setattr(studio_v2, "ENGINE", engine)
     monkeypatch.setattr(studio_v2, "SessionLocal", sessionmaker(bind=engine, autoflush=False, expire_on_commit=False))
-    monkeypatch.setattr(studio_v2, "workspace_root", lambda: tmp_path / "workspace")
-    monkeypatch.setattr(content_analysis_v2, "workspace_root", lambda: tmp_path / "workspace")
 
 
 def seed_one_shot_project(monkeypatch, tmp_path: Path) -> tuple[str, str, str]:
@@ -53,7 +51,6 @@ def test_f05_schema_keeps_ai_evidence_separate_from_final_entities() -> None:
         "v2_speaker_segments",
         "v2_analysis_dialogues",
     } <= table_names
-    # F06 以后使用的 Final 实体仍独立存在，F05 不覆盖它们。
     assert "v2_characters" in table_names
     assert "v2_dialogues" in table_names
 
@@ -61,7 +58,7 @@ def test_f05_schema_keeps_ai_evidence_separate_from_final_entities() -> None:
 def test_project_analysis_persists_scene_dialogue_and_current_run(monkeypatch, tmp_path: Path) -> None:
     project_id, episode_id, shot_id = seed_one_shot_project(monkeypatch, tmp_path)
 
-    monkeypatch.setattr(content_analysis_v2, "_detect_character_observations", lambda shots: [])
+    monkeypatch.setattr(content_analysis_v2, "analyze_characters", lambda shots: [])
     monkeypatch.setattr(content_analysis_v2, "_cluster_scenes", lambda run_id, project_id, shots: [
         content_analysis_v2.SceneDraft(id="SCENE_CANDIDATE_1", shot_ids=[shot_id], cover_path=None)
     ])
