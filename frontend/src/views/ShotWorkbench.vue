@@ -54,7 +54,7 @@ onMounted(async () => {
       syncDraftInputs()
       await nextTick()
       scrollSelectedShotIntoView()
-      // 预览帧必须等待播放器先取得 proxy metadata，避免 FFmpeg 抽帧抢占同一媒体文件。
+      // 播放器先取得 Proxy metadata；之后当前 Shot 关键帧可以在播放中串行生成。
     }
   } catch {
     // Store 保存可展示错误；页面不猜测数据库/媒体修复方式。
@@ -62,7 +62,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  cancelPreviewWork()
+  cancelAllPreviewWork()
   for (const url of Object.values(previewUrls.value)) URL.revokeObjectURL(url)
 })
 
@@ -70,18 +70,20 @@ watch(selectedShotId, async () => {
   syncDraftInputs()
   await nextTick()
   scrollSelectedShotIntoView()
-  if (videoReady.value && !videoIsPlaying.value) {
-    void loadSelectedKeyframes()
-    scheduleThumbnailResume(120)
-  }
+  if (!videoReady.value) return
+
+  // 当前正在看的 Shot 优先：即使视频正在播放，也允许这 5 张关键帧串行加载/生成。
+  void loadSelectedKeyframes()
+
+  // 整集缩略图属于低优先级后台任务，播放期间暂停。
+  if (!videoIsPlaying.value) scheduleThumbnailResume(120)
 })
 
 watch(() => workbench.value?.revision, () => {
   syncDraftInputs()
-  if (videoReady.value && !videoIsPlaying.value) {
-    void loadSelectedKeyframes()
-    scheduleThumbnailResume(120)
-  }
+  if (!videoReady.value) return
+  void loadSelectedKeyframes()
+  if (!videoIsPlaying.value) scheduleThumbnailResume(120)
 })
 
 function syncDraftInputs(): void {
@@ -141,7 +143,8 @@ function keyframeTimes(shot: FinalShot): Array<{ label: string; timeUs: number }
 }
 
 /**
- * 生成一张 UI 预览帧。调用方负责串行调度；同一时间点只生成一次，失败自动重试一次。
+ * 读取/生成一张 UI 预览帧。
+ * 后端会先检查 `.cache/f05/frames/<source_time_us>.jpg`；命中缓存时不会再次运行 FFmpeg。
  */
 async function ensurePreview(sourceTimeUs: number): Promise<void> {
   const key = previewKey(sourceTimeUs)
@@ -177,12 +180,12 @@ async function ensurePreview(sourceTimeUs: number): Promise<void> {
 
   previewStates.value[key] = 'error'
   if (!previewErrorMessage.value) {
-    previewErrorMessage.value = `预览图生成失败：${lastError}。请把后端对应 frame 请求日志发给我。`
+    previewErrorMessage.value = `预览图加载失败：${lastError}。请把后端对应 frame 请求日志发给我。`
   }
 }
 
 /**
- * 后台缩略图以当前 Shot 为中心逐步向外生成；播放期间立即停止，保证 proxy 播放优先。
+ * 低优先级整集缩略图：以当前 Shot 为中心向外补齐；视频播放期间暂停。
  */
 async function loadShotThumbnails(): Promise<void> {
   if (!videoReady.value || videoIsPlaying.value) return
@@ -199,23 +202,32 @@ async function loadShotThumbnails(): Promise<void> {
   }
 }
 
+/**
+ * 当前 Shot 的 5 张关键帧是高优先级任务。
+ * 播放中也允许执行，但始终一张接一张，不为一个 Shot 并发启动多个 FFmpeg。
+ * Shot 发生切换时用 generation 终止旧 Shot 尚未开始的后续帧，马上服务新 Shot。
+ */
 async function loadSelectedKeyframes(): Promise<void> {
   const shot = selectedShot.value
-  if (!shot || !videoReady.value || videoIsPlaying.value) return
+  if (!shot || !videoReady.value) return
   const generation = ++keyframeQueueGeneration
   for (const frame of keyframeTimes(shot)) {
-    if (generation !== keyframeQueueGeneration || videoIsPlaying.value) return
+    if (generation !== keyframeQueueGeneration) return
     await ensurePreview(frame.timeUs)
   }
 }
 
-function cancelPreviewWork(): void {
+function cancelThumbnailWork(): void {
   thumbnailQueueGeneration += 1
-  keyframeQueueGeneration += 1
   if (resumePreviewTimer !== null) {
     window.clearTimeout(resumePreviewTimer)
     resumePreviewTimer = null
   }
+}
+
+function cancelAllPreviewWork(): void {
+  cancelThumbnailWork()
+  keyframeQueueGeneration += 1
 }
 
 function scheduleThumbnailResume(delayMs = 300): void {
@@ -227,7 +239,7 @@ function scheduleThumbnailResume(delayMs = 300): void {
   }, delayMs)
 }
 
-/** 播放器先成功拿到 metadata，之后才允许后台抽预览帧。 */
+/** 播放器先成功拿到 metadata，再开始预览任务。 */
 function onVideoLoadedMetadata(): void {
   videoReady.value = true
   videoErrorMessage.value = ''
@@ -235,26 +247,28 @@ function onVideoLoadedMetadata(): void {
   scheduleThumbnailResume(350)
 }
 
-/** 播放开始时暂停全部后台 FFmpeg 预览任务，把磁盘/解码资源让给视频。 */
+/**
+ * 播放开始：只暂停整集缩略图后台任务。
+ * 当前 Shot 的 5 张关键帧仍继续串行读取/生成，不再被播放状态阻断。
+ */
 function onVideoPlay(): void {
   videoIsPlaying.value = true
-  cancelPreviewWork()
+  cancelThumbnailWork()
+  void loadSelectedKeyframes()
 }
 
-/** 暂停/结束后再继续后台预览生成。 */
+/** 暂停/结束后继续当前关键帧，并恢复低优先级缩略图补齐。 */
 function onVideoPause(): void {
   videoIsPlaying.value = false
   void loadSelectedKeyframes()
   scheduleThumbnailResume(250)
 }
 
-/**
- * 浏览器 video 元素报错时主动探测 proxy HTTP 接口，页面直接显示可排查信息。
- */
+/** 浏览器 video 报错时主动探测 Proxy HTTP，直接给出可排查信息。 */
 async function onVideoError(): Promise<void> {
   videoReady.value = false
   videoIsPlaying.value = false
-  cancelPreviewWork()
+  cancelAllPreviewWork()
   const mediaCode = videoRef.value?.error?.code ?? 0
   let detail = `浏览器媒体错误 code=${mediaCode}`
   try {
@@ -418,7 +432,7 @@ async function confirmTimeline(): Promise<void> {
         <span>!</span><div><strong>视频无法播放</strong><p>{{ videoErrorMessage }}</p></div>
       </div>
       <div v-if="previewErrorMessage" class="inline-alert error-alert shot-workbench-alert">
-        <span>!</span><div><strong>部分预览图未生成</strong><p>{{ previewErrorMessage }}</p></div>
+        <span>!</span><div><strong>部分预览图未加载</strong><p>{{ previewErrorMessage }}</p></div>
       </div>
 
       <section class="shot-workbench-grid">
@@ -436,7 +450,7 @@ async function confirmTimeline(): Promise<void> {
             >
               <img v-if="previewUrl(thumbnailTime(shot))" :src="previewUrl(thumbnailTime(shot))" alt="" />
               <span v-else class="shot-preview-placeholder" :class="{ failed: previewState(thumbnailTime(shot)) === 'error' }">
-                {{ previewState(thumbnailTime(shot)) === 'error' ? '预览失败' : videoReady ? '生成中' : '等待视频' }}
+                {{ previewState(thumbnailTime(shot)) === 'error' ? '预览失败' : videoReady ? '加载中' : '等待视频' }}
               </span>
               <span class="final-shot-copy"><strong>#{{ String(shot.ordinal).padStart(3, '0') }}</strong><small>{{ formatTimecode(shot.final_start_us) }}</small><em>{{ formatDuration(shot.duration_us) }}</em></span>
               <span v-if="shot.origin_kind === 'manual'" class="manual-dot" title="已人工修改"></span>
@@ -478,7 +492,7 @@ async function confirmTimeline(): Promise<void> {
               <button v-for="frame in keyframeTimes(selectedShot)" :key="frame.label" type="button" @click="videoRef && (videoRef.currentTime = playerSecondsFromSource(frame.timeUs))">
                 <img v-if="previewUrl(frame.timeUs)" :src="previewUrl(frame.timeUs)" alt="" />
                 <span v-else class="shot-keyframe-placeholder" :class="{ failed: previewState(frame.timeUs) === 'error' }">
-                  {{ previewState(frame.timeUs) === 'error' ? '预览失败' : videoReady ? '生成中' : '等待视频' }}
+                  {{ previewState(frame.timeUs) === 'error' ? '预览失败' : videoReady ? '加载中' : '等待视频' }}
                 </span>
                 <span>{{ frame.label }}</span><small>{{ formatTimecode(frame.timeUs) }}</small>
               </button>
