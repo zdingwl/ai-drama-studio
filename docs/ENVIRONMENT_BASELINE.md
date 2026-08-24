@@ -149,10 +149,10 @@ last verified date
 {
   "python": "3.11.x",
   "node": "xx.x.x",
-  "pytorch": "x.x.x",
+  "pytorch": "2.5.1+cu124",
   "cuda_available": true,
-  "gpu": "NVIDIA GeForce RTX 4060 Ti",
-  "vram_mb": 16384,
+  "gpu": "NVIDIA GeForce RTX 3060 Ti",
+  "vram_mb": "runtime-detect",
   "ffmpeg": "...",
   "platform": "Windows ..."
 }
@@ -204,13 +204,24 @@ Feature 如果新增依赖，必须同步：
 
 ---
 
-## 9. RTX 4060 Ti 16GB 基线
+## 9. 当前本机 NVIDIA 基线
 
-当前开发硬件基线：
+用户在 2026-08-24 通过项目虚拟环境实际执行：
 
 ```text
-NVIDIA RTX 4060 Ti 16GB
+torch: 2.5.1+cu124
+cuda: True
+cuda version: 12.4
+gpu: NVIDIA GeForce RTX 3060 Ti
 ```
+
+因此当前开发硬件事实以：
+
+```text
+NVIDIA GeForce RTX 3060 Ti
+```
+
+为准。显存容量尚未通过项目诊断命令记录，**不得根据型号口头猜测 VRAM 数值**；需要做 Qwen3-VL / Whisper 等显存规划时必须先实际读取。
 
 开发阶段原则：
 
@@ -218,7 +229,7 @@ NVIDIA RTX 4060 Ti 16GB
 - GPU concurrency 默认 1；
 - 模型按需 load/run/unload；
 - 不因速度慢而擅自引入大规模基础设施；
-- 如果某 Feature 只能在 >16GB 显存运行，必须在 Contract 中明确，而不能开发到一半才发现。
+- 如果某 Feature 对显存有硬要求，必须在开发前先读取当前实际 VRAM，并在 Contract 中明确。
 
 ---
 
@@ -253,7 +264,7 @@ Provider Token
 2. 为什么需要？
 3. 精确版本/lock 如何记录？
 4. 是否影响 CUDA / PyTorch / FFmpeg？
-5. 是否改变 4060 Ti 16GB 可运行性？
+5. 是否符合当前 RTX 3060 Ti + 实际可用 VRAM？
 6. 新电脑如何安装？
 7. 如何验证安装成功？
 
@@ -267,7 +278,10 @@ F04 是第一个正式引入 PyTorch 本地模型的 Feature。其实现基线�
 Feature: F04 自动拉片
 Detector: TransNetV2
 Python package: transnetv2-pytorch==1.0.5
-PyTorch: torch==2.5.1
+PyTorch dependency: torch==2.5.1
+Current Windows runtime: torch 2.5.1+cu124
+Current CUDA runtime reported by PyTorch: 12.4
+Current GPU: NVIDIA GeForce RTX 3060 Ti
 NumPy: numpy==2.1.3
 Pandas: pandas==2.2.3
 Pillow: pillow==11.1.0
@@ -375,44 +389,58 @@ ffprobe -version
 Python 3.11
 ```
 
-安装：
+安装基础依赖：
 
 ```text
 python -m pip install -r engine/requirements.txt
 ```
 
+NVIDIA Windows 环境需要按项目已验证组合安装 PyTorch 2.5.1 CUDA wheel；当前用户机器实际为 `2.5.1+cu124`。不得为了 CUDA 可用而擅自升级 PyTorch 大版本。
+
 随后验证：
 
 ```text
-python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
+python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.version.cuda); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
 python -c "import transnetv2_pytorch; import importlib.metadata as m; print(m.version('transnetv2-pytorch'))"
 ffmpeg -version
 ffprobe -version
 ```
 
-注意：`torch==2.5.1` 的具体 CUDA wheel 获取方式取决于当前 Windows/CUDA 安装源。**不得为了让 `cuda_available` 变成 true 而擅自升级到其它 PyTorch 大版本。** 如需改 PyTorch/CUDA 组合，必须先按本文件第 8 节做依赖升级评审。
+如需改 PyTorch/CUDA 组合，必须先按本文件第 8 节做依赖升级评审。
 
 ### 12.6 当前验收边界
 
-2026-08-24 当前 ChatGPT 工具容器仅确认：
+2026-08-24 用户 Windows 项目环境已经确认：
 
 ```text
-FFmpeg/FFprobe 7.1.5 可用
+PyTorch 2.5.1+cu124
+CUDA available = True
+CUDA runtime = 12.4
+GPU = NVIDIA GeForce RTX 3060 Ti
+TransNetV2 首次真实视频运行成功（首次运行记录为 CPU）
 ```
 
-该工具容器是 Python 3.13 + CPU 环境，且没有安装 `transnetv2-pytorch`，**不等于用户 Windows 项目运行环境**。
-
-因此在 F04 用户验收前，必须在用户本机执行真实视频 smoke test，并记录：
+仍未完成的 F04 Freeze Gate：
 
 ```text
-Python 实际 patch 版本
-PyTorch 2.5.1
-CUDA available
-GPU 名称
-TransNetV2 1.0.5
-FFmpeg / FFprobe 实际版本
-真实视频 Shot Count
-应用重启后结果可读取
+重启后端后，对现有项目执行一次显式 CUDA rerun
+确认新的 Detection Run 保存 detector_device=cuda
+人工检查明显切镜点质量
 ```
 
-未完成本机 smoke test 之前，不允许声称“F04 已在 RTX 4060 Ti 上验证通过”。
+因此当前仍不得声称“F04 GPU 验收已完成”。
+
+---
+
+## 13. F05 环境变化
+
+F05 三栏镜头工作台不新增 Python/AI 模型依赖：
+
+```text
+FastAPI / SQLAlchemy：沿用现有版本
+FFmpeg：复用现有本地工具做预览帧抽取
+Vue / TypeScript：沿用现有前端 lock
+GPU：F05 本身不需要 GPU
+```
+
+因此 F05 不改变当前 CUDA/PyTorch 基线。后续真正接入 Whisper / Qwen3-VL 前必须单独重新做显存和模型基线评审。
