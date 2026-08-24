@@ -23,8 +23,12 @@ const draftEndSeconds = ref(0)
 const previewUrls = ref<Record<string, string>>({})
 const previewStates = ref<Record<string, 'loading' | 'ready' | 'error'>>({})
 const previewErrorMessage = ref('')
+const videoReady = ref(false)
+const videoIsPlaying = ref(false)
+const videoErrorMessage = ref('')
 let thumbnailQueueGeneration = 0
 let keyframeQueueGeneration = 0
+let resumePreviewTimer: number | null = null
 
 const projectId = computed(() => String(route.params.projectId || ''))
 const project = computed(() => projectStore.currentProject)
@@ -50,8 +54,7 @@ onMounted(async () => {
       syncDraftInputs()
       await nextTick()
       scrollSelectedShotIntoView()
-      void loadSelectedKeyframes()
-      void loadShotThumbnails()
+      // 预览帧必须等待播放器先取得 proxy metadata，避免 FFmpeg 抽帧抢占同一媒体文件。
     }
   } catch {
     // Store 保存可展示错误；页面不猜测数据库/媒体修复方式。
@@ -59,8 +62,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  thumbnailQueueGeneration += 1
-  keyframeQueueGeneration += 1
+  cancelPreviewWork()
   for (const url of Object.values(previewUrls.value)) URL.revokeObjectURL(url)
 })
 
@@ -68,13 +70,18 @@ watch(selectedShotId, async () => {
   syncDraftInputs()
   await nextTick()
   scrollSelectedShotIntoView()
-  void loadSelectedKeyframes()
+  if (videoReady.value && !videoIsPlaying.value) {
+    void loadSelectedKeyframes()
+    scheduleThumbnailResume(120)
+  }
 })
 
 watch(() => workbench.value?.revision, () => {
   syncDraftInputs()
-  void loadSelectedKeyframes()
-  void loadShotThumbnails()
+  if (videoReady.value && !videoIsPlaying.value) {
+    void loadSelectedKeyframes()
+    scheduleThumbnailResume(120)
+  }
 })
 
 function syncDraftInputs(): void {
@@ -115,10 +122,7 @@ function previewState(sourceTimeUs: number): 'loading' | 'ready' | 'error' | 'id
   return previewStates.value[previewKey(sourceTimeUs)] ?? 'idle'
 }
 
-/**
- * Shot 列表缩略图取镜头中间位置，不贴着自动切点抽帧。
- * 这样既更有代表性，也避开转场边缘/解码边界造成的空帧。
- */
+/** Shot 列表缩略图取镜头中间位置，避开切点边缘。 */
 function thumbnailTime(shot: FinalShot): number {
   return Math.min(shot.final_end_us - 1_000, shot.final_start_us + Math.floor(shot.duration_us / 2))
 }
@@ -137,9 +141,7 @@ function keyframeTimes(shot: FinalShot): Array<{ label: string; timeUs: number }
 }
 
 /**
- * F05 一页可能同时出现几十张预览图。浏览器直接给每个 <img> URL 会瞬间并发几十个
- * FFmpeg 进程，Windows 本地环境很容易出现预览失败。这里统一通过队列预取并转成 blob URL；
- * 同一个 Source 时间只生成一次，失败会自动重试一次。
+ * 生成一张 UI 预览帧。调用方负责串行调度；同一时间点只生成一次，失败自动重试一次。
  */
 async function ensurePreview(sourceTimeUs: number): Promise<void> {
   const key = previewKey(sourceTimeUs)
@@ -175,26 +177,103 @@ async function ensurePreview(sourceTimeUs: number): Promise<void> {
 
   previewStates.value[key] = 'error'
   if (!previewErrorMessage.value) {
-    previewErrorMessage.value = `预览图生成失败：${lastError}。播放器不受影响；请把后端对应 frame 请求日志发给我。`
+    previewErrorMessage.value = `预览图生成失败：${lastError}。请把后端对应 frame 请求日志发给我。`
   }
 }
 
+/**
+ * 后台缩略图以当前 Shot 为中心逐步向外生成；播放期间立即停止，保证 proxy 播放优先。
+ */
 async function loadShotThumbnails(): Promise<void> {
+  if (!videoReady.value || videoIsPlaying.value) return
   const generation = ++thumbnailQueueGeneration
-  for (const shot of shots.value) {
-    if (generation !== thumbnailQueueGeneration) return
-    await ensurePreview(thumbnailTime(shot))
+  const center = Math.max(0, selectedIndex.value)
+  const ordered = shots.value
+    .map((shot, index) => ({ shot, distance: Math.abs(index - center) }))
+    .sort((left, right) => left.distance - right.distance)
+
+  for (const item of ordered) {
+    if (generation !== thumbnailQueueGeneration || videoIsPlaying.value) return
+    await ensurePreview(thumbnailTime(item.shot))
+    await new Promise((resolve) => window.setTimeout(resolve, 80))
   }
 }
 
 async function loadSelectedKeyframes(): Promise<void> {
   const shot = selectedShot.value
-  if (!shot) return
+  if (!shot || !videoReady.value || videoIsPlaying.value) return
   const generation = ++keyframeQueueGeneration
   for (const frame of keyframeTimes(shot)) {
-    if (generation !== keyframeQueueGeneration) return
+    if (generation !== keyframeQueueGeneration || videoIsPlaying.value) return
     await ensurePreview(frame.timeUs)
   }
+}
+
+function cancelPreviewWork(): void {
+  thumbnailQueueGeneration += 1
+  keyframeQueueGeneration += 1
+  if (resumePreviewTimer !== null) {
+    window.clearTimeout(resumePreviewTimer)
+    resumePreviewTimer = null
+  }
+}
+
+function scheduleThumbnailResume(delayMs = 300): void {
+  if (!videoReady.value || videoIsPlaying.value) return
+  if (resumePreviewTimer !== null) window.clearTimeout(resumePreviewTimer)
+  resumePreviewTimer = window.setTimeout(() => {
+    resumePreviewTimer = null
+    if (!videoIsPlaying.value) void loadShotThumbnails()
+  }, delayMs)
+}
+
+/** 播放器先成功拿到 metadata，之后才允许后台抽预览帧。 */
+function onVideoLoadedMetadata(): void {
+  videoReady.value = true
+  videoErrorMessage.value = ''
+  void loadSelectedKeyframes()
+  scheduleThumbnailResume(350)
+}
+
+/** 播放开始时暂停全部后台 FFmpeg 预览任务，把磁盘/解码资源让给视频。 */
+function onVideoPlay(): void {
+  videoIsPlaying.value = true
+  cancelPreviewWork()
+}
+
+/** 暂停/结束后再继续后台预览生成。 */
+function onVideoPause(): void {
+  videoIsPlaying.value = false
+  void loadSelectedKeyframes()
+  scheduleThumbnailResume(250)
+}
+
+/**
+ * 浏览器 video 元素报错时主动探测 proxy HTTP 接口，页面直接显示可排查信息。
+ */
+async function onVideoError(): Promise<void> {
+  videoReady.value = false
+  videoIsPlaying.value = false
+  cancelPreviewWork()
+  const mediaCode = videoRef.value?.error?.code ?? 0
+  let detail = `浏览器媒体错误 code=${mediaCode}`
+  try {
+    const response = await fetch(proxyUrl.value, { headers: { Range: 'bytes=0-1' } })
+    detail += `；Proxy HTTP=${response.status}`
+    const contentRange = response.headers.get('content-range')
+    if (contentRange) detail += `；Content-Range=${contentRange}`
+    if (!response.ok && response.status !== 206) {
+      try {
+        const payload = await response.json() as { error?: { message?: string } }
+        if (payload.error?.message) detail += `；${payload.error.message}`
+      } catch {
+        // 视频/文本响应不强行解析。
+      }
+    }
+  } catch (error) {
+    detail += `；Proxy 请求失败：${error instanceof Error ? error.message : '未知错误'}`
+  }
+  videoErrorMessage.value = detail
 }
 
 function scrollSelectedShotIntoView(): void {
@@ -335,6 +414,9 @@ async function confirmTimeline(): Promise<void> {
       <div v-if="workbenchStore.errorMessage" class="inline-alert error-alert shot-workbench-alert">
         <span>!</span><div><strong>修改未保存</strong><p>{{ workbenchStore.errorMessage }}</p></div>
       </div>
+      <div v-if="videoErrorMessage" class="inline-alert error-alert shot-workbench-alert">
+        <span>!</span><div><strong>视频无法播放</strong><p>{{ videoErrorMessage }}</p></div>
+      </div>
       <div v-if="previewErrorMessage" class="inline-alert error-alert shot-workbench-alert">
         <span>!</span><div><strong>部分预览图未生成</strong><p>{{ previewErrorMessage }}</p></div>
       </div>
@@ -354,7 +436,7 @@ async function confirmTimeline(): Promise<void> {
             >
               <img v-if="previewUrl(thumbnailTime(shot))" :src="previewUrl(thumbnailTime(shot))" alt="" />
               <span v-else class="shot-preview-placeholder" :class="{ failed: previewState(thumbnailTime(shot)) === 'error' }">
-                {{ previewState(thumbnailTime(shot)) === 'error' ? '预览失败' : '生成中' }}
+                {{ previewState(thumbnailTime(shot)) === 'error' ? '预览失败' : videoReady ? '生成中' : '等待视频' }}
               </span>
               <span class="final-shot-copy"><strong>#{{ String(shot.ordinal).padStart(3, '0') }}</strong><small>{{ formatTimecode(shot.final_start_us) }}</small><em>{{ formatDuration(shot.duration_us) }}</em></span>
               <span v-if="shot.origin_kind === 'manual'" class="manual-dot" title="已人工修改"></span>
@@ -365,8 +447,22 @@ async function confirmTimeline(): Promise<void> {
         <main class="shot-center-column">
           <section class="content-panel shot-player-panel">
             <div class="shot-player-topline"><div><span class="panel-eyebrow">NOW REVIEWING</span><strong>#{{ String(selectedShot.ordinal).padStart(3, '0') }}</strong></div><span class="mono-value">{{ formatTimecode(selectedShot.final_start_us) }} → {{ formatTimecode(selectedShot.final_end_us) }}</span></div>
-            <video ref="videoRef" class="shot-workbench-video" :src="proxyUrl" controls preload="metadata" @timeupdate="onTimeUpdate" @seeked="onTimeUpdate"></video>
-            <div class="player-time-row"><span>播放点</span><strong class="mono-value">{{ formatTimecode(currentSourceUs) }}</strong><small>Source Timeline</small></div>
+            <video
+              ref="videoRef"
+              class="shot-workbench-video"
+              :src="proxyUrl"
+              controls
+              preload="metadata"
+              playsinline
+              @loadedmetadata="onVideoLoadedMetadata"
+              @play="onVideoPlay"
+              @pause="onVideoPause"
+              @ended="onVideoPause"
+              @error="onVideoError"
+              @timeupdate="onTimeUpdate"
+              @seeked="onTimeUpdate"
+            ></video>
+            <div class="player-time-row"><span>播放点</span><strong class="mono-value">{{ formatTimecode(currentSourceUs) }}</strong><small>{{ videoReady ? 'Source Timeline' : '正在加载视频…' }}</small></div>
           </section>
 
           <section class="content-panel shot-timeline-panel">
@@ -382,7 +478,7 @@ async function confirmTimeline(): Promise<void> {
               <button v-for="frame in keyframeTimes(selectedShot)" :key="frame.label" type="button" @click="videoRef && (videoRef.currentTime = playerSecondsFromSource(frame.timeUs))">
                 <img v-if="previewUrl(frame.timeUs)" :src="previewUrl(frame.timeUs)" alt="" />
                 <span v-else class="shot-keyframe-placeholder" :class="{ failed: previewState(frame.timeUs) === 'error' }">
-                  {{ previewState(frame.timeUs) === 'error' ? '预览失败' : '生成中' }}
+                  {{ previewState(frame.timeUs) === 'error' ? '预览失败' : videoReady ? '生成中' : '等待视频' }}
                 </span>
                 <span>{{ frame.label }}</span><small>{{ formatTimecode(frame.timeUs) }}</small>
               </button>
