@@ -15,3 +15,13 @@ export function startShotDetection(projectId: string): Promise<ShotDetection> {
     method: 'POST',
   })
 }
+
+/**
+ * 显式重新执行 F04。
+ * 后端会先完整计算新结果，再原子替换旧 READY Auto Evidence；失败时旧结果继续保留。
+ */
+export function rerunShotDetection(projectId: string): Promise<ShotDetection> {
+  return apiRequest<ShotDetection>(`/api/projects/${encodeURIComponent(projectId)}/shot-detection/rerun`, {
+    method: 'POST',
+  })
+}
