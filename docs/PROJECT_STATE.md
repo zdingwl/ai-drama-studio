@@ -9,10 +9,12 @@ Project: AI Drama Studio
 Official Baseline: main
 Current Working Branch: main（用户未要求切换/新建其它分支）
 Current Feature: F03 — 视频预处理
-Feature Status: PLANNED
-F03 Contract: DRAFTED / WAITING_USER_CONFIRMATION
-F03 Function Contracts: DRAFTED / WAITING_USER_CONFIRMATION
-Business Code: NOT STARTED
+Feature Status: IN_PROGRESS
+F03 Contract: CONFIRMED
+F03 Function Contracts: CONFIRMED
+F03 0003 Migration: IMPLEMENTED / TARGETED TEST PASS
+F03 Media Time Utilities: IMPLEMENTED / TARGETED TEST PASS
+Business Code: IN_PROGRESS
 F01 — 创建项目: STABLE / FROZEN
 F02 — 上传原视频: STABLE / FROZEN
 Stable Features: F01, F02
@@ -48,7 +50,7 @@ docs/features/F01-stable-snapshot.md
 docs/features/F02-stable-snapshot.md
 ```
 
-F03 只能做兼容性 Additive 扩展，特别不得：
+F03 只能 Additive 扩展，特别不得：
 
 ```text
 覆盖 F02 original.<ext>
@@ -62,19 +64,14 @@ F03 只能做兼容性 Additive 扩展，特别不得：
 
 ---
 
-# F03 权威规划文档
+# F03 权威文档
 
 ```text
 docs/features/F03-video-preprocessing.md
 docs/features/F03-function-contracts.md
 ```
 
-当前尚未获得用户对 F03 Contract 的最终确认，因此：
-
-```text
-F03 = PLANNED
-Business Code = NOT STARTED
-```
+用户已通过“继续”明确确认 F03 当前规划并允许进入编码，因此 F03 已从 PLANNED 切换为 IN_PROGRESS。
 
 ---
 
@@ -110,7 +107,7 @@ F04 仍未开始。
 
 ---
 
-# F03 Preprocess Profile V1 Draft
+# F03 Preprocess Profile V1
 
 Proxy：
 
@@ -123,8 +120,8 @@ yuv420p
 最大装入 1280×720
 保持比例
 不放大小视频
-保留 presentation timestamp 节奏
 不强制 CFR
+保留 presentation timestamp 节奏
 Source 有音频时 Proxy 携带 AAC 128k
 ```
 
@@ -137,23 +134,19 @@ PCM s16le
 mono
 ```
 
-Source 无音频时：
-
-```text
-不生成假静音 WAV
-```
+Source 无音频时不生成假静音 WAV。
 
 Thumbnail：
 
 ```text
 thumbnail.jpg
-从 Proxy 固定时间点抽取
-同时记录 thumbnail_source_time_us
+thumbnail_proxy_time_us = min(proxy_duration_us / 10, 5_000_000)
+同时保存 thumbnail_source_time_us
 ```
 
 ---
 
-# F03 Workspace Draft
+# F03 Workspace
 
 ```text
 <workspace>/preprocess/
@@ -178,15 +171,15 @@ F03 绝不覆盖原片。
 
 ---
 
-# F03 Database Draft
+# F03 Database / Migration — 已完成底座
 
-计划 Migration：
+新增 Migration：
 
 ```text
 0003_create_source_preprocess
 ```
 
-计划新增：
+新增表：
 
 ```text
 source_preprocess
@@ -202,10 +195,10 @@ ready
 F03 V1：
 
 ```text
-1 Source Video → 0 或 1 个 ready Preprocess Asset Set
+1 Source Video → 0 或 1 个 Preprocess Asset Set
 ```
 
-保存：
+主要保存：
 
 ```text
 Source SHA snapshot
@@ -217,17 +210,138 @@ Thumbnail path / size / hash / Source timestamp
 created_at / completed_at
 ```
 
-Migration 继续复用已经冻结的 SQLite Upgrade Backup Gate。
+数据库规则：
+
+```text
+processing
+→ 只要求已知 Source snapshot + 目标路径
+→ 输出 metadata 可以 NULL
+
+ready
+→ Proxy + Thumbnail 核心 metadata 必须完整
+→ Source/Proxy time_base + mapping 必须存在
+
+Audio
+→ 全部 NULL（无音频）
+或
+→ path/size/hash/duration/16000Hz/mono/offset 全部完整
+```
+
+F01/F02 的 `projects` / `source_videos` 既有字段没有修改。
 
 ---
 
-# F03 Timebase Draft
+# F03 Migration Backup Gate — 已验证
 
-F03 属于：
+真实升级路径验证：
 
 ```text
-Source Domain
+0002 app.db
+→ init_database()
+→ backups/app_<UTC>_0002_create_source_videos.db
+→ backup revision = 0002
+→ Alembic upgrade 0003
+→ source_preprocess 存在
+→ 第二次 init_database() 不重复生成 backup
 ```
+
+结果：PASS。
+
+共享备份机制仍来自 F02 已冻结的 SQLite `Connection.backup()` Gate，没有重新发明第二套 Migration 流程。
+
+---
+
+# F03 公共 Media Time Utility — 已完成底座
+
+新增：
+
+```text
+engine/app/core/media_time.py
+```
+
+公共能力：
+
+```text
+seconds_to_microseconds()
+pts_to_microseconds()
+microseconds_to_pts()
+derived_to_source_microseconds()
+source_to_derived_microseconds()
+```
+
+规则：
+
+```text
+FFprobe 十进制秒
+→ Decimal
+→ integer microseconds
+
+PTS + rational time_base
+→ Fraction
+→ integer microseconds
+
+Proxy/Audio Mapping
+source_us = derived_us + offset_us
+derived_us = source_us - offset_us
+```
+
+支持负 PTS，不把媒体起始时间强制裁成 0。
+
+禁止 F03/F04/F08 后续自己重复写 `int(seconds * 1000)` / `frame_index / fps` 作为权威时间逻辑。
+
+针对性测试：
+
+```text
+Decimal 秒值 / half-up                 PASS
+NaN 拒绝                              PASS
+1/90000 PTS round-trip                PASS
+负 PTS round-trip                     PASS
+Source↔Derived integer offset round-trip PASS
+非法 time_base 拒绝                   PASS
+```
+
+Media Time：6 passed。
+
+Migration/Constraint：3 passed。
+
+当前底座针对性合计：
+
+```text
+9 passed
+```
+
+完整 F01 + F02 + F03 回归仍在 F03 后续开发完成后执行，当前不能把 Feature 标成 READY_FOR_REVIEW。
+
+---
+
+# F03 核心函数进度
+
+正式 7 个核心函数：
+
+```text
+generate_proxy_video()         NEXT
+extract_analysis_audio()       NOT STARTED
+generate_thumbnail()           NOT STARTED
+inspect_preprocess_assets()    NOT STARTED
+preprocess_source_video()      NOT STARTED
+get_source_preprocess()        NOT STARTED
+recover_source_preprocesses()  NOT STARTED
+```
+
+Controller：
+
+```text
+GET  /api/projects/{project_id}/preprocess   NOT STARTED
+POST /api/projects/{project_id}/preprocess   NOT STARTED
+```
+
+详细职责见 `docs/features/F03-function-contracts.md`。
+
+---
+
+# F03 Timebase Contract
+
+F03 属于 Source Domain。
 
 权威单位：
 
@@ -256,7 +370,7 @@ VFR：
 后续使用 timestamp mapping
 ```
 
-目标媒体映射误差：
+媒体映射目标误差：
 
 ```text
 <= 1 ms
@@ -266,148 +380,27 @@ VFR：
 
 ---
 
-# F03 Processing / Recovery Draft
-
-```text
-验证 Project + F02 Source
-→ Source size/hash
-→ DB processing
-→ staging
-→ Proxy
-→ Audio（可选）
-→ Thumbnail
-→ inspect
-→ publish staging → final
-→ DB ready
-```
-
-Final 发布前失败：
-
-```text
-清理本次 F03 known staging
-+ processing row
-```
-
-Final 发布后 DB finalization 失败：
-
-```text
-保留 final
-保留 processing
-→ Startup Recovery
-```
-
-Unknown file / invalid final：
-
-```text
-保留现场
-不递归删除
-```
-
-Recovery 永远不能删除 F02 Source。
-
----
-
-# F03 核心函数 Draft
-
-7 个：
-
-```text
-generate_proxy_video()
-extract_analysis_audio()
-generate_thumbnail()
-inspect_preprocess_assets()
-preprocess_source_video()
-get_source_preprocess()
-recover_source_preprocesses()
-```
-
-2 个 Controller：
-
-```text
-GET  /api/projects/{project_id}/preprocess
-POST /api/projects/{project_id}/preprocess
-```
-
-每个函数的具体业务作用、调用关系、输入输出、副作用、失败行为、禁止行为和测试要求见：
-
-```text
-docs/features/F03-function-contracts.md
-```
-
----
-
-# F03 UI Draft
-
-路由：
-
-```text
-/projects/:projectId/preprocess
-```
-
-项目流程：
-
-```text
-01 项目总览      已完成
-02 视频导入      已完成
-03 视频预处理    当前开放
-04 自动拉片      禁用
-```
-
-页面：
-
-```text
-Source summary
-→ 固定 Preprocess Profile
-→ 开始视频预处理
-→ Processing（不伪造百分比）
-→ Ready：Proxy / Audio / Thumbnail / Timeline Mapping
-```
-
-Ready 后 F03 V1 不提供“重新预处理”按钮。
-
----
-
-# Environment Gate Draft
-
-F03 用户 Windows 环境需要确认：
-
-```powershell
-ffmpeg -version
-ffmpeg -hide_banner -encoders | findstr /I "libx264 aac pcm_s16le"
-ffprobe -version
-```
-
-F03 不新增 PyTorch / OpenCV / Shot Detection 依赖。
-
----
-
 # 当前下一步
 
-等待用户审核：
-
 ```text
-F03 主 Contract
-+
-F03 7 个核心函数 / 2 个 Controller 详细职责
-```
-
-如果用户确认：
-
-```text
-F03 → IN_PROGRESS
-→ 0003 Migration + F01/F02 Regression
-→ 公共 media-time mapping utility
-→ Proxy / WAV / Thumbnail
-→ inspect + Recovery
-→ API
-→ Vue 页面
-→ 自动测试 + 真实短剧视频测试
+0003 Migration                 DONE / targeted PASS
+Media Time Utility            DONE / targeted PASS
+→ generate_proxy_video()
+→ extract_analysis_audio()
+→ generate_thumbnail()
+→ inspect_preprocess_assets()
+→ preprocess / get / recovery
+→ 2 个 API
+→ Vue F03 页面
+→ F01 + F02 + F03 全量自动回归
+→ Windows 真实短剧视频验收
 → READY_FOR_REVIEW
+→ 用户验收
 ```
 
-未经用户确认不开始 F03 业务代码。
+F03 未通过用户验收前不得进入 F04。
 
 ## 最近更新时间
 
-- 日期：2026-08-24 10:46 +08:00
-- 状态：用户已明确开始 F03；F03 主 Contract + 详细函数职责已起草并写入 main，等待用户确认后进入编码。
+- 日期：2026-08-24 10:56 +08:00
+- 状态：用户确认 F03 规划并进入开发；0003 Migration + 公共媒体时间换算底座已实现，针对性 9 tests PASS；下一核心函数为 `generate_proxy_video()`。
