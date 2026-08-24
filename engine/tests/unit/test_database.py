@@ -1,4 +1,4 @@
-"""F01 init_database() 数据库初始化测试。"""
+"""应用数据库初始化测试；持续保护 F01 冻结 projects Contract。"""
 
 from pathlib import Path
 import sqlite3
@@ -18,9 +18,11 @@ EXPECTED_PROJECT_COLUMNS = {
     "last_opened_at",
 }
 
+CURRENT_BUSINESS_TABLES = {"projects", "source_videos"}
+
 
 def _read_table_names(database_path: Path) -> set[str]:
-    """读取当前 SQLite 的表名；只用于验证 F01 没有提前创建其它业务表。"""
+    """读取当前 SQLite 表名，用于确认 Migration 得到预期业务表。"""
 
     with sqlite3.connect(database_path) as connection:
         rows = connection.execute(
@@ -35,7 +37,7 @@ def _insert_project(
     workspace_path: str,
     status: str = "ready",
 ) -> None:
-    """测试辅助：插入最小项目记录，用于验证数据库约束。"""
+    """测试辅助：插入最小项目记录，用于持续验证 F01 数据库约束。"""
 
     connection.execute(
         """
@@ -59,19 +61,19 @@ def _insert_project(
     )
 
 
-def test_init_database_creates_app_db_and_projects_table(tmp_path: Path) -> None:
-    """首次初始化必须只得到 Alembic 版本表和 F01 的 projects 业务表。"""
+def test_init_database_creates_app_db_and_current_business_tables(tmp_path: Path) -> None:
+    """新数据库必须创建当前已批准的 F01 projects + F02 source_videos。"""
 
     app_data_dir = tmp_path / "app-data"
     database_path = init_database(app_data_dir)
 
     assert database_path == (app_data_dir / "app.db").resolve()
     assert database_path.is_file()
-    assert _read_table_names(database_path) == {"alembic_version", "projects"}
+    assert _read_table_names(database_path) == {"alembic_version", *CURRENT_BUSINESS_TABLES}
 
 
-def test_init_database_creates_exact_f01_project_columns(tmp_path: Path) -> None:
-    """projects 字段必须与已确认的 F01 Database Dictionary 完全一致。"""
+def test_init_database_keeps_exact_f01_project_columns(tmp_path: Path) -> None:
+    """F02 Additive Migration 不得静默改变已冻结的 F01 projects 字段。"""
 
     database_path = init_database(tmp_path / "app-data")
 
@@ -81,8 +83,8 @@ def test_init_database_creates_exact_f01_project_columns(tmp_path: Path) -> None
     assert {row[1] for row in rows} == EXPECTED_PROJECT_COLUMNS
 
 
-def test_init_database_records_initial_alembic_revision(tmp_path: Path) -> None:
-    """数据库必须记录 0001 revision，确保后续升级可追踪。"""
+def test_init_database_records_current_alembic_revision(tmp_path: Path) -> None:
+    """F02 开始后当前 schema head 必须是 0002。"""
 
     database_path = init_database(tmp_path / "app-data")
 
@@ -91,22 +93,22 @@ def test_init_database_records_initial_alembic_revision(tmp_path: Path) -> None:
             "SELECT version_num FROM alembic_version"
         ).fetchone()
 
-    assert revision == ("0001_create_projects",)
+    assert revision == ("0002_create_source_videos",)
 
 
 def test_init_database_is_safe_to_run_more_than_once(tmp_path: Path) -> None:
-    """软件多次启动时重复初始化不能重复建表或损坏数据库。"""
+    """软件多次启动时重复初始化不能重复建表或损坏 F01/F02 数据库。"""
 
     app_data_dir = tmp_path / "app-data"
     first_path = init_database(app_data_dir)
     second_path = init_database(app_data_dir)
 
     assert second_path == first_path
-    assert _read_table_names(second_path) == {"alembic_version", "projects"}
+    assert _read_table_names(second_path) == {"alembic_version", *CURRENT_BUSINESS_TABLES}
 
 
 def test_projects_table_rejects_invalid_status(tmp_path: Path) -> None:
-    """F01 的 status 只允许 creating / ready，非法状态必须由数据库兜底拒绝。"""
+    """F01 冻结 status 仍然只允许 creating / ready。"""
 
     database_path = init_database(tmp_path / "app-data")
 
@@ -125,7 +127,7 @@ def test_projects_table_rejects_invalid_status(tmp_path: Path) -> None:
 
 
 def test_projects_table_rejects_duplicate_workspace_path(tmp_path: Path) -> None:
-    """两个项目不能同时指向同一个 Workspace 路径。"""
+    """F02 Migration 后仍必须保持 F01 workspace_path 唯一约束。"""
 
     database_path = init_database(tmp_path / "app-data")
 
