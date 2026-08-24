@@ -1,6 +1,6 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.0.0
+version: 3.1.0
 description: AI Drama Studio Reference Video 驱动的本地短剧本地化重制工作台开发规则。
 ---
 
@@ -30,6 +30,8 @@ F01 项目管理
 
 详细定义见 `docs/REFERENCE_VIDEO_V2_ARCHITECTURE.md`。
 
+F05 当前实现见 `docs/F05_CONTENT_ANALYSIS_V2.md`。
+
 ## 核心实体
 
 ```text
@@ -46,6 +48,22 @@ Generation
 ```
 
 其中 Shot 是核心生产单元，Reference Clip 是 Shot 一级正式资产。
+
+F05 额外维护 AI Evidence：
+
+```text
+ContentAnalysisRun
+CharacterCandidate
+CharacterTrack
+SceneCandidate
+ShotSceneEvidence
+PropCandidate
+ShotPropEvidence
+SpeakerSegment
+AnalysisDialogue
+```
+
+AI Evidence 与 F06 以后人工 Final 实体必须分离。
 
 ## 拉片数据优先级
 
@@ -70,6 +88,72 @@ Generation
 
 不优先结构化：复杂动作序列、精确人物空间距离、复杂摄影轨迹、详细灯光参数、逐帧动作文字化。Reference Video 已经包含这些信息时，不重复高成本重建。
 
+## Character 规则
+
+人物不能等同于人脸。
+
+F05 V1 最低基线：
+
+```text
+YuNet Face Detection
++ SFace Identity Embedding
++ OpenCV HOG Person Detection
++ Body / Clothing Visual Evidence
++ Shot-local Track
++ Conservative Cross-shot Clustering
+```
+
+有脸时 SFace 主导身份；没有脸但检测到人体时允许形成 body-only Track。body-only 不允许跨远距离 Shot 激进合并，只允许相邻 Shot 且极高身体相似度时自动连接。
+
+以后可以把 HOG/HSV 换成专门 Body ReID / Segmentation 模型，但不得改变 Character/Track 的业务语义。
+
+## F05 各子组件必须独立失败
+
+F05 不是一个黑盒模型。
+
+```text
+Characters
+Scenes
+Props
+ASR
+Speaker
+Speaker → Character
+Description
+```
+
+每个组件必须有独立状态。某一组件模型缺失或失败时，不应无条件摧毁其它已经可计算的结果。
+
+例如 Speaker 未配置时：
+
+```text
+speaker = NOT_CONFIGURED
+```
+
+Scene / ASR / Character 仍可完成。
+
+Key Prop 没有可靠对象/剧情模型时保持 `NOT_CONFIGURED`，禁止用普通 Object Detection 结果冒充剧情关键道具。
+
+## F05 ASR / Speaker
+
+源对白使用 faster-whisper。
+
+默认配置：
+
+```text
+AI_DRAMA_WHISPER_MODEL=small
+AI_DRAMA_WHISPER_DEVICE=auto
+```
+
+Speaker Diarization 是可选本地能力，通过：
+
+```text
+AI_DRAMA_DIARIZATION_MODEL_PATH
+```
+
+接入本机 pyannote Pipeline。
+
+低置信 Speaker → Character 不能强行绑定；未解析是合法状态，F06 人工处理。
+
 ## 批量执行
 
 Episode 按 `sort_order` 排序。
@@ -82,9 +166,18 @@ EP01 完成
 
 默认不并行多个视频，后续 GPU 重任务同样默认 concurrency = 1。
 
+F05 使用 Project 级 Run 按这个顺序读取所有 Episode，使人物候选可以跨集聚类。
+
 ## 时间规则
 
-Source Shot 使用原片 integer microseconds。
+Source Shot / F05 Dialogue 使用原片 integer microseconds。
+
+Dialogue 同时保存：
+
+```text
+source_start_us / source_end_us
+shot_start_us / shot_end_us
+```
 
 目标语言允许改变 Shot 时长：
 
@@ -116,16 +209,22 @@ FULL_VIDEO_REGEN
 
 ## 当前代码状态
 
-V2 当前真正实现：F01-F04。
+```text
+F01-F02 = IMPLEMENTED
+F03-F04 = IMPLEMENTED / NEEDS WINDOWS REAL-VIDEO TEST
+F05 = IMPLEMENTED V1 / NEEDS REAL-SAMPLE TEST
+F06-F13 = NOT IMPLEMENTED
+```
 
-主代码：
+V2 主代码：
 - `engine/app/studio_v2.py`
 - `engine/app/media_v2.py`
+- `engine/app/content_models_v2.py`
+- `engine/app/character_visual_v2.py`
+- `engine/app/content_analysis_v2.py`
 - `engine/app/main.py`
 - `frontend/src/views/ProjectList.vue`
 - `frontend/src/views/ProjectStudio.vue`
-
-F05-F13 的实体边界已经在 V2 Schema 中预留，但必须逐步实现后才能标记为可用。
 
 ## Legacy 规则
 
@@ -143,4 +242,12 @@ pytest
 
 只验证 `engine/tests/v2`。
 
-F03/F04 还必须在 Windows 本机验证 FFmpeg、TransNetV2 和真实视频输出。测试重点是 Reference Clip 是否准确、批量是否按顺序、失败是否明确可恢复。
+F03-F05 还必须在 Windows 本机验证真实媒体链。F05 特别检查：
+- 正脸/侧脸/背影 Track；
+- 同人物跨 Shot 过拆和误合；
+- 同 Shot 多人物不能自动合并；
+- Scene 聚类；
+- Faster Whisper 文本和 Shot 时间绑定；
+- Project 多 Episode 顺序分析；
+- 重跑后 Current Run 切换；
+- 缺少可选模型时组件状态是否明确。
