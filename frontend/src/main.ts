@@ -7,5 +7,6 @@ import './typography.css'
 import './source-video.css'
 import './preprocess.css'
 import './shot-detection.css'
+import './shot-workbench.css'
 
 createApp(App).use(createPinia()).use(router).mount('#app')
