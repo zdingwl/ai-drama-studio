@@ -1,6 +1,5 @@
-# F01–F05 当前实际使用的后端依赖。
+# F01–F06 当前实际使用的后端依赖。
 # 新依赖必须按 Feature 追加并锁定版本；禁止依赖 latest。
-# F05 三栏镜头工作台只复用 FastAPI / SQLAlchemy / FFmpeg，不新增第三方 Python 包。
 fastapi==0.128.2
 uvicorn==0.48.0
 pydantic==2.13.4
@@ -20,3 +19,7 @@ pillow==11.1.0
 tqdm==4.67.1
 ffmpeg-python==0.2.0
 future==1.0.0
+
+# F06 本地人物识别。V1 使用 OpenCV YuNet + SFace，CPU DNN 推理；
+# 不升级/替换 F04 已冻结的 PyTorch + CUDA 组合。
+opencv-python==4.11.0.86
