@@ -36,6 +36,7 @@ from engine.app.shot_detection import (
     recover_shot_detections,
     run_shot_detection,
 )
+from engine.app.shot_detection_rerun import rerun_shot_detection
 from engine.app.source_videos import (
     SourceVideoError,
     get_source_video,
@@ -196,8 +197,8 @@ async def _lifespan(_: FastAPI):
 def create_app() -> FastAPI:
     """创建 AI Drama Studio 当前本地 FastAPI Application。
 
-    F01–F03 已冻结 Controller 语义保持不变；F04 Additive 新增自动拉片 GET/POST。
-    模型、PTS 对齐、完整性校验、DB 事务和 Recovery 全部由 shot_detection.py 负责。
+    F01–F03 已冻结 Controller 语义保持不变；F04 Additive 新增自动拉片 GET/POST 与显式重跑 POST。
+    模型、PTS 对齐、完整性校验、DB 事务和 Recovery 全部由 F04 业务层负责。
     """
 
     app = FastAPI(title="AI Drama Studio", version="0.4.0", lifespan=_lifespan)
@@ -303,12 +304,14 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ShotDetectionError)
     async def shot_detection_error_handler(_: Request, exc: ShotDetectionError) -> JSONResponse:
-        """把 F04 本地模型/PTS/完整性错误转换成稳定 HTTP error envelope。"""
+        """把 F04 本地模型/PTS/完整性/显式重跑错误转换成稳定 HTTP error envelope。"""
 
         status_map = {
             "SHOT_DETECTION_PREPROCESS_REQUIRED": 409,
             "SHOT_DETECTION_ALREADY_EXISTS": 409,
             "SHOT_DETECTION_IN_PROGRESS": 409,
+            "SHOT_DETECTION_RERUN_NOT_READY": 409,
+            "SHOT_DETECTION_RERUN_CONFLICT": 409,
             "SHOT_DETECTION_PROXY_INTEGRITY_MISMATCH": 409,
             "SHOT_DETECTION_UPSTREAM_CHANGED": 409,
             "SHOT_DETECTION_MODEL_UNAVAILABLE": 503,
@@ -407,9 +410,22 @@ def create_app() -> FastAPI:
         status_code=201,
     )
     def run_shot_detection_api(project_id: str) -> dict:
-        """F04 开始自动拉片入口；Controller 不接收阈值/device/model path 等自由参数。"""
+        """F04 首次自动拉片入口；ready 后重复 POST 仍然拒绝，不把重复请求当成重跑。"""
 
         return run_shot_detection(project_id=project_id).to_dict()
+
+    @app.post(
+        "/api/projects/{project_id}/shot-detection/rerun",
+        response_model=ShotDetectionResponse,
+    )
+    def rerun_shot_detection_api(project_id: str) -> dict:
+        """F04 显式重新自动拉片入口。
+
+        只有用户主动点击“重新自动拉片”才调用本接口。旧 READY 结果会保留到新结果完整成功，
+        最后由单一数据库事务原子替换，因此 GPU/模型失败不会把现有 Auto Evidence 删除。
+        """
+
+        return rerun_shot_detection(project_id=project_id).to_dict()
 
     return app
 
