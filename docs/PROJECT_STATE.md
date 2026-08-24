@@ -1,301 +1,236 @@
-# AI Drama Studio — Project State
+# AI Drama Studio — Project State (Reference Video V2)
 
-> 新对话恢复当前项目状态的第一入口。
-> 用户流程以 `docs/WORKFLOW_ARCHITECTURE.md` 为最高优先级；所有 Workflow 重跑/版本/回退必须遵守 `docs/WORKFLOW_RUN_VERSIONING.md`。
+> 2026-08-24：用户明确决定不再受旧程序和旧 Contract 限制，项目按 Reference Video 驱动重制架构重新建立。
 
 ## 当前状态
 
 ```text
-Project: AI Drama Studio
-Official Baseline: main
-Current Working Branch: main
+Repository: zdingwl/ai-drama-studio
+Official Release Baseline: main
+Current Rebuild Branch: rebuild/reference-video-v2
+Architecture: Reference Video V2
+Project Format: 2.0
 
-F01-F05 Existing Capability: STABLE BASELINE
-Actor Visual Evidence Prototype: EXISTS / NOT ACCEPTED
-
-Current Product Work:
-WORKFLOW VERSIONING REFACTOR
+F01 项目管理: IMPLEMENTED
+F02 多剧集导入与排序: IMPLEMENTED
+F03 视频预处理: IMPLEMENTED / NEEDS LOCAL REAL-VIDEO TEST
+F04 自动拉片 + Reference Clip: IMPLEMENTED / NEEDS LOCAL REAL-VIDEO TEST
+F05-F13: PLANNED / ENTITY BOUNDARIES RESERVED
 ```
 
-当前不继续向后堆新 Feature。
+未创建 PR，未合并 main。
 
-用户已经确认两个架构修正：
-
-```text
-1. Feature != 用户页面；产品改成 Workflow 驱动
-2. 每个 Workflow 必须可重复执行并保留版本
-```
-
----
-
-# 1. 当前用户主流程
+## 产品主线
 
 ```text
-01 导入原片
+F01 项目管理
 ↓
-02 拉片
+F02 剧集导入与排序
 ↓
-03 资产提取
-   ├ 人物
-   └ 场景
+F03 视频预处理
 ↓
-04 人物对白
+F04 自动拉片 / Reference Clip
 ↓
-05 剧本 / 重制设计
+F05 人物 / 场景 / 道具 / 台词智能识别
 ↓
-06 生成制作
+F06 拉片审核与人工修正
 ↓
-07 最终合成 / 导出
-```
-
-详细见：
-
-```text
-docs/WORKFLOW_ARCHITECTURE.md
-docs/WORKFLOW_RUN_VERSIONING.md
-```
-
-`docs/FEATURE_SEQUENCE.md` 只保留为内部能力拆分参考，不再代表前端一级导航。
-
----
-
-# 2. 全局版本化硬规则
-
-任何 Workflow 都必须支持：
-
-```text
-首次执行
-重新执行
-新 Run / Revision
-旧版本保留
-新版本成功后切 current
-新版本失败时旧 current 不受影响
-历史版本读取
-回退 / 重新选择
-下游 stale
-重新计算下游
-```
-
-确认规则改为：
-
-```text
-confirmed/approved = 当前 Revision 被锁定
-!= 整个 Workflow 永远禁止重做
-```
-
-需要修改时创建新的 Draft / Revision，不原地解锁旧 confirmed 版本。
-
----
-
-# 3. Workflow 01 — 导入原片
-
-当前已有一次性编排实现：
-
-```text
-POST /api/project-imports
-→ create_project()
-→ import_source_video()
-→ preprocess_source_video()
-```
-
-前端已经是一张“导入原片”表单。
-
-但当前旧底层仍存在：
-
-```text
-一个 Project 只能有一个 Source Video
-```
-
-这个限制现在被认定为不满足生产需求。
-
-下一版必须升级为：
-
-```text
-Source V1 / V2 / ...
-只有一个 current Source
-旧 Source 永不覆盖
-```
-
-重新导入 Source 后，旧 Shot / Asset / Dialogue / Design / Generation / Render 默认 stale。
-
----
-
-# 4. Workflow 02 — 拉片
-
-用户体验目标已经确定：
-
-```text
-开始拉片
-→ Auto Shot Detection
-→ 自动创建 Final Shot Draft
-→ 直接进入镜头工作台
-→ 人工确认
-```
-
-旧 F04 技术结果页不再作为必须停留的用户步骤。
-
-但当前旧 F05 规则：
-
-```text
-confirmed 后永久禁止边界/拆分/合并
-```
-
-只能用于保护“该 Revision 不被修改”，不能再用于禁止整个拉片 Workflow 重做。
-
-必须升级为：
-
-```text
-Final Shots R1 confirmed
+F07 替换素材与资产绑定
 ↓
-重新自动拉片 / 基于 R1 重新编辑
+F08 翻译 / 本地化 / Voice / TTS
 ↓
-Final Shots Draft R2
+F09 重制任务规划
 ↓
-Confirm R2
+F10 Reference Video 视频重制
 ↓
-R1 historical
-R2 current
-```
-
----
-
-# 5. Workflow 03 — 资产提取
-
-拉片完成后先提取资产：
-
-```text
-人物资产
-场景资产
-```
-
-人物和场景必须分别支持：
-
-```text
-自动 Run V1/V2/...
-人工 Final Revision R1/R2/...
-重新执行
-基于当前结果重新编辑
-版本历史
-```
-
-人物重跑不强制场景重跑；场景重跑不强制人物重跑。
-
-当前 YuNet + SFace 代码保留为：
-
-```text
-AssetExtractionWorkflow
-└ Actor Visual Evidence capability
-```
-
-Candidate-only 页面不是最终产品。
-
----
-
-# 6. Workflow 04 — 人物对白
-
-前置：
-
-```text
-Current Final Characters
-+ Current Final Shots
-+ Current Audio
-```
-
-内部允许局部重跑：
-
-```text
-ASR Run
-Speaker Run
-Speaker ↔ Character Mapping Run
-Final Dialogue Revision
-```
-
-可以只重跑其中一个，不强制全部从头执行。
-
-必须支持未归属对白，低置信度不得强行绑定人物。
-
----
-
-# 7. 下游失效规则
-
-继续遵守：
-
-```text
-docs/DEPENDENCY_AND_INVALIDATION_RULES.md
-```
-
-上游 current 变化：
-
-```text
-旧下游保留
-→ stale
-→ 禁止静默作为 fresh current 使用
-```
-
-禁止自动级联重跑所有昂贵任务。
-
----
-
-# 8. 现有 Stable Snapshot 如何理解
-
-F01-F05 Stable Snapshot 仍然是重要底层基线：
-
-```text
-ID
-时间轴
-文件安全
-Auto Evidence
-Final Shot 数据语义
-```
-
-但是其中与“整个 Workflow 永久不可重做”冲突的限制，需要通过新 Migration / 新 Version Model 向前升级。
-
-冻结不能成为拒绝生产需求的理由。
-
-必须保留旧数据兼容，不原地破坏现有项目。
-
----
-
-# 9. 当前开发优先级
-
-立即暂停继续扩展资产/对白算法，先补版本化底座：
-
-```text
-P0-0  Run / Revision / Current / Stale 通用规则
+F11 弹性时间轴 / 整集合成
 ↓
-P0-1  Source Versioning + 导入原片重跑
+F12 QC
 ↓
-P0-2  Final Shot Revision + 拉片重跑/重新编辑
-↓
-P0-3  资产提取 Workflow（人物 + 场景）
-↓
-P0-4  人物对白 Workflow
+F13 导出
 ```
 
-以后任何 Workflow 要验收，必须同时验证：
+详细见 `docs/REFERENCE_VIDEO_V2_ARCHITECTURE.md`。
+
+## 当前 V2 数据模型
+
+已建立：
 
 ```text
-第一次执行
-第二次重新执行
-失败不破坏旧版本
-历史可读取
-current 可切换
-下游 stale 正确
+Project
+Episode
+Preprocess
+Shot
+Character
+Scene
+Prop
+Dialogue
+Asset
+Voice
+Generation
 ```
 
----
+正式数据库使用 `v2_*` 表，与旧数据库结构隔离。
 
-# 10. 当前恢复顺序
+当前默认本地数据目录：
 
 ```text
-AGENTS.md
-→ SKILL.md
-→ docs/PROJECT_STATE.md
-→ docs/WORKFLOW_ARCHITECTURE.md
-→ docs/WORKFLOW_RUN_VERSIONING.md
-→ docs/DEPENDENCY_AND_INVALIDATION_RULES.md
-→ F01-F05 Stable Snapshots
-→ 当前 Workflow Session
+data_v2/
+├ studio_v2.sqlite3
+└ workspace/
+   └ PROJECT_ID/
+      └ episodes/
+         └ EPISODE_ID/
+            ├ source/
+            ├ preprocess/
+            │  ├ proxy.mp4
+            │  └ audio.wav
+            └ shots/
+               ├ reference/
+               └ thumbnails/
 ```
 
-`main` 是唯一正式 Source of Truth。未经用户明确要求，不创建 PR、不切换正式基线。
+可通过 `AI_DRAMA_STUDIO_HOME` 改变本地数据根目录。
+
+## 当前 F01-F04 用户流程
+
+### F01
+
+新建项目填写：
+- 项目名称；
+- 原项目语言；
+- 目标语言；
+- 目标地区。
+
+### F02
+
+一个 Project 可以导入多个视频。
+
+前端支持：
+- 多文件导入；
+- 拖动排序；
+- 删除 Episode。
+
+数据库以 `sort_order` 作为后续批处理顺序。
+
+### F03
+
+每个 Episode 独立：
+- FFprobe 媒体信息；
+- 标准化 Proxy；
+- 独立 WAV；
+- 状态记录。
+
+单集可处理，也可以项目级顺序批处理。
+
+### F04
+
+每个 Episode：
+
+```text
+proxy.mp4
+→ FFprobe Frame PTS
+→ TransNetV2
+→ Shot Boundaries
+→ 从 original source 生成每个 Shot 的 Reference Clip
+→ 生成 Thumbnail
+→ 保存 Shot
+```
+
+支持：
+- 单集拉片；
+- 单集重新拉片；
+- 项目级顺序批量拉片。
+
+Reference Clip 是正式 Shot 资产。
+
+## F05 以后必须遵守的核心方向
+
+F05 不做“大而全影视分析”。
+
+重点顺序：
+
+```text
+★★★★★ Character Identity
+★★★★★ Character Track
+★★★★★ Dialogue / ASR
+★★★★★ Speaker → Character
+★★★★☆ Character Mask
+★★★★☆ Scene ID
+★★★★☆ Key Prop ID
+★★★☆☆ Dialogue Emotion / Speaking Style
+★★★☆☆ Short Description
+★★☆☆☆ Shot Type / Camera Motion
+```
+
+复杂动作、机位、空间关系和镜头运动优先由 Reference Video 直接提供给后续视频模型。
+
+## 重制原则
+
+F09 以后每个 Shot 先选择处理策略，而不是全部 Full Regen：
+
+```text
+REUSE_REFERENCE
+AUDIO_ONLY
+LIPSYNC_ONLY
+CHARACTER_REPLACE
+SCENE_REPLACE
+PROP_REPLACE
+PARTIAL_EDIT
+FULL_VIDEO_REGEN
+```
+
+目标语言造成的音频时长变化允许改变最终 Shot 时长。F11 重算 Production Timeline。
+
+## 测试状态
+
+已完成代码级 Smoke 验证：
+- V2 Python 模块可编译；
+- V2 DB 初始化可执行；
+- Project 创建/读取可执行；
+- FastAPI V2 应用可导入。
+
+默认 pytest 已切换到：
+
+```text
+engine/tests/v2
+```
+
+仍需要用户 Windows 本机做真实素材验证：
+- FFmpeg/FFprobe；
+- TransNetV2 权重和推理；
+- 多 Episode 顺序批处理；
+- Reference Clip 边界与画面准确性；
+- Vue build / 浏览器交互。
+
+## Legacy 状态
+
+旧代码、旧测试、旧 Feature 文档可能仍保留在仓库中作为历史参考，但：
+
+```text
+Legacy != V2 Contract
+Legacy != 当前产品入口
+Legacy != 默认测试 Gate
+```
+
+V2 `engine/app/main.py` 和 V2 Router 不允许重新依赖旧业务流程，除非用户明确决定复用某个算法。
+
+## 下一开发目标
+
+本机验收 F01-F04 后进入 F05：
+
+```text
+Character Detection
++ Face / Body ReID
++ Character Track
++ Mask
++ Scene Clustering
++ Key Prop Detection
++ ASR
++ Speaker Diarization
++ Speaker ↔ Character
++ Dialogue Type
++ Emotion / Speaking Style
+```
+
+全部结果绑定现有 Shot / Reference Clip。
