@@ -34,6 +34,10 @@ def test_f04_migration_creates_detection_tables_and_constraints(tmp_path: Path) 
             constraint["column_names"] == ["detection_id", "ordinal"]
             for constraint in candidate_uniques
         )
+
+        candidate_checks = {constraint["name"] for constraint in inspector.get_check_constraints("shot_candidates")}
+        assert "ck_shot_candidate_boundary_score_range" in candidate_checks
+        assert "ck_shot_candidate_boundary_score" in candidate_checks
     finally:
         engine.dispose()
 
