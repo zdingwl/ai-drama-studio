@@ -60,6 +60,10 @@ from engine.app.source_videos import (
 LanguageCode = Literal["zh", "en", "ja", "ko", "es", "pt", "fr", "de", "id", "th", "vi"]
 RegionCode = Literal["US", "GB", "JP", "KR", "ES", "BR", "FR", "DE", "ID", "TH", "VN", "TW", "SG"]
 
+# F05 预览帧 URL 由 project_id + Source 时间唯一确定。F03/F05 时间轴没有变化时，
+# 同一 URL 的 JPEG 内容不会改变，因此允许浏览器长期复用，避免每次打开工作台重新请求。
+F05_PREVIEW_CACHE_HEADERS = {"Cache-Control": "private, max-age=31536000, immutable"}
+
 
 class CreateProjectRequest(BaseModel):
     """前端创建项目时允许提交的 F01 基础字段。"""
@@ -488,10 +492,10 @@ def create_app() -> FastAPI:
         project_id: str,
         source_time_us: int = Query(description="Source Domain integer microseconds"),
     ) -> FileResponse:
-        """按 Source 时间返回 F05 工作台缩略图/关键帧 JPEG。"""
+        """按 Source 时间返回 F05 工作台缩略图/关键帧 JPEG；稳定时间点允许浏览器长期缓存。"""
 
         path = render_workbench_frame(project_id=project_id, source_time_us=source_time_us)
-        return FileResponse(path, media_type="image/jpeg")
+        return FileResponse(path, media_type="image/jpeg", headers=F05_PREVIEW_CACHE_HEADERS)
 
     return app
 
