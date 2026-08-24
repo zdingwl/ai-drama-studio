@@ -3,7 +3,7 @@ name: Reference Video V2 CI
 on:
   push:
     branches:
-      - rebuild/reference-video-v2
+      - main
   pull_request:
 
 jobs:
