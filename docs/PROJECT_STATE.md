@@ -1,6 +1,6 @@
 # AI Drama Studio — Project State
 
-> 新对话恢复当前项目状态的第一入口。详细 Contract / Database Dictionary / Session 记录放在 `docs/features/` 与 `docs/sessions/`。
+> 新对话恢复当前项目状态的第一入口。详细 Contract / Function Contract / Database Dictionary / Session 记录放在 `docs/features/` 与 `docs/sessions/`。
 
 ## 当前状态
 
@@ -13,7 +13,7 @@ F01 — 创建项目:     STABLE / FROZEN
 F02 — 上传原视频:   STABLE / FROZEN
 F03 — 视频预处理:   STABLE / FROZEN
 F04 — 自动拉片:     READY_FOR_REVIEW（NOT FROZEN）
-F05 — 镜头人工修正: IN DEVELOPMENT
+F05 — 镜头人工修正: IN DEVELOPMENT / READY FOR LOCAL TEST
 
 Current Feature: F05 — 三栏拉片工作台 / Final Shot
 ```
@@ -32,8 +32,10 @@ AGENTS.md
 → docs/features/F02-stable-snapshot.md
 → docs/features/F03-stable-snapshot.md
 → docs/features/F04-auto-shot-detection.md
+→ docs/features/F04-function-contracts.md
 → docs/features/F04-database-dictionary.md
 → docs/features/F05-shot-workbench.md
+→ docs/features/F05-function-contracts.md
 → docs/features/F05-database-dictionary.md
 → 最新 docs/sessions/*.md
 ```
@@ -56,7 +58,7 @@ F03 proxy.mp4
 → Shot Candidate
 ```
 
-用户真实视频已成功得到：
+用户真实视频第一次成功运行得到：
 
 ```text
 31 Shot Candidates
@@ -65,30 +67,50 @@ F03 proxy.mp4
 66.360s Source Range
 ```
 
-第一次运行保存的 runtime 是：
+第一次 Detection Run 保存的 runtime：
 
 ```text
 PyTorch 2.5.1+cpu
 Device: cpu
 ```
 
-用户随后确认当前 Windows venv：
+用户随后通过当前项目 venv 实际确认：
 
 ```text
 PyTorch 2.5.1+cu124
 CUDA available: True
+CUDA runtime: 12.4
 GPU: NVIDIA GeForce RTX 3060 Ti
 ```
 
-已增加显式“重新自动拉片”安全重跑：旧 READY 保留到新结果完整成功后再原子替换。
+F04 已有显式“重新自动拉片”安全重跑：旧 READY 保留到新结果完整成功后再原子替换。
 
-F04 仍需用户在重启后端后完成一次 CUDA rerun，并人工确认切镜质量，才能创建 Stable/Frozen Snapshot。
+F04 仍需：
+
+```text
+重启后端
+→ 在进入 F05 前执行一次 CUDA rerun
+→ 页面确认 detector_device=cuda / torch=2.5.1+cu124
+→ 人工检查明显切镜质量
+```
+
+然后才能创建 F04 Stable/Frozen Snapshot。
+
+### 重要顺序
+
+F05 初始化会保存 `source_detection_id` 并开始生产级 Final Shot 工作。为了保证追溯，一旦当前项目存在 F05 `shot_edit_sets`：
+
+```text
+F04 rerun -> SHOT_DETECTION_RERUN_CONFLICT
+```
+
+因此**同一个现有测试项目如果还要做 F04 CUDA rerun，必须先 rerun，再第一次进入 F05**。
 
 ---
 
 # F05 正式目标
 
-F05 不再做普通结果表，而是三栏生产工作台：
+F05 不做普通结果表，而是三栏生产工作台：
 
 ```text
 左：Final Shot 列表 / 缩略图 / 时间 / 当前 Shot 高亮
@@ -142,6 +164,14 @@ right.final_start_us
 
 拆分 = 新增镜头；合并 = 删除公共边界。F05 不为同一语义维护“新增/删除”第二套重复算法。
 
+浏览器播放器与 FFmpeg `-ss` 都使用媒体相对时间：
+
+```text
+relative_seconds = (source_us - edit_set.source_start_us) / 1_000_000
+```
+
+禁止把 Source absolute timestamp 直接当 `video.currentTime`。
+
 ---
 
 # F05 Database
@@ -166,7 +196,7 @@ editing
 confirmed
 ```
 
-confirmed 后 F05 写接口必须拒绝修改。
+confirmed 后 F05 写接口拒绝修改。
 
 详细字段语义：
 
@@ -184,17 +214,23 @@ docs/features/F05-database-dictionary.md
 engine/app/shot_workbench.py
 ```
 
-已实现：
+公开职责：
 
 ```text
-initialize_shot_workbench()
-get_shot_workbench()
-adjust_shot_boundary()
-split_final_shot()
-merge_final_shots()
-confirm_final_shots()
-get_workbench_proxy_path()
-render_workbench_frame()
+initialize_shot_workbench()  F04 Candidate -> Final Shot Draft
+get_shot_workbench()         读取并验证完整 Final Timeline
+adjust_shot_boundary()       同时移动相邻两 Shot 的公共边界
+split_final_shot()           拆分 / 新增镜头
+merge_final_shots()          合并 / 删除公共边界
+confirm_final_shots()        人工确认并锁定
+get_workbench_proxy_path()   播放 F03 Proxy
+render_workbench_frame()     按 Source 时间抽 UI 预览帧
+```
+
+详细输入/输出/为什么存在/不能做什么：
+
+```text
+docs/features/F05-function-contracts.md
 ```
 
 API：
@@ -209,8 +245,6 @@ POST /api/projects/{project_id}/shot-workbench/confirm
 GET  /api/projects/{project_id}/shot-workbench/media/proxy
 GET  /api/projects/{project_id}/shot-workbench/frame?source_time_us=...
 ```
-
-F05 一旦初始化，F04 显式 rerun 会返回已有 `SHOT_DETECTION_RERUN_CONFLICT`，防止替换 Final Shot 正在追溯的 Auto Evidence。
 
 ---
 
@@ -232,7 +266,7 @@ frontend/src/api/shot-workbench.ts
 frontend/src/stores/shot-workbench.ts
 ```
 
-已接入：
+已实现：
 
 ```text
 左侧 05 镜头修正导航
@@ -260,17 +294,20 @@ engine/tests/unit/test_database_migration_f05.py
 engine/tests/unit/test_shot_workbench_f05.py
 ```
 
-同时修正 F04 Migration Test：不再把历史 `0005` 当成永久 Alembic head；当前 head 由 F05 Test 断言为 `0006_create_final_shots`。
+同时修正 F04 Migration Test：F04 只检查自己的表和约束，不再把历史 `0005` 当永久 Alembic head；当前 head 由 F05 Test 断言为 `0006_create_final_shots`。
 
 ---
 
 # 当前验收边界
 
-ChatGPT 工具容器无法 DNS clone GitHub，因此本轮没有声称已经执行全仓 pytest / npm build。
+ChatGPT 工具容器无法 DNS clone GitHub，因此本轮没有声称已经执行全仓 pytest / npm typecheck / build。
 
 用户 Windows 本机拉取最新 main 后必须执行：
 
 ```powershell
+cd D:\ai-drama-studio
+git pull
+
 python -m pytest engine/tests -q
 
 cd frontend
@@ -279,23 +316,31 @@ npm run typecheck
 npm run build
 ```
 
-然后重启后端（8080）和前端，真实验收：
+随后重启 8080 后端和前端。
+
+### 推荐真实验收顺序
 
 ```text
-项目总览 -> 05 镜头修正
--> 首次自动复制 31 个 Final Shot
--> 左侧缩略图正常
--> 视频可播放
--> 点击 Shot 正确跳转
--> 播放时高亮跟随
--> 修改一个公共边界
--> 拆分一个镜头
--> 合并回来
--> 刷新页面数据仍存在
--> 最后再测试 Confirm（确认后不可再编辑）
+A. 如果还没完成 F04 CUDA 验收：
+   先进入 04 -> 重新自动拉片 -> 确认 cuda
+
+B. 再进入 05 镜头修正：
+   首次自动复制 31 个 Final Shot
+   -> 左侧缩略图正常
+   -> Proxy 可播放
+   -> 点击 Shot 正确跳转
+   -> 播放时高亮跟随
+   -> 修改一个公共边界
+   -> 在播放点拆分一个镜头
+   -> 再合并回来
+   -> 刷新页面数据仍存在
+
+C. “确认 Final Shots”放到最后测试：
+   点击确认后应变为 confirmed
+   -> 再尝试边界/拆分/合并应被锁定
 ```
 
-F05 当前状态：
+F05 当前：
 
 ```text
 IN DEVELOPMENT / READY FOR LOCAL TEST
