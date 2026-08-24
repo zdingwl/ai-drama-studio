@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
-import type { Episode, Project, Shot } from '../types/studio'
+import type { ContentAnalysisRun, Episode, F05ModelStatus, Project, Shot } from '../types/studio'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,6 +16,9 @@ const draggedId = ref<string | null>(null)
 const selectedEpisodeId = ref('')
 const shots = ref<Shot[]>([])
 const selectedShot = ref<Shot | null>(null)
+const contentRun = ref<ContentAnalysisRun | null>(null)
+const f05Models = ref<F05ModelStatus | null>(null)
+const f05View = ref<'characters' | 'scenes' | 'dialogues' | 'props'>('characters')
 
 const stages = [
   ['F01', '项目设置', '项目语言与目标市场'],
@@ -37,13 +40,54 @@ const episodes = computed(() => project.value?.episodes ?? [])
 const selectedEpisode = computed(() => episodes.value.find((item) => item.id === selectedEpisodeId.value) ?? null)
 
 function seconds(us: number | null) {
-  if (!us) return '—'
+  if (us === null || us === undefined) return '—'
   return `${(us / 1_000_000).toFixed(2)}s`
+}
+
+function stageReady(index: number) { return index <= 5 }
+
+function componentText(key: string) {
+  const status = contentRun.value?.component_status[key] || '未执行'
+  const labels: Record<string, string> = {
+    READY: '已完成', PENDING: '等待中', NOT_CONFIGURED: '未配置', NOT_AVAILABLE: '依赖未安装',
+    MODEL_NOT_READY: '模型未准备', MODEL_MISSING: '模型路径不存在', NO_CHARACTER: '未识别人',
+    NO_SCENE: '未识别场景', NO_DIALOGUE: '没有对白', NO_SPEECH: '没有语音', NO_MAPPING: '未绑定人物',
+    FAILED: '失败', BASIC: '基础描述',
+  }
+  return labels[status] || status
+}
+
+function componentClass(key: string) {
+  const status = contentRun.value?.component_status[key]
+  return status === 'READY' || status === 'NO_DIALOGUE' || status === 'NO_SPEECH' || status === 'BASIC' ? 'ready' : 'planned'
+}
+
+function episodeLabel(episodeId: string) {
+  const episode = episodes.value.find((item) => item.id === episodeId)
+  return episode ? `E${String(episode.sort_order).padStart(2, '0')}` : 'E—'
+}
+
+function shotLabel(shotId: string) {
+  for (const episode of episodes.value) {
+    if (episode.id !== selectedEpisodeId.value) continue
+    const shot = shots.value.find((item) => item.id === shotId)
+    if (shot) return `SHOT ${String(shot.ordinal).padStart(4, '0')}`
+  }
+  return shotId.slice(-8)
 }
 
 async function reloadProject() {
   project.value = await api.getProject(projectId)
   if (!selectedEpisodeId.value && project.value.episodes.length) selectedEpisodeId.value = project.value.episodes[0].id
+}
+
+async function loadF05() {
+  const [models, current] = await Promise.all([
+    api.getF05ModelStatus(),
+    api.getCurrentContentAnalysis(projectId),
+  ])
+  f05Models.value = models
+  contentRun.value = current
 }
 
 async function run(label: string, action: () => Promise<unknown>, after?: () => Promise<void>) {
@@ -114,12 +158,21 @@ async function analyzeSingle(episode: Episode) {
   await run('正在自动拉片', () => api.analyzeEpisodeShots(episode.id), () => loadShots(episode.id))
 }
 
-function stageReady(index: number) { return index <= 4 }
+async function prepareModels() {
+  await run('正在准备 F05 人物视觉模型', () => api.prepareF05Models(), loadF05)
+}
+
+async function analyzeContent() {
+  await run('正在执行 F05 智能内容识别', () => api.runContentAnalysis(projectId), async () => {
+    await loadF05()
+    await loadShots()
+  })
+}
 
 onMounted(async () => {
   try {
     await reloadProject()
-    await loadShots()
+    await Promise.all([loadShots(), loadF05()])
   } catch (err) {
     error.value = err instanceof Error ? err.message : '项目读取失败'
   } finally {
@@ -222,12 +275,91 @@ onMounted(async () => {
         </div>
       </section>
 
+      <section v-else-if="activeStage === 5" class="workspace-panel f05-workspace">
+        <div class="section-title">
+          <div><span>F05</span><h2>智能内容识别</h2></div>
+          <div class="section-actions">
+            <button v-if="!f05Models?.ready" class="ghost-button" :disabled="!!busy" @click="prepareModels">准备人物模型</button>
+            <button class="primary-button" :disabled="!episodes.length || !!busy" @click="analyzeContent">{{ contentRun ? '重新智能识别' : '开始智能识别' }}</button>
+          </div>
+        </div>
+        <p class="section-help">以 F04 Reference Clip 为视觉证据，重点提取人物身份/Track、Scene、源对白和 Speaker；不把原动作、构图、机位重复翻译成长文本。</p>
+
+        <div class="f05-model-note">
+          <div><strong>人物视觉模型</strong><span>{{ f05Models?.ready ? 'YuNet + SFace 已准备' : '尚未准备，人物组件会明确跳过' }}</span></div>
+          <span :class="['status-pill', f05Models?.ready ? 'ready' : 'planned']">{{ f05Models?.ready ? 'READY' : 'MODEL REQUIRED' }}</span>
+        </div>
+
+        <div v-if="contentRun" class="analysis-status-grid">
+          <div v-for="item in [
+            ['characters', '人物身份 / Track'], ['scenes', 'Scene 聚类'], ['props', '关键道具'],
+            ['asr', 'ASR 源对白'], ['speaker', 'Speaker'], ['speaker_character', 'Speaker → Character']
+          ]" :key="item[0]" class="analysis-status-card">
+            <span>{{ item[1] }}</span>
+            <strong :class="['status-text', componentClass(item[0])]">{{ componentText(item[0]) }}</strong>
+          </div>
+        </div>
+
+        <div v-if="!contentRun" class="empty-state large">
+          <strong>还没有 F05 分析结果</strong>
+          <span>所有剧集完成 F04 后，从这里按剧集顺序执行一次 Project 级识别。</span>
+        </div>
+
+        <template v-else>
+          <div class="analysis-run-bar">
+            <div><strong>{{ contentRun.status }}</strong><span>Run {{ contentRun.id.slice(-10) }} · {{ contentRun.profile_version }}</span></div>
+            <div class="analysis-counts"><span>{{ contentRun.counts.character_candidates || 0 }} 人物</span><span>{{ contentRun.counts.scene_candidates || 0 }} 场景</span><span>{{ contentRun.counts.dialogues || 0 }} 台词</span></div>
+          </div>
+
+          <div class="result-tabs">
+            <button :class="{ active: f05View === 'characters' }" @click="f05View = 'characters'">人物 {{ contentRun.characters.length }}</button>
+            <button :class="{ active: f05View === 'scenes' }" @click="f05View = 'scenes'">场景 {{ contentRun.scenes.length }}</button>
+            <button :class="{ active: f05View === 'dialogues' }" @click="f05View = 'dialogues'">台词 {{ contentRun.dialogues.length }}</button>
+            <button :class="{ active: f05View === 'props' }" @click="f05View = 'props'">关键道具 {{ contentRun.props.length }}</button>
+          </div>
+
+          <div v-if="f05View === 'characters'" class="evidence-grid">
+            <div v-if="contentRun.characters.length === 0" class="empty-state large"><strong>没有人物候选</strong><span>如果模型未准备，请先点击“准备人物模型”再重新识别。</span></div>
+            <article v-for="character in contentRun.characters" :key="character.id" class="evidence-card">
+              <img v-if="character.cover_url" :src="character.cover_url" :alt="character.auto_label" />
+              <div class="evidence-card-body">
+                <div class="evidence-title"><strong>{{ character.auto_label }}</strong><span>AUTO</span></div>
+                <p>{{ character.shot_count }} 个 Shot · {{ character.track_count }} 条 Track</p>
+                <small>聚类置信：{{ character.confidence === null ? '单独候选' : character.confidence.toFixed(3) }}</small>
+              </div>
+            </article>
+          </div>
+
+          <div v-else-if="f05View === 'scenes'" class="evidence-grid scene-grid">
+            <div v-if="contentRun.scenes.length === 0" class="empty-state large"><strong>没有场景候选</strong><span>当前缩略图没有形成有效视觉聚类。</span></div>
+            <article v-for="scene in contentRun.scenes" :key="scene.id" class="evidence-card">
+              <img v-if="scene.cover_url" :src="scene.cover_url" :alt="scene.auto_label" />
+              <div class="evidence-card-body"><div class="evidence-title"><strong>{{ scene.auto_label }}</strong><span>AUTO</span></div><p>{{ scene.shot_count }} 个 Shot</p></div>
+            </article>
+          </div>
+
+          <div v-else-if="f05View === 'dialogues'" class="dialogue-list">
+            <div v-if="contentRun.dialogues.length === 0" class="empty-state large"><strong>没有自动台词</strong><span>检查 ASR 状态；没有音轨的剧集不会生成对白。</span></div>
+            <article v-for="dialogue in contentRun.dialogues" :key="dialogue.id" class="dialogue-row">
+              <div class="dialogue-position"><strong>{{ episodeLabel(dialogue.episode_id) }}</strong><span>{{ shotLabel(dialogue.shot_id) }}</span></div>
+              <div class="dialogue-copy"><strong>{{ dialogue.ai_text }}</strong><small>{{ seconds(dialogue.source_start_us) }} → {{ seconds(dialogue.source_end_us) }}</small></div>
+              <div class="dialogue-speaker"><span>{{ dialogue.speaker_label || 'Speaker 未解析' }}</span><strong>{{ dialogue.speaker_candidate_id ? '已候选绑定' : '待 F06 确认' }}</strong></div>
+            </article>
+          </div>
+
+          <div v-else class="empty-state large">
+            <strong>关键道具自动模型尚未配置</strong>
+            <span>F05 已保留 Prop Candidate / Shot Prop Evidence 数据结构，但不会在没有对象模型时把普通环境物体伪装成剧情关键道具。</span>
+          </div>
+        </template>
+      </section>
+
       <section v-else class="workspace-panel planned-panel">
         <div class="planned-icon">{{ stages[activeStage - 1][0] }}</div>
         <h2>{{ stages[activeStage - 1][1] }}</h2>
         <p>{{ stages[activeStage - 1][2] }}</p>
         <span class="status-pill planned">待开发</span>
-        <div class="architecture-note"><strong>已经锁定接口边界</strong><p>后端 V2 数据库已经预留 Character、Scene、Prop、Dialogue、Asset、Voice、Generation 等核心实体。该阶段会在 F04 数据验收后继续实现，不使用旧版功能冒充完成。</p></div>
+        <div class="architecture-note"><strong>下一步按 V2 数据继续</strong><p>F06 会把 F05 的 AI Evidence 转成可人工修改的 Final Character / Scene / Prop / Dialogue，不覆盖原始自动证据。</p></div>
       </section>
     </main>
   </div>
