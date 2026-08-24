@@ -112,19 +112,19 @@ def upgrade() -> None:
             "audio_relative_path",
             sa.Text(),
             nullable=True,
-            comment="分析 audio.wav 相对路径；Source 无音频时为空。",
+            comment="分析 audio.wav 相对路径；Source 无音频时为空；processing 时可先确定目标路径。",
         ),
         sa.Column(
             "audio_file_size_bytes",
             sa.BigInteger(),
             nullable=True,
-            comment="分析 WAV 文件大小；无音频时为空。",
+            comment="分析 WAV 文件大小；processing/无音频时可为空。",
         ),
         sa.Column(
             "audio_sha256",
             sa.String(length=64),
             nullable=True,
-            comment="分析 WAV SHA-256；无音频时为空。",
+            comment="分析 WAV SHA-256；processing/无音频时可为空。",
         ),
         sa.Column(
             "audio_duration_us",
@@ -136,13 +136,13 @@ def upgrade() -> None:
             "audio_sample_rate",
             sa.Integer(),
             nullable=True,
-            comment="分析 WAV 采样率；F03 V1 有音频时固定为 16000。",
+            comment="分析 WAV 采样率；F03 V1 ready+有音频时固定为 16000。",
         ),
         sa.Column(
             "audio_channels",
             sa.Integer(),
             nullable=True,
-            comment="分析 WAV 声道数；F03 V1 有音频时固定为 1。",
+            comment="分析 WAV 声道数；F03 V1 ready+有音频时固定为 1。",
         ),
         sa.Column(
             "audio_to_source_offset_us",
@@ -227,7 +227,10 @@ def upgrade() -> None:
             ")",
             name="ck_source_preprocess_ready_core",
         ),
+        # processing 阶段可以先知道 audio.wav 的目标路径，但此时尚未生成 size/hash/duration。
+        # 因此 Audio “全空或全完整”只在 ready 时强制；否则会让正常的有音频预处理无法建立恢复锚点。
         sa.CheckConstraint(
+            "status != 'ready' OR ("
             "(audio_relative_path IS NULL AND "
             "audio_file_size_bytes IS NULL AND audio_sha256 IS NULL AND "
             "audio_duration_us IS NULL AND audio_sample_rate IS NULL AND "
@@ -236,8 +239,9 @@ def upgrade() -> None:
             "audio_file_size_bytes > 0 AND "
             "audio_sha256 IS NOT NULL AND length(audio_sha256) = 64 AND "
             "audio_duration_us > 0 AND audio_sample_rate = 16000 AND "
-            "audio_channels = 1 AND audio_to_source_offset_us IS NOT NULL)",
-            name="ck_source_preprocess_audio_all_or_none",
+            "audio_channels = 1 AND audio_to_source_offset_us IS NOT NULL)"
+            ")",
+            name="ck_source_preprocess_audio_ready_consistency",
         ),
         sa.ForeignKeyConstraint(
             ["source_video_id"],
