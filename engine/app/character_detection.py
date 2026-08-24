@@ -62,7 +62,7 @@ OPENCV_PACKAGE = "opencv-python"
 OPENCV_PACKAGE_VERSION = "4.11.0.86"
 RUNTIME_DEVICE = "cpu"
 
-TARGET_SAMPLE_FPS = 4.0
+TARGET_SAMPLE_FPS = 4
 MIN_SAMPLES_PER_SHOT = 3
 MAX_SAMPLES_PER_SHOT = 12
 SAMPLE_EDGE_MARGIN_US = 40_000
@@ -569,6 +569,9 @@ def _build_sample_plan(
 ) -> tuple[SamplePoint, ...]:
     """把 4 FPS 目标采样点吸附到每个 Final Shot 内最近的真实 PTS 帧。
 
+    数量按已确认 Contract 使用 round-half-up：
+    ``round_half_up(duration_us * 4 / 1_000_000)``，再 clamp 到 3–12。
+
     这里允许使用 frame index 作为“解码顺序索引”，但 ``SamplePoint.source_time_us`` 只能
     来自 ``frame_source_pts[index]``，绝不使用 index/fps 推算正式时间。
     """
@@ -586,9 +589,10 @@ def _build_sample_plan(
             # 极短镜头在 Proxy 中没有独立解码帧时不补造假时间；该 Shot 本轮不会产生人物 Evidence。
             continue
 
+        rounded_target_count = (shot.duration_us * TARGET_SAMPLE_FPS + 500_000) // 1_000_000
         target_count = max(
             MIN_SAMPLES_PER_SHOT,
-            min(MAX_SAMPLES_PER_SHOT, int(math.ceil((shot.duration_us / 1_000_000) * TARGET_SAMPLE_FPS))),
+            min(MAX_SAMPLES_PER_SHOT, int(rounded_target_count)),
         )
         margin = min(SAMPLE_EDGE_MARGIN_US, max(0, shot.duration_us // 20))
         target_start = shot.final_start_us + margin
@@ -814,7 +818,7 @@ def _build_shot_tracks(observations: tuple[FaceObservation, ...]) -> list[TrackD
                     )
                 )
 
-        tracks.sort(key=lambda item: (item.start_us, item.representative.bbox[0], item.id))
+        tracks.sort(key=lambda item: (item.start_us, item.representative.bbox[0], item.representative.bbox[1]))
         for ordinal, track in enumerate(tracks, start=1):
             track.track_ordinal_in_shot = ordinal
         all_tracks.extend(tracks)
@@ -829,7 +833,12 @@ def _cluster_tracks(tracks: list[TrackDraft]) -> list[CandidateDraft]:
     candidates: list[CandidateDraft] = []
     ordered_tracks = sorted(
         tracks,
-        key=lambda item: (-item.representative.face_quality, item.start_us, item.id),
+        key=lambda item: (
+            -item.representative.face_quality,
+            item.start_us,
+            item.final_shot_ordinal,
+            item.track_ordinal_in_shot,
+        ),
     )
     for track in ordered_tracks:
         if track.embedding is None:
@@ -904,7 +913,7 @@ def _validate_algorithm_result(
         raise CharacterDetectionError("CHARACTER_DETECTION_INVALID_RESULT", "Candidate ID 重复")
     assigned = [track.id for candidate in candidates for track in candidate.tracks]
     if sorted(assigned) != sorted(track_ids):
-        raise CharacterDetectionError("CHARACTER_DETECTION_INVALID_RESULT", "Track 没有且仅没有被分配到一个 Candidate")
+        raise CharacterDetectionError("CHARACTER_DETECTION_INVALID_RESULT", "每个 Track 必须且只能属于一个 Candidate")
     for candidate in candidates:
         _validate_embedding(candidate.centroid)
 
@@ -1126,7 +1135,7 @@ def _rows_to_candidates(
     records: list[CharacterCandidateRecord] = []
     for row in candidate_rows:
         _blob_to_embedding(row["centroid_embedding_blob"])
-        tracks = tuple(sorted(tracks_by_candidate.get(row["id"], []), key=lambda item: (item.start_us, item.id)))
+        tracks = tuple(sorted(tracks_by_candidate.get(row["id"], []), key=lambda item: (item.start_us, item.final_shot_ordinal, item.track_ordinal_in_shot)))
         records.append(
             CharacterCandidateRecord(
                 id=row["id"],
