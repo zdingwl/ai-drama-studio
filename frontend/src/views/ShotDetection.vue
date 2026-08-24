@@ -1,24 +1,48 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StudioShell from '../components/StudioShell.vue'
 import { usePreprocessStore } from '../stores/preprocess'
 import { useProjectStore } from '../stores/project'
 import { useShotDetectionStore } from '../stores/shot-detection'
+import { useShotWorkbenchStore } from '../stores/shot-workbench'
 
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
 const preprocessStore = usePreprocessStore()
 const shotStore = useShotDetectionStore()
+const workbenchStore = useShotWorkbenchStore()
+const enteringWorkbench = ref(false)
 
 const projectId = computed(() => String(route.params.projectId || ''))
 const project = computed(() => projectStore.currentProject)
 const preprocess = computed(() => preprocessStore.currentPreprocess)
 const detection = computed(() => shotStore.currentDetection)
+const workflowBusy = computed(() => shotStore.processing || workbenchStore.loading || enteringWorkbench.value)
+const workflowError = computed(() => shotStore.errorMessage || workbenchStore.errorMessage || preprocessStore.errorMessage)
+
+/**
+ * 职责：把已经 ready 的自动 Shot Detection 接成生产级 Final Shot Draft，并进入镜头工作台。
+ * 输入：当前 projectId；输出：导航到 /shot-workbench。
+ * 为什么：用户的“拉片”是一个连续 Workflow，不应该停在 F04 技术结果页再手动初始化 F05。
+ */
+async function enterShotWorkbench(): Promise<void> {
+  if (enteringWorkbench.value) return
+  enteringWorkbench.value = true
+  try {
+    await workbenchStore.loadOrInitialize(projectId.value)
+    await router.replace(`/projects/${projectId.value}/shot-workbench`)
+  } catch {
+    // Workbench Store 已保存具体错误；页面保留当前状态供用户重试。
+  } finally {
+    enteringWorkbench.value = false
+  }
+}
 
 onMounted(async () => {
   shotStore.resetShotDetectionState()
+  workbenchStore.reset()
   try {
     if (projectStore.currentProject?.id !== projectId.value) {
       await projectStore.openProject(projectId.value)
@@ -26,68 +50,47 @@ onMounted(async () => {
     if (preprocessStore.currentPreprocess?.project_id !== projectId.value) {
       await preprocessStore.loadPreprocess(projectId.value)
     }
-    if (preprocessStore.currentPreprocess) {
-      await shotStore.loadShotDetection(projectId.value)
+    if (!preprocessStore.currentPreprocess) return
+
+    await shotStore.loadShotDetection(projectId.value)
+
+    // 历史项目已经完成 F04 时，不再让用户停留在旧的“自动检测结果页”。
+    // 直接恢复/创建 Final Shot Draft 并进入统一拉片工作台。
+    if (shotStore.currentDetection?.status === 'ready') {
+      await enterShotWorkbench()
     }
   } catch {
-    // Store 已保留具体错误；页面只负责展示，不在这里猜测修复方式。
+    // 对应 Store 已保存具体错误。
   }
 })
 
-async function startDetection(): Promise<void> {
-  if (!preprocess.value || shotStore.processing || detection.value?.status === 'ready') return
+/**
+ * 职责：执行 Workflow 02 的自动分析阶段，并在成功后立即进入人工拉片工作台。
+ * 输入：confirmed F03 Preprocess；输出：F04 Auto Evidence + F05 Final Shot Draft。
+ * 为什么：用户只需要一次“开始拉片”，不需要理解 F04/F05 初始化边界。
+ */
+async function startShotWorkflow(): Promise<void> {
+  if (!preprocess.value || workflowBusy.value) return
   try {
-    await shotStore.runShotDetection(projectId.value)
+    if (detection.value?.status !== 'ready') {
+      await shotStore.runShotDetection(projectId.value)
+    }
+    await enterShotWorkbench()
   } catch {
-    // 错误文案由 Store 保存。
+    // Store 已保存具体错误。
   }
-}
-
-async function rerunDetection(): Promise<void> {
-  if (!preprocess.value || shotStore.processing || detection.value?.status !== 'ready') return
-  const confirmed = window.confirm(
-    '重新自动拉片会使用当前本机的 TransNetV2 / PyTorch / CUDA 环境重新计算。\n\n新结果完整成功前，当前 Auto Evidence 会一直保留；如果重跑失败，旧结果不会丢失。\n\n确定继续吗？',
-  )
-  if (!confirmed) return
-
-  try {
-    await shotStore.rerunShotDetection(projectId.value)
-  } catch {
-    // 错误文案由 Store 保存；后端保证失败时旧 READY 结果继续存在。
-  }
-}
-
-function formatTimecode(value: number | null): string {
-  if (value === null) return '—'
-  const totalMs = Math.round(value / 1000)
-  const milliseconds = Math.abs(totalMs % 1000)
-  const totalSeconds = Math.floor(Math.abs(totalMs) / 1000)
-  const seconds = totalSeconds % 60
-  const minutes = Math.floor(totalSeconds / 60) % 60
-  const hours = Math.floor(totalSeconds / 3600)
-  const sign = value < 0 ? '-' : ''
-  return `${sign}${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`
-}
-
-function formatDuration(value: number): string {
-  if (value < 1_000_000) return `${(value / 1000).toFixed(0)} ms`
-  return `${(value / 1_000_000).toFixed(3)} s`
-}
-
-function formatScore(value: number | null): string {
-  return value === null ? '视频结束' : value.toFixed(4)
 }
 </script>
 
 <template>
   <StudioShell
-    title="自动拉片"
-    :subtitle="project ? `${project.name} · 本地镜头边界检测` : '正在读取项目'"
+    title="拉片"
+    :subtitle="project ? `${project.name} · 自动检测 + 镜头人工修正` : '正在读取项目'"
     project-mode
     :project-name="project?.name || ''"
   >
     <template #topbar>
-      <span v-if="project" class="workspace-status-chip"><i></i> LOCAL · TRANSNETV2</span>
+      <span v-if="project" class="workspace-status-chip"><i></i> WORKFLOW 02 · LOCAL</span>
       <button type="button" class="secondary-button compact-button" @click="router.push(`/projects/${projectId}`)">
         返回项目总览
       </button>
@@ -95,8 +98,8 @@ function formatScore(value: number | null): string {
 
     <div v-if="projectStore.opening || preprocessStore.loading || shotStore.loading" class="workspace-loading">
       <div class="loading-ring"></div>
-      <strong>正在读取自动拉片状态</strong>
-      <p>检查 F03 Proxy、时间映射和已有 Detection Run…</p>
+      <strong>正在恢复拉片状态</strong>
+      <p>检查分析视频、已有自动切镜结果和 Final Shot Draft…</p>
     </div>
 
     <div v-else-if="projectStore.errorMessage" class="workspace-error-panel">
@@ -110,166 +113,56 @@ function formatScore(value: number | null): string {
     </div>
 
     <template v-else-if="project">
-      <section class="shot-page-heading">
-        <div>
-          <span class="panel-eyebrow">AUTO SHOT DETECTION · F04</span>
-          <h2>用本地 TransNetV2 自动找切镜点</h2>
-          <p>模型只判断“哪一帧发生转场”；正式镜头时间全部由 FFprobe 真实 PTS 生成，再映射回 Source Timeline。</p>
-        </div>
-        <span class="shot-profile-chip">Profile V1 · 固定参数</span>
-      </section>
-
-      <div v-if="shotStore.errorMessage || preprocessStore.errorMessage" class="inline-alert error-alert shot-alert">
+      <div v-if="workflowError" class="inline-alert error-alert shot-alert">
         <span>!</span>
         <div>
-          <strong>自动拉片失败</strong>
-          <p>{{ shotStore.errorMessage || preprocessStore.errorMessage }}</p>
+          <strong>拉片流程未完成</strong>
+          <p>{{ workflowError }}</p>
         </div>
       </div>
 
       <section v-if="!preprocess" class="content-panel shot-blocked-panel">
-        <div class="shot-blocked-icon">03</div>
-        <span class="panel-eyebrow">UPSTREAM REQUIRED</span>
-        <h2>请先完成视频预处理</h2>
-        <p>F04 只读取 F03 已校验的 proxy.mp4 和 Proxy → Source 时间映射。当前项目还没有可用的 F03 结果。</p>
-        <button type="button" class="primary-button" @click="router.push(`/projects/${projectId}/preprocess`)">进入视频预处理</button>
+        <div class="shot-blocked-icon">01</div>
+        <span class="panel-eyebrow">SOURCE REQUIRED</span>
+        <h2>当前项目还没有完成原片初始化</h2>
+        <p>新的正常流程会在“导入原片”时一次完成 Proxy、分析音频和时间映射。历史项目请先完成原片恢复。</p>
+        <button type="button" class="secondary-button" @click="router.push(`/projects/${projectId}`)">返回项目总览</button>
       </section>
 
-      <template v-else-if="detection?.status === 'ready'">
-        <section class="content-panel shot-ready-panel">
-          <div class="shot-ready-header">
-            <div class="shot-ready-icon">✓</div>
-            <div>
-              <span class="online-chip"><i></i> SHOT DETECTION READY</span>
-              <h2>自动拉片完成</h2>
-              <p>自动证据已经锁定。F05 人工修正会另存 Final Shot，不覆盖这里的 detected_* 结果。</p>
-            </div>
-            <div class="topbar-actions">
-              <span class="shot-lock-badge">Auto Evidence</span>
-              <button
-                type="button"
-                class="secondary-button compact-button"
-                :disabled="shotStore.processing"
-                @click="rerunDetection"
-              >
-                {{ shotStore.processing ? '正在重新检测…' : '重新自动拉片' }}
-              </button>
-            </div>
-          </div>
-
-          <div class="shot-stat-grid">
-            <article><span>镜头数</span><strong>{{ detection.shot_count ?? detection.candidates.length }}</strong><small>Shot Candidates</small></article>
-            <article><span>自动切点</span><strong>{{ detection.detected_cut_count ?? 0 }}</strong><small>Normalized Cuts</small></article>
-            <article><span>分析帧</span><strong>{{ detection.analyzed_frame_count ?? '—' }}</strong><small>PTS Aligned Frames</small></article>
-            <article><span>计算设备</span><strong>{{ detection.detector_device || '—' }}</strong><small>PyTorch {{ detection.torch_version || '—' }}</small></article>
-          </div>
-        </section>
-
-        <section class="content-panel shot-runtime-panel">
-          <div class="section-heading compact">
-            <div><h2>Detector Runtime</h2><p>这组信息用于复现同一次自动判断。</p></div>
-            <span class="online-chip"><i></i> LOCAL MODEL</span>
-          </div>
-          <div class="shot-runtime-grid">
-            <div><span>Detector</span><strong>{{ detection.detector_name }}</strong></div>
-            <div><span>Package</span><strong>{{ detection.detector_package_version }}</strong></div>
-            <div><span>Threshold</span><strong>{{ detection.detector_threshold.toFixed(2) }}</strong></div>
-            <div><span>近邻去抖</span><strong>{{ detection.min_boundary_gap_us / 1000 }} ms</strong></div>
-            <div><span>Proxy Range</span><strong>{{ formatTimecode(detection.proxy_start_us) }} → {{ formatTimecode(detection.proxy_end_us) }}</strong></div>
-            <div><span>Source Range</span><strong>{{ formatTimecode(detection.source_start_us) }} → {{ formatTimecode(detection.source_end_us) }}</strong></div>
-          </div>
-        </section>
-
-        <section class="content-panel shot-list-panel">
-          <div class="section-heading">
-            <div>
-              <h2>Shot Candidates</h2>
-              <p>时间以 Source Domain 为主；边界分数只是模型 transition score，不代表“准确率”。</p>
-            </div>
-            <span class="progress-summary">{{ detection.candidates.length }} SHOTS</span>
-          </div>
-
-          <div class="shot-table-wrap">
-            <table class="shot-table">
-              <thead>
-                <tr>
-                  <th>镜头</th>
-                  <th>Source 开始</th>
-                  <th>Source 结束</th>
-                  <th>时长</th>
-                  <th>结束边界</th>
-                  <th>边界分数</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="candidate in detection.candidates" :key="candidate.id">
-                  <td><strong>#{{ String(candidate.ordinal).padStart(3, '0') }}</strong></td>
-                  <td class="mono-value">{{ formatTimecode(candidate.detected_start_us) }}</td>
-                  <td class="mono-value">{{ formatTimecode(candidate.detected_end_us) }}</td>
-                  <td>{{ formatDuration(candidate.duration_us) }}</td>
-                  <td><span class="shot-boundary-chip" :class="candidate.end_boundary_kind">{{ candidate.end_boundary_kind === 'cut' ? 'CUT' : 'VIDEO END' }}</span></td>
-                  <td class="mono-value">{{ formatScore(candidate.end_boundary_score) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="content-panel shot-next-panel">
-          <div class="next-step-icon">05</div>
+      <section v-else class="content-panel shot-run-panel">
+        <div v-if="workflowBusy" class="shot-processing-state">
+          <div class="loading-ring"></div>
           <div>
-            <span class="panel-eyebrow">NEXT FEATURE</span>
-            <h2>下一步：人工修正镜头边界</h2>
-            <p>F04 只保留自动检测结果。F05 再处理误切、漏切、拆分和合并，并形成独立 Final Shot。</p>
+            <strong>{{ detection?.status === 'ready' ? '正在进入镜头工作台…' : '正在自动拉片…' }}</strong>
+            <p v-if="detection?.status === 'ready'">自动切镜结果已经完成，正在恢复或创建 Final Shot Draft。</p>
+            <p v-else>本地 TransNetV2 正在检测切镜点；完成后会自动创建 Final Shot Draft，并直接进入镜头工作台。</p>
           </div>
-          <span class="shot-next-status">F05 待开发</span>
-        </section>
-      </template>
+        </div>
 
-      <template v-else>
-        <section class="shot-profile-grid">
-          <article class="content-panel shot-profile-card">
-            <span>01</span><div><strong>TransNetV2</strong><p>本地神经网络检测硬切与渐变转场，不使用云端 API。</p></div>
-          </article>
-          <article class="content-panel shot-profile-card">
-            <span>02</span><div><strong>真实 PTS</strong><p>逐帧 FFprobe 时间戳与模型 prediction 一一对齐，VFR 不按 FPS 猜时间。</p></div>
-          </article>
-          <article class="content-panel shot-profile-card">
-            <span>03</span><div><strong>Source Mapping</strong><p>复用 F03 固定 offset，把 Proxy 边界映射为后续功能统一使用的 Source 时间。</p></div>
-          </article>
-        </section>
+        <template v-else>
+          <div>
+            <span class="panel-eyebrow">WORKFLOW 02 · SHOT ANALYSIS</span>
+            <h2>{{ detection?.status === 'ready' ? '自动切镜已经完成' : '开始拉片' }}</h2>
+            <p v-if="detection?.status === 'ready'">不需要停留查看内部 F04 表格。继续后会直接进入 Final Shot 人工修正工作台。</p>
+            <p v-else>系统会自动完成镜头边界检测并建立 Final Shot Draft。你只需要在随后打开的工作台里检查、拆分、合并和确认。</p>
+          </div>
+          <button type="button" class="primary-button shot-start-button" @click="startShotWorkflow">
+            {{ detection?.status === 'ready' ? '进入镜头工作台' : '开始拉片' }}
+          </button>
+        </template>
+      </section>
 
-        <section class="content-panel shot-input-panel">
-          <div class="section-heading">
-            <div><h2>F03 输入已经就绪</h2><p>运行前和保存结果前都会再次校验 Proxy SHA-256。</p></div>
-            <span class="online-chip"><i></i> PREPROCESS READY</span>
-          </div>
-          <div class="shot-input-grid">
-            <div><span>Proxy</span><strong>{{ preprocess.proxy_relative_path }}</strong></div>
-            <div><span>Proxy 时长</span><strong>{{ formatDuration(preprocess.proxy_duration_us) }}</strong></div>
-            <div><span>Profile</span><strong>F03 V{{ preprocess.profile_version }}</strong></div>
-            <div><span>Proxy → Source Offset</span><strong>{{ (preprocess.proxy_to_source_offset_us / 1_000_000).toFixed(6) }} s</strong></div>
-          </div>
-        </section>
-
-        <section class="content-panel shot-run-panel">
-          <div v-if="shotStore.processing" class="shot-processing-state">
-            <div class="loading-ring"></div>
-            <div>
-              <strong>正在自动拉片…</strong>
-              <p>正在执行 Proxy 完整性校验、FFprobe 逐帧 PTS、TransNetV2 本地推理、转场归并和 Shot 连续性校验。此阶段不显示虚假百分比。</p>
-            </div>
-          </div>
-          <template v-else>
-            <div>
-              <span class="panel-eyebrow">READY TO DETECT</span>
-              <h2>开始本地自动拉片</h2>
-              <p>Profile V1 固定使用 threshold 0.5 和 120ms 近邻去抖。页面不开放随意填写算法参数，避免同一功能产生不可比较结果。</p>
-            </div>
-            <button type="button" class="primary-button shot-start-button" @click="startDetection">开始自动拉片</button>
-          </template>
-        </section>
-      </template>
+      <section class="shot-profile-grid">
+        <article class="content-panel shot-profile-card">
+          <span>01</span><div><strong>自动检测</strong><p>本地模型识别镜头转场，自动证据保持只读。</p></div>
+        </article>
+        <article class="content-panel shot-profile-card">
+          <span>02</span><div><strong>建立 Final Shot</strong><p>自动结果完成后系统自动建立独立 Draft，不要求用户点击“初始化”。</p></div>
+        </article>
+        <article class="content-panel shot-profile-card">
+          <span>03</span><div><strong>人工确认</strong><p>直接进入三栏镜头工作台，完成边界修正、拆分、合并和最终确认。</p></div>
+        </article>
+      </section>
     </template>
   </StudioShell>
 </template>
