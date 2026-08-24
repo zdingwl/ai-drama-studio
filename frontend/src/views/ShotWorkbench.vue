@@ -30,6 +30,7 @@ const selectedShot = computed(() => selectedIndex.value >= 0 ? shots.value[selec
 const isLocked = computed(() => workbench.value?.status === 'confirmed')
 const totalDurationUs = computed(() => workbench.value ? workbench.value.source_end_us - workbench.value.source_start_us : 0)
 const proxyUrl = computed(() => shotWorkbenchProxyUrl(projectId.value))
+const fatalError = computed(() => projectStore.errorMessage || detectionStore.errorMessage || (!workbench.value ? workbenchStore.errorMessage : ''))
 
 onMounted(async () => {
   workbenchStore.reset()
@@ -86,10 +87,7 @@ function keyframeTimes(shot: FinalShot): Array<{ label: string; timeUs: number }
   const labels = ['首帧', '25%', '中帧', '75%', '尾帧']
   return fractions.map((fraction, index) => ({
     label: labels[index],
-    timeUs: Math.min(
-      shot.final_end_us - 1,
-      shot.final_start_us + Math.floor(shot.duration_us * fraction),
-    ),
+    timeUs: Math.min(shot.final_end_us - 1, shot.final_start_us + Math.floor(shot.duration_us * fraction)),
   }))
 }
 
@@ -108,18 +106,17 @@ function onTimeUpdate(): void {
   if (!workbench.value || !videoRef.value) return
   const sourceUs = workbench.value.source_start_us + Math.round(videoRef.value.currentTime * 1_000_000)
   currentSourceUs.value = Math.min(workbench.value.source_end_us, sourceUs)
-  const current = shots.value.find(
-    (shot) => sourceUs >= shot.final_start_us && sourceUs < shot.final_end_us,
-  )
+  const current = shots.value.find((shot) => sourceUs >= shot.final_start_us && sourceUs < shot.final_end_us)
   if (current && current.id !== selectedShotId.value) selectedShotId.value = current.id
 }
 
 async function saveStartBoundary(): Promise<void> {
   if (isLocked.value || selectedIndex.value <= 0 || !selectedShot.value) return
   const previous = shots.value[selectedIndex.value - 1]
+  const keepId = selectedShot.value.id
   try {
     await workbenchStore.adjustBoundary(projectId.value, previous.id, Math.round(draftStartSeconds.value * 1_000_000))
-    selectedShotId.value = selectedShot.value?.id ?? ''
+    selectedShotId.value = keepId
   } catch {
     syncDraftInputs()
   }
@@ -204,40 +201,22 @@ async function confirmTimeline(): Promise<void> {
     </template>
 
     <div v-if="projectStore.opening || detectionStore.loading || workbenchStore.loading" class="workspace-loading">
-      <div class="loading-ring"></div>
-      <strong>正在打开镜头工作台</strong>
-      <p>读取 F04 Auto Evidence，并准备独立 Final Shot Timeline…</p>
+      <div class="loading-ring"></div><strong>正在打开镜头工作台</strong><p>读取 F04 Auto Evidence，并准备独立 Final Shot Timeline…</p>
     </div>
 
-    <div v-else-if="projectStore.errorMessage || detectionStore.errorMessage || workbenchStore.errorMessage" class="workspace-error-panel">
+    <div v-else-if="fatalError" class="workspace-error-panel">
       <div class="error-visual">!</div>
-      <div>
-        <span class="panel-eyebrow">SHOT WORKBENCH ERROR</span>
-        <h2>镜头工作台暂时不可用</h2>
-        <p>{{ projectStore.errorMessage || detectionStore.errorMessage || workbenchStore.errorMessage }}</p>
-        <button type="button" class="secondary-button" @click="router.push(`/projects/${projectId}`)">返回项目总览</button>
-      </div>
+      <div><span class="panel-eyebrow">SHOT WORKBENCH ERROR</span><h2>镜头工作台暂时不可用</h2><p>{{ fatalError }}</p><button type="button" class="secondary-button" @click="router.push(`/projects/${projectId}`)">返回项目总览</button></div>
     </div>
 
     <section v-else-if="detection?.status !== 'ready'" class="content-panel shot-workbench-blocked">
-      <span class="panel-eyebrow">F04 REQUIRED</span>
-      <h2>请先完成自动拉片</h2>
-      <p>F05 必须以一份 READY 的 F04 Auto Shot Candidate 作为只读来源。</p>
-      <button type="button" class="primary-button" @click="router.push(`/projects/${projectId}/shot-detection`)">进入自动拉片</button>
+      <span class="panel-eyebrow">F04 REQUIRED</span><h2>请先完成自动拉片</h2><p>F05 必须以一份 READY 的 F04 Auto Shot Candidate 作为只读来源。</p><button type="button" class="primary-button" @click="router.push(`/projects/${projectId}/shot-detection`)">进入自动拉片</button>
     </section>
 
     <template v-else-if="workbench && selectedShot">
       <section class="shot-workbench-heading">
-        <div>
-          <span class="panel-eyebrow">FINAL SHOT WORKBENCH · F05</span>
-          <h2>逐镜头检查、播放和修正</h2>
-          <p>F04 自动证据保持只读；这里的每一次修改只作用于 Final Shot。</p>
-        </div>
-        <div class="shot-workbench-summary">
-          <span>{{ shots.length }} SHOTS</span>
-          <span>REV {{ workbench.revision }}</span>
-          <span :class="{ locked: isLocked }">{{ isLocked ? '已确认' : '编辑中' }}</span>
-        </div>
+        <div><span class="panel-eyebrow">FINAL SHOT WORKBENCH · F05</span><h2>逐镜头检查、播放和修正</h2><p>F04 自动证据保持只读；这里的每一次修改只作用于 Final Shot。</p></div>
+        <div class="shot-workbench-summary"><span>{{ shots.length }} SHOTS</span><span>REV {{ workbench.revision }}</span><span :class="{ locked: isLocked }">{{ isLocked ? '已确认' : '编辑中' }}</span></div>
       </section>
 
       <div v-if="workbenchStore.errorMessage" class="inline-alert error-alert shot-workbench-alert">
@@ -246,25 +225,11 @@ async function confirmTimeline(): Promise<void> {
 
       <section class="shot-workbench-grid">
         <aside class="content-panel shot-list-column">
-          <div class="shot-column-header">
-            <div><span class="panel-eyebrow">SHOT LIST</span><h3>镜头列表</h3></div>
-            <span>{{ shots.length }}</span>
-          </div>
+          <div class="shot-column-header"><div><span class="panel-eyebrow">SHOT LIST</span><h3>镜头列表</h3></div><span>{{ shots.length }}</span></div>
           <div class="final-shot-list">
-            <button
-              v-for="shot in shots"
-              :key="shot.id"
-              type="button"
-              class="final-shot-card"
-              :class="{ active: shot.id === selectedShotId, manual: shot.origin_kind === 'manual' }"
-              @click="selectShot(shot)"
-            >
+            <button v-for="shot in shots" :key="shot.id" type="button" class="final-shot-card" :class="{ active: shot.id === selectedShotId, manual: shot.origin_kind === 'manual' }" @click="selectShot(shot)">
               <img :src="frameUrl(thumbnailTime(shot))" loading="lazy" alt="" />
-              <span class="final-shot-copy">
-                <strong>#{{ String(shot.ordinal).padStart(3, '0') }}</strong>
-                <small>{{ formatTimecode(shot.final_start_us) }}</small>
-                <em>{{ formatDuration(shot.duration_us) }}</em>
-              </span>
+              <span class="final-shot-copy"><strong>#{{ String(shot.ordinal).padStart(3, '0') }}</strong><small>{{ formatTimecode(shot.final_start_us) }}</small><em>{{ formatDuration(shot.duration_us) }}</em></span>
               <span v-if="shot.origin_kind === 'manual'" class="manual-dot" title="已人工修改"></span>
             </button>
           </div>
@@ -272,118 +237,52 @@ async function confirmTimeline(): Promise<void> {
 
         <main class="shot-center-column">
           <section class="content-panel shot-player-panel">
-            <div class="shot-player-topline">
-              <div>
-                <span class="panel-eyebrow">NOW REVIEWING</span>
-                <strong>#{{ String(selectedShot.ordinal).padStart(3, '0') }}</strong>
-              </div>
-              <span class="mono-value">{{ formatTimecode(selectedShot.final_start_us) }} → {{ formatTimecode(selectedShot.final_end_us) }}</span>
-            </div>
-            <video
-              ref="videoRef"
-              class="shot-workbench-video"
-              :src="proxyUrl"
-              controls
-              preload="metadata"
-              @timeupdate="onTimeUpdate"
-              @seeked="onTimeUpdate"
-            ></video>
-            <div class="player-time-row">
-              <span>播放点</span>
-              <strong class="mono-value">{{ formatTimecode(currentSourceUs) }}</strong>
-              <small>Source Timeline</small>
-            </div>
+            <div class="shot-player-topline"><div><span class="panel-eyebrow">NOW REVIEWING</span><strong>#{{ String(selectedShot.ordinal).padStart(3, '0') }}</strong></div><span class="mono-value">{{ formatTimecode(selectedShot.final_start_us) }} → {{ formatTimecode(selectedShot.final_end_us) }}</span></div>
+            <video ref="videoRef" class="shot-workbench-video" :src="proxyUrl" controls preload="metadata" @timeupdate="onTimeUpdate" @seeked="onTimeUpdate"></video>
+            <div class="player-time-row"><span>播放点</span><strong class="mono-value">{{ formatTimecode(currentSourceUs) }}</strong><small>Source Timeline</small></div>
           </section>
 
           <section class="content-panel shot-timeline-panel">
-            <div class="shot-column-header">
-              <div><span class="panel-eyebrow">SHOT TIMELINE</span><h3>镜头时间轴</h3></div>
-              <span>{{ formatDuration(totalDurationUs) }}</span>
-            </div>
+            <div class="shot-column-header"><div><span class="panel-eyebrow">SHOT TIMELINE</span><h3>镜头时间轴</h3></div><span>{{ formatDuration(totalDurationUs) }}</span></div>
             <div class="shot-timeline-track">
-              <button
-                v-for="shot in shots"
-                :key="shot.id"
-                type="button"
-                class="shot-timeline-segment"
-                :class="{ active: shot.id === selectedShotId, manual: shot.origin_kind === 'manual' }"
-                :style="{ flexGrow: Math.max(1, shot.duration_us) }"
-                :title="`#${shot.ordinal} ${formatTimecode(shot.final_start_us)} - ${formatTimecode(shot.final_end_us)}`"
-                @click="selectShot(shot)"
-              ><span>{{ shot.ordinal }}</span></button>
+              <button v-for="shot in shots" :key="shot.id" type="button" class="shot-timeline-segment" :class="{ active: shot.id === selectedShotId, manual: shot.origin_kind === 'manual' }" :style="{ flexGrow: Math.max(1, shot.duration_us) }" :title="`#${shot.ordinal} ${formatTimecode(shot.final_start_us)} - ${formatTimecode(shot.final_end_us)}`" @click="selectShot(shot)"><span>{{ shot.ordinal }}</span></button>
             </div>
           </section>
 
           <section class="content-panel shot-keyframes-panel">
-            <div class="shot-column-header">
-              <div><span class="panel-eyebrow">KEYFRAMES</span><h3>当前镜头关键帧</h3></div>
-              <span>5 FRAMES</span>
-            </div>
+            <div class="shot-column-header"><div><span class="panel-eyebrow">KEYFRAMES</span><h3>当前镜头关键帧</h3></div><span>5 FRAMES</span></div>
             <div class="shot-keyframe-grid">
-              <button
-                v-for="frame in keyframeTimes(selectedShot)"
-                :key="frame.label"
-                type="button"
-                @click="videoRef && (videoRef.currentTime = playerSecondsFromSource(frame.timeUs))"
-              >
-                <img :src="frameUrl(frame.timeUs)" loading="lazy" alt="" />
-                <span>{{ frame.label }}</span>
-                <small>{{ formatTimecode(frame.timeUs) }}</small>
+              <button v-for="frame in keyframeTimes(selectedShot)" :key="frame.label" type="button" @click="videoRef && (videoRef.currentTime = playerSecondsFromSource(frame.timeUs))">
+                <img :src="frameUrl(frame.timeUs)" loading="lazy" alt="" /><span>{{ frame.label }}</span><small>{{ formatTimecode(frame.timeUs) }}</small>
               </button>
             </div>
           </section>
         </main>
 
         <aside class="content-panel shot-detail-column">
-          <div class="shot-detail-header">
-            <div>
-              <span class="panel-eyebrow">FINAL SHOT</span>
-              <h3>#{{ String(selectedShot.ordinal).padStart(3, '0') }}</h3>
-            </div>
-            <span class="shot-origin-chip">{{ selectedShot.origin_kind === 'manual' ? 'MANUAL' : 'AUTO COPY' }}</span>
-          </div>
+          <div class="shot-detail-header"><div><span class="panel-eyebrow">FINAL SHOT</span><h3>#{{ String(selectedShot.ordinal).padStart(3, '0') }}</h3></div><span class="shot-origin-chip">{{ selectedShot.origin_kind === 'manual' ? 'MANUAL' : 'AUTO COPY' }}</span></div>
 
           <div class="shot-time-editor">
-            <label>
-              <span>Final Start · 秒</span>
-              <div><input v-model.number="draftStartSeconds" type="number" step="0.001" :disabled="isLocked || selectedIndex === 0 || workbenchStore.saving" /><button type="button" :disabled="isLocked || selectedIndex === 0 || workbenchStore.saving" @click="saveStartBoundary">保存</button></div>
-              <small>{{ selectedIndex === 0 ? '首镜起点由整集范围锁定' : '保存时会同步修改前一镜的结束点' }}</small>
-            </label>
-            <label>
-              <span>Final End · 秒</span>
-              <div><input v-model.number="draftEndSeconds" type="number" step="0.001" :disabled="isLocked || selectedIndex === shots.length - 1 || workbenchStore.saving" /><button type="button" :disabled="isLocked || selectedIndex === shots.length - 1 || workbenchStore.saving" @click="saveEndBoundary">保存</button></div>
-              <small>{{ selectedIndex === shots.length - 1 ? '末镜终点由整集范围锁定' : '保存时会同步修改后一镜的开始点' }}</small>
-            </label>
+            <label><span>Final Start · 秒</span><div><input v-model.number="draftStartSeconds" type="number" step="0.001" :disabled="isLocked || selectedIndex === 0 || workbenchStore.saving" /><button type="button" :disabled="isLocked || selectedIndex === 0 || workbenchStore.saving" @click="saveStartBoundary">保存</button></div><small>{{ selectedIndex === 0 ? '首镜起点由整集范围锁定' : '保存时会同步修改前一镜的结束点' }}</small></label>
+            <label><span>Final End · 秒</span><div><input v-model.number="draftEndSeconds" type="number" step="0.001" :disabled="isLocked || selectedIndex === shots.length - 1 || workbenchStore.saving" /><button type="button" :disabled="isLocked || selectedIndex === shots.length - 1 || workbenchStore.saving" @click="saveEndBoundary">保存</button></div><small>{{ selectedIndex === shots.length - 1 ? '末镜终点由整集范围锁定' : '保存时会同步修改后一镜的开始点' }}</small></label>
           </div>
 
           <div class="shot-edit-actions">
             <button type="button" class="primary-button" :disabled="isLocked || workbenchStore.saving" @click="splitAtPlayhead">在播放点拆分（新增镜头）</button>
-            <div>
-              <button type="button" class="secondary-button" :disabled="isLocked || selectedIndex <= 0 || workbenchStore.saving" @click="mergePrevious">与前一镜合并</button>
-              <button type="button" class="secondary-button" :disabled="isLocked || selectedIndex >= shots.length - 1 || workbenchStore.saving" @click="mergeNext">与后一镜合并</button>
-            </div>
+            <div><button type="button" class="secondary-button" :disabled="isLocked || selectedIndex <= 0 || workbenchStore.saving" @click="mergePrevious">与前一镜合并</button><button type="button" class="secondary-button" :disabled="isLocked || selectedIndex >= shots.length - 1 || workbenchStore.saving" @click="mergeNext">与后一镜合并</button></div>
           </div>
 
-          <div class="shot-origin-block">
-            <span>Auto Evidence 来源</span>
-            <strong>{{ selectedShot.origin_candidate_ids.length }} Candidate</strong>
-            <small>{{ selectedShot.origin_candidate_ids.join(' · ') }}</small>
-          </div>
+          <div class="shot-origin-block"><span>Auto Evidence 来源</span><strong>{{ selectedShot.origin_candidate_ids.length }} Candidate</strong><small>{{ selectedShot.origin_candidate_ids.join(' · ') }}</small></div>
 
           <div class="shot-semantic-placeholder">
             <div class="shot-column-header"><div><span class="panel-eyebrow">LATER FEATURES</span><h3>镜头语义</h3></div><span>待分析</span></div>
-            <dl>
-              <div><dt>人物</dt><dd>F06+</dd></div><div><dt>场景</dt><dd>F11+</dd></div>
-              <div><dt>景别</dt><dd>后续 VLM</dd></div><div><dt>运镜</dt><dd>后续 VLM</dd></div>
-              <div><dt>动作</dt><dd>后续 VLM</dd></div><div><dt>对白</dt><dd>F08+</dd></div>
-            </dl>
+            <dl><div><dt>人物</dt><dd>F06+</dd></div><div><dt>场景</dt><dd>F11+</dd></div><div><dt>景别</dt><dd>后续 VLM</dd></div><div><dt>运镜</dt><dd>后续 VLM</dd></div><div><dt>动作</dt><dd>后续 VLM</dd></div><div><dt>对白</dt><dd>F08+</dd></div></dl>
             <p>这里只预留展示位置，F05 不伪造人物、对白、景别或运镜结果。</p>
           </div>
 
           <div class="shot-confirm-block">
             <div><strong>{{ isLocked ? 'Final Shots 已确认' : '完成全部人工检查后确认' }}</strong><p>{{ isLocked ? '当前时间轴已经锁定，可供后续 Feature 稳定引用。' : '确认后 F05 不再允许调整、拆分或合并。' }}</p></div>
-            <button v-if="!isLocked" type="button" class="primary-button" :disabled="workbenchStore.saving" @click="confirmTimeline">确认 Final Shots</button>
-            <span v-else class="online-chip"><i></i> CONFIRMED</span>
+            <button v-if="!isLocked" type="button" class="primary-button" :disabled="workbenchStore.saving" @click="confirmTimeline">确认 Final Shots</button><span v-else class="online-chip"><i></i> CONFIRMED</span>
           </div>
         </aside>
       </section>
