@@ -28,23 +28,20 @@ const globalNav = computed(() => [
   { label: '资产中心', icon: 'assets', enabled: false, active: false },
 ])
 
-// 项目侧栏只开放已经真正有页面和后端 Contract 的阶段。
-// F04 已进入开发验收，因此“自动拉片”可以导航；F05 以后仍保持禁用，避免 UI 假装能力已经存在。
+// 只开放已经有真实路由和后端 Contract 的阶段；F05 现在进入开发，因此镜头修正可导航。
 const projectNav = computed(() => [
   { label: '项目总览', step: '01', enabled: true, active: route.name === 'workspace', routeName: 'workspace' },
   { label: '视频导入', step: '02', enabled: true, active: route.name === 'source-video', routeName: 'source-video' },
   { label: '视频预处理', step: '03', enabled: true, active: route.name === 'preprocess', routeName: 'preprocess' },
   { label: '自动拉片', step: '04', enabled: true, active: route.name === 'shot-detection', routeName: 'shot-detection' },
-  { label: '镜头修正', step: '05', enabled: false, active: false, routeName: '' },
+  { label: '镜头修正', step: '05', enabled: true, active: route.name === 'shot-workbench', routeName: 'shot-workbench' },
   { label: '人物对白', step: '06', enabled: false, active: false, routeName: '' },
   { label: '生成制作', step: '07', enabled: false, active: false, routeName: '' },
   { label: '最终合成', step: '08', enabled: false, active: false, routeName: '' },
 ])
 
 function goGlobal(label: string): void {
-  if (label === '工作台' || label === '项目管理') {
-    void router.push('/')
-  }
+  if (label === '工作台' || label === '项目管理') void router.push('/')
 }
 
 function goProject(routeName: string): void {
@@ -57,13 +54,8 @@ function goProject(routeName: string): void {
   <div class="studio-shell">
     <aside class="studio-sidebar">
       <div class="brand-block" @click="router.push('/')">
-        <div class="brand-mark" aria-hidden="true">
-          <span class="brand-mark-core">AI</span>
-        </div>
-        <div class="brand-copy">
-          <strong>AI短剧工厂</strong>
-          <span>Drama Studio</span>
-        </div>
+        <div class="brand-mark" aria-hidden="true"><span class="brand-mark-core">AI</span></div>
+        <div class="brand-copy"><strong>AI短剧工厂</strong><span>Drama Studio</span></div>
       </div>
 
       <nav class="side-nav" aria-label="主导航">
@@ -83,10 +75,7 @@ function goProject(routeName: string): void {
       </nav>
 
       <div v-if="projectMode" class="project-nav-section">
-        <div class="project-nav-title">
-          <span>当前项目</span>
-          <strong :title="projectName">{{ projectName || '项目工作区' }}</strong>
-        </div>
+        <div class="project-nav-title"><span>当前项目</span><strong :title="projectName">{{ projectName || '项目工作区' }}</strong></div>
         <div class="project-flow-nav">
           <button
             v-for="item in projectNav"
@@ -105,17 +94,9 @@ function goProject(routeName: string): void {
       </div>
 
       <div class="sidebar-footer">
-        <div class="local-badge">
-          <span class="status-dot"></span>
-          <div>
-            <strong>本地模式</strong>
-            <span>数据保存在当前电脑</span>
-          </div>
-        </div>
+        <div class="local-badge"><span class="status-dot"></span><div><strong>本地模式</strong><span>数据保存在当前电脑</span></div></div>
         <button type="button" class="nav-item disabled" disabled>
-          <span class="nav-icon" data-icon="settings" aria-hidden="true"></span>
-          <span>系统设置</span>
-          <span class="nav-soon">后续</span>
+          <span class="nav-icon" data-icon="settings" aria-hidden="true"></span><span>系统设置</span><span class="nav-soon">后续</span>
         </button>
       </div>
     </aside>
@@ -124,23 +105,16 @@ function goProject(routeName: string): void {
       <header class="topbar">
         <div class="page-heading">
           <button v-if="projectMode" type="button" class="back-button" @click="router.push('/')">←</button>
-          <div>
-            <h1>{{ title }}</h1>
-            <p v-if="subtitle">{{ subtitle }}</p>
-          </div>
+          <div><h1>{{ title }}</h1><p v-if="subtitle">{{ subtitle }}</p></div>
         </div>
         <div class="topbar-actions">
           <slot name="topbar" />
-          <button type="button" class="icon-button" title="通知（后续功能）" disabled>
-            <span aria-hidden="true">◌</span>
-          </button>
+          <button type="button" class="icon-button" title="通知（后续功能）" disabled><span aria-hidden="true">◌</span></button>
           <div class="avatar-button" title="本地用户">本</div>
         </div>
       </header>
 
-      <main class="studio-content">
-        <slot />
-      </main>
+      <main class="studio-content"><slot /></main>
     </div>
   </div>
 </template>
