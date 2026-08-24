@@ -13,6 +13,7 @@ def use_temp_database(monkeypatch, tmp_path: Path) -> None:
     studio_v2.Base.metadata.create_all(engine)
     monkeypatch.setattr(studio_v2, "ENGINE", engine)
     monkeypatch.setattr(studio_v2, "SessionLocal", sessionmaker(bind=engine, autoflush=False, expire_on_commit=False))
+    monkeypatch.setattr(studio_v2, "workspace_root", lambda: tmp_path / "workspace")
 
 
 def seed_one_shot_project(monkeypatch, tmp_path: Path) -> tuple[str, str, str]:
