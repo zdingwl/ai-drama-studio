@@ -1,4 +1,4 @@
-"""AI Drama Studio 本地 FastAPI 应用与 F01–F06 HTTP Controller。
+"""AI Drama Studio 本地 FastAPI 应用与内部 Feature / 用户 Workflow HTTP Controller。
 
 Controller 只负责 HTTP 边界：接收请求、调用业务函数、返回响应。
 不在本文件直接执行 SQL、媒体处理、模型推理、Hash 或业务状态转换。
@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
 
-from fastapi import FastAPI, File, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -31,6 +31,7 @@ from engine.app.preprocess import (
     preprocess_source_video,
     recover_source_preprocesses,
 )
+from engine.app.project_import_workflow import import_project_source_workflow
 from engine.app.projects import (
     ProjectError,
     create_project,
@@ -63,8 +64,8 @@ from engine.app.source_videos import (
     recover_source_video_imports,
 )
 
-# F01 创建项目只允许保存下面这些稳定代码。
-# 前端使用下拉框限制普通用户，API Schema 再限制直接请求，形成双层保护。
+# 项目与 Workflow 01 只允许保存下面这些稳定代码。
+# 前端使用下拉框限制普通用户，API Schema/Form 再限制直接请求，形成双层保护。
 LanguageCode = Literal["zh", "en", "ja", "ko", "es", "pt", "fr", "de", "id", "th", "vi"]
 RegionCode = Literal["US", "GB", "JP", "KR", "ES", "BR", "FR", "DE", "ID", "TH", "VN", "TW", "SG"]
 
@@ -75,7 +76,7 @@ F06_PREVIEW_CACHE_HEADERS = {"Cache-Control": "private, max-age=31536000, immuta
 
 
 class CreateProjectRequest(BaseModel):
-    """前端创建项目时允许提交的 F01 基础字段。"""
+    """内部 F01 单独创建项目接口允许提交的基础字段。"""
 
     name: str = Field(description="用户看到的项目名称")
     source_language: LanguageCode | None = Field(default=None, description="原片标准语言代码；可为空表示暂不指定")
@@ -157,6 +158,15 @@ class SourcePreprocessResponse(BaseModel):
     source_video_time_base_den: int
     created_at: datetime
     completed_at: datetime
+
+
+class ProjectImportWorkflowResponse(BaseModel):
+    """Workflow 01 一次完成后的完整结果；不创建重复业务身份。"""
+
+    status: str
+    project: ProjectResponse
+    source_video: SourceVideoResponse
+    preprocess: SourcePreprocessResponse
 
 
 class ShotCandidateResponse(BaseModel):
@@ -287,7 +297,7 @@ class CharacterTrackResponse(BaseModel):
 
 
 class CharacterCandidateResponse(BaseModel):
-    """F06 自动聚类的人物候选；不是 F07 Final Character。"""
+    """F06 自动聚类的人物候选；不是最终人物。"""
 
     id: str
     run_id: str
@@ -305,7 +315,7 @@ class CharacterCandidateResponse(BaseModel):
 
 
 class CharacterDetectionResponse(BaseModel):
-    """F06 一次自动人物识别 Run 与全部 Character Candidate。"""
+    """演员视觉识别子能力的一次 Run 与全部 Character Candidate。"""
 
     id: str
     project_id: str
@@ -336,7 +346,7 @@ class CharacterDetectionResponse(BaseModel):
 
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
-    """启动时升级数据库，并按依赖顺序恢复 F01–F06 可恢复状态。"""
+    """启动时升级数据库，并按依赖顺序恢复内部 Feature 的可恢复状态。"""
 
     init_database()
     recover_creating_projects()
@@ -350,7 +360,7 @@ async def _lifespan(_: FastAPI):
 def create_app() -> FastAPI:
     """创建 AI Drama Studio 本地 FastAPI Application。"""
 
-    app = FastAPI(title="AI Drama Studio", version="0.6.0", lifespan=_lifespan)
+    app = FastAPI(title="AI Drama Studio", version="0.6.1", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[],
@@ -362,7 +372,22 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-        """把 FastAPI/Pydantic 请求格式错误转换成当前 Feature 的统一错误码。"""
+        """把 FastAPI/Pydantic/Form 请求格式错误转换成稳定错误码。"""
+
+        invalid_fields = {str(error["loc"][-1]) for error in exc.errors() if error.get("loc")}
+
+        if request.url.path == "/api/project-imports":
+            if "source_language" in invalid_fields:
+                code, message = "PROJECT_SOURCE_LANGUAGE_UNSUPPORTED", "原片语言不是系统支持的标准语言"
+            elif "target_language" in invalid_fields:
+                code, message = "PROJECT_TARGET_LANGUAGE_UNSUPPORTED", "目标语言不是系统支持的标准语言"
+            elif "target_region" in invalid_fields:
+                code, message = "PROJECT_TARGET_REGION_UNSUPPORTED", "目标地区不是系统支持的标准地区"
+            elif "file" in invalid_fields:
+                code, message = "PROJECT_IMPORT_FILE_REQUIRED", "请选择要导入的原片视频"
+            else:
+                code, message = "PROJECT_IMPORT_REQUEST_INVALID", "导入原片请求格式不正确"
+            return JSONResponse(status_code=422, content={"error": {"code": code, "message": message}})
 
         if request.url.path.endswith("/source-video"):
             return JSONResponse(
@@ -375,7 +400,6 @@ def create_app() -> FastAPI:
                 content={"error": {"code": "SHOT_WORKBENCH_REQUEST_INVALID", "message": "镜头修正请求格式不正确"}},
             )
 
-        invalid_fields = {str(error["loc"][-1]) for error in exc.errors() if error.get("loc")}
         if "source_language" in invalid_fields:
             code, message = "PROJECT_SOURCE_LANGUAGE_UNSUPPORTED", "原片语言不是系统支持的标准语言"
         elif "target_language" in invalid_fields:
@@ -454,7 +478,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ShotWorkbenchError)
     async def shot_workbench_error_handler(_: Request, exc: ShotWorkbenchError) -> JSONResponse:
-        """把 F05 Final Shot/媒体错误映射为稳定 HTTP 状态。"""
+        """把 Final Shot/媒体错误映射为稳定 HTTP 状态。"""
 
         status_map = {
             "SHOT_WORKBENCH_DETECTION_REQUIRED": 409,
@@ -477,7 +501,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(CharacterDetectionError)
     async def character_detection_error_handler(_: Request, exc: CharacterDetectionError) -> JSONResponse:
-        """把 F06 模型/上游/算法错误映射成稳定 HTTP 状态。"""
+        """把演员视觉识别模型/上游/算法错误映射成稳定 HTTP 状态。"""
 
         status_map = {
             "CHARACTER_DETECTION_FINAL_SHOTS_REQUIRED": 409,
@@ -511,6 +535,33 @@ def create_app() -> FastAPI:
     def health_api() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.post("/api/project-imports", response_model=ProjectImportWorkflowResponse, status_code=201)
+    async def import_project_source_workflow_api(
+        name: str = Form(...),
+        source_language: LanguageCode | None = Form(default=None),
+        target_language: LanguageCode = Form(...),
+        target_region: RegionCode = Form(...),
+        workspace_root: str | None = Form(default=None),
+        file: UploadFile = File(...),
+    ) -> dict:
+        """Workflow 01：用户一次提交，完成 Project + Source + Preprocess。"""
+
+        try:
+            record = await import_project_source_workflow(
+                name=name,
+                source_language=source_language,
+                target_language=target_language,
+                target_region=target_region,
+                workspace_root=workspace_root,
+                upload_file=file,
+                original_filename=file.filename or "source-video",
+            )
+            return record.to_dict()
+        finally:
+            await file.close()
+
+    # 下面 F01/F02/F03 单独 API 继续保留作为内部能力、历史项目恢复和调试入口；
+    # 新普通用户流程不再要求逐个调用。
     @app.get("/api/projects", response_model=list[ProjectResponse])
     def list_projects_api() -> list[dict]:
         return [project.to_dict() for project in list_projects()]
@@ -560,14 +611,14 @@ def create_app() -> FastAPI:
 
     @app.get("/api/projects/{project_id}/shot-workbench", response_model=ShotWorkbenchResponse | None)
     def get_shot_workbench_api(project_id: str) -> dict | None:
-        """读取 F05 Final Shot 工作区；尚未初始化返回 200 null。"""
+        """读取 Final Shot 工作区；尚未初始化返回 200 null。"""
 
         record = get_shot_workbench(project_id=project_id)
         return record.to_dict() if record else None
 
     @app.post("/api/projects/{project_id}/shot-workbench/initialize", response_model=ShotWorkbenchResponse, status_code=201)
     def initialize_shot_workbench_api(project_id: str) -> dict:
-        """把 F04 Auto Candidate 复制成独立 Final Shot Draft。"""
+        """把自动 Shot Candidate 复制成独立 Final Shot Draft。"""
 
         return initialize_shot_workbench(project_id=project_id).to_dict()
 
@@ -611,27 +662,27 @@ def create_app() -> FastAPI:
         project_id: str,
         source_time_us: int = Query(description="Source Domain integer microseconds"),
     ) -> FileResponse:
-        """按 Source 时间返回 F05 工作台缩略图/关键帧 JPEG；稳定时间点允许浏览器长期缓存。"""
+        """按 Source 时间返回拉片工作台缩略图/关键帧 JPEG。"""
 
         path = render_workbench_frame(project_id=project_id, source_time_us=source_time_us)
         return FileResponse(path, media_type="image/jpeg", headers=F05_PREVIEW_CACHE_HEADERS)
 
     @app.get("/api/projects/{project_id}/character-detection", response_model=CharacterDetectionResponse | None)
     def get_character_detection_api(project_id: str) -> dict | None:
-        """读取 F06 当前 processing/current ready/最近 failed 状态。"""
+        """读取人物对白 Workflow 中当前演员视觉识别 Evidence。"""
 
         record = get_character_detection(project_id=project_id)
         return record.to_dict() if record else None
 
     @app.post("/api/projects/{project_id}/character-detection", response_model=CharacterDetectionResponse, status_code=201)
     def run_character_detection_api(project_id: str) -> dict:
-        """首次运行 F06；已有 current ready 时禁止静默覆盖。"""
+        """首次运行演员视觉识别；已有 current ready 时禁止静默覆盖。"""
 
         return run_character_detection(project_id=project_id).to_dict()
 
     @app.post("/api/projects/{project_id}/character-detection/rerun", response_model=CharacterDetectionResponse)
     def rerun_character_detection_api(project_id: str) -> dict:
-        """显式创建新的 F06 Run；成功后才原子替换 current。"""
+        """显式创建新的演员视觉识别 Run；成功后才原子替换 current。"""
 
         return rerun_character_detection(project_id=project_id).to_dict()
 
