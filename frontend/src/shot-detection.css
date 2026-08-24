@@ -29,7 +29,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 8px 12px;
   font-size: 13px;
@@ -56,8 +56,8 @@
   border-radius: 16px;
   font-size: 22px;
   font-weight: 800;
-  background: var(--surface-strong);
-  border: 1px solid var(--border-color);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   margin-bottom: 18px;
 }
 
@@ -81,8 +81,8 @@
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  background: var(--surface-strong);
-  border: 1px solid var(--border-color);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   font-weight: 800;
 }
 
@@ -111,8 +111,8 @@
   min-width: 0;
   padding: 15px 16px;
   border-radius: 12px;
-  background: var(--surface-strong);
-  border: 1px solid var(--border-color);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
 }
 
 .shot-input-grid span,
@@ -121,7 +121,7 @@
   display: block;
   margin-bottom: 6px;
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--muted);
 }
 
 .shot-input-grid strong,
@@ -186,9 +186,9 @@
 .shot-stat-grid article {
   min-width: 0;
   padding: 18px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border);
   border-radius: 14px;
-  background: var(--surface-strong);
+  background: var(--surface-2);
 }
 
 .shot-stat-grid strong {
@@ -201,14 +201,14 @@
 .shot-stat-grid small {
   display: block;
   margin-top: 7px;
-  color: var(--text-muted);
+  color: var(--muted);
   font-size: 12px;
 }
 
 .shot-table-wrap {
   width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border);
   border-radius: 14px;
 }
 
@@ -223,15 +223,15 @@
 .shot-table td {
   padding: 14px 16px;
   text-align: left;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
 
 .shot-table th {
   font-size: 12px;
   letter-spacing: .04em;
-  color: var(--text-muted);
-  background: var(--surface-strong);
+  color: var(--muted);
+  background: var(--surface-2);
 }
 
 .shot-table tbody tr:last-child td {
