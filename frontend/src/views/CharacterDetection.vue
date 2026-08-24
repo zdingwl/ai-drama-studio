@@ -49,9 +49,13 @@ onMounted(async () => {
     const result = await fetchShotWorkbench(projectId.value)
     workbenchStore.currentWorkbench = result
     if (result?.status === 'confirmed') {
-      const current = await characterStore.loadCharacterDetection(projectId.value)
-      if (current?.candidates.length) selectCandidate(current.candidates[0], false)
-      currentSourceUs.value = current?.source_start_us ?? result.source_start_us
+      try {
+        const current = await characterStore.loadCharacterDetection(projectId.value)
+        if (current?.candidates.length) selectCandidate(current.candidates[0], false)
+        currentSourceUs.value = current?.source_start_us ?? result.source_start_us
+      } catch {
+        // F06 自身读取错误由 Character Store 展示，不伪装成 F05 upstream error。
+      }
     }
   } catch (error) {
     upstreamError.value = error instanceof Error ? error.message : 'F05 Final Shot 状态读取失败'
@@ -105,12 +109,32 @@ function selectTrack(track: CharacterTrack): void {
   seekSource(track.representative_source_us)
 }
 
+/**
+ * 播放时只在“当前人工选中的 Candidate”内部跟随 Track。
+ * 同一画面可能多人，因此 F06 不根据播放时间自动切换 Candidate，避免 UI 把同框人物强行选成一个。
+ */
 function onTimeUpdate(): void {
   if (!videoRef.value || !detection.value) return
-  currentSourceUs.value = Math.min(
+  const sourceUs = Math.min(
     detection.value.source_end_us,
     detection.value.source_start_us + Math.round(videoRef.value.currentTime * 1_000_000),
   )
+  currentSourceUs.value = sourceUs
+
+  const currentShot = workbench.value?.shots.find(
+    (shot) => sourceUs >= shot.final_start_us && sourceUs < shot.final_end_us,
+  )
+  if (!currentShot || !selectedCandidate.value) return
+  const tracksInCurrentShot = selectedCandidate.value.tracks.filter(
+    (track) => track.final_shot_id === currentShot.id,
+  )
+  if (!tracksInCurrentShot.length) return
+  const nearest = tracksInCurrentShot.reduce((best, track) => {
+    return Math.abs(track.representative_source_us - sourceUs) < Math.abs(best.representative_source_us - sourceUs)
+      ? track
+      : best
+  })
+  selectedTrackId.value = nearest.id
 }
 
 function trackStyle(track: CharacterTrack): Record<string, string> {
