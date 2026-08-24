@@ -86,12 +86,15 @@
 
 ### `render_workbench_frame(project_id, source_time_us)`
 
-**干嘛：** 为左侧 Shot 缩略图和中间 5 关键帧抽取 JPEG。  
+**干嘛：** 为左侧 Shot 缩略图和中间 5 关键帧读取/抽取 JPEG。  
 **输入：** Project ID + Source Domain microseconds。  
 **时间换算：** `relative_seconds = (source_time_us - edit_set.source_start_us) / 1e6`。  
 **输出：** Workspace `.cache/f05/frames/<source_us>.jpg`。  
 **为什么要减 source_start：** FFmpeg `-ss` 与浏览器 currentTime 都是媒体相对时间，不能直接使用 Source absolute timestamp。  
-**缓存语义：** UI cache，不是业务资产，删除可重建。  
+**缓存命中规则：** 如果 `.cache/f05/frames/<source_us>.jpg` 已存在且非空，必须直接返回，禁止再次启动 FFmpeg。  
+**缓存失效规则：** Final Shot 边界没有变化时，原时间点图片永久复用；边界调整、拆分、合并只会产生新的 `source_time_us`，只补新时间点，不批量重生成其它 Shot。  
+**HTTP 缓存：** `/shot-workbench/frame` 对稳定时间点返回长期浏览器缓存头；同一 URL 再次打开页面时优先由浏览器/磁盘缓存复用。  
+**缓存语义：** UI cache，不是正式业务资产；人工删除缓存后允许按同一时间点重建。  
 **不能做：** 不创建正式 Keyframe 数据库资产。
 
 ## Controller `engine/app/main.py`
@@ -107,7 +110,7 @@ Controller 只有下面职责：Pydantic 校验 → 调业务函数 → response
 | `POST /merge` | 接收 left_shot_id | `merge_final_shots()` |
 | `POST /confirm` | 人工最终确认 | `confirm_final_shots()` |
 | `GET /media/proxy` | FileResponse | `get_workbench_proxy_path()` |
-| `GET /frame` | JPEG FileResponse | `render_workbench_frame()` |
+| `GET /frame` | JPEG FileResponse + 长期缓存头 | `render_workbench_frame()` |
 
 Controller 禁止自己写 SQL、算 ordinal、算 duration、改 F04 Candidate 或调用 FFmpeg。
 
@@ -131,7 +134,8 @@ Controller 禁止自己写 SQL、算 ordinal、算 duration、改 F04 Candidate 
 Source time <-> player currentTime 显示换算
 触发 Store action
 播放时高亮当前 Shot
-展示关键帧 URL
+当前 Shot 的 5 张关键帧高优先级串行加载（播放中也允许）
+整集 Shot 缩略图低优先级补齐（播放中暂停）
 ```
 
 页面禁止：
@@ -141,5 +145,6 @@ Source time <-> player currentTime 显示换算
 自己重排 ordinal
 自己决定 DB 事务
 自己覆盖 detected_*
+并发启动同一个 Shot 的多个 FFmpeg 关键帧任务
 伪造人物/场景/景别/对白结果
 ```
