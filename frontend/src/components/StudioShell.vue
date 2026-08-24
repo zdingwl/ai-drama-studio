@@ -28,14 +28,15 @@ const globalNav = computed(() => [
   { label: '资产中心', icon: 'assets', enabled: false, active: false },
 ])
 
-// 只开放已经有真实路由和后端 Contract 的阶段；F05 现在进入开发，因此镜头修正可导航。
+// 侧栏仍用 8 个大工作区概括完整 35 Feature；第 06 大区从 F06 自动人物识别开始开放。
+// F06 当前只实现人物 Candidate，ASR / Speaker / 人工对白仍按 F08–F10 后续 Feature 进入该大区。
 const projectNav = computed(() => [
   { label: '项目总览', step: '01', enabled: true, active: route.name === 'workspace', routeName: 'workspace' },
   { label: '视频导入', step: '02', enabled: true, active: route.name === 'source-video', routeName: 'source-video' },
   { label: '视频预处理', step: '03', enabled: true, active: route.name === 'preprocess', routeName: 'preprocess' },
   { label: '自动拉片', step: '04', enabled: true, active: route.name === 'shot-detection', routeName: 'shot-detection' },
   { label: '镜头修正', step: '05', enabled: true, active: route.name === 'shot-workbench', routeName: 'shot-workbench' },
-  { label: '人物对白', step: '06', enabled: false, active: false, routeName: '' },
+  { label: '人物对白', step: '06', enabled: true, active: route.name === 'character-detection', routeName: 'character-detection' },
   { label: '生成制作', step: '07', enabled: false, active: false, routeName: '' },
   { label: '最终合成', step: '08', enabled: false, active: false, routeName: '' },
 ])
