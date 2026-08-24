@@ -1,10 +1,10 @@
 # AI Drama Studio — Reference Video V2 Architecture
 
-## 1. 为什么重建
+## 1. 架构目标
 
 本项目最终目标不是产出一份影视分析报告，而是把原短剧拆成可控制的镜头，并用新的语言、人物、声音、场景和关键道具重新制作。
 
-因此 V2 采用：
+V2 核心：
 
 ```text
 Reference Video + Structured Control Data
@@ -18,7 +18,7 @@ Reference Video + Structured Control Data
 - 动作节奏；
 - 原镜头的时序结构。
 
-结构化拉片只重点保存后续替换、绑定、翻译、配音和生成模型无法从 Reference Video 稳定推断或必须被人工控制的信息。
+结构化拉片重点保存后续替换、绑定、翻译、配音和生成模型必须明确控制的信息。
 
 ## 2. 13 阶段生产链
 
@@ -76,25 +76,41 @@ Shot
 
 Reference Clip 从 Original Source 按 Shot 边界重新编码生成并永久保存。
 
-可以重新拉片；新结果替代当前 Shot 集合。正式版本化能力以后可在 V2 上继续增加，但不继承旧 Candidate / Final Shot 双层业务模型。
+可以重新拉片；新结果替代当前 Shot 集合。V2 不继承旧 Candidate / Final Shot 双层业务模型。
 
 ### F05 智能内容识别
 
-必须重点识别：
+F05 是 **AI Evidence 层**，不是人工 Final 数据层。
+
+重点识别：
 - Character Identity；
-- Face / Body ReID；
 - Character Track；
-- Character Mask；
-- Scene Clustering / Scene ID；
-- Key Prop Detection；
-- ASR；
+- Face / Body Evidence；
+- Scene Candidate / Scene ID Evidence；
+- Source Dialogue / ASR；
 - Speaker Diarization；
 - Speaker → Character；
-- Dialogue Type；
-- Emotion / Speaking Style；
-- Short Description。
+- Key Prop Candidate；
+- 轻量 Structured Description。
 
-人物不能等同于人脸。Character 是项目级实体，应聚合脸、身体、服装、声音和跨镜头证据。
+当前 V1 人物视觉链：
+
+```text
+YuNet Face Detection
++ SFace Identity Embedding
++ OpenCV HOG Person Detection
++ Body / Clothing Visual Evidence
+→ Shot-local Track
+→ Conservative Cross-shot Clustering
+```
+
+人物不能等同于人脸。没有脸但检测到人体时允许形成 body-only Track；无脸证据只允许保守相邻 Shot 自动连接，避免仅因服装相似造成跨场景误合。
+
+当前 Scene 使用 Shot Thumbnail 视觉聚类；ASR 使用 faster-whisper。
+
+Speaker 是可选本地能力；未配置时必须显式返回 `NOT_CONFIGURED`，不能让其它组件一起失败。
+
+Key Prop 已建立 Evidence 数据结构，但在没有可靠对象 + 交互 + 剧情语义模型时保持 `NOT_CONFIGURED`，禁止把普通环境物体冒充剧情关键道具。
 
 不要求第一版高精度结构化：
 - 复杂动作序列；
@@ -103,17 +119,31 @@ Reference Clip 从 Original Source 按 Shot 边界重新编码生成并永久保
 - 灯光参数；
 - 逐帧动作文字。
 
+详细 Contract：`docs/F05_CONTENT_ANALYSIS_V2.md`。
+
 ### F06 拉片审核与人工修正
 
+F06 读取 F05 AI Evidence，不重新跑识别模型。
+
 用户围绕 Reference Video 审核：
-- 人物增删/改绑；
-- 人物合并/拆分；
-- Scene 修正/合并；
-- Key Prop 修正；
+- 人物命名 / 增删 / 改绑；
+- 人物合并 / 拆分；
+- Scene 命名 / 修正 / 合并；
+- Key Prop 增删 / 命名 / 合并；
 - Speaker 修正；
 - Dialogue 文本和类型修正。
 
-AI Evidence 与人工 Final 值应保持可区分。
+最终形成：
+
+```text
+Final Character
+Final Scene
+Final Prop
+Final Source Dialogue
+Final Speaker → Character
+```
+
+AI Evidence 与人工 Final 值保持可区分。
 
 ### F07 替换素材与资产绑定
 
@@ -276,7 +306,34 @@ Project
 
 保存每次 Shot 重制策略、版本、目标时长与输出。
 
-## 4. Shot 数据优先级
+## 4. F05 AI Evidence 与 Final 分层
+
+F05 写：
+
+```text
+ContentAnalysisRun
+CharacterCandidate
+CharacterTrack
+SceneCandidate
+ShotSceneEvidence
+PropCandidate
+ShotPropEvidence
+SpeakerSegment
+AnalysisDialogue
+```
+
+F06 写人工 Final：
+
+```text
+Character
+Scene
+Prop
+Dialogue
+```
+
+F05 重跑不能覆盖旧 Evidence；新 Run 成功后切换 current。F06 人工修正不得覆盖原始 AI Evidence。
+
+## 5. Shot 数据优先级
 
 ### 必须高准确率
 
@@ -308,7 +365,9 @@ Camera Motion
 Prop Track / Mask
 ```
 
-## 5. Reference Clip 存储原则
+Character Mask 仍属于高价值后续增强；当前 F05 V1 先稳定 Track / BBox，不用低质量伪 Mask 冒充正式分割结果。
+
+## 6. Reference Clip 存储原则
 
 建议工作区：
 
@@ -333,7 +392,7 @@ Reference Clip 以后可作为：
 - Lip Sync 输入；
 - 生成结果对比证据。
 
-## 6. 时间模型
+## 7. 时间模型
 
 所有数据库正式时间单位使用：
 
@@ -344,24 +403,28 @@ integer microseconds
 Source Timeline 只描述原视频证据。
 Production Timeline 描述目标语言重制成片。
 
+F05 Dialogue 同时保存 Source Time 与 Shot-local Time。
+
 禁止假设：
 
 ```text
 Production Shot duration == Source Shot duration
 ```
 
-## 7. V2 当前实现范围
-
-当前代码：
+## 8. 当前实现范围
 
 ```text
-F01-F04 = 已实现代码
-F05-F13 = 数据边界已预留 / 业务待开发
+F01-F02 = IMPLEMENTED
+F03-F04 = IMPLEMENTED / NEEDS WINDOWS REAL-VIDEO TEST
+F05 = IMPLEMENTED V1 / NEEDS REAL-SAMPLE TEST
+F06-F13 = NOT IMPLEMENTED
 ```
 
-F04 当前本地方案继续使用 TransNetV2 + FFprobe PTS；后续如果更换切镜算法，只替换 detector，不改变 Shot / Reference Clip 业务 Contract。
+F04 当前本地方案继续使用 TransNetV2 + FFprobe PTS；后续如果更换切镜算法，只替换 detector，不改变 Shot / Reference Clip Contract。
 
-## 8. 与 Legacy 的关系
+F05 当前算法也采用能力分层：Character Visual、Scene、ASR、Speaker、Prop 可以分别替换，不允许再次做成一个不可拆的黑盒。
+
+## 9. 与 Legacy 的关系
 
 V2 不要求：
 - 旧数据库迁移兼容；
@@ -369,4 +432,4 @@ V2 不要求：
 - 旧页面兼容；
 - 旧 Frozen Feature 顺序兼容。
 
-历史代码可以作为算法参考，但新实现必须以本文件和用户最新决策为准。
+历史代码可以作为算法参考，但新实现必须以本文件、`docs/PROJECT_STATE.md`、当前 Feature Contract 和用户最新决策为准。
