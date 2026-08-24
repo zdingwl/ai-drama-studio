@@ -6,6 +6,8 @@ import numpy as np
 
 from engine.app.character_detection import (
     CLUSTER_MIN_COSINE,
+    FACE_SCORE_THRESHOLD,
+    PROFILE_VERSION,
     FaceObservation,
     TrackDraft,
     _blob_to_embedding,
@@ -65,6 +67,12 @@ def _observation(
     )
 
 
+def test_f06_v2_profile_restores_confirmed_detection_and_cluster_thresholds() -> None:
+    assert PROFILE_VERSION == "f06-v2"
+    assert FACE_SCORE_THRESHOLD == 0.90
+    assert CLUSTER_MIN_COSINE == 0.45
+
+
 def test_sample_plan_uses_real_pts_and_stays_inside_final_shots() -> None:
     shots = (_shot(1, 100_000, 900_000), _shot(2, 900_000, 2_000_000))
     # 故意使用不规则 PTS，确保结果来自这组真实时间，而不是 frame_index / fps。
@@ -122,6 +130,36 @@ def test_conservative_clustering_merges_cross_shot_same_identity() -> None:
     assert len(candidates[0].tracks) == 2
     assert candidates[0].cluster_score is not None
     assert candidates[0].cluster_score >= CLUSTER_MIN_COSINE
+
+
+def test_v2_merges_cross_pose_tracks_between_old_050_and_new_045_threshold() -> None:
+    """真实素材回归：同一人物侧脸/角度变化不能因为旧 0.50 门槛被拆成多个 Candidate。"""
+
+    frontal = _embedding(0)
+    # cosine(frontal, angled) ≈ 0.475：旧 f06-v1(0.50) 会拆，f06-v2(0.45) 应合并。
+    angled = _embedding(0, 1, 1.85)
+    assert 0.45 <= float(np.dot(frontal, angled)) < 0.50
+
+    first = TrackDraft(
+        id="TRACK_FRONTAL",
+        final_shot_id="SHOT_1",
+        final_shot_ordinal=1,
+        observations=[_observation(shot_id="SHOT_1", shot_ordinal=1, time_us=100_000, bbox=(10, 10, 100, 100), embedding=frontal)],
+        embedding=frontal,
+        track_ordinal_in_shot=1,
+    )
+    second = TrackDraft(
+        id="TRACK_ANGLED",
+        final_shot_id="SHOT_2",
+        final_shot_ordinal=2,
+        observations=[_observation(shot_id="SHOT_2", shot_ordinal=2, time_us=1_100_000, bbox=(20, 20, 96, 96), embedding=angled)],
+        embedding=angled,
+        track_ordinal_in_shot=1,
+    )
+
+    candidates = _cluster_tracks([first, second])
+    assert len(candidates) == 1
+    assert {track.id for track in candidates[0].tracks} == {"TRACK_FRONTAL", "TRACK_ANGLED"}
 
 
 def test_cooccurring_tracks_are_hard_conflict_even_with_identical_embedding() -> None:
