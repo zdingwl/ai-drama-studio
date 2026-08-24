@@ -15,6 +15,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from starlette.concurrency import run_in_threadpool
+
 from engine.app.preprocess import SourcePreprocessRecord, preprocess_source_video
 from engine.app.projects import ProjectRecord, create_project
 from engine.app.source_videos import AsyncReadableUpload, SourceVideoRecord, import_source_video
@@ -70,6 +72,11 @@ async def import_project_source_workflow(
     用户流程不应该暴露 F01/F02/F03 三个技术步骤。这个函数把它们编排成一个用户动作，
     但每一步仍由原 Feature Service 自己负责校验、事务、文件发布与恢复。
 
+    线程规则：
+    - ``import_source_video()`` 保持 async，继续按上传流分块读写；
+    - ``create_project()`` 和 ``preprocess_source_video()`` 是同步文件/FFmpeg 工作，放入线程池，
+      避免一个长视频初始化期间把 FastAPI 事件循环完全堵住。
+
     失败规则：
     - 不在这里递归删除 Project Workspace，也不绕过 F01/F02/F03 的安全恢复规则；
     - 如果后一步失败，前一步已经安全发布的数据继续保留，便于启动恢复或后续重试；
@@ -82,7 +89,8 @@ async def import_project_source_workflow(
     - 不修改 F01/F02/F03 的冻结数据 Contract。
     """
 
-    project = create_project(
+    project = await run_in_threadpool(
+        create_project,
         name=name,
         source_language=source_language,
         target_language=target_language,
@@ -98,7 +106,8 @@ async def import_project_source_workflow(
         app_data_path=app_data_path,
     )
 
-    preprocess = preprocess_source_video(
+    preprocess = await run_in_threadpool(
+        preprocess_source_video,
         project_id=project.id,
         app_data_path=app_data_path,
     )
