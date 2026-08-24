@@ -1,4 +1,4 @@
-"""应用数据库初始化测试；持续保护 F01 冻结 projects Contract。"""
+"""应用数据库初始化测试；持续保护 F01/F02 冻结 Contract。"""
 
 from pathlib import Path
 import sqlite3
@@ -18,7 +18,7 @@ EXPECTED_PROJECT_COLUMNS = {
     "last_opened_at",
 }
 
-CURRENT_BUSINESS_TABLES = {"projects", "source_videos"}
+CURRENT_BUSINESS_TABLES = {"projects", "source_videos", "source_preprocess"}
 
 
 def _read_table_names(database_path: Path) -> set[str]:
@@ -62,7 +62,7 @@ def _insert_project(
 
 
 def test_init_database_creates_app_db_and_current_business_tables(tmp_path: Path) -> None:
-    """新数据库必须创建当前已批准的 F01 projects + F02 source_videos。"""
+    """新数据库必须创建 F01/F02 冻结表以及当前 F03 Additive 表。"""
 
     app_data_dir = tmp_path / "app-data"
     database_path = init_database(app_data_dir)
@@ -73,7 +73,7 @@ def test_init_database_creates_app_db_and_current_business_tables(tmp_path: Path
 
 
 def test_init_database_keeps_exact_f01_project_columns(tmp_path: Path) -> None:
-    """F02 Additive Migration 不得静默改变已冻结的 F01 projects 字段。"""
+    """F03 Additive Migration 不得静默改变已冻结的 F01 projects 字段。"""
 
     database_path = init_database(tmp_path / "app-data")
 
@@ -84,7 +84,7 @@ def test_init_database_keeps_exact_f01_project_columns(tmp_path: Path) -> None:
 
 
 def test_init_database_records_current_alembic_revision(tmp_path: Path) -> None:
-    """F02 开始后当前 schema head 必须是 0002。"""
+    """F03 开始后当前 schema head 必须是 0003。"""
 
     database_path = init_database(tmp_path / "app-data")
 
@@ -93,11 +93,11 @@ def test_init_database_records_current_alembic_revision(tmp_path: Path) -> None:
             "SELECT version_num FROM alembic_version"
         ).fetchone()
 
-    assert revision == ("0002_create_source_videos",)
+    assert revision == ("0003_create_source_preprocess",)
 
 
 def test_init_database_is_safe_to_run_more_than_once(tmp_path: Path) -> None:
-    """软件多次启动时重复初始化不能重复建表或损坏 F01/F02 数据库。"""
+    """软件多次启动时不能重复建表或损坏 F01/F02/F03 数据库。"""
 
     app_data_dir = tmp_path / "app-data"
     first_path = init_database(app_data_dir)
@@ -127,7 +127,7 @@ def test_projects_table_rejects_invalid_status(tmp_path: Path) -> None:
 
 
 def test_projects_table_rejects_duplicate_workspace_path(tmp_path: Path) -> None:
-    """F02 Migration 后仍必须保持 F01 workspace_path 唯一约束。"""
+    """F03 Migration 后仍必须保持 F01 workspace_path 唯一约束。"""
 
     database_path = init_database(tmp_path / "app-data")
 
