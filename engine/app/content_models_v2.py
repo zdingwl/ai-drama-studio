@@ -1,19 +1,18 @@
 """03 资产本地人物视觉模型准备。
 
-统一管理人物 V5 需要的固定模型：
+Character V6 当前固定模型：
 - YuNet：Face Detection；
-- SFace：Face Identity；
+- SFace：当前 Face Identity provider（已与 Global Resolver 解耦，可替换）；
 - YOLOX：Person Detection，先回答“画面里有几个人”；
-- YoutuReID：Body ReID，补侧脸 / 背影 / 遮挡身份连续性。
+- YoutuReID：Body ReID，只做辅助证据。
 
-V5 的变化主要在业务算法：Person Track → Track Gallery → Character Gallery；
-模型本身继续复用这四个稳定 ONNX 权重。
+V6 额外运行时：
+- trackers 2.6：BoT-SORT 优先，ByteTrack fallback；
+- Global Identity Graph：整项目 Track 完成后统一解析人物身份；
+- 只有 RESOLVED Candidate 能进入 Final Character。
 
-模型不提交 Git；显式执行 prepare 后写入 ``data_v2/models/f05``，正式分析时只读本地权重，
-不会在业务 Run 中静默联网下载。
-
-执行策略：YOLOX / YoutuReID 默认优先 ONNX Runtime CUDA，CUDA 不可用自动回退 CPU；
-YuNet / SFace 保持 OpenCV CPU。
+模型不提交 Git；显式执行 prepare 后写入 ``data_v2/models/f05``，正式分析只读本地权重。
+YOLOX / YoutuReID 默认 ONNX Runtime CUDA 优先，CUDA 不可用自动回退 CPU。
 """
 from __future__ import annotations
 
@@ -36,12 +35,7 @@ class ContentModelError(RuntimeError):
 
 
 class RequiredCharacterModelError(RuntimeError):
-    """正式人物 V5 Run 缺少必需模型。
-
-    这个异常故意不继承 ContentModelError：旧 content_analysis_v2 会把 ContentModelError
-    当成可降级组件错误并继续生成 Run；人物 V5 不允许这样做，否则可能把“模型没准备”
-    错误发布成“0 人物”的新 AUTO 资产版本。
-    """
+    """正式人物 V6 Run 缺少必需模型/运行时时使用。"""
 
 
 @dataclass(frozen=True)
@@ -124,9 +118,10 @@ def _verify(path: Path, spec: ModelSpec) -> None:
 
 
 def model_status() -> dict[str, object]:
-    """返回人物模型准备状态 + 实际推理设备能力，不主动联网。"""
+    """返回 V6 模型准备状态 + GPU + Mature MOT 状态，不主动联网。"""
 
     from engine.app.inference_runtime_v41 import runtime_status
+    from engine.app.character_tracking_v6 import tracker_runtime_status
 
     root = model_dir()
     models: list[dict[str, object]] = []
@@ -148,24 +143,28 @@ def model_status() -> dict[str, object]:
             "path": str(path),
             "error": error,
         })
+
+    tracking = tracker_runtime_status()
+    if not bool(tracking.get("ready")):
+        all_ready = False
     return {
         "ready": all_ready,
-        "profile": "character-v5-track-gallery",
+        "profile": "character-v6-global-identity",
         "models": models,
         "runtime": runtime_status(),
-        "face_runtime": {"device": "CPU", "provider": "OpenCV", "detail": "YuNet + SFace"},
-        "identity_policy": "Track First → Clean Track Gallery → Character Gallery",
+        "tracking_runtime": tracking,
+        "face_runtime": {
+            "device": "CPU",
+            "provider": "OpenCV",
+            "detail": "YuNet + SFace provider (replaceable)",
+        },
+        "identity_policy": "12fps Person → Mature MOT → Global Identity Graph → RESOLVED/UNRESOLVED",
+        "final_policy": "Only RESOLVED Identity can become Final Character",
         "gallery_policy": "正式人物图库只保存目标人物干净单人图",
     }
 
 
 def require_models() -> dict[str, Path]:
-    """正式人物 Run 的硬门槛。
-
-    输入：本机模型目录；输出：四个已校验模型路径。
-    为什么：缺任一 V5 模型时必须让本次 Run 失败，保留旧 Current，禁止降级成空人物结果。
-    """
-
     root = model_dir()
     result: dict[str, Path] = {}
     for spec in MODEL_SPECS:
@@ -174,14 +173,14 @@ def require_models() -> dict[str, Path]:
             _verify(path, spec)
         except ContentModelError as exc:
             raise RequiredCharacterModelError(
-                f"人物识别 V5 模型未准备完整：{exc}。请先执行人物模型准备，再重新提取资产。"
+                f"人物识别 V6 模型未准备完整：{exc}。请先执行人物模型准备，再重新提取资产。"
             ) from exc
         result[spec.logical_id] = path
     return result
 
 
 def prepare_models() -> dict[str, object]:
-    """显式下载并校验全部人物 V5 模型；已有正确文件直接复用。"""
+    """显式下载并校验人物视觉固定模型；MOT 为 Python runtime，不下载额外权重。"""
 
     root = model_dir()
     for spec in MODEL_SPECS:
@@ -194,7 +193,7 @@ def prepare_models() -> dict[str, object]:
 
         part_path = root / f"{spec.filename}.part"
         part_path.unlink(missing_ok=True)
-        request = urllib.request.Request(spec.download_url, headers={"User-Agent": "AI-Drama-Studio/2.5"})
+        request = urllib.request.Request(spec.download_url, headers={"User-Agent": "AI-Drama-Studio/2.6"})
         try:
             with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
                 with part_path.open("wb") as output:
@@ -215,14 +214,16 @@ def prepare_models() -> dict[str, object]:
 
 
 def main() -> None:
-    print("正在准备资产人物 V5 模型（YuNet / SFace / YOLOX / YoutuReID）…")
+    print("正在准备资产人物 V6 模型（YOLOX / YoutuReID / YuNet / SFace）…")
     status = prepare_models()
     for item in status["models"]:  # type: ignore[index]
         print(f"OK  {item['filename']}\n    {item['path']}")
     runtime = status.get("runtime") or {}
-    print(f"人物重模型运行时：{runtime.get('device')} · {runtime.get('provider')} · {runtime.get('detail')}")
-    print("人物身份策略：Track First → Clean Track Gallery → Character Gallery")
-    print("资产人物 V5 模型准备完成。")
+    tracking = status.get("tracking_runtime") or {}
+    print(f"Person/ReID：{runtime.get('device')} · {runtime.get('provider')} · {runtime.get('detail')}")
+    print(f"MOT：{tracking.get('tracker')} · {tracking.get('package')}")
+    print("人物身份策略：12fps Person → Mature MOT → Global Identity Graph → RESOLVED only Final")
+    print("资产人物 V6 模型准备完成。")
 
 
 if __name__ == "__main__":
