@@ -127,11 +127,9 @@ def test_simultaneous_people_cannot_merge_through_transitive_graph_path() -> Non
     )
 
     candidates = v6.resolve_global_identities([a, b, bridge])
-    groups = [{track.shot_id + ":" + str(track.start_us) for track in item.tracks} for item in candidates]
 
     assert len(candidates) >= 2
     assert not any(len(item.tracks) == 3 for item in candidates)
-    assert groups
 
 
 def test_isolated_face_fragment_stays_unresolved() -> None:
@@ -150,20 +148,39 @@ def test_isolated_face_fragment_stays_unresolved() -> None:
     assert candidates[0].identity_status == "UNRESOLVED"
 
 
-def test_single_track_with_multiple_high_quality_face_samples_can_resolve() -> None:
+def test_even_clear_single_shot_face_stays_unresolved_until_second_shot_confirms_identity() -> None:
+    """防止高清侧脸/特写碎片直接制造人物020。"""
+
     value = track(
         shot_id="SHOT_1",
         shot_ordinal=1,
         face=vec(1, 0, 0),
         reid=vec(1, 0, 0),
-        samples=4,
-        face_score=0.94,
+        samples=6,
+        face_score=0.98,
     )
 
     candidates = v6.resolve_global_identities([value])
 
     assert len(candidates) == 1
+    assert candidates[0].identity_status == "UNRESOLVED"
+
+
+def test_same_identity_confirmed_in_two_shots_becomes_resolved() -> None:
+    left = track(
+        shot_id="SHOT_1", shot_ordinal=1,
+        face=vec(1, 0, 0), reid=vec(1, 0, 0), samples=4,
+    )
+    right = track(
+        shot_id="SHOT_2", shot_ordinal=2,
+        face=vec(0.99, 0.04, 0), reid=vec(0.99, 0.03, 0), samples=4,
+    )
+
+    candidates = v6.resolve_global_identities([left, right])
+
+    assert len(candidates) == 1
     assert candidates[0].identity_status == "RESOLVED"
+    assert len(candidates[0].tracks) == 2
 
 
 def test_body_only_track_cannot_create_character_identity() -> None:
@@ -181,7 +198,7 @@ def test_body_only_track_cannot_create_character_identity() -> None:
     assert candidates[0].identity_status == "UNRESOLVED"
 
 
-def test_adjacent_body_only_track_can_attach_to_existing_face_identity() -> None:
+def test_adjacent_body_only_track_can_attach_but_cannot_promote_single_face_shot() -> None:
     face_track = track(
         shot_id="SHOT_1",
         shot_ordinal=1,
@@ -198,7 +215,7 @@ def test_adjacent_body_only_track_can_attach_to_existing_face_identity() -> None
     )
 
     candidates = v6.resolve_global_identities([face_track, body])
-    resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
 
-    assert len(resolved) == 1
-    assert len(resolved[0].tracks) == 2
+    assert len(candidates) == 1
+    assert candidates[0].identity_status == "UNRESOLVED"
+    assert len(candidates[0].tracks) == 2
