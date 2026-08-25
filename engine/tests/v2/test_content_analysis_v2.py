@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -49,6 +50,7 @@ def test_f05_schema_keeps_ai_evidence_separate_from_final_entities() -> None:
         "v2_shot_scene_evidence",
         "v2_prop_candidates",
         "v2_shot_prop_evidence",
+        # 历史/后续 F06 兼容表继续保留，但新的 F05 Asset Run 不写入。
         "v2_speaker_segments",
         "v2_analysis_dialogues",
     } <= table_names
@@ -56,33 +58,27 @@ def test_f05_schema_keeps_ai_evidence_separate_from_final_entities() -> None:
     assert "v2_dialogues" in table_names
 
 
-def test_project_analysis_persists_scene_dialogue_and_current_run(monkeypatch, tmp_path: Path) -> None:
-    project_id, episode_id, shot_id = seed_one_shot_project(monkeypatch, tmp_path)
+def test_asset_run_persists_scene_and_switches_current_without_running_dialogue(monkeypatch, tmp_path: Path) -> None:
+    project_id, _episode_id, shot_id = seed_one_shot_project(monkeypatch, tmp_path)
 
     monkeypatch.setattr(content_analysis_v2, "analyze_characters", lambda shots: [])
     monkeypatch.setattr(content_analysis_v2, "_cluster_scenes", lambda run_id, project_id, shots: [
         content_analysis_v2.SceneDraft(id="SCENE_CANDIDATE_1", shot_ids=[shot_id], cover_path=None)
     ])
-    monkeypatch.setattr(content_analysis_v2, "_run_asr", lambda project, episodes, shots: (
-        "READY",
-        [{
-            "id": "AI_DIALOGUE_1", "episode_id": episode_id, "shot_id": shot_id,
-            "source_start_us": 200_000, "source_end_us": 900_000,
-            "shot_start_us": 200_000, "shot_end_us": 900_000,
-            "ai_text": "测试台词", "language": "zh", "speaker_label": None,
-            "speaker_candidate_id": None, "speaker_mapping_confidence": None,
-            "dialogue_type": "unknown", "emotion": None, "speaking_style": None,
-            "confidence": None, "evidence": {"provider": "test"},
-        }],
-    ))
-    monkeypatch.setattr(content_analysis_v2, "_run_diarization", lambda episodes: ("NOT_CONFIGURED", []))
+
+    # F05 新流程不允许意外触发 ASR / Speaker；如果调用就让测试直接失败。
+    monkeypatch.setattr(content_analysis_v2, "_run_asr", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("F05 不应运行 ASR")))
+    monkeypatch.setattr(content_analysis_v2, "_run_diarization", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("F05 不应运行 Speaker")))
 
     result = content_analysis_v2.run_content_analysis(project_id)
     assert result["is_current"] is True
+    assert result["profile_version"] == "f05-assets-v2.3"
     assert result["counts"]["scene_candidates"] == 1
-    assert result["counts"]["dialogues"] == 1
-    assert result["dialogues"][0]["ai_text"] == "测试台词"
+    assert result["counts"]["dialogues"] == 0
+    assert result["dialogues"] == []
     assert result["component_status"]["props"] == "NOT_CONFIGURED"
+    assert "asr" not in result["component_status"]
+    assert "speaker" not in result["component_status"]
 
     current = content_analysis_v2.get_current_analysis(project_id)
     assert current is not None
@@ -91,10 +87,38 @@ def test_project_analysis_persists_scene_dialogue_and_current_run(monkeypatch, t
     with studio_v2.get_session() as session:
         shot = session.get(studio_v2.Shot, shot_id)
         assert shot is not None
-        assert "源对白" in (shot.short_description or "")
+        assert "场景候选" in (shot.short_description or "")
+        assert "源对白" not in (shot.short_description or "")
 
 
-def test_speaker_mapping_is_conservative() -> None:
+def test_scene_clustering_never_crosses_episode_boundary(monkeypatch) -> None:
+    descriptors = {
+        "SHOT_A": np.asarray([1.0, 0.0], dtype=np.float32),
+        "SHOT_B": np.asarray([1.0, 0.0], dtype=np.float32),
+    }
+    monkeypatch.setattr(content_analysis_v2, "_scene_descriptor", lambda path: descriptors[path])
+
+    scenes = content_analysis_v2._cluster_scenes(
+        "RUN",
+        "PROJECT",
+        [
+            {
+                "id": "SHOT_A", "episode_id": "EP_1", "episode_order": 1, "ordinal": 1,
+                "thumbnail_path": "SHOT_A",
+            },
+            {
+                "id": "SHOT_B", "episode_id": "EP_2", "episode_order": 2, "ordinal": 1,
+                "thumbnail_path": "SHOT_B",
+            },
+        ],
+    )
+
+    assert len(scenes) == 2
+    assert scenes[0].shot_ids == ["SHOT_A"]
+    assert scenes[1].shot_ids == ["SHOT_B"]
+
+
+def test_speaker_mapping_helper_remains_conservative_for_future_f06() -> None:
     candidate = content_analysis_v2.CandidateDraft(id="CHAR_A")
     candidate.tracks = [
         content_analysis_v2.TrackDraft(shot_id="SHOT_1", episode_id="EP_1", episode_order=1, shot_ordinal=1),
