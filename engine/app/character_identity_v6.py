@@ -234,9 +234,10 @@ def _resolved_cluster(indices: set[int], tracks: list[TrackDraft]) -> bool:
     shot_count = len({tracks[index].shot_id for index in indices})
     if face_tracks >= 2 and shot_count >= 2:
         return True
-    # 单镜角色必须有连续多个可靠人脸样本，避免一次误检直接成为 Final Character。
+    # 只有一条 Face Track 时，允许它凭连续多张高质量脸完成 Resolve。
+    # 同 cluster 后续挂入 body-only Track 不得反向降低已经充分的 Face anchor 等级。
     if (
-        len(indices) == 1
+        face_tracks == 1
         and _face_sample_count(indices, tracks) >= SINGLE_TRACK_RESOLVE_FACE_SAMPLES
         and _best_face_score(indices, tracks) >= SINGLE_TRACK_RESOLVE_FACE_SCORE
     ):
