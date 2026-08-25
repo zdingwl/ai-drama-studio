@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AssetStageV4 from '../components/AssetStageV4.vue'
 import EpisodeManagerV3 from '../components/EpisodeManagerV3.vue'
 import ShotWorkbenchV3 from '../components/ShotWorkbenchV3.vue'
 import { api } from '../api/client'
-import type { Project } from '../types/studio'
+import type { BackgroundTask, Project } from '../types/studio'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,6 +14,7 @@ const project = ref<Project | null>(null)
 const activeStage = ref(1)
 const loading = ref(true)
 const error = ref('')
+const shotRefreshToken = ref(0)
 
 const stages = [
   { id: 1, title: '剧集管理', subtitle: '批量导入 / 排序 / 替换' },
@@ -41,11 +42,32 @@ async function refreshProject(): Promise<void> {
   }
 }
 
+/**
+ * 职责：后台拉片完成后强制让 ShotWorkbench 重新读取 Shot / Revision。
+ * 输入：Task Dock 派发的 studio-task-finished；输出：刷新 Project，并重建拉片工作台。
+ * 为什么：第一次拉片会改变 shot_count；重新自动拉片可能 shot_count 不变，单靠 props watch 无法保证刷新。
+ */
+function onTaskFinished(event: Event): void {
+  const task = (event as CustomEvent<BackgroundTask>).detail
+  if (!task || task.project_id !== projectId.value) return
+  void refreshProject()
+  if (task.task_type === 'EPISODE_SHOTS' || task.task_type === 'BATCH_SHOTS') {
+    shotRefreshToken.value += 1
+  }
+}
+
 function selectStage(stageId: number): void {
   activeStage.value = stageId
 }
 
-onMounted(refreshProject)
+onMounted(() => {
+  window.addEventListener('studio-task-finished', onTaskFinished)
+  void refreshProject()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('studio-task-finished', onTaskFinished)
+})
 </script>
 
 <template>
@@ -68,7 +90,7 @@ onMounted(refreshProject)
 
     <main :class="['studio-main', { 'shot-stage-main': activeStage === 2, 'asset-stage-main': activeStage === 3 }]">
       <EpisodeManagerV3 v-if="activeStage === 1" :project="project" @refresh="refreshProject" />
-      <ShotWorkbenchV3 v-else-if="activeStage === 2" :project-id="project.id" :episodes="project.episodes" @refresh-project="refreshProject" />
+      <ShotWorkbenchV3 :key="shotRefreshToken" v-else-if="activeStage === 2" :project-id="project.id" :episodes="project.episodes" @refresh-project="refreshProject" />
       <AssetStageV4 v-else-if="activeStage === 3" :project-id="project.id" :episodes="project.episodes" />
 
       <section v-else class="workspace-panel planned-panel">
