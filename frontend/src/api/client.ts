@@ -1,4 +1,4 @@
-import type { BackgroundTask, ContentAnalysisRun, Episode, F05ModelStatus, Project, ProjectCreatePayload, Shot } from '../types/studio'
+import type { BackgroundTask, ContentAnalysisRun, Episode, F05ModelStatus, Project, ProjectCreatePayload, Shot, ShotRevision } from '../types/studio'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options)
@@ -40,7 +40,7 @@ export const api = {
   runContentAnalysis: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/assets`, { method: 'POST' }),
   listShots: (episodeId: string) => request<Shot[]>(`/api/episodes/${episodeId}/shots`),
 
-  // Shot 人工修正：这里修改的是当前生产 Shot，不修改自动模型本身。
+  // Shot 人工修正：修改当前生产 Shot；每次成功修改后后端创建新的 MANUAL Revision。
   adjustShotBoundary: (shotId: string, side: 'start' | 'end', sourceTimeUs: number) => request<Shot[]>(`/api/shots/${shotId}/boundary`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ side, source_time_us: sourceTimeUs }),
   }),
@@ -48,6 +48,11 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_time_us: sourceTimeUs }),
   }),
   mergeShotWithNext: (shotId: string) => request<Shot[]>(`/api/shots/${shotId}/merge-next`, { method: 'POST' }),
+
+  // Shot Revision：历史只读；restore 会创建新的 RESTORE Revision，不覆盖历史。
+  listShotRevisions: (episodeId: string) => request<ShotRevision[]>(`/api/episodes/${episodeId}/shot-revisions`),
+  getShotRevision: (revisionId: string) => request<ShotRevision>(`/api/shot-revisions/${revisionId}`),
+  restoreShotRevision: (revisionId: string) => request<Shot[]>(`/api/shot-revisions/${revisionId}/restore`, { method: 'POST' }),
 
   // 显式 Task API，给后续独立工作区复用。
   startEpisodePreprocessTask: (episodeId: string) => request<BackgroundTask>(`/api/episodes/${episodeId}/tasks/preprocess`, { method: 'POST' }),
