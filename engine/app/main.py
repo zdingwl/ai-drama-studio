@@ -1,7 +1,7 @@
 """AI Drama Studio V2 FastAPI 入口。
 
 当前可用范围：
-多剧集管理、自动初始化 + 拉片、Shot 人工修正、资产提取，以及统一后台 Task / Progress API。
+多剧集管理、自动初始化 + 拉片、Shot 人工修正、Final Asset / Shot Binding，以及统一后台 Task / Progress API。
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from engine.app.asset_routes_v3 import router as asset_router
 from engine.app.content_analysis_v2 import (
     ContentAnalysisError,
     content_model_status,
@@ -43,13 +44,14 @@ from engine.app.task_routes_v2 import router as task_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # content_analysis_v2 / task_progress_v2 已在本模块 import，所有 V2 表会进入同一个 Base metadata。
+    # asset_routes_v3 / content_analysis_v2 / task_progress_v2 已在本模块 import，
+    # 新增 Final Asset / Binding / Revision 表会进入同一个 Base metadata。
     init_database()
     recover_interrupted_tasks()
     yield
 
 
-app = FastAPI(title="AI Drama Studio", version="2.3.0", lifespan=lifespan)
+app = FastAPI(title="AI Drama Studio", version="2.4.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -59,6 +61,7 @@ app.add_middleware(
 )
 app.include_router(task_router)
 app.include_router(shot_edit_router)
+app.include_router(asset_router)
 
 
 class ProjectCreate(BaseModel):
@@ -82,7 +85,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "architecture": "reference-video-v2", "app_version": "2.3.0"}
+    return {"status": "ok", "architecture": "reference-video-v2", "app_version": "2.4.0"}
 
 
 @app.get("/api/projects")
@@ -155,7 +158,7 @@ def api_get_episode(episode_id: str) -> dict[str, Any]:
     return episode
 
 
-# 下面同步接口继续保留兼容旧测试/调试；正式 UI 已改走 /tasks/* 后台任务接口。
+# 下面同步接口继续保留兼容旧测试/调试；正式 UI 已改走后台 Task。
 @app.post("/api/episodes/{episode_id}/preprocess")
 def api_preprocess_episode(episode_id: str) -> dict[str, Any]:
     try:
@@ -229,7 +232,7 @@ def api_shot_thumbnail(shot_id: str) -> FileResponse:
     return FileResponse(path, media_type="image/jpeg", filename=path.name)
 
 
-# ---------------------------- 资产提取 ----------------------------
+# ---------------------------- AI Evidence 兼容接口 ----------------------------
 
 
 @app.get("/api/models/f05/status")
@@ -249,7 +252,7 @@ def api_prepare_f05_models() -> dict[str, object]:
 
 @app.post("/api/projects/{project_id}/content-analysis")
 def api_run_content_analysis(project_id: str) -> dict[str, Any]:
-    """同步兼容接口；正式 UI 使用 /api/projects/{project_id}/tasks/assets。"""
+    """同步兼容接口；正式资产页使用 /api/projects/{project_id}/assets/tasks/extract。"""
     if get_project(project_id) is None:
         raise _not_found("项目不存在")
     try:
