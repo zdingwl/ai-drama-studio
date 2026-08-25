@@ -1,7 +1,7 @@
-# AI Drama Studio — Project State (Reference Video V2)
+# AI Drama Studio — Project State (Reference Video V2 / Character V6)
 
 > 当前开发基线：`main`。
-> 产品已经从“一个技术 Feature 一个页面”切换为“后台自动能力 + 少量可操作工作区”。
+> 产品采用“后台自动能力 + 少量可操作工作区”，人物资产当前正式算法基线为 Character V6。
 
 ## 当前基线
 
@@ -9,6 +9,7 @@
 Repository: zdingwl/ai-drama-studio
 Branch: main
 Architecture: Reference Video V2
+Character: V6 Global Identity
 Project Format: 2.0
 App Version: 2.3.x
 ```
@@ -41,24 +42,15 @@ App Version: 2.3.x
 → 再进入人工修正
 ```
 
-FFprobe、Proxy、Audio WAV、Frame PTS、关键帧缓存、Embedding、SAM Mask、OCR 原始框、Camera Trajectory、模型内部日志等都不是独立生产页面。
+FFprobe、Proxy、Audio WAV、Frame PTS、关键帧缓存、Embedding、MOT、模型内部日志等都不是独立生产页面。
 
 ## 01 剧集管理
 
 一个 Project 表示一部短剧；一个 Project 可以包含多个 Episode。
 
-用户负责：
-
-```text
-批量导入多个视频
-拖动排序
-删除 / 后续替换单集
-追加剧集
-```
+用户负责批量导入、拖动排序、删除 / 替换单集、追加剧集。
 
 `Episode.sort_order` 是所有批量任务的正式处理顺序。
-
-项目名称、原项目语言、目标语言、目标地区属于 Project 设置，不单独占一个生产阶段。
 
 ## 02 拉片
 
@@ -72,119 +64,27 @@ FFprobe、Proxy、Audio WAV、Frame PTS、关键帧缓存、Embedding、SAM Mask
 恢复历史 Revision
 ```
 
-拉片 Workflow 内部自动执行：
+后台链：
 
 ```text
-检查媒体分析资产
-↓
-如果 preprocess_status != READY
-  FFprobe
-  → Proxy
-  → Audio
-  → Media Info
-否则
-  直接复用已有 Proxy / Audio
-↓
-FFprobe Frame PTS
-↓
-TransNetV2
-↓
-Shot Boundaries
-↓
-Reference Clip
-↓
-Thumbnail / Keyframe
-↓
-安全切换 Current Shot Revision
+Media Preprocess
+→ FFprobe Frame PTS
+→ TransNetV2 / Scene evidence
+→ Shot Boundaries
+→ Reference Clip
+→ Thumbnail / Keyframe
+→ Safe Current Shot Revision switch
 ```
 
-原来的“视频预处理”仍然是后端基础能力，但已经不再是用户页面。
+批量拉片严格按 `Episode.sort_order` 顺序执行，不并行多个 Episode。
 
-批量拉片严格按 Episode.sort_order 顺序执行，不并行跑多个 Episode。
+Shot Revision 已实现 AUTO / MANUAL / RESTORE，自动重跑失败不破坏旧 Current。
 
-### 拉片结果不要求逐镜确认
-
-如果用户没有发现问题，可以直接继续资产阶段。
-
-页面目前用 `< 500ms` 短镜头作为一个简单“建议检查”提示；它不会阻塞下游。
-
-### Shot 人工修正
-
-当前 V2 已实现：
-
-```text
-修改当前 Shot Start 公共边界
-修改当前 Shot End 公共边界
-在播放器当前播放头拆分 Shot
-合并上一镜
-合并下一镜
-```
-
-硬约束：
-
-```text
-Source Domain integer microseconds
-相邻 Shot 必须连续
-不允许 gap
-不允许 overlap
-单 Shot 最短 120ms
-```
-
-边界修改会同时更新边界两侧 Shot；拆分保留左 Shot ID 并创建右 Shot；合并保留左 Shot 并删除公共边界。
-
-### Shot Revision / Safe Rerun
-
-已建立：
-
-```text
-v2_shot_revisions
-v2_shot_revision_items
-```
-
-Revision 类型：
-
-```text
-BASELINE  升级版本化前的旧 Current
-AUTO      自动拉片成功结果
-MANUAL    人工边界 / 拆分 / 合并结果
-RESTORE   从历史 Revision 恢复形成的新 Current
-```
-
-规则：
-
-```text
-自动重跑：
-旧 Current 保持可用
-↓
-新 Run 在独立 shots/runs/RUN_ID 目录完整生成
-↓
-TransNet / FFmpeg 任一步失败
-→ 删除本次未提交 Run
-→ 旧 Current 不变
-↓
-全部媒体成功
-→ 数据库事务切换新 Current Revision
-```
-
-因此重新自动拉片不会再先删除当前 `shots/` 目录。
-
-人工修改后的 Reference Clip / Thumbnail 写入独立 `shots/manual/EDIT_ID/` 路径，不覆盖历史媒体。
-
-历史 Revision 只读；恢复历史版本不会改写原历史，而会创建新的 `RESTORE Rn`。
-
-拉片页已经显示：
-
-```text
-CURRENT Rn · 自动拉片 / 人工修正 / 历史恢复
-版本历史
-恢复为新版本
-```
-
-Current Shot Revision 发生变化后，当前资产 ContentAnalysisRun 会标记为 `STALE`。
+Current Shot Revision 改变后，当前资产 ContentAnalysisRun 标记为 `STALE`。
 
 ## 03 资产
 
-目标：从当前 Shot / Reference Clip 中提取：
+目标：从当前 Shot / Reference Clip 中形成：
 
 ```text
 人物
@@ -194,34 +94,128 @@ Current Shot Revision 发生变化后，当前资产 ContentAnalysisRun 会标�
 
 并绑定回 Shot。
 
-人物当前策略：
+### Character V6 正式链
 
 ```text
-Face / SFace = 身份锚点
-Body / Clothing / HOG = 辅助 Evidence
+YOLOX Person Observation（约 12fps，长 Shot 有采样上限）
++ YuNet Face
++ SFace Face Embedding Provider
++ YoutuReID Body Evidence
+↓
+BoT-SORT Mature MOT + CMC
+  └ init/runtime failure → 当前 Shot 从头 ByteTrack fallback
+↓
+CLEAN Track Gallery
++ Face hard-conflict split
+↓
+Project-level Global Identity Graph
+↓
+RESOLVED / UNRESOLVED
+↓
+Final Gate = RESOLVED only
 ```
 
-body-only Detection 不能单独创建正式人物身份。
-
-资产页面按：
+Tracking、Identity、Final Character 已彻底分层：
 
 ```text
-Episode
-→ Shot
-→ 当前 Shot 的人物 / 场景 / 道具 Binding
+Observation / Track = Evidence
+Global Identity = 身份解析
+Character = Final Asset
 ```
 
-组织，不再把几千个 AI Candidate 平铺成卡片墙。
+Track 数量不能当人物数量。
 
-当前资产页已经可以检查 Evidence 和 Shot Binding，但“合并 / 拆分 / 改名 / 添加移除 Binding”的 Final Asset 编辑层尚未完成，因此目前正式名称只叫“资产”。
+### 当前自动 Resolve 门槛
 
-ASR / Speaker / Dialogue 不属于资产提取，后续进入“内容剧本”。
+为了防止同一演员的侧脸 / 特写 / 遮挡碎片制造“人物020”式虚假人物，当前规则是：
+
+```text
+至少 2 条 Face Track
+且 Face Evidence 覆盖至少 2 个不同 Shot
+→ RESOLVED
+```
+
+因此：
+- 单 Shot 高清脸仍 `UNRESOLVED`；
+- 孤立脸 / 一次误检保留 Evidence；
+- 纯 body-only 不能创建 Character；
+- body-only 只能在相邻 Shot + 极强 CLEAN ReID 时挂回 Face cluster；
+- 同 Shot 时间重叠的人物是永久 cannot-link；
+- Face hard conflict 阻断传递合并。
+
+### Final Character Gate
+
+只有明确：
+
+```text
+identity_status == RESOLVED
+```
+
+才物化 AUTO Final Character。
+
+以下全部只保留 Evidence：
+- `UNRESOLVED`；
+- 缺失 identity_status；
+- 非法 / 损坏状态；
+- 未定义为可发布的未来中间状态。
+
+Final Gate 已改为显式 fail-closed allow-list，不再临时修改 `face_visible`，也不再 monkeypatch legacy materializer。
+
+即使 Candidate 标为 RESOLVED，也必须至少存在一条真实 face-visible Track，纯 body-only 不能绕过 Gate。
+
+### MOT 稀疏时间
+
+长 Shot 因采样上限可能低于名义 12fps。V6 会把：
+
+```text
+local_time_us / 1_000_000
+```
+
+作为真实 timestamp 传入 Mature MOT，避免 Kalman / lost-track 按固定调用间隔误判。
+
+BoT-SORT 若在 Shot 中途失败，本 Shot 的部分结果全部丢弃，从 Shot 开头用 ByteTrack 完整重跑，避免两套 tracker 的 ID / state 混杂。
+
+### Face Provider
+
+当前继续使用 YuNet + SFace。Global Identity 已与 face embedding provider 解耦；以后选定明确可商用或已有授权的 ArcFace 权重后可替换 provider，不改变 Track / Final Asset Contract。
+
+## Evidence / Final Asset / Revision
+
+```text
+CharacterCandidate / CharacterTrack / SceneCandidate / PropCandidate
+= immutable AI Evidence
+
+Character / Scene / Prop
+= Project Final Asset
+
+ShotCharacterBinding / ShotSceneBinding / ShotPropBinding
+= Final Binding
+```
+
+人物 RESOLVED Identity 可以自动形成 AUTO Final Character；UNRESOLVED 永远不会增加 Final Character 数量。
+
+Asset Revision 继续保护 MANUAL / RESTORE：新 AI Run 默认不能静默覆盖人工版本。
+
+## Character V6 Run 原子性
+
+新 Run 完整成功才切 Current：
+
+```text
+Track / Global Identity
+→ RESOLVED / UNRESOLVED 标记
+→ Candidate / Track / Scene Evidence
+→ counts
+→ Current Run 切换
+→ commit
+```
+
+任何一步失败，旧 Current 不动。
 
 ## 04 内容剧本
 
-规划后台能力：Whisper ASR、Speaker Diarization、OCR、Qwen3-VL / 可选云端 VLM、动作 / 情绪 / 景别 / 构图 / 运镜、人物 ↔ Speaker / Dialogue、多模态融合。
+规划 / 后续能力：Whisper ASR、Speaker Diarization、OCR、VLM、人物 ↔ Speaker / Dialogue、多模态融合、结构化源剧本。
 
-这些不会各自做页面。用户最终修改结构化源剧本、人物对白、Scene 内容、重要动作/视觉语义和剧情概括。
+这些不会各自做页面。用户最终修改的是结构化剧情与可生产数据。
 
 ## 05 重制设计
 
@@ -250,11 +244,11 @@ Timeline Assembly
 Final Export
 ```
 
-默认采用异常驱动，不要求用户逐项确认所有正常结果。
+默认异常驱动，不要求用户逐项确认所有正常结果。
 
 ## 统一后台 Task Progress
 
-所有耗时任务使用持久化 `BackgroundTaskRecord`：
+耗时任务使用持久化 `BackgroundTaskRecord`：
 
 ```text
 QUEUED
@@ -265,87 +259,72 @@ FAILED
 CANCELLED
 ```
 
-页面刷新 / 切换工作区不会丢进度；重复点击不会重复创建同作用域活动任务；服务重启后遗留 PROCESSING 会明确标记为中断失败。
-
-第一批已接入：
-
-```text
-单集 / 批量视频初始化（兼容/诊断）
-单集拉片
-顺序批量拉片
-资产提取
-```
-
-能计算真实数量时显示真实百分比；无法诚实计算模型内部百分比时使用阶段型 indeterminate 进度。
-
-## 当前 V2 数据模型
-
-```text
-Project
-Episode
-Preprocess
-Shot
-ShotRevision
-ShotRevisionItem
-Character
-Scene
-Prop
-Dialogue
-Asset
-Voice
-Generation
-BackgroundTaskRecord
-```
-
-AI Evidence 和人工 Final / Revision 分开设计。
-
-当前 Shot 媒体目录新增版本化路径：
-
-```text
-episodes/EPISODE_ID/
-├ source/
-├ preprocess/
-└ shots/
-   ├ runs/SHOTRUN_ID/
-   │  ├ reference/
-   │  └ thumbnails/
-   └ manual/EDIT_ID/
-      ├ reference/
-      └ thumbnails/
-```
+页面刷新 / 切换工作区不会丢进度；重复点击不重复创建同作用域活动任务；服务重启后遗留 PROCESSING 明确标记为中断失败。
 
 ## 当前开发状态
 
 ```text
-01 剧集管理: IMPLEMENTED / NEEDS LOCAL REGRESSION
-02 拉片: AUTO-PREPROCESS + TASK PROGRESS + MANUAL EDIT + SHOT REVISION + SAFE RERUN IMPLEMENTED / NEEDS LOCAL REGRESSION
-03 资产: IMPLEMENTED AUTO EVIDENCE V1 / FINAL MANUAL BINDING NOT IMPLEMENTED
-04 内容剧本: PLANNED
-05 重制设计: PLANNED
-06 生成 / 导出: PLANNED
+01 剧集管理:
+  IMPLEMENTED / NEEDS LOCAL REGRESSION
 
-Task Progress: IMPLEMENTED V1 / NEEDS LOCAL REGRESSION
-Shot Revision / Safe Rerun: IMPLEMENTED V1 / NEEDS LOCAL REGRESSION
-Global Run / Revision Contract: SHOT IMPLEMENTED FIRST; OTHER WORKFLOWS STILL NEED VERSIONING
+02 拉片:
+  AUTO-PREPROCESS + TASK PROGRESS + MANUAL EDIT + SHOT REVISION + SAFE RERUN
+  IMPLEMENTED / NEEDS LOCAL REAL-VIDEO REGRESSION
+
+03 资产:
+  Character V6 Mature MOT + Global Identity + RESOLVED-only Final Gate
+  IMPLEMENTED / NEEDS WINDOWS REAL-SAMPLE REGRESSION
+  Scene / Prop 继续沿用当前 Evidence / Semantic 链
+
+04 内容剧本:
+  PLANNED / PARTIAL LOW-LEVEL CAPABILITIES EXIST
+
+05 重制设计:
+  PLANNED
+
+06 生成 / 导出:
+  PLANNED
+```
+
+## Character V6 已锁行为测试
+
+```text
+15 Track 碎片 / 3 人 → 3 RESOLVED Identity
+同框两人不能经 bridge Track 传递合并
+孤立 Face → UNRESOLVED
+单 Shot 高清 Face → UNRESOLVED
+同身份两 Shot Face → RESOLVED
+body-only → 不能创建 Character
+body-only 可挂回 Face cluster 但不能晋级单 Shot Face
+UNRESOLVED face_visible Evidence → 不物化 Final Character
+缺失 identity_status → Final Gate fail closed
+MOT tracker rows → 按 IoU 映射 Observation
+稀疏采样 → 真实 timestamp
+BoT-SORT runtime failure → 整 Shot ByteTrack 重跑
+未确认 observation → 仍保留 Evidence
 ```
 
 ## 近期优先级
 
 ```text
-P0-1 本机验证：自动重跑失败不破坏 Current、Manual Revision、历史 Restore
-P0-2 完成人物 / 场景 / 道具 Final Asset Binding 人工编辑
-P0-3 资产 Run / Revision + 局部重跑
-P0-4 开发内容剧本（ASR + Speaker + VLM + Structured Script）
+P0-1 Windows 本机安装/确认 trackers 2.6 + supervision + ONNX Runtime GPU Runtime
+P0-2 用真实短剧重新跑资产，验收 Final Character 数量而不是 Track 数量
+P0-3 重点检查人物进入 / 遮挡 / 交叉 / 离开、长 Shot、侧脸和同框 cannot-link
+P0-4 核对 RESOLVED / UNRESOLVED Evidence 页面与 Final Asset 数量
+P0-5 继续内容剧本（ASR + Speaker + VLM + Structured Script）
 ```
 
 ## 测试入口
 
 ```text
-python -m pytest engine/tests/v2/test_shot_revision_v2.py -q
-python -m pytest engine/tests/v2/test_shot_editor_v2.py -q
+python -m pytest engine/tests/v2/test_character_identity_v6.py -q
+python -m pytest engine/tests/v2/test_character_tracking_v6.py -q
+python -m pytest engine/tests/v2/test_asset_final_gate_v6.py -q
 python -m pytest engine/tests/v2 -q
 
 cd frontend
 npm run typecheck
 npm run build
 ```
+
+真实媒体 Release Gate 仍必须在用户 Windows 本机完成；仓库单元测试不能替代 GPU / FFmpeg / Reference Clip / 人物真实素材验收。
