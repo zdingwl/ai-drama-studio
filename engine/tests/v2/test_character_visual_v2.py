@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from engine.app.character_visual_v2 import TrackDraft, cluster_candidates
+from engine.app.character_visual_v2 import TrackDraft, cluster_candidates, sample_ratios
 
 
 def normalized(vector: list[float]):
@@ -18,6 +18,7 @@ def body_track(*, shot_id: str, shot_ordinal: int, vector: list[float]) -> Track
         shot_ordinal=shot_ordinal,
     )
     track.body_hist = normalized(vector)
+    track.reid_embedding = normalized(vector)
     track.face_embedding = None
     return track
 
@@ -36,17 +37,21 @@ def face_track(
         shot_ordinal=shot_ordinal,
     )
     track.face_embedding = normalized(face_vector)
+    track.reid_embedding = normalized(body_vector)
     track.body_hist = normalized(body_vector)
     return track
 
 
-def test_body_only_tracks_never_create_character_identity_by_themselves() -> None:
+def test_body_only_tracks_become_unresolved_person_evidence_not_resolved_identity() -> None:
     left = body_track(shot_id="SHOT_1", shot_ordinal=1, vector=[1.0, 0.0, 0.0])
-    right = body_track(shot_id="SHOT_2", shot_ordinal=2, vector=[1.0, 0.0, 0.0])
+    right = body_track(shot_id="SHOT_2", shot_ordinal=2, vector=[1.0, 0.01, 0.0])
 
     candidates = cluster_candidates([left, right])
 
-    assert candidates == []
+    assert len(candidates) == 1
+    assert candidates[0].identity_status == "UNRESOLVED"
+    assert candidates[0].has_face_anchor is False
+    assert set(candidates[0].tracks) == {left, right}
 
 
 def test_same_shot_face_tracks_never_auto_merge_even_with_identical_identity_evidence() -> None:
@@ -68,6 +73,7 @@ def test_same_shot_face_tracks_never_auto_merge_even_with_identical_identity_evi
     assert len(candidates) == 2
     assert candidates[0].tracks == [left]
     assert candidates[1].tracks == [right]
+    assert all(item.identity_status == "RESOLVED" for item in candidates)
 
 
 def test_adjacent_body_only_track_can_extend_existing_face_anchored_identity() -> None:
@@ -82,12 +88,13 @@ def test_adjacent_body_only_track_can_extend_existing_face_anchored_identity() -
     candidates = cluster_candidates([back_view, anchor])
 
     assert len(candidates) == 1
+    assert candidates[0].identity_status == "RESOLVED"
     assert anchor in candidates[0].tracks
     assert back_view in candidates[0].tracks
     assert len(candidates[0].tracks) == 2
 
 
-def test_distant_body_only_track_does_not_attach_to_face_identity() -> None:
+def test_distant_body_only_track_remains_unresolved_instead_of_silent_drop() -> None:
     anchor = face_track(
         shot_id="SHOT_1",
         shot_ordinal=1,
@@ -98,5 +105,15 @@ def test_distant_body_only_track_does_not_attach_to_face_identity() -> None:
 
     candidates = cluster_candidates([anchor, distant])
 
-    assert len(candidates) == 1
-    assert candidates[0].tracks == [anchor]
+    assert len(candidates) == 2
+    resolved = next(item for item in candidates if item.identity_status == "RESOLVED")
+    unresolved = next(item for item in candidates if item.identity_status == "UNRESOLVED")
+    assert resolved.tracks == [anchor]
+    assert unresolved.tracks == [distant]
+
+
+def test_adaptive_sampling_uses_more_than_three_frames_for_normal_short_drama_shot() -> None:
+    assert len(sample_ratios(300_000)) == 3
+    assert len(sample_ratios(700_000)) == 5
+    assert len(sample_ratios(1_600_000)) == 7
+    assert len(sample_ratios(4_000_000)) == 9
