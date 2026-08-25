@@ -30,6 +30,18 @@ from engine.app.task_progress_v2 import (
 
 router = APIRouter(prefix="/api", tags=["background-tasks"])
 
+STAGE_LABELS = {
+    "probe": "读取媒体信息",
+    "proxy": "生成 Proxy",
+    "audio": "提取 Audio",
+    "frame_pts": "读取真实 PTS",
+    "transnet": "TransNetV2 镜头检测",
+    "boundaries": "整理 Shot 边界",
+    "reference_clips": "生成 Reference Clip",
+    "persist": "保存结果",
+    "ready": "完成",
+}
+
 
 def _active_task(project_id: str, task_type: str, episode_id: str | None = None) -> dict[str, Any] | None:
     for task in list_project_tasks(project_id, limit=100):
@@ -76,14 +88,31 @@ def _episode_name(episode: Any) -> str:
     return f"EP{int(episode.sort_order):02d} · {episode.title}"
 
 
+def _stage_label(stage_key: str) -> str:
+    return STAGE_LABELS.get(stage_key, stage_key)
+
+
 def run_episode_preprocess_task(task_id: str, episode_id: str) -> None:
     try:
         episode = get_episode(episode_id)
         if episode is None:
             raise LookupError("剧集不存在")
         start_task(task_id, stage_key="preprocess", stage_label="视频初始化", message="正在读取媒体并生成 Proxy / Audio")
-        update_task(task_id, progress_percent=10, current_item=episode["title"], current_index=1, total_items=1)
-        result = preprocess_episode(episode_id)
+
+        def report(percent: float, stage_key: str, message: str, current: int | None, total: int | None) -> None:
+            update_task(
+                task_id,
+                progress_mode="determinate",
+                progress_percent=percent,
+                stage_key=stage_key,
+                stage_label=_stage_label(stage_key),
+                current_item=episode["title"],
+                current_index=current or 1,
+                total_items=total or 1,
+                message=message,
+            )
+
+        result = preprocess_episode(episode_id, progress=report)
         finish_task(task_id, result=result, message="视频初始化完成")
     except Exception as exc:
         fail_task(task_id, exc)
@@ -99,19 +128,34 @@ def run_batch_preprocess_task(task_id: str, project_id: str) -> None:
         results: list[dict[str, Any]] = []
         failures = 0
         for index, episode in enumerate(episodes, start=1):
-            base_percent = ((index - 1) / total) * 100
+            episode_name = _episode_name(episode)
+
+            def report(percent: float, stage_key: str, message: str, current: int | None, inner_total: int | None, *, _index: int = index, _name: str = episode_name) -> None:
+                overall = ((_index - 1) + percent / 100.0) / total * 100.0
+                update_task(
+                    task_id,
+                    progress_mode="determinate",
+                    progress_percent=overall,
+                    current_item=_name,
+                    current_index=_index,
+                    total_items=total,
+                    stage_key=stage_key,
+                    stage_label=_stage_label(stage_key),
+                    message=message,
+                )
+
             update_task(
                 task_id,
-                progress_percent=base_percent,
-                current_item=_episode_name(episode),
+                progress_percent=((index - 1) / total) * 100,
+                current_item=episode_name,
                 current_index=index,
                 total_items=total,
                 stage_key="episode_preprocess",
                 stage_label="视频初始化",
-                message=f"正在处理 {_episode_name(episode)}",
+                message=f"正在处理 {episode_name}",
             )
             try:
-                info = preprocess_episode(episode.id)
+                info = preprocess_episode(episode.id, progress=report)
                 results.append({"episode_id": episode.id, "status": "READY", "media": info})
             except Exception as exc:
                 failures += 1
@@ -119,7 +163,7 @@ def run_batch_preprocess_task(task_id: str, project_id: str) -> None:
             update_task(
                 task_id,
                 progress_percent=(index / total) * 100,
-                current_item=_episode_name(episode),
+                current_item=episode_name,
                 current_index=index,
                 total_items=total,
                 message=f"已处理 {index} / {total} 集",
@@ -137,8 +181,21 @@ def run_episode_shots_task(task_id: str, episode_id: str) -> None:
         if episode is None:
             raise LookupError("剧集不存在")
         start_task(task_id, stage_key="shot_detection", stage_label="自动拉片", message="正在分析镜头边界并生成 Reference Clip")
-        update_task(task_id, progress_mode="indeterminate", current_item=episode["title"], current_index=1, total_items=1)
-        shots = detect_episode_shots(episode_id)
+
+        def report(percent: float, stage_key: str, message: str, current: int | None, total: int | None) -> None:
+            update_task(
+                task_id,
+                progress_mode="determinate",
+                progress_percent=percent,
+                stage_key=stage_key,
+                stage_label=_stage_label(stage_key),
+                current_item=episode["title"],
+                current_index=current if current is not None else 1,
+                total_items=total if total is not None else 1,
+                message=message,
+            )
+
+        shots = detect_episode_shots(episode_id, progress=report)
         finish_task(task_id, result={"episode_id": episode_id, "shot_count": len(shots)}, message=f"拉片完成：{len(shots)} Shots")
     except Exception as exc:
         fail_task(task_id, exc)
@@ -154,19 +211,38 @@ def run_batch_shots_task(task_id: str, project_id: str) -> None:
         results: list[dict[str, Any]] = []
         failures = 0
         for index, episode in enumerate(episodes, start=1):
+            episode_name = _episode_name(episode)
+
+            def report(percent: float, stage_key: str, message: str, current: int | None, inner_total: int | None, *, _index: int = index, _name: str = episode_name) -> None:
+                overall = ((_index - 1) + percent / 100.0) / total * 100.0
+                detail = message
+                if current is not None and inner_total is not None and stage_key == "reference_clips":
+                    detail = f"{_name} · Reference Clip {current} / {inner_total}"
+                update_task(
+                    task_id,
+                    progress_mode="determinate",
+                    progress_percent=overall,
+                    current_item=_name,
+                    current_index=_index,
+                    total_items=total,
+                    stage_key=stage_key,
+                    stage_label=_stage_label(stage_key),
+                    message=detail,
+                )
+
             update_task(
                 task_id,
                 progress_mode="determinate",
                 progress_percent=((index - 1) / total) * 100,
-                current_item=_episode_name(episode),
+                current_item=episode_name,
                 current_index=index,
                 total_items=total,
                 stage_key="episode_shots",
                 stage_label="镜头检测 / Reference Clip",
-                message=f"正在拉片 {_episode_name(episode)}",
+                message=f"正在拉片 {episode_name}",
             )
             try:
-                shots = detect_episode_shots(episode.id)
+                shots = detect_episode_shots(episode.id, progress=report)
                 results.append({"episode_id": episode.id, "status": "READY", "shot_count": len(shots)})
             except Exception as exc:
                 failures += 1
@@ -174,7 +250,7 @@ def run_batch_shots_task(task_id: str, project_id: str) -> None:
             update_task(
                 task_id,
                 progress_percent=(index / total) * 100,
-                current_item=_episode_name(episode),
+                current_item=episode_name,
                 current_index=index,
                 total_items=total,
                 message=f"已完成 {index} / {total} 集",
@@ -263,7 +339,7 @@ def api_start_episode_shots(episode_id: str, background: BackgroundTasks) -> dic
         title=f"拉片 · {episode['title']}",
         runner=run_episode_shots_task,
         runner_args=(episode_id,),
-        progress_mode="indeterminate",
+        progress_mode="determinate",
         total_items=1,
     )
 
