@@ -21,15 +21,16 @@ def test_asset_evidence_reports_character_shot_progress(monkeypatch) -> None:
 
     monkeypatch.setattr(progress_v4, "_load_context", lambda _project_id: ({"id": "P1"}, [], shots))
     monkeypatch.setattr(progress_v4, "_create_run", lambda _project_id: "RUN_1")
+    monkeypatch.setattr(progress_v4, "_mark_v5_profile", lambda _run_id: None)
     monkeypatch.setattr(progress_v4, "_cluster_scenes", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(progress_v4, "_persist_results", lambda **_kwargs: None)
     monkeypatch.setattr(progress_v4, "get_analysis_run", lambda _run_id: {"id": "RUN_1", "status": "READY"})
 
     def fake_characters(_shots, progress=None):
         assert progress is not None
-        progress(1, 4, "人物识别：Shot 1 / 4")
-        progress(2, 4, "人物识别：Shot 2 / 4")
-        progress(4, 4, "人物识别：Shot 4 / 4")
+        progress(1, 4, "人物 V5：Shot 1 / 4")
+        progress(2, 4, "人物 V5：Shot 2 / 4")
+        progress(4, 4, "人物 V5：Shot 4 / 4")
         return []
 
     monkeypatch.setattr(progress_v4, "analyze_characters", fake_characters)
