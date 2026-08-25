@@ -4,7 +4,8 @@
 - 把当前可生产 Shot Timeline 快照为不可变 Revision；
 - 自动重跑只有在新 Shot 全部生成成功后才切换 Current；
 - 人工修改后创建新的 MANUAL Revision；
-- 支持查看历史 Revision、查看历史 Shot 和恢复历史版本。
+- 支持查看历史 Revision、查看历史 Shot 和恢复历史版本；
+- Current Shot 发生切换时把依赖旧 Shot 的资产分析标记为 STALE。
 
 不负责：
 - 不运行 TransNetV2 / FFmpeg；
@@ -13,6 +14,7 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, select
@@ -28,7 +30,7 @@ class ShotRevision(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     episode_id: Mapped[str] = mapped_column(ForeignKey("v2_episodes.id", ondelete="CASCADE"), index=True)
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
-    kind: Mapped[str] = mapped_column(String(32), nullable=False)  # AUTO / MANUAL / RESTORE / BASELINE
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     source_revision_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -82,6 +84,23 @@ def _snapshot_items(session: Any, revision_id: str, shots: list[Shot]) -> None:
             camera_motion=shot.camera_motion,
             shot_status=shot.status,
         ))
+
+
+def _mark_assets_stale(session: Any, project_id: str) -> None:
+    """Shot Current 切换后，旧资产 Run 保留但不能继续冒充最新结果。"""
+
+    # 延迟 import，避免媒体流水线 import 本模块时引入不必要的模型初始化链。
+    from engine.app.content_analysis_v2 import ContentAnalysisRun
+
+    runs = session.scalars(
+        select(ContentAnalysisRun).where(
+            ContentAnalysisRun.project_id == project_id,
+            ContentAnalysisRun.is_current.is_(True),
+        )
+    ).all()
+    for run in runs:
+        if run.status not in {"PROCESSING", "FAILED", "STALE"}:
+            run.status = "STALE"
 
 
 def _create_revision_from_current(
@@ -145,9 +164,9 @@ def record_manual_revision(episode_id: str, *, note: str | None = None) -> dict[
 
 
 def commit_auto_shot_revision(episode_id: str, shot_payloads: list[dict[str, Any]], *, note: str | None = None) -> list[dict[str, Any]]:
-    """把已经完整生成成功的自动 Shot 原子切换为新的 Current Revision。
+    """把已经完整生成成功的 Shot 原子切换为新的 Current Revision。
 
-    调用前媒体文件必须已经全部生成成功。数据库事务失败时旧 Current Shot 不变。
+    调用前媒体文件必须已经全部生成成功。数据库事务失败时旧 Current Shot / Revision 不变。
     """
 
     if not shot_payloads:
@@ -169,7 +188,6 @@ def commit_auto_shot_revision(episode_id: str, shot_payloads: list[dict[str, Any
             )
             session.flush()
 
-        # 先把旧 current 标为 historical；同一数据库事务内新 Shot / Revision 任一步失败都会整体回滚。
         if current_revision is not None:
             current_revision.is_current = False
         for item in existing:
@@ -198,6 +216,7 @@ def commit_auto_shot_revision(episode_id: str, shot_payloads: list[dict[str, Any
 
         episode.status = "SHOTS_READY"
         episode.updated_at = utcnow()
+        _mark_assets_stale(session, episode.project_id)
         session.commit()
         for shot in new_shots:
             session.refresh(shot)
@@ -253,8 +272,7 @@ def serialize_revision_item(item: ShotRevisionItem) -> dict[str, Any]:
     }
 
 
-def get_revision_item_path(item_id: str, kind: str) -> Any | None:
-    from pathlib import Path
+def get_revision_item_path(item_id: str, kind: str) -> Path | None:
     with get_session() as session:
         item = session.get(ShotRevisionItem, item_id)
         if item is None:
@@ -290,14 +308,14 @@ def restore_shot_revision(revision_id: str) -> list[dict[str, Any]]:
             for item in items
         ]
         episode_id = source.episode_id
+        source_revision_number = source.revision
 
-    # 用与自动切换相同的原子替换逻辑，但随后把 AUTO Revision 改成 RESTORE，保留 source_revision_id。
-    result = commit_auto_shot_revision(episode_id, payloads, note=f"恢复自 R{source.revision}")
+    result = commit_auto_shot_revision(episode_id, payloads, note=f"恢复自 R{source_revision_number}")
     with get_session() as session:
         current = session.scalar(select(ShotRevision).where(ShotRevision.episode_id == episode_id, ShotRevision.is_current.is_(True)))
         if current is not None:
             current.kind = "RESTORE"
             current.source_revision_id = revision_id
-            current.note = f"恢复自 R{source.revision}"
+            current.note = f"恢复自 R{source_revision_number}"
             session.commit()
     return result
