@@ -4,7 +4,8 @@
 - 修改两个相邻 Shot 的公共边界；
 - 在当前 Shot 内拆分；
 - 合并当前 Shot 与下一 Shot；
-- 重新生成受影响 Shot 的 Reference Clip / Thumbnail；
+- 为每次人工修正生成独立媒体，不覆盖历史 Revision；
+- 修改成功后创建新的 MANUAL Shot Revision；
 - Shot 结构变化后把当前资产分析标记为 STALE。
 
 为什么存在：拉片页面只有在用户能够真正修正错误 Cut 时才有意义。
@@ -12,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,7 @@ from sqlalchemy import select
 
 from engine.app.content_analysis_v2 import ContentAnalysisRun
 from engine.app.media_v2 import MIN_SHOT_DURATION_US, _render_reference, _render_thumbnail
+from engine.app.shot_revision_v2 import ensure_current_revision, record_manual_revision
 from engine.app.studio_v2 import Episode, Shot, episode_dir, get_session, new_id, serialize_shot, utcnow
 
 
@@ -27,15 +30,23 @@ class ShotEditError(RuntimeError):
 
 
 class _PendingMedia:
+    """人工编辑媒体的两阶段文件。
+
+    final 路径使用本次 edit token 的独立目录，因此可以先落盘再提交数据库；
+    数据库失败时删除新文件，不会碰历史版本媒体。
+    """
+
     def __init__(self, reference: Path, thumbnail: Path, tmp_reference: Path, tmp_thumbnail: Path) -> None:
         self.reference = reference
         self.thumbnail = thumbnail
         self.tmp_reference = tmp_reference
         self.tmp_thumbnail = tmp_thumbnail
+        self.committed = False
 
-    def commit(self) -> None:
+    def commit_files(self) -> None:
         self.tmp_reference.replace(self.reference)
         self.tmp_thumbnail.replace(self.thumbnail)
+        self.committed = True
 
     def cleanup(self) -> None:
         for path in (self.tmp_reference, self.tmp_thumbnail):
@@ -44,6 +55,13 @@ class _PendingMedia:
                     path.unlink()
             except OSError:
                 pass
+        if self.committed:
+            for path in (self.reference, self.thumbnail):
+                try:
+                    if path.exists():
+                        path.unlink()
+                except OSError:
+                    pass
 
 
 def _ordered_shots(session: Any, episode_id: str) -> list[Shot]:
@@ -57,29 +75,13 @@ def _shot_index(shots: list[Shot], shot_id: str) -> int:
     raise ShotEditError("Shot 不存在")
 
 
-def _park_ordinals(session: Any, shots: list[Shot]) -> None:
-    """先把当前 ordinal 临时停到负数，避免唯一约束在插入/删除中途碰撞。"""
-
-    for index, shot in enumerate(shots, start=1):
-        shot.ordinal = -index
-    session.flush()
-
-
-def _assign_ordinals(session: Any, shots: list[Shot]) -> None:
-    """按当前列表顺序恢复 1..N 连续 ordinal。"""
-
-    for index, shot in enumerate(shots, start=1):
-        shot.ordinal = index
-    session.flush()
-
-
-def _paths_for_new_shot(episode: Episode, shot_id: str) -> tuple[Path, Path]:
-    root = episode_dir(episode.project_id, episode.id) / "shots"
-    return root / "reference" / f"manual_{shot_id}.mp4", root / "thumbnails" / f"manual_{shot_id}.jpg"
+def _edit_paths(episode: Episode, shot_id: str, edit_token: str) -> tuple[Path, Path]:
+    root = episode_dir(episode.project_id, episode.id) / "shots" / "manual" / edit_token
+    return root / "reference" / f"{shot_id}.mp4", root / "thumbnails" / f"{shot_id}.jpg"
 
 
 def _render_pending(source: Path, reference: Path, thumbnail: Path, start_us: int, end_us: int) -> _PendingMedia:
-    """先生成临时文件，全部成功后再替换正式媒体，避免 FFmpeg 失败留下半成品。"""
+    """先生成临时文件，全部成功后再落到本次独立人工版本目录。"""
 
     duration_us = end_us - start_us
     reference.parent.mkdir(parents=True, exist_ok=True)
@@ -129,14 +131,45 @@ def _validate_duration(start_us: int, end_us: int, *, label: str) -> None:
         raise ShotEditError(f"{label}不能短于 {MIN_SHOT_DURATION_US / 1000:.0f} ms")
 
 
+def _renumber_after_split(session: Any, shots: list[Shot], split_index: int) -> None:
+    """两阶段移动 ordinal，避免 SQLite 唯一约束在更新途中碰撞。"""
+
+    following = shots[split_index + 1 :]
+    for item in following:
+        item.ordinal = -item.ordinal
+    session.flush()
+    for item in following:
+        item.ordinal = (-item.ordinal) + 1
+    session.flush()
+
+
+def _renumber_after_merge(session: Any, shots: list[Shot], merged_right_index: int) -> None:
+    following = shots[merged_right_index + 1 :]
+    for item in following:
+        item.ordinal = -item.ordinal
+    session.flush()
+    for item in following:
+        item.ordinal = (-item.ordinal) - 1
+    session.flush()
+
+
 def adjust_boundary(*, shot_id: str, side: str, source_time_us: int) -> list[dict[str, Any]]:
-    """移动公共边界，并同时更新左右两 Shot，禁止产生 gap / overlap。"""
+    """移动公共边界；同时更新左右 Shot，禁止 gap / overlap。"""
 
     if side not in {"start", "end"}:
         raise ShotEditError("side 只能是 start 或 end")
 
     pending: list[_PendingMedia] = []
+    episode_id: str | None = None
     try:
+        # 编辑前先保证旧 Current 已经成为不可变历史基线。
+        with get_session() as lookup:
+            current = lookup.get(Shot, shot_id)
+            if current is None:
+                raise ShotEditError("Shot 不存在")
+            episode_id = current.episode_id
+        ensure_current_revision(episode_id)
+
         with get_session() as session:
             shot = session.get(Shot, shot_id)
             if shot is None:
@@ -165,14 +198,15 @@ def adjust_boundary(*, shot_id: str, side: str, source_time_us: int) -> list[dic
             source = Path(episode.source_path)
             if not source.is_file():
                 raise ShotEditError("原视频文件不存在")
-            left_ref = Path(left.reference_clip_path)
-            left_thumb = Path(left.thumbnail_path) if left.thumbnail_path else _paths_for_new_shot(episode, left.id)[1]
-            right_ref = Path(right.reference_clip_path)
-            right_thumb = Path(right.thumbnail_path) if right.thumbnail_path else _paths_for_new_shot(episode, right.id)[1]
+            token = f"EDIT_{uuid.uuid4().hex}"
+            left_ref, left_thumb = _edit_paths(episode, left.id, token)
+            right_ref, right_thumb = _edit_paths(episode, right.id, token)
             pending = [
                 _render_pending(source, left_ref, left_thumb, left.start_us, boundary_us),
                 _render_pending(source, right_ref, right_thumb, boundary_us, right.end_us),
             ]
+            for item in pending:
+                item.commit_files()
 
             left.end_us = boundary_us
             left.duration_us = left.end_us - left.start_us
@@ -184,10 +218,10 @@ def adjust_boundary(*, shot_id: str, side: str, source_time_us: int) -> list[dic
             episode.updated_at = utcnow()
             _mark_assets_stale(session, episode.project_id)
             session.commit()
+            result = [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
 
-            for item in pending:
-                item.commit()
-            return [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
+        record_manual_revision(episode_id, note=f"修改 Shot 公共{ '开始' if side == 'start' else '结束' }边界")
+        return result
     except Exception:
         for item in pending:
             item.cleanup()
@@ -198,7 +232,15 @@ def split_shot(*, shot_id: str, source_time_us: int) -> list[dict[str, Any]]:
     """在当前 Shot 内拆分。左段保留原 Shot ID，右段生成新 ID。"""
 
     pending: list[_PendingMedia] = []
+    episode_id: str | None = None
     try:
+        with get_session() as lookup:
+            current = lookup.get(Shot, shot_id)
+            if current is None:
+                raise ShotEditError("Shot 不存在")
+            episode_id = current.episode_id
+        ensure_current_revision(episode_id)
+
         with get_session() as session:
             shot = session.get(Shot, shot_id)
             if shot is None:
@@ -217,25 +259,27 @@ def split_shot(*, shot_id: str, source_time_us: int) -> list[dict[str, Any]]:
             source = Path(episode.source_path)
             if not source.is_file():
                 raise ShotEditError("原视频文件不存在")
-            old_end = shot.end_us
-            left_ref = Path(shot.reference_clip_path)
-            left_thumb = Path(shot.thumbnail_path) if shot.thumbnail_path else _paths_for_new_shot(episode, shot.id)[1]
+            token = f"EDIT_{uuid.uuid4().hex}"
             right_id = new_id("SHOT")
-            right_ref, right_thumb = _paths_for_new_shot(episode, right_id)
+            left_ref, left_thumb = _edit_paths(episode, shot.id, token)
+            right_ref, right_thumb = _edit_paths(episode, right_id, token)
+            old_end = shot.end_us
             pending = [
                 _render_pending(source, left_ref, left_thumb, shot.start_us, split_us),
                 _render_pending(source, right_ref, right_thumb, split_us, old_end),
             ]
+            for item in pending:
+                item.commit_files()
 
-            # 两阶段重编号：先清空所有正 ordinal，再插入新 Shot，最后恢复 1..N。
-            _park_ordinals(session, shots)
+            _renumber_after_split(session, shots, index)
             shot.end_us = split_us
             shot.duration_us = split_us - shot.start_us
             _update_shot_media_fields(shot, left_ref, left_thumb)
+
             right = Shot(
                 id=right_id,
                 episode_id=episode.id,
-                ordinal=-(len(shots) + 1),
+                ordinal=shot.ordinal + 1,
                 start_us=split_us,
                 end_us=old_end,
                 duration_us=old_end - split_us,
@@ -248,17 +292,14 @@ def split_shot(*, shot_id: str, source_time_us: int) -> list[dict[str, Any]]:
                 status="MANUAL",
             )
             session.add(right)
-            session.flush()
-            final_order = shots[: index + 1] + [right] + shots[index + 1 :]
-            _assign_ordinals(session, final_order)
             episode.status = "SHOTS_EDITED"
             episode.updated_at = utcnow()
             _mark_assets_stale(session, episode.project_id)
             session.commit()
+            result = [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
 
-            for item in pending:
-                item.commit()
-            return [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
+        record_manual_revision(episode_id, note="在播放头拆分 Shot")
+        return result
     except Exception:
         for item in pending:
             item.cleanup()
@@ -269,8 +310,15 @@ def merge_with_next(*, shot_id: str) -> list[dict[str, Any]]:
     """合并当前 Shot 与下一 Shot；保留左 Shot ID。"""
 
     pending: list[_PendingMedia] = []
-    remove_after_commit: list[Path] = []
+    episode_id: str | None = None
     try:
+        with get_session() as lookup:
+            current = lookup.get(Shot, shot_id)
+            if current is None:
+                raise ShotEditError("Shot 不存在")
+            episode_id = current.episode_id
+        ensure_current_revision(episode_id)
+
         with get_session() as session:
             left = session.get(Shot, shot_id)
             if left is None:
@@ -287,36 +335,26 @@ def merge_with_next(*, shot_id: str) -> list[dict[str, Any]]:
             source = Path(episode.source_path)
             if not source.is_file():
                 raise ShotEditError("原视频文件不存在")
-            left_ref = Path(left.reference_clip_path)
-            left_thumb = Path(left.thumbnail_path) if left.thumbnail_path else _paths_for_new_shot(episode, left.id)[1]
+            token = f"EDIT_{uuid.uuid4().hex}"
+            left_ref, left_thumb = _edit_paths(episode, left.id, token)
             pending = [_render_pending(source, left_ref, left_thumb, left.start_us, right.end_us)]
-            if right.reference_clip_path:
-                remove_after_commit.append(Path(right.reference_clip_path))
-            if right.thumbnail_path:
-                remove_after_commit.append(Path(right.thumbnail_path))
+            for item in pending:
+                item.commit_files()
 
-            _park_ordinals(session, shots)
             left.end_us = right.end_us
             left.duration_us = left.end_us - left.start_us
             _update_shot_media_fields(left, left_ref, left_thumb)
             session.delete(right)
             session.flush()
-            final_order = shots[: index + 1] + shots[index + 2 :]
-            _assign_ordinals(session, final_order)
+            _renumber_after_merge(session, shots, index + 1)
             episode.status = "SHOTS_EDITED"
             episode.updated_at = utcnow()
             _mark_assets_stale(session, episode.project_id)
             session.commit()
+            result = [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
 
-            for item in pending:
-                item.commit()
-            for path in remove_after_commit:
-                try:
-                    if path.exists() and path not in {left_ref, left_thumb}:
-                        path.unlink()
-                except OSError:
-                    pass
-            return [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
+        record_manual_revision(episode_id, note="合并相邻 Shot")
+        return result
     except Exception:
         for item in pending:
             item.cleanup()
