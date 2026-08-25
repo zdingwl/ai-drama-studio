@@ -1,11 +1,11 @@
-"""V2 本地媒体流水线：F03 预处理 + F04 自动切镜和 Reference Clip 生成。"""
+"""V2 本地媒体流水线：视频预处理 + 自动切镜和 Reference Clip 生成。"""
 from __future__ import annotations
 
 import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from engine.app.studio_v2 import episode_dir, get_episode_record, replace_shots, upsert_preprocess
 
@@ -13,9 +13,24 @@ FFMPEG_TIMEOUT_SECONDS = 60 * 60
 SHOT_THRESHOLD = 0.5
 MIN_SHOT_DURATION_US = 120_000
 
+# percent, stage_key, message, current, total
+ProgressReporter = Callable[[float, str, str, int | None, int | None], None]
+
 
 class MediaPipelineError(RuntimeError):
     pass
+
+
+def _report(
+    reporter: ProgressReporter | None,
+    percent: float,
+    stage_key: str,
+    message: str,
+    current: int | None = None,
+    total: int | None = None,
+) -> None:
+    if reporter is not None:
+        reporter(max(0.0, min(100.0, float(percent))), stage_key, message, current, total)
 
 
 def _run(command: list[str], *, timeout: int = FFMPEG_TIMEOUT_SECONDS) -> subprocess.CompletedProcess[str]:
@@ -69,7 +84,9 @@ def probe_media(path: Path) -> dict[str, Any]:
     }
 
 
-def preprocess_episode(episode_id: str) -> dict[str, Any]:
+def preprocess_episode(episode_id: str, progress: ProgressReporter | None = None) -> dict[str, Any]:
+    """生成 Proxy / Audio，并向调用方报告真实阶段进度。"""
+
     episode = get_episode_record(episode_id)
     if episode is None:
         raise LookupError("剧集不存在")
@@ -84,7 +101,10 @@ def preprocess_episode(episode_id: str) -> dict[str, Any]:
 
     upsert_preprocess(episode_id=episode_id, status="PROCESSING")
     try:
+        _report(progress, 5, "probe", "正在读取媒体信息")
         info = probe_media(source)
+
+        _report(progress, 15, "proxy", "正在生成分析用 Proxy")
         _run([
             "ffmpeg", "-y", "-i", str(source),
             "-map", "0:v:0", "-an",
@@ -93,13 +113,18 @@ def preprocess_episode(episode_id: str) -> dict[str, Any]:
             "-pix_fmt", "yuv420p", "-movflags", "+faststart",
             "-avoid_negative_ts", "make_zero", str(proxy),
         ])
+        _report(progress, 70, "proxy", "Proxy 已生成")
+
         if info["has_audio"]:
+            _report(progress, 75, "audio", "正在提取独立音轨")
             _run([
                 "ffmpeg", "-y", "-i", str(source), "-map", "0:a:0",
                 "-vn", "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", str(audio),
             ])
         elif audio.exists():
             audio.unlink()
+        _report(progress, 92, "persist", "正在保存预处理结果")
+
         upsert_preprocess(
             episode_id=episode_id,
             status="READY",
@@ -107,6 +132,7 @@ def preprocess_episode(episode_id: str) -> dict[str, Any]:
             audio_path=str(audio) if audio.exists() else None,
             media_info=info,
         )
+        _report(progress, 100, "ready", "视频初始化完成")
         return info | {"proxy_path": str(proxy), "audio_path": str(audio) if audio.exists() else None}
     except Exception as exc:
         upsert_preprocess(episode_id=episode_id, status="FAILED", error_message=str(exc))
@@ -210,7 +236,9 @@ def _render_thumbnail(reference: Path, output: Path, duration_us: int) -> None:
     ], timeout=10 * 60)
 
 
-def detect_episode_shots(episode_id: str) -> list[dict[str, Any]]:
+def detect_episode_shots(episode_id: str, progress: ProgressReporter | None = None) -> list[dict[str, Any]]:
+    """自动拉片并报告 PTS / 模型 / Reference Clip 的真实阶段进度。"""
+
     episode = get_episode_record(episode_id)
     if episode is None:
         raise LookupError("剧集不存在")
@@ -221,10 +249,17 @@ def detect_episode_shots(episode_id: str) -> list[dict[str, Any]]:
     if not source.is_file() or not proxy.is_file():
         raise MediaPipelineError("原视频或代理视频文件缺失")
 
+    _report(progress, 3, "probe", "正在读取原片时长")
     info = probe_media(source)
     duration_us = int(info["duration_us"])
+
+    _report(progress, 8, "frame_pts", "正在读取 FFprobe 真实逐帧 PTS")
     frame_pts = _frame_pts_us(proxy)
+
+    _report(progress, 15, "transnet", "TransNetV2 正在检测镜头边界")
     cuts = _transnet_cut_points(proxy, frame_pts)
+
+    _report(progress, 24, "boundaries", "正在整理 Cut 与 Shot 边界")
     boundaries = _normalize_boundaries(duration_us, cuts)
 
     shots_root = episode_dir(episode.project_id, episode.id) / "shots"
@@ -236,10 +271,13 @@ def detect_episode_shots(episode_id: str) -> list[dict[str, Any]]:
     thumbs.mkdir(parents=True, exist_ok=True)
 
     payloads: list[dict[str, Any]] = []
+    total_shots = max(1, len(boundaries) - 1)
     for index, (start_us, end_us) in enumerate(zip(boundaries, boundaries[1:]), start=1):
         duration = end_us - start_us
         reference = refs / f"shot_{index:04d}.mp4"
         thumbnail = thumbs / f"shot_{index:04d}.jpg"
+        progress_percent = 25 + ((index - 1) / total_shots) * 70
+        _report(progress, progress_percent, "reference_clips", f"正在生成 Reference Clip {index} / {total_shots}", index, total_shots)
         _render_reference(source, reference, start_us, duration)
         _render_thumbnail(reference, thumbnail, duration)
         payloads.append({
@@ -255,4 +293,9 @@ def detect_episode_shots(episode_id: str) -> list[dict[str, Any]]:
             "camera_motion": None,
             "status": "READY",
         })
-    return replace_shots(episode_id, payloads)
+        _report(progress, 25 + (index / total_shots) * 70, "reference_clips", f"已生成 {index} / {total_shots} 个 Reference Clip", index, total_shots)
+
+    _report(progress, 97, "persist", "正在保存 Shot 结果", total_shots, total_shots)
+    result = replace_shots(episode_id, payloads)
+    _report(progress, 100, "ready", f"拉片完成：{len(result)} Shots", len(result), len(result))
+    return result
