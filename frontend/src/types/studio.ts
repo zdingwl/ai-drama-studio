@@ -146,6 +146,88 @@ export interface F05ModelStatus {
   }>
 }
 
+export type AssetEntityType = 'character' | 'scene' | 'prop'
+
+export interface FinalAssetEntity {
+  id: string
+  type: AssetEntityType
+  name: string
+  status: string
+  is_key_prop: boolean | null
+  cover_url: string | null
+  source_candidate_ids: string[]
+  confidence: number | null
+  shot_ids: string[]
+  shot_count: number
+  metadata: Record<string, unknown>
+}
+
+export interface AssetRevision {
+  id: string
+  project_id: string
+  revision: number
+  kind: 'AUTO' | 'MANUAL' | 'RESTORE' | string
+  is_current: boolean
+  source_run_id: string | null
+  source_revision_id: string | null
+  note: string | null
+  created_at: string
+  counts: {
+    characters: number
+    scenes: number
+    props: number
+  }
+}
+
+export interface ShotAssetBindings {
+  character_ids: string[]
+  scene_id: string | null
+  prop_ids: string[]
+}
+
+export interface AssetEvidenceItem {
+  candidate_id: string
+  label: string
+  confidence: number | null
+  cover_url: string | null
+  final_asset_id: string | null
+}
+
+export interface ShotAssetEvidence {
+  characters: AssetEvidenceItem[]
+  scene: AssetEvidenceItem | null
+  props: AssetEvidenceItem[]
+}
+
+export interface AssetWorkspace {
+  project_id: string
+  status: string
+  stale: boolean
+  revision: AssetRevision | null
+  analysis: {
+    id: string
+    status: string
+    profile_version: string
+    component_status: Record<string, string>
+    counts: Record<string, number>
+  } | null
+  characters: FinalAssetEntity[]
+  scenes: FinalAssetEntity[]
+  props: FinalAssetEntity[]
+  bindings_by_shot: Record<string, ShotAssetBindings>
+  evidence_by_shot: Record<string, ShotAssetEvidence>
+  revisions: AssetRevision[]
+}
+
+export interface AssetSemanticModelStatus {
+  ready: boolean
+  configured: boolean
+  provider: string
+  base_url: string | null
+  model: string | null
+  purpose: string
+}
+
 export type BackgroundTaskStatus = 'QUEUED' | 'PROCESSING' | 'READY' | 'READY_WITH_WARNINGS' | 'FAILED' | 'CANCELLED'
 
 export interface BackgroundTask {
