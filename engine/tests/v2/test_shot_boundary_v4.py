@@ -62,7 +62,7 @@ def test_review_out_frame_is_strictly_before_exclusive_end() -> None:
     assert out_us < 160_000
 
 
-def test_reference_renderer_uses_exclusive_trim_end(monkeypatch, tmp_path: Path) -> None:
+def test_reference_renderer_uses_accurate_seek_plus_exclusive_trim(monkeypatch, tmp_path: Path) -> None:
     captured: list[list[str]] = []
 
     monkeypatch.setattr(media_v4.v2, "probe_media", lambda _path: {"has_audio": False})
@@ -77,9 +77,11 @@ def test_reference_renderer_uses_exclusive_trim_end(monkeypatch, tmp_path: Path)
 
     assert captured
     command = captured[0]
+    assert command[command.index("-ss") + 1] == "1.000000"
     filter_complex = command[command.index("-filter_complex") + 1]
-    assert "trim=start=1.000000:end=3.000000" in filter_complex
+    assert "trim=start=0:end=2.000000" in filter_complex
     assert "setpts=PTS-STARTPTS" in filter_complex
+    assert "-t" not in command
 
 
 def test_low_confidence_boundary_is_marked_for_review() -> None:
