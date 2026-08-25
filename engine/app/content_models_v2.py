@@ -1,10 +1,13 @@
 """03 资产本地人物视觉模型准备。
 
-统一管理人物 V4.1 需要的固定模型：
+统一管理人物 V5 需要的固定模型：
 - YuNet：Face Detection；
 - SFace：Face Identity；
-- YOLOX：Person Detection，回答“画面里有几个人”；
+- YOLOX：Person Detection，先回答“画面里有几个人”；
 - YoutuReID：Body ReID，补侧脸 / 背影 / 遮挡身份连续性。
+
+V5 的变化主要在业务算法：Person Track → Track Gallery → Character Gallery；
+模型本身继续复用这四个稳定 ONNX 权重。
 
 模型不提交 Git；显式执行 prepare 后写入 ``data_v2/models/f05``，正式分析时只读本地权重，
 不会在业务 Run 中静默联网下载。
@@ -33,10 +36,10 @@ class ContentModelError(RuntimeError):
 
 
 class RequiredCharacterModelError(RuntimeError):
-    """正式人物 V4 Run 缺少必需模型。
+    """正式人物 V5 Run 缺少必需模型。
 
     这个异常故意不继承 ContentModelError：旧 content_analysis_v2 会把 ContentModelError
-    当成可降级组件错误并继续生成 Run；人物 V4 不允许这样做，否则可能把“模型没准备”
+    当成可降级组件错误并继续生成 Run；人物 V5 不允许这样做，否则可能把“模型没准备”
     错误发布成“0 人物”的新 AUTO 资产版本。
     """
 
@@ -147,10 +150,12 @@ def model_status() -> dict[str, object]:
         })
     return {
         "ready": all_ready,
-        "profile": "character-v4.1",
+        "profile": "character-v5-track-gallery",
         "models": models,
         "runtime": runtime_status(),
         "face_runtime": {"device": "CPU", "provider": "OpenCV", "detail": "YuNet + SFace"},
+        "identity_policy": "Track First → Clean Track Gallery → Character Gallery",
+        "gallery_policy": "正式人物图库只保存目标人物干净单人图",
     }
 
 
@@ -158,7 +163,7 @@ def require_models() -> dict[str, Path]:
     """正式人物 Run 的硬门槛。
 
     输入：本机模型目录；输出：四个已校验模型路径。
-    为什么：缺任一 V4 模型时必须让本次 Run 失败，保留旧 Current，禁止降级成空人物结果。
+    为什么：缺任一 V5 模型时必须让本次 Run 失败，保留旧 Current，禁止降级成空人物结果。
     """
 
     root = model_dir()
@@ -169,14 +174,14 @@ def require_models() -> dict[str, Path]:
             _verify(path, spec)
         except ContentModelError as exc:
             raise RequiredCharacterModelError(
-                f"人物识别 V4 模型未准备完整：{exc}。请先执行人物模型准备，再重新提取资产。"
+                f"人物识别 V5 模型未准备完整：{exc}。请先执行人物模型准备，再重新提取资产。"
             ) from exc
         result[spec.logical_id] = path
     return result
 
 
 def prepare_models() -> dict[str, object]:
-    """显式下载并校验全部人物 V4 模型；已有正确文件直接复用。"""
+    """显式下载并校验全部人物 V5 模型；已有正确文件直接复用。"""
 
     root = model_dir()
     for spec in MODEL_SPECS:
@@ -210,13 +215,14 @@ def prepare_models() -> dict[str, object]:
 
 
 def main() -> None:
-    print("正在准备资产人物 V4.1 模型（YuNet / SFace / YOLOX / YoutuReID）…")
+    print("正在准备资产人物 V5 模型（YuNet / SFace / YOLOX / YoutuReID）…")
     status = prepare_models()
     for item in status["models"]:  # type: ignore[index]
         print(f"OK  {item['filename']}\n    {item['path']}")
     runtime = status.get("runtime") or {}
     print(f"人物重模型运行时：{runtime.get('device')} · {runtime.get('provider')} · {runtime.get('detail')}")
-    print("资产人物 V4.1 模型准备完成。")
+    print("人物身份策略：Track First → Clean Track Gallery → Character Gallery")
+    print("资产人物 V5 模型准备完成。")
 
 
 if __name__ == "__main__":
