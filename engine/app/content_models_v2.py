@@ -1,6 +1,6 @@
 """03 资产本地人物视觉模型准备。
 
-统一管理人物 V4 需要的固定 OpenCV Zoo 模型：
+统一管理人物 V4.1 需要的固定模型：
 - YuNet：Face Detection；
 - SFace：Face Identity；
 - YOLOX：Person Detection，回答“画面里有几个人”；
@@ -8,6 +8,9 @@
 
 模型不提交 Git；显式执行 prepare 后写入 ``data_v2/models/f05``，正式分析时只读本地权重，
 不会在业务 Run 中静默联网下载。
+
+执行策略：YOLOX / YoutuReID 默认优先 ONNX Runtime CUDA，CUDA 不可用自动回退 CPU；
+YuNet / SFace 保持 OpenCV CPU。
 """
 from __future__ import annotations
 
@@ -69,8 +72,6 @@ SFACE_SPEC = ModelSpec(
     ),
 )
 
-# OpenCV Zoo LFS metadata at MODEL_SOURCE_COMMIT：
-# oid sha256:c5c2...8063 / size 35,858,002 bytes。
 YOLOX_SPEC = ModelSpec(
     logical_id="person_detection.yolox.2022nov",
     filename="object_detection_yolox_2022nov.onnx",
@@ -82,8 +83,6 @@ YOLOX_SPEC = ModelSpec(
     ),
 )
 
-# OpenCV Zoo LFS metadata at MODEL_SOURCE_COMMIT：
-# oid sha256:0579...580d / size 106,878,407 bytes。
 YOUTU_REID_SPEC = ModelSpec(
     logical_id="person_reid.youtu.2021nov",
     filename="person_reid_youtu_2021nov.onnx",
@@ -122,7 +121,9 @@ def _verify(path: Path, spec: ModelSpec) -> None:
 
 
 def model_status() -> dict[str, object]:
-    """返回全部人物模型准备状态，不主动联网。"""
+    """返回人物模型准备状态 + 实际推理设备能力，不主动联网。"""
+
+    from engine.app.inference_runtime_v41 import runtime_status
 
     root = model_dir()
     models: list[dict[str, object]] = []
@@ -144,7 +145,13 @@ def model_status() -> dict[str, object]:
             "path": str(path),
             "error": error,
         })
-    return {"ready": all_ready, "profile": "character-v4", "models": models}
+    return {
+        "ready": all_ready,
+        "profile": "character-v4.1",
+        "models": models,
+        "runtime": runtime_status(),
+        "face_runtime": {"device": "CPU", "provider": "OpenCV", "detail": "YuNet + SFace"},
+    }
 
 
 def require_models() -> dict[str, Path]:
@@ -203,11 +210,13 @@ def prepare_models() -> dict[str, object]:
 
 
 def main() -> None:
-    print("正在准备资产人物 V4 模型（YuNet / SFace / YOLOX / YoutuReID）…")
+    print("正在准备资产人物 V4.1 模型（YuNet / SFace / YOLOX / YoutuReID）…")
     status = prepare_models()
     for item in status["models"]:  # type: ignore[index]
         print(f"OK  {item['filename']}\n    {item['path']}")
-    print("资产人物 V4 模型准备完成。")
+    runtime = status.get("runtime") or {}
+    print(f"人物重模型运行时：{runtime.get('device')} · {runtime.get('provider')} · {runtime.get('detail')}")
+    print("资产人物 V4.1 模型准备完成。")
 
 
 if __name__ == "__main__":
