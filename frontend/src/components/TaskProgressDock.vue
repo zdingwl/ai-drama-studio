@@ -12,7 +12,7 @@ let timer: number | null = null
 
 const projectId = computed(() => String(route.params.projectId || ''))
 const activeTasks = computed(() => tasks.value.filter((item) => item.status === 'QUEUED' || item.status === 'PROCESSING'))
-const currentTask = computed(() => activeTasks.value[0] ?? tasks.value[0] ?? null)
+const currentTask = computed(() => activeTasks.value[0] ?? null)
 const recentTasks = computed(() => tasks.value.slice(0, 8))
 
 function isFinished(task: BackgroundTask) {
@@ -74,7 +74,7 @@ onUnmounted(() => {
         <small>{{ currentTask.stage_label || statusLabel(currentTask) }}<template v-if="currentTask.current_item"> · {{ currentTask.current_item }}</template></small>
       </span>
       <span class="task-dock-percent">{{ percentLabel(currentTask) }}</span>
-      <span class="task-dock-count">任务 {{ activeTasks.length || recentTasks.length }}</span>
+      <span class="task-dock-count">进行中 {{ activeTasks.length }}</span>
     </button>
 
     <div class="task-progress-track" :class="{ indeterminate: currentTask.progress_mode === 'indeterminate' || currentTask.progress_percent === null }">
