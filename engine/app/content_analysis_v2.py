@@ -1,16 +1,21 @@
-"""F05「智能内容识别」V2。
+"""F05「资产提取」V2。
 
-F05 只保存 AI Evidence，不直接写人工 Final Character / Scene / Prop / Dialogue。
-Reference Clip 继续负责动作、机位、构图和运动；本模块重点保存重制时必须控制的语义。
+F05 的产品职责已经收敛为：
+- 从已经完成拉片的 Shot / Reference Clip 中提取人物、场景、关键道具 AI Evidence；
+- 把 Evidence 明确绑定回 Shot；
+- 为后续人工 Final Binding 提供可追溯来源；
+- 不在本阶段执行 ASR / Speaker / Dialogue，人物对白属于后续 F06。
 
-当前能力：
-- Character Identity / Track：YuNet + SFace + body-only HOG + 身体/服装颜色证据；
-- Scene：Shot Thumbnail 视觉聚类；
-- ASR：faster-whisper；
-- Speaker：可选本地 pyannote Pipeline；
-- Speaker → Character：基于跨 Shot 共现做保守映射；
-- Key Prop：数据边界已建立，未配置对象模型时绝不伪造结果；
-- Short Description：只生成结构化摘要，不复述 Reference Video 已经包含的动作/摄影细节。
+人物策略：
+- Face/SFace 是身份锚点；
+- 身体 / 服装 Evidence 只辅助已有身份，不允许 body-only HOG 自己制造人物身份。
+
+场景策略：
+- 当前仍是轻量视觉候选，不冒充正式 Scene Asset；
+- 优先按 Episode 内连续 Shot 做 Scene Segment 候选，不再跨整部剧只按颜色把不连续镜头硬聚到一起。
+
+关键道具：
+- 数据边界已建立；没有可靠对象/VLM 模型时返回 NOT_CONFIGURED，不伪造道具。
 """
 from __future__ import annotations
 
@@ -35,8 +40,8 @@ from engine.app.character_visual_v2 import (
 from engine.app.content_models_v2 import ContentModelError, model_status
 from engine.app.studio_v2 import Base, Episode, Project, Shot, get_session, new_id, utcnow
 
-PROFILE_VERSION = "f05-v2.2"
-SCENE_CLUSTER_THRESHOLD = 0.72
+PROFILE_VERSION = "f05-assets-v2.3"
+SCENE_CLUSTER_THRESHOLD = 0.68
 
 
 class ContentAnalysisError(RuntimeError):
@@ -137,6 +142,8 @@ class ShotPropEvidence(Base):
     bbox_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+# 下面 Speaker / Dialogue 表继续保留历史兼容和后续 F06 使用。
+# 新的 F05 Asset Run 不再写这些表。
 class SpeakerSegment(Base):
     __tablename__ = "v2_speaker_segments"
 
@@ -182,6 +189,8 @@ class SceneDraft:
 
 
 def _scene_descriptor(path: str | None) -> Any | None:
+    """生成轻量环境视觉 descriptor；只用于 Scene Candidate，不等同最终场景身份。"""
+
     if not path:
         return None
     import cv2
@@ -198,28 +207,60 @@ def _scene_descriptor(path: str | None) -> Any | None:
 
 
 def _cluster_scenes(run_id: str, project_id: str, shots: list[dict[str, Any]]) -> list[SceneDraft]:
+    """按 Episode 内连续 Shot 形成 Scene Segment 候选。
+
+    旧实现把整部剧所有 Shot 只按 HSV 相似度全局聚类，会把时间上完全不连续、只是颜色相似的房间合在一起。
+    新实现先尊重 Episode 与 Shot 连续性；单个视觉离群 Shot 如果下一镜又回到当前场景，则不立即切场。
+    跨 Episode 的正式 Scene Asset 聚合留给后续资产确认层。
+    """
+
     descriptors = {shot["id"]: _scene_descriptor(shot.get("thumbnail_path")) for shot in shots}
+    ordered = sorted(shots, key=lambda item: (item["episode_order"], item["ordinal"]))
     scenes: list[SceneDraft] = []
-    for shot in shots:
+    current_scene: SceneDraft | None = None
+    current_episode_id: str | None = None
+
+    for index, shot in enumerate(ordered):
         descriptor = descriptors.get(shot["id"])
         if descriptor is None:
             continue
-        best: SceneDraft | None = None
-        best_score = -1.0
-        for scene in scenes:
-            score = cosine(scene.centroid, descriptor) or -1.0
-            if score >= SCENE_CLUSTER_THRESHOLD and score > best_score:
-                best, best_score = scene, score
-        if best is None:
-            best = SceneDraft(id=new_id("SCENE_CANDIDATE"), cover_path=shot.get("thumbnail_path"))
-            scenes.append(best)
-        else:
-            best.scores.append(best_score)
-        best.shot_ids.append(shot["id"])
-        best.centroid = mean_vector([descriptors[shot_id] for shot_id in best.shot_ids if descriptors.get(shot_id) is not None])
+
+        if shot["episode_id"] != current_episode_id:
+            current_episode_id = shot["episode_id"]
+            current_scene = None
+
+        score = cosine(current_scene.centroid, descriptor) if current_scene is not None else None
+        should_continue = current_scene is not None and score is not None and score >= SCENE_CLUSTER_THRESHOLD
+
+        # 容忍一个镜头的视觉离群，例如同一客厅中的脸部特写 / 道具特写。
+        if current_scene is not None and not should_continue:
+            next_shot = ordered[index + 1] if index + 1 < len(ordered) else None
+            if next_shot is not None and next_shot["episode_id"] == shot["episode_id"]:
+                next_descriptor = descriptors.get(next_shot["id"])
+                next_score = cosine(current_scene.centroid, next_descriptor)
+                if next_score is not None and next_score >= SCENE_CLUSTER_THRESHOLD:
+                    should_continue = True
+
+        if not should_continue:
+            current_scene = SceneDraft(
+                id=new_id("SCENE_CANDIDATE"),
+                cover_path=shot.get("thumbnail_path"),
+            )
+            scenes.append(current_scene)
+        elif score is not None:
+            current_scene.scores.append(score)
+
+        current_scene.shot_ids.append(shot["id"])
+        current_scene.centroid = mean_vector([
+            descriptors[shot_id]
+            for shot_id in current_scene.shot_ids
+            if descriptors.get(shot_id) is not None
+        ])
+
     return scenes
 
 
+# 以下对白 / Speaker helpers 暂时保留给后续 F06 迁移与历史测试；F05 不再调用。
 def _language_code(locale: str) -> str | None:
     value = (locale or "").strip().lower()
     mapping = {
@@ -422,7 +463,7 @@ def _load_context(project_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]
             preprocess = episode.preprocess
             episode_shots = session.scalars(select(Shot).where(Shot.episode_id == episode.id).order_by(Shot.ordinal)).all()
             if not episode_shots:
-                raise ContentAnalysisError(f"第 {episode.sort_order} 集还没有完成 F04 自动拉片")
+                raise ContentAnalysisError(f"第 {episode.sort_order} 集还没有完成 F04 拉片")
             episode_payloads.append({
                 "id": episode.id,
                 "sort_order": episode.sort_order,
@@ -506,9 +547,9 @@ def _persist_results(
                 confidence=confidence,
                 cover_path=cover_path,
                 evidence_json=json.dumps({
-                    "identity": "YuNet + SFace + body-only HOG + clothing histogram",
+                    "identity": "Face/SFace anchored + body/clothing auxiliary evidence",
                     "face_track_count": face_track_count,
-                    "body_only_track_count": len(candidate.tracks) - face_track_count,
+                    "body_only_extension_track_count": len(candidate.tracks) - face_track_count,
                     "profile": PROFILE_VERSION,
                 }, ensure_ascii=False),
             ))
@@ -553,7 +594,10 @@ def _persist_results(
                 auto_label=f"场景 {ordinal:03d}",
                 shot_count=len(scene.shot_ids),
                 cover_path=scene.cover_path,
-                evidence_json=json.dumps({"method": "HSV visual clustering", "profile": PROFILE_VERSION}, ensure_ascii=False),
+                evidence_json=json.dumps({
+                    "method": "episode-contiguous HSV scene candidate segmentation",
+                    "profile": PROFILE_VERSION,
+                }, ensure_ascii=False),
             ))
             scene_confidence = sum(scene.scores) / len(scene.scores) if scene.scores else 1.0
             for shot_id in scene.shot_ids:
@@ -566,6 +610,7 @@ def _persist_results(
                     confidence=scene_confidence,
                 ))
 
+        # 历史兼容：F05 新 Run 默认传空列表；后续 F06 可迁移后复用这些表。
         for item in speaker_segments:
             session.add(SpeakerSegment(
                 id=item["id"],
@@ -602,9 +647,7 @@ def _persist_results(
         for candidate in candidates:
             for shot_id in {track.shot_id for track in candidate.tracks}:
                 character_count_by_shot[shot_id] = character_count_by_shot.get(shot_id, 0) + 1
-        dialogue_count_by_shot: dict[str, int] = {}
-        for dialogue in dialogues:
-            dialogue_count_by_shot[dialogue["shot_id"]] = dialogue_count_by_shot.get(dialogue["shot_id"], 0) + 1
+
         for shot_payload in shots:
             shot = session.get(Shot, shot_payload["id"])
             if shot is None:
@@ -614,10 +657,9 @@ def _persist_results(
                 parts.append(f"{character_count_by_shot[shot.id]} 个人物候选")
             if scene_by_shot.get(shot.id):
                 parts.append("已归入场景候选")
-            if dialogue_count_by_shot.get(shot.id):
-                parts.append(f"{dialogue_count_by_shot[shot.id]} 段源对白")
-            shot.short_description = "；".join(parts) if parts else "暂无需要结构化控制的自动结果"
+            shot.short_description = "；".join(parts) if parts else "暂无人物 / 场景 / 道具自动 Evidence"
 
+        # 新 Run 完整成功以后才切换 current；失败时旧 current 不动。
         for previous in session.scalars(select(ContentAnalysisRun).where(
             ContentAnalysisRun.project_id == project_id,
             ContentAnalysisRun.is_current.is_(True),
@@ -627,9 +669,9 @@ def _persist_results(
         run = session.get(ContentAnalysisRun, run_id)
         if run is None:
             raise ContentAnalysisError("F05 Run 记录丢失")
-        normal_statuses = {"READY", "NO_DIALOGUE", "NO_SPEECH", "NO_CHARACTER", "NO_SCENE", "BASIC"}
-        core_values = [component_status.get(key, "") for key in ("characters", "scenes", "props", "asr", "speaker", "speaker_character", "description")]
-        warnings = any(value not in normal_statuses for value in core_values)
+        normal_statuses = {"READY", "NO_CHARACTER", "NO_SCENE"}
+        core_values = [component_status.get(key, "") for key in ("characters", "scenes")]
+        warnings = any(value not in normal_statuses for value in core_values) or component_status.get("props") != "READY"
         run.status = "READY_WITH_WARNINGS" if warnings else "READY"
         run.is_current = True
         run.component_status_json = json.dumps(component_status, ensure_ascii=False)
@@ -646,16 +688,18 @@ def _persist_results(
 
 
 def run_content_analysis(project_id: str) -> dict[str, Any]:
-    project, episodes, shots = _load_context(project_id)
+    """执行 F05 Asset Run；只计算人物、场景、道具 Evidence。
+
+    重跑规则：新 Run 以 is_current=False 开始；全部持久化成功后才切换 current。
+    因此新算法失败不会覆盖旧的可用资产 Evidence。
+    """
+
+    _project, _episodes, shots = _load_context(project_id)
     run_id = _create_run(project_id)
     component_status: dict[str, str] = {
         "characters": "PENDING",
         "scenes": "PENDING",
         "props": "NOT_CONFIGURED",
-        "asr": "PENDING",
-        "speaker": "PENDING",
-        "speaker_character": "PENDING",
-        "description": "BASIC",
     }
     try:
         candidates: list[CandidateDraft] = []
@@ -669,24 +713,9 @@ def run_content_analysis(project_id: str) -> dict[str, Any]:
         scenes = _cluster_scenes(run_id, project_id, shots)
         component_status["scenes"] = "READY" if scenes else "NO_SCENE"
 
-        try:
-            asr_status, dialogues = _run_asr(project, episodes, shots)
-        except Exception as exc:
-            asr_status, dialogues = "FAILED", []
-            component_status["asr_detail"] = str(exc)
-        component_status["asr"] = asr_status
-
-        try:
-            speaker_status, speaker_segments = _run_diarization(episodes)
-        except Exception as exc:
-            speaker_status, speaker_segments = "FAILED", []
-            component_status["speaker_detail"] = str(exc)
-        component_status["speaker"] = speaker_status
-
-        _attach_speakers(dialogues, speaker_segments)
-        _map_speaker_to_character(dialogues, candidates)
-        mapped = sum(1 for item in dialogues if item.get("speaker_candidate_id"))
-        component_status["speaker_character"] = "READY" if mapped else ("NO_MAPPING" if dialogues else "NO_DIALOGUE")
+        # F05 不再运行 ASR / Speaker。人物对白从 F06 独立创建自己的 Run / Version。
+        dialogues: list[dict[str, Any]] = []
+        speaker_segments: list[dict[str, Any]] = []
 
         _persist_results(
             run_id=run_id,
@@ -779,6 +808,7 @@ def get_analysis_run(run_id: str) -> dict[str, Any] | None:
             for item in scenes
         ]
 
+        # 历史 Run 仍能读取旧 Dialogue；新的 F05 Asset Run 正常返回空数组。
         dialogues = session.scalars(select(AnalysisDialogue).where(
             AnalysisDialogue.run_id == run_id
         ).order_by(AnalysisDialogue.episode_id, AnalysisDialogue.source_start_us)).all()
