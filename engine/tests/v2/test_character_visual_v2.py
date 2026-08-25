@@ -51,7 +51,7 @@ def test_body_only_tracks_become_unresolved_person_evidence_not_resolved_identit
     assert len(candidates) == 1
     assert candidates[0].identity_status == "UNRESOLVED"
     assert candidates[0].has_face_anchor is False
-    assert set(candidates[0].tracks) == {left, right}
+    assert candidates[0].tracks == [left, right]
 
 
 def test_same_shot_face_tracks_never_auto_merge_even_with_identical_identity_evidence() -> None:
