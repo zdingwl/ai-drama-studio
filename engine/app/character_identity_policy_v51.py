@@ -34,11 +34,15 @@ SECOND_PASS_FACE_FLOOR = 0.40
 
 
 def _face_vectors_from_track(track: TrackDraft) -> list[object]:
-    return [
+    values = [
         obs.face_embedding
         for obs in track.observations
         if obs.face_embedding is not None
     ]
+    # 历史测试/旧 Evidence 可能只有 Track 聚合 embedding，没有逐帧 Observation。
+    if not values and track.face_embedding is not None:
+        values.append(track.face_embedding)
+    return values
 
 
 def _face_vectors_from_candidate(candidate: CandidateDraft) -> list[object]:
@@ -90,14 +94,33 @@ def _symmetric_face_profile(candidate: CandidateDraft, track: TrackDraft) -> tup
     return (sum(scores) / len(scores) if scores else None, min(floors) if floors else None)
 
 
+def _legacy_reid_fallback_allowed(candidate: CandidateDraft, track: TrackDraft) -> bool:
+    """只给旧数据/单测保留聚合 ReID fallback。
+
+    正式 V5/V5.1 Track 一旦存在 representative（哪怕全是 dirty），就绝不能退回聚合 ReID，
+    否则多人污染图会重新进入 Character_ID 判断。
+    """
+
+    return (
+        not track.representatives
+        and all(not item.representatives for item in candidate.tracks)
+    )
+
+
 def _reid_profile(candidate: CandidateDraft, track: TrackDraft) -> float | None:
-    # 只允许 CLEAN person crop 参与 Body ReID 身份合并。
+    # 正式路径只允许 CLEAN person crop 参与 Body ReID 身份合并。
     candidate_vectors = _clean_reid_vectors_from_candidate(candidate)
     track_vectors = _clean_reid_vectors_from_track(track)
     left, _ = _directed_profile(track_vectors, candidate_vectors)
     right, _ = _directed_profile(candidate_vectors, track_vectors)
     values = [value for value in (left, right) if value is not None]
-    return sum(values) / len(values) if values else None
+    if values:
+        return sum(values) / len(values)
+
+    # 仅兼容没有 representative 概念的旧 Track；正式脏图库绝不走这里。
+    if _legacy_reid_fallback_allowed(candidate, track):
+        return v5.cosine(candidate.reid_embedding, track.reid_embedding)
+    return None
 
 
 def _candidate_match_score(candidate: CandidateDraft, track: TrackDraft) -> float | None:
@@ -122,7 +145,7 @@ def _candidate_match_score(candidate: CandidateDraft, track: TrackDraft) -> floa
             return face * 0.76 + reid * 0.24
         return None
 
-    # 只有一边有 Face：只能把 body-only Track 在非常近的时间连续性下临时挂回。
+    # 只有一边有 Face，或两边都没有 Face：只允许在相邻 Shot + 极高 ReID 下临时连续。
     # 不允许像 V5 那样跨 4 个 Shot 用 0.76 ReID 自动合并。
     if gap is None or gap > BODY_ONLY_MAX_SHOT_GAP:
         return None
