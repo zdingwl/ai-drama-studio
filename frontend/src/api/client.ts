@@ -40,6 +40,15 @@ export const api = {
   runContentAnalysis: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/assets`, { method: 'POST' }),
   listShots: (episodeId: string) => request<Shot[]>(`/api/episodes/${episodeId}/shots`),
 
+  // Shot 人工修正：这里修改的是当前生产 Shot，不修改自动模型本身。
+  adjustShotBoundary: (shotId: string, side: 'start' | 'end', sourceTimeUs: number) => request<Shot[]>(`/api/shots/${shotId}/boundary`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ side, source_time_us: sourceTimeUs }),
+  }),
+  splitShot: (shotId: string, sourceTimeUs: number) => request<Shot[]>(`/api/shots/${shotId}/split`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_time_us: sourceTimeUs }),
+  }),
+  mergeShotWithNext: (shotId: string) => request<Shot[]>(`/api/shots/${shotId}/merge-next`, { method: 'POST' }),
+
   // 显式 Task API，给后续独立工作区复用。
   startEpisodePreprocessTask: (episodeId: string) => request<BackgroundTask>(`/api/episodes/${episodeId}/tasks/preprocess`, { method: 'POST' }),
   startBatchPreprocessTask: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/preprocess-batch`, { method: 'POST' }),
