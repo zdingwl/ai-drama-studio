@@ -20,6 +20,7 @@ const revisionOpen = ref(false)
 const busy = ref('')
 const error = ref('')
 const videoRef = ref<HTMLVideoElement | null>(null)
+const playheadUs = ref(0)
 const startSeconds = ref(0)
 const endSeconds = ref(0)
 
@@ -28,6 +29,7 @@ const selectedShotIndex = computed(() => selectedShot.value ? shots.value.findIn
 const suspiciousShots = computed(() => shots.value.filter((shot) => shot.duration_us < 500_000))
 const currentRevision = computed(() => revisions.value.find((item) => item.is_current) ?? null)
 const finishedEpisodes = computed(() => props.episodes.filter((item) => item.shot_count > 0).length)
+const episodeProxyUrl = computed(() => selectedEpisodeId.value ? `/api/episodes/${selectedEpisodeId.value}/proxy` : '')
 
 function seconds(us: number | null | undefined): string {
   if (us === null || us === undefined) return '—'
@@ -57,22 +59,31 @@ function thumbnailUrl(shot: Shot): string {
   return shot.thumbnail_url ? `${shot.thumbnail_url}?v=${shot.start_us}-${shot.end_us}` : ''
 }
 
-function shotMediaUrl(shot: Shot): string {
-  return `${shot.reference_url}?v=${shot.start_us}-${shot.end_us}`
-}
-
-function selectShot(shot: Shot | null): void {
+/**
+ * 职责：更新当前 Shot Inspector，但不一定移动视频播放头。
+ * 输入：Shot + 是否跳转到 Shot 开始；输出：更新选中状态。
+ * 为什么：用户点击卡片时需要跳转，而视频自然播放跨 Cut 时只应高亮，不能把播放头拉回 Shot 开头。
+ */
+function applySelectedShot(shot: Shot | null, seek: boolean): void {
   selectedShot.value = shot
   if (!shot) return
   startSeconds.value = shot.start_us / 1_000_000
   endSeconds.value = shot.end_us / 1_000_000
+  if (seek && videoRef.value) {
+    videoRef.value.currentTime = shot.start_us / 1_000_000
+    playheadUs.value = shot.start_us
+  }
+}
+
+function selectShot(shot: Shot): void {
+  applySelectedShot(shot, true)
 }
 
 async function loadEpisodeData(episodeId: string): Promise<void> {
   if (!episodeId) {
     shots.value = []
     revisions.value = []
-    selectShot(null)
+    applySelectedShot(null, false)
     return
   }
   const previousId = selectedShot.value?.id
@@ -82,12 +93,13 @@ async function loadEpisodeData(episodeId: string): Promise<void> {
   ])
   shots.value = nextShots
   revisions.value = nextRevisions
-  selectShot(nextShots.find((shot) => shot.id === previousId) ?? nextShots[0] ?? null)
+  applySelectedShot(nextShots.find((shot) => shot.id === previousId) ?? nextShots[0] ?? null, false)
 }
 
 async function chooseEpisode(episodeId: string): Promise<void> {
   selectedEpisodeId.value = episodeId
   revisionOpen.value = false
+  playheadUs.value = 0
   error.value = ''
   try {
     await loadEpisodeData(episodeId)
@@ -127,9 +139,14 @@ async function applyEdit(label: string, action: () => Promise<Shot[]>, preferred
   error.value = ''
   try {
     const oldIndex = selectedShotIndex.value
+    const oldPlayhead = playheadUs.value
     const updated = await action()
     shots.value = updated
-    selectShot(updated.find((item) => item.id === preferredId) ?? updated[Math.max(0, Math.min(oldIndex, updated.length - 1))] ?? null)
+    const nextSelected = updated.find((item) => item.id === preferredId)
+      ?? updated.find((item) => oldPlayhead >= item.start_us && oldPlayhead < item.end_us)
+      ?? updated[Math.max(0, Math.min(oldIndex, updated.length - 1))]
+      ?? null
+    applySelectedShot(nextSelected, false)
     revisions.value = selectedEpisodeId.value ? await api.listShotRevisions(selectedEpisodeId.value) : []
     emit('refreshProject')
   } catch (err) {
@@ -140,15 +157,34 @@ async function applyEdit(label: string, action: () => Promise<Shot[]>, preferred
 }
 
 /**
- * 职责：把当前 Reference Clip 播放头换算回 Source Domain 时间。
- * 输入：当前 Shot + video.currentTime；输出：Source 微秒。
- * 为什么：用户应该直接停在画面上设 Cut，不应该手算绝对时间。
+ * 职责：返回整集 Proxy 播放头对应的 Source Domain 时间。
+ * 输入：video.currentTime；输出：Source 微秒。
+ * 为什么：Proxy 与 Source 保持同一时间原点，用户可以跨当前 Cut 自由拖动后直接设边界。
  */
 function playheadSourceUs(): number | null {
-  const shot = selectedShot.value
   const video = videoRef.value
-  if (!shot || !video) return null
-  return shot.start_us + Math.round(video.currentTime * 1_000_000)
+  if (!video) return null
+  return Math.max(0, Math.round(video.currentTime * 1_000_000))
+}
+
+function onVideoLoaded(): void {
+  const shot = selectedShot.value
+  if (!shot || !videoRef.value) return
+  videoRef.value.currentTime = shot.start_us / 1_000_000
+  playheadUs.value = shot.start_us
+}
+
+function onVideoTimeUpdate(): void {
+  const sourceUs = playheadSourceUs()
+  if (sourceUs === null) return
+  playheadUs.value = sourceUs
+  const current = shots.value.find((shot, index) => {
+    if (index === shots.value.length - 1) return sourceUs >= shot.start_us && sourceUs <= shot.end_us
+    return sourceUs >= shot.start_us && sourceUs < shot.end_us
+  })
+  if (current && current.id !== selectedShot.value?.id) {
+    applySelectedShot(current, false)
+  }
 }
 
 async function usePlayheadAsStart(): Promise<void> {
@@ -307,14 +343,16 @@ onMounted(async () => {
           <div class="shot-v3-player">
             <video
               ref="videoRef"
-              :key="`${selectedShot.id}-${selectedShot.start_us}-${selectedShot.end_us}`"
-              :src="shotMediaUrl(selectedShot)"
+              :key="selectedEpisodeId"
+              :src="episodeProxyUrl"
               controls
               preload="metadata"
+              @loadedmetadata="onVideoLoaded"
+              @timeupdate="onVideoTimeUpdate"
             ></video>
             <div class="shot-v3-player-meta">
               <span>SHOT {{ String(selectedShot.ordinal).padStart(4, '0') }}</span>
-              <span>{{ timecode(selectedShot.start_us) }} → {{ timecode(selectedShot.end_us) }}</span>
+              <span>播放头 {{ timecode(playheadUs) }} · 当前 Shot {{ timecode(selectedShot.start_us) }} → {{ timecode(selectedShot.end_us) }}</span>
             </div>
           </div>
 
