@@ -1,10 +1,19 @@
+.shots-workspace {
+  grid-template-areas:
+    "title title"
+    "help help"
+    "episodes action"
+    "episodes revision"
+    "episodes history"
+    "episodes content";
+}
+
 .shot-revision-current {
-  grid-area: content;
+  grid-area: revision;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 12px;
   padding: 12px 14px;
   border: 1px solid #cdd9f6;
   border-radius: 12px;
@@ -34,8 +43,7 @@
 }
 
 .shot-revision-history {
-  grid-area: content;
-  margin-bottom: 14px;
+  grid-area: history;
   border: 1px solid var(--line);
   border-radius: 14px;
   overflow: hidden;
@@ -89,15 +97,6 @@
 
 .shot-revision-copy strong {
   font-size: 13px;
-}
-
-/* Current 与历史面板位于 action 和 Shot 内容之间；打开历史时仍保持三层管理结构。 */
-.shots-workspace:has(.shot-revision-current) {
-  grid-template-areas:
-    "title title"
-    "help help"
-    "episodes action"
-    "episodes content";
 }
 
 @media (max-width: 1350px) {
