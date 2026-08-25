@@ -17,6 +17,7 @@ V4.1 因此把“时间边界”转换成“Source 帧所有权”后再渲染�
 from __future__ import annotations
 
 from bisect import bisect_left
+from functools import lru_cache
 from pathlib import Path
 
 from engine.app import media_v2 as v2
@@ -75,6 +76,22 @@ def _safe_seek_us(frame_pts: tuple[int, ...], start_index: int, start_us: int) -
     return max(0, min(int(start_us), midpoint_us))
 
 
+@lru_cache(maxsize=32)
+def _cached_source_pts(path_text: str, size: int, mtime_ns: int) -> tuple[int, ...]:
+    """同一 Source 一次拉片只读一次逐帧 PTS；size/mtime 变化会自动形成新缓存键。"""
+
+    del size, mtime_ns  # 只参与 cache key，读取逻辑不需要它们。
+    return tuple(int(value) for value in v2._frame_pts_us(Path(path_text)))
+
+
+def _source_frame_pts(source: Path) -> tuple[int, ...]:
+    try:
+        stat = source.stat()
+    except OSError as exc:
+        raise v2.MediaPipelineError("原视频不存在，无法读取 Source PTS") from exc
+    return _cached_source_pts(str(source.resolve()), int(stat.st_size), int(stat.st_mtime_ns))
+
+
 def render_reference_exact(
     source: Path,
     output: Path,
@@ -85,15 +102,15 @@ def render_reference_exact(
 ) -> None:
     """精确生成一个 ``[start_us, start_us + duration_us)`` Reference Clip。
 
-    视频按 Source 帧数量裁剪；音频仍按业务微秒边界裁剪。自动拉片应传入已经读取好的
-    ``frame_pts``，人工编辑没有现成 PTS 时才按需读取一次 Source PTS。
+    视频按 Source 帧数量裁剪；音频仍按业务微秒边界裁剪。自动拉片如已有 ``frame_pts`` 可
+    直接传入；没有传入时会按 Source 文件版本缓存读取，因此一集几十个 Shot 不会重复跑几十次 ffprobe。
     """
 
     output.parent.mkdir(parents=True, exist_ok=True)
     start_us = int(start_us)
     duration_us = int(duration_us)
     end_us = start_us + duration_us
-    source_pts = tuple(int(value) for value in (frame_pts if frame_pts is not None else v2._frame_pts_us(source)))
+    source_pts = tuple(int(value) for value in frame_pts) if frame_pts is not None else _source_frame_pts(source)
     start_index, end_index = frame_span_indices(source_pts, start_us, end_us)
     expected_frames = end_index - start_index
     seek_us = _safe_seek_us(source_pts, start_index, start_us)
