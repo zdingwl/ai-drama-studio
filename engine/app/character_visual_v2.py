@@ -8,6 +8,8 @@
 - YOLOX / YoutuReID 仍保持 GPU 优先、CPU fallback。
 
 保存层额外经过 character_gallery_persistence_v5：正式 Gallery 与 face-only cover 都不允许带入其他人物。
+运行时经过 character_visual_runtime_guard_v5：缺 ONNX Runtime 时整次任务失败并保留旧 Current；
+只有 CUDA Provider 不可用时才允许 CPU fallback。
 
 保留本文件只为了让 content_analysis_v2 / 历史测试 import 路径稳定。
 """
@@ -19,17 +21,19 @@ from engine.app.character_visual_v5 import (  # noqa: F401
     Observation,
     TrackDraft,
     TrackRepresentative,
-    analyze_characters,
     bbox_iou,
     build_tracks,
     candidate_confidence,
     cluster_candidates,
     cosine,
-    detect_observations,
     mean_vector,
     sample_ratios,
     sample_times_us,
     select_track_representatives,
+)
+from engine.app.character_visual_runtime_guard_v5 import (  # noqa: F401
+    analyze_characters,
+    detect_observations,
 )
 from engine.app.character_gallery_persistence_v5 import (  # noqa: F401
     save_candidate_cover,
