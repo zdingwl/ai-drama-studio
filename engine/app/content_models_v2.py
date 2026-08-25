@@ -1,7 +1,13 @@
-"""F05 V2 本地视觉模型准备。
+"""03 资产本地人物视觉模型准备。
 
-当前只管理人物视觉识别需要的 YuNet + SFace 固定模型。
-模型不提交 Git，下载后写入 ``data_v2/models/f05``，并强制校验大小和 SHA-256。
+统一管理人物 V4 需要的固定 OpenCV Zoo 模型：
+- YuNet：Face Detection；
+- SFace：Face Identity；
+- YOLOX：Person Detection，回答“画面里有几个人”；
+- YoutuReID：Body ReID，补侧脸 / 背影 / 遮挡身份连续性。
+
+模型不提交 Git；显式执行 prepare 后写入 ``data_v2/models/f05``，正式分析时只读本地权重，
+不会在业务 Run 中静默联网下载。
 """
 from __future__ import annotations
 
@@ -16,11 +22,11 @@ from engine.app.studio_v2 import data_root
 
 MODEL_SOURCE_COMMIT = "47534e27c9851bb1128ccc0102f1145e27f23f98"
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024
-DOWNLOAD_TIMEOUT_SECONDS = 120
+DOWNLOAD_TIMEOUT_SECONDS = 300
 
 
 class ContentModelError(RuntimeError):
-    """F05 模型准备错误。"""
+    """资产人物模型准备错误。"""
 
 
 @dataclass(frozen=True)
@@ -54,7 +60,33 @@ SFACE_SPEC = ModelSpec(
     ),
 )
 
-MODEL_SPECS = (YUNET_SPEC, SFACE_SPEC)
+# OpenCV Zoo LFS metadata at MODEL_SOURCE_COMMIT:
+# oid sha256:c5c2...8063 / size 35,858,002 bytes.
+YOLOX_SPEC = ModelSpec(
+    logical_id="person_detection.yolox.2022nov",
+    filename="object_detection_yolox_2022nov.onnx",
+    size_bytes=35_858_002,
+    sha256="c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063",
+    download_url=(
+        "https://media.githubusercontent.com/media/opencv/opencv_zoo/"
+        f"{MODEL_SOURCE_COMMIT}/models/object_detection_yolox/object_detection_yolox_2022nov.onnx"
+    ),
+)
+
+# OpenCV Zoo LFS metadata at MODEL_SOURCE_COMMIT:
+# oid sha256:0579...580d / size 106,878,407 bytes.
+YOUTU_REID_SPEC = ModelSpec(
+    logical_id="person_reid.youtu.2021nov",
+    filename="person_reid_youtu_2021nov.onnx",
+    size_bytes=106_878_407,
+    sha256="0579683334d4b9440221606dcb461656dd0dc64143b18f48faedaced9b4f580d",
+    download_url=(
+        "https://media.githubusercontent.com/media/opencv/opencv_zoo/"
+        f"{MODEL_SOURCE_COMMIT}/models/person_reid_youtureid/person_reid_youtu_2021nov.onnx"
+    ),
+)
+
+MODEL_SPECS = (YUNET_SPEC, SFACE_SPEC, YOLOX_SPEC, YOUTU_REID_SPEC)
 
 
 def model_dir() -> Path:
@@ -81,6 +113,8 @@ def _verify(path: Path, spec: ModelSpec) -> None:
 
 
 def model_status() -> dict[str, object]:
+    """返回全部人物模型准备状态，不主动联网。"""
+
     root = model_dir()
     models: list[dict[str, object]] = []
     all_ready = True
@@ -101,10 +135,12 @@ def model_status() -> dict[str, object]:
             "path": str(path),
             "error": error,
         })
-    return {"ready": all_ready, "models": models}
+    return {"ready": all_ready, "profile": "character-v4", "models": models}
 
 
 def require_models() -> dict[str, Path]:
+    """正式人物 Run 的硬门槛：四个固定模型都必须已在本机准备完成。"""
+
     root = model_dir()
     result: dict[str, Path] = {}
     for spec in MODEL_SPECS:
@@ -115,6 +151,8 @@ def require_models() -> dict[str, Path]:
 
 
 def prepare_models() -> dict[str, object]:
+    """显式下载并校验全部人物 V4 模型；已有正确文件直接复用。"""
+
     root = model_dir()
     for spec in MODEL_SPECS:
         final_path = root / spec.filename
@@ -126,7 +164,7 @@ def prepare_models() -> dict[str, object]:
 
         part_path = root / f"{spec.filename}.part"
         part_path.unlink(missing_ok=True)
-        request = urllib.request.Request(spec.download_url, headers={"User-Agent": "AI-Drama-Studio/2.0"})
+        request = urllib.request.Request(spec.download_url, headers={"User-Agent": "AI-Drama-Studio/2.5"})
         try:
             with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
                 with part_path.open("wb") as output:
@@ -147,11 +185,11 @@ def prepare_models() -> dict[str, object]:
 
 
 def main() -> None:
-    print("正在准备 F05 YuNet / SFace 模型…")
+    print("正在准备资产人物 V4 模型（YuNet / SFace / YOLOX / YoutuReID）…")
     status = prepare_models()
     for item in status["models"]:  # type: ignore[index]
         print(f"OK  {item['filename']}\n    {item['path']}")
-    print("F05 人物视觉模型准备完成。")
+    print("资产人物 V4 模型准备完成。")
 
 
 if __name__ == "__main__":
