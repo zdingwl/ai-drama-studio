@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from engine.app.asset_batch_routes_v4 import router as asset_batch_router
 from engine.app.asset_routes_v3 import router as asset_router
 from engine.app.content_analysis_v2 import (
     ContentAnalysisError,
@@ -44,14 +45,14 @@ from engine.app.task_routes_v2 import router as task_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # asset_routes_v3 / content_analysis_v2 / task_progress_v2 已在本模块 import，
-    # 新增 Final Asset / Binding / Revision 表会进入同一个 Base metadata。
+    # asset_routes_v3 / asset_batch_routes_v4 / content_analysis_v2 / task_progress_v2 已在本模块 import，
+    # Final Asset / Binding / Revision 表会进入同一个 Base metadata。
     init_database()
     recover_interrupted_tasks()
     yield
 
 
-app = FastAPI(title="AI Drama Studio", version="2.4.0", lifespan=lifespan)
+app = FastAPI(title="AI Drama Studio", version="2.4.1", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -62,6 +63,7 @@ app.add_middleware(
 app.include_router(task_router)
 app.include_router(shot_edit_router)
 app.include_router(asset_router)
+app.include_router(asset_batch_router)
 
 
 class ProjectCreate(BaseModel):
@@ -85,7 +87,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "architecture": "reference-video-v2", "app_version": "2.4.0"}
+    return {"status": "ok", "architecture": "reference-video-v2", "app_version": "2.4.1"}
 
 
 @app.get("/api/projects")
