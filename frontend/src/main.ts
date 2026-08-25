@@ -10,6 +10,7 @@ import './shot-workbench-v3.css'
 import './shot-workbench-v3-overrides.css'
 import './asset-workbench-v3.css'
 import './asset-review-matrix-v4.css'
+import './asset-review-matrix-v4-overrides.css'
 import './task-progress.css'
 
 createApp(App).use(router).mount('#app')
