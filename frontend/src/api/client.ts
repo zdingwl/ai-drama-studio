@@ -1,4 +1,17 @@
-import type { BackgroundTask, ContentAnalysisRun, Episode, F05ModelStatus, Project, ProjectCreatePayload, Shot, ShotRevision } from '../types/studio'
+import type {
+  AssetEntityType,
+  AssetSemanticModelStatus,
+  AssetWorkspace,
+  BackgroundTask,
+  ContentAnalysisRun,
+  Episode,
+  F05ModelStatus,
+  Project,
+  ProjectCreatePayload,
+  Shot,
+  ShotAssetBindings,
+  ShotRevision,
+} from '../types/studio'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options)
@@ -16,11 +29,13 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+const jsonHeaders = { 'Content-Type': 'application/json' }
+
 export const api = {
   listProjects: () => request<Project[]>('/api/projects'),
   getProject: (projectId: string) => request<Project>(`/api/projects/${projectId}`),
   createProject: (payload: ProjectCreatePayload) => request<Project>('/api/projects', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify(payload),
   }),
   uploadEpisodes: (projectId: string, files: File[]) => {
     const body = new FormData()
@@ -28,7 +43,7 @@ export const api = {
     return request<Episode[]>(`/api/projects/${projectId}/episodes/batch`, { method: 'POST', body })
   },
   reorderEpisodes: (projectId: string, episodeIds: string[]) => request<Episode[]>(`/api/projects/${projectId}/episodes/reorder`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ episode_ids: episodeIds }),
+    method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ episode_ids: episodeIds }),
   }),
   deleteEpisode: (episodeId: string) => request<void>(`/api/episodes/${episodeId}`, { method: 'DELETE' }),
 
@@ -42,10 +57,10 @@ export const api = {
 
   // Shot 人工修正：修改当前生产 Shot；每次成功修改后后端创建新的 MANUAL Revision。
   adjustShotBoundary: (shotId: string, side: 'start' | 'end', sourceTimeUs: number) => request<Shot[]>(`/api/shots/${shotId}/boundary`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ side, source_time_us: sourceTimeUs }),
+    method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ side, source_time_us: sourceTimeUs }),
   }),
   splitShot: (shotId: string, sourceTimeUs: number) => request<Shot[]>(`/api/shots/${shotId}/split`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_time_us: sourceTimeUs }),
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ source_time_us: sourceTimeUs }),
   }),
   mergeShotWithNext: (shotId: string) => request<Shot[]>(`/api/shots/${shotId}/merge-next`, { method: 'POST' }),
 
@@ -53,6 +68,34 @@ export const api = {
   listShotRevisions: (episodeId: string) => request<ShotRevision[]>(`/api/episodes/${episodeId}/shot-revisions`),
   getShotRevision: (revisionId: string) => request<ShotRevision>(`/api/shot-revisions/${revisionId}`),
   restoreShotRevision: (revisionId: string) => request<Shot[]>(`/api/shot-revisions/${revisionId}/restore`, { method: 'POST' }),
+
+  // 03 Final Asset 工作台：AI Evidence 与人工 Final Asset 完全分层。
+  getAssetWorkspace: (projectId: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/workspace`),
+  getAssetSemanticModelStatus: () => request<AssetSemanticModelStatus>('/api/assets/models/status'),
+  startFullAssetExtractionTask: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/assets/tasks/extract`, { method: 'POST' }),
+  applyLatestAssetAnalysis: (projectId: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/apply-analysis`, { method: 'POST' }),
+  setShotAssetBindings: (projectId: string, shotId: string, payload: ShotAssetBindings) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/shots/${shotId}/bindings`, {
+    method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload),
+  }),
+  createFinalAsset: (projectId: string, entityType: AssetEntityType, name: string, shotId?: string | null) => request<AssetWorkspace>(`/api/projects/${projectId}/assets`, {
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ entity_type: entityType, name, shot_id: shotId || null }),
+  }),
+  renameFinalAsset: (projectId: string, entityType: AssetEntityType, entityId: string, name: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/${entityType}/${entityId}`, {
+    method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ name }),
+  }),
+  deleteFinalAsset: (projectId: string, entityType: AssetEntityType, entityId: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/${entityType}/${entityId}`, {
+    method: 'DELETE',
+  }),
+  mergeFinalAssets: (projectId: string, entityType: AssetEntityType, entityIds: string[], targetId?: string | null) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/merge`, {
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ entity_type: entityType, entity_ids: entityIds, target_id: targetId || null }),
+  }),
+  splitFinalAsset: (projectId: string, entityType: AssetEntityType, entityId: string, shotIds: string[], newName?: string | null) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/${entityType}/${entityId}/split`, {
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ entity_type: entityType, shot_ids: shotIds, new_name: newName || null }),
+  }),
+  setFinalAssetCover: (projectId: string, entityType: AssetEntityType, entityId: string, coverUrl: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/${entityType}/${entityId}/cover`, {
+    method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ cover_url: coverUrl }),
+  }),
+  restoreAssetRevision: (revisionId: string) => request<AssetWorkspace>(`/api/asset-revisions/${revisionId}/restore`, { method: 'POST' }),
 
   // 显式 Task API，给后续独立工作区复用。
   startEpisodePreprocessTask: (episodeId: string) => request<BackgroundTask>(`/api/episodes/${episodeId}/tasks/preprocess`, { method: 'POST' }),
