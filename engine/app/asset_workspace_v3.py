@@ -298,7 +298,14 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             "identity_policy": "Face/SFace anchor + body/clothing auxiliary",
         }
         session.add(Character(id=asset_id, project_id=project_id, name=candidate.auto_label, status="AUTO", metadata_json=json.dumps(metadata, ensure_ascii=False)))
+
+        # V5 的 Track 是 Evidence 粒度：同一人物在一个 Shot 内可能因遮挡/断轨产生多条 Track。
+        # Final ShotCharacterBinding 表达的是“这个 Character 是否出现在该 Shot”，因此同一 Shot 只能物化一次。
+        bound_shot_ids: set[str] = set()
         for track in members:
+            if track.shot_id in bound_shot_ids:
+                continue
+            bound_shot_ids.add(track.shot_id)
             session.add(ShotCharacterBinding(
                 id=new_id("SHOTCHAR"), project_id=project_id, shot_id=track.shot_id, character_id=asset_id,
                 source="AUTO", confidence=candidate.confidence, source_run_id=run_id, source_candidate_id=candidate.id,
