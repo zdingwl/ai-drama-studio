@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
-import type { ContentAnalysisRun, Episode, F05ModelStatus, Project, Shot } from '../types/studio'
+import type { ContentAnalysisRun, Episode, F05ModelStatus, Project, Shot, ShotRevision } from '../types/studio'
 
 const route = useRoute()
 const router = useRouter()
@@ -21,6 +21,8 @@ const shotVideoRef = ref<HTMLVideoElement | null>(null)
 const startBoundarySeconds = ref(0)
 const endBoundarySeconds = ref(0)
 const editBusy = ref('')
+const shotRevisions = ref<ShotRevision[]>([])
+const revisionPanelOpen = ref(false)
 const contentRun = ref<ContentAnalysisRun | null>(null)
 const f05Models = ref<F05ModelStatus | null>(null)
 const assetView = ref<'shot' | 'characters' | 'scenes' | 'props'>('shot')
@@ -42,6 +44,7 @@ const episodes = computed(() => project.value?.episodes ?? [])
 const selectedEpisode = computed(() => episodes.value.find((item) => item.id === selectedEpisodeId.value) ?? null)
 const selectedShotIndex = computed(() => selectedShot.value ? shots.value.findIndex((item) => item.id === selectedShot.value?.id) : -1)
 const suspiciousShotCount = computed(() => shots.value.filter((shot) => shot.duration_us < 500_000).length)
+const currentShotRevision = computed(() => shotRevisions.value.find((item) => item.is_current) ?? null)
 
 /** 正式人物候选必须至少有一条露脸 Track；body-only 只能作为辅助 Evidence。 */
 const reliableCharacters = computed(() => {
@@ -64,6 +67,10 @@ function scenesForShot(shotId: string) {
 function seconds(us: number | null) {
   if (us === null || us === undefined) return '—'
   return `${(us / 1_000_000).toFixed(2)}s`
+}
+function revisionKind(kind: string) {
+  const labels: Record<string, string> = { AUTO: '自动拉片', MANUAL: '人工修正', RESTORE: '历史恢复', BASELINE: '历史基线' }
+  return labels[kind] || kind
 }
 function stageReady(index: number) { return index <= 3 }
 function componentText(key: string) {
@@ -106,6 +113,9 @@ async function loadAssets() {
   f05Models.value = models
   contentRun.value = current
 }
+async function loadRevisions(episodeId = selectedEpisodeId.value) {
+  shotRevisions.value = episodeId ? await api.listShotRevisions(episodeId) : []
+}
 async function run(label: string, action: () => Promise<unknown>, after?: () => Promise<void>) {
   busy.value = label
   error.value = ''
@@ -145,6 +155,7 @@ async function removeEpisode(episode: Episode) {
     if (selectedEpisodeId.value === episode.id) {
       selectedEpisodeId.value = project.value?.episodes[0]?.id ?? ''
       shots.value = []
+      shotRevisions.value = []
       selectShot(null)
     }
   })
@@ -162,23 +173,22 @@ async function loadShots(episodeId = selectedEpisodeId.value) {
 async function chooseEpisode(episodeId: string) {
   selectedEpisodeId.value = episodeId
   shotEditorOpen.value = false
-  await loadShots(episodeId)
+  revisionPanelOpen.value = false
+  await Promise.all([loadShots(episodeId), loadRevisions(episodeId)])
 }
 async function analyzeSingle(episode: Episode) {
   selectedEpisodeId.value = episode.id
   shotEditorOpen.value = false
+  revisionPanelOpen.value = false
   await run('正在启动单集拉片', () => api.startEpisodeShotsTask(episode.id))
 }
 async function analyzeBatch() {
   shotEditorOpen.value = false
+  revisionPanelOpen.value = false
   await run('正在启动顺序批量拉片', () => api.startBatchShotsTask(projectId))
 }
 
-/**
- * 职责：应用一次人工 Shot 编辑并刷新当前 Shot 集合。
- * 输入：编辑 API；输出：新的完整 Shot Timeline。
- * 为什么：只有真正能修改 Cut 的页面才叫人工修正。
- */
+/** 应用一次人工 Shot 编辑；成功后后端同时创建新的 MANUAL Revision。 */
 async function applyShotEdit(label: string, action: () => Promise<Shot[]>, preferredShotId?: string) {
   editBusy.value = label
   error.value = ''
@@ -186,7 +196,7 @@ async function applyShotEdit(label: string, action: () => Promise<Shot[]>, prefe
     const updated = await action()
     shots.value = updated
     selectShot(updated.find((item) => item.id === preferredShotId) ?? updated[Math.max(0, Math.min(selectedShotIndex.value, updated.length - 1))] ?? null)
-    await Promise.all([reloadProject(), loadAssets()])
+    await Promise.all([reloadProject(), loadAssets(), loadRevisions()])
   } catch (err) {
     error.value = err instanceof Error ? err.message : `${label}失败`
   } finally {
@@ -221,6 +231,12 @@ async function mergeNext() {
   if (!shot || selectedShotIndex.value >= shots.value.length - 1) return
   await applyShotEdit('正在合并下一镜', () => api.mergeShotWithNext(shot.id), shot.id)
 }
+async function restoreRevision(revision: ShotRevision) {
+  if (revision.is_current) return
+  if (!window.confirm(`恢复 R${revision.revision}（${revisionKind(revision.kind)}）？系统会创建一个新的恢复版本，不会覆盖历史。`)) return
+  await applyShotEdit(`正在恢复 R${revision.revision}`, () => api.restoreShotRevision(revision.id))
+  shotEditorOpen.value = false
+}
 
 async function prepareModels() {
   await run('正在准备人物视觉模型', () => api.prepareF05Models(), loadAssets)
@@ -232,7 +248,7 @@ async function analyzeContent() {
 onMounted(async () => {
   try {
     await reloadProject()
-    await Promise.all([loadShots(), loadAssets()])
+    await Promise.all([loadShots(), loadAssets(), loadRevisions()])
   } catch (err) {
     error.value = err instanceof Error ? err.message : '项目读取失败'
   } finally {
@@ -269,7 +285,7 @@ onMounted(async () => {
 
       <p v-if="error" class="error-banner">{{ error }}</p>
       <div v-if="busy" class="busy-banner"><span class="spinner"></span>{{ busy }}…</div>
-      <div v-if="editBusy" class="busy-banner"><span class="spinner"></span>{{ editBusy }}，正在重新生成受影响的 Reference Clip…</div>
+      <div v-if="editBusy" class="busy-banner"><span class="spinner"></span>{{ editBusy }}，正在保存新的 Shot Revision…</div>
 
       <section v-if="activeStage === 1" class="workspace-panel">
         <div class="section-title">
@@ -295,7 +311,7 @@ onMounted(async () => {
           <div><span>02</span><h2>拉片</h2></div>
           <button class="primary-button" :disabled="!episodes.length || !!busy || !!editBusy" @click="analyzeBatch">顺序批量拉片</button>
         </div>
-        <p class="section-help">自动结果不要求逐镜确认。没有问题可以直接进入资产；发现漏切、多切或边界不准时，再打开“修正镜头”。</p>
+        <p class="section-help">自动结果不要求逐镜确认。重新自动拉片先完整生成新 Run，成功后才切换 Current；失败时当前人工版本保持不变。</p>
         <div class="episode-tabs"><button v-for="episode in episodes" :key="episode.id" :class="{ active: selectedEpisodeId === episode.id }" @click="chooseEpisode(episode.id)">E{{ String(episode.sort_order).padStart(2, '0') }} · {{ episode.shot_count }} Shots</button></div>
         <div v-if="selectedEpisode" class="shot-action-bar">
           <div>
@@ -305,10 +321,29 @@ onMounted(async () => {
             <span v-else>首次拉片会自动完成视频初始化</span>
           </div>
           <div class="shot-action-buttons">
+            <button v-if="selectedEpisode.shot_count" class="ghost-button" :disabled="!!busy || !!editBusy" @click="revisionPanelOpen = !revisionPanelOpen">版本历史 {{ shotRevisions.length }}</button>
             <button v-if="selectedEpisode.shot_count" class="ghost-button" :disabled="!!busy || !!editBusy" @click="shotEditorOpen = !shotEditorOpen">{{ shotEditorOpen ? '关闭修正' : '修正镜头' }}</button>
             <button class="ghost-button" :disabled="!!busy || !!editBusy" @click="analyzeSingle(selectedEpisode)">{{ selectedEpisode.shot_count ? '重新自动拉片' : '单独拉片' }}</button>
           </div>
         </div>
+
+        <div v-if="currentShotRevision" class="shot-revision-current">
+          <div><span>CURRENT</span><strong>R{{ currentShotRevision.revision }} · {{ revisionKind(currentShotRevision.kind) }}</strong><small>{{ currentShotRevision.shot_count }} Shots · {{ currentShotRevision.note || '当前生产版本' }}</small></div>
+          <button class="ghost-button" @click="revisionPanelOpen = !revisionPanelOpen">{{ revisionPanelOpen ? '收起历史' : '查看历史' }}</button>
+        </div>
+
+        <div v-if="revisionPanelOpen && shotRevisions.length" class="shot-revision-history">
+          <div class="shot-revision-heading"><strong>Shot Revision 历史</strong><span>历史版本只读；恢复会生成新的 RESTORE Revision。</span></div>
+          <div class="shot-revision-list">
+            <div v-for="revision in shotRevisions" :key="revision.id" :class="['shot-revision-row', { current: revision.is_current }]">
+              <div class="shot-revision-number">R{{ revision.revision }}</div>
+              <div class="shot-revision-copy"><strong>{{ revisionKind(revision.kind) }}</strong><small>{{ revision.shot_count }} Shots · {{ revision.note || '—' }}</small></div>
+              <span :class="['status-pill', revision.is_current ? 'ready' : 'planned']">{{ revision.is_current ? 'CURRENT' : 'HISTORY' }}</span>
+              <button v-if="!revision.is_current" class="ghost-button" :disabled="!!editBusy || !!busy" @click="restoreRevision(revision)">恢复为新版本</button>
+            </div>
+          </div>
+        </div>
+
         <div v-if="shots.length === 0" class="empty-state large"><strong>当前剧集还没有 Shot</strong><span>直接执行拉片即可；Proxy / Audio 会自动准备。</span></div>
         <div v-else-if="!shotEditorOpen" class="shot-result-summary">
           <div :class="['shot-summary-icon', suspiciousShotCount ? 'warning' : 'ready']">{{ suspiciousShotCount ? '!' : '✓' }}</div>
@@ -336,7 +371,7 @@ onMounted(async () => {
               <button class="primary-button" :disabled="!!editBusy" @click="splitAtPlayhead">在播放头拆分</button>
               <button class="ghost-button" :disabled="selectedShotIndex >= shots.length - 1 || !!editBusy" @click="mergeNext">合并下一镜</button>
             </div>
-            <div class="architecture-note compact"><strong>人工修正会影响下游</strong><p>修改 Shot 后，已有资产 Evidence 会标记为 STALE，需要重新提取；不会静默把旧绑定当成最新结果。</p></div>
+            <div class="architecture-note compact"><strong>每次修正都会产生新版本</strong><p>旧 Shot Timeline 和历史 Reference Clip 不覆盖；修改后已有资产 Evidence 会标记为 STALE。</p></div>
           </aside>
         </div>
       </section>
@@ -351,7 +386,7 @@ onMounted(async () => {
         </div>
         <p class="section-help asset-help">后台从每个 Shot 提取人物 / 场景 / 道具 Evidence。当前页面先用于检查绑定；人工合并、拆分、改名和 Shot Binding 修改会继续接到这里。</p>
 
-        <div v-if="contentRun?.status === 'STALE'" class="asset-warning"><div><strong>Shot 已发生人工修改，当前资产结果已过期</strong><span>旧 Evidence 仍保留用于对照，但重新提取后才可作为当前资产结果。</span></div><button class="primary-button" :disabled="!!busy" @click="analyzeContent">重新提取资产</button></div>
+        <div v-if="contentRun?.status === 'STALE'" class="asset-warning"><div><strong>Shot Current Revision 已变化，当前资产结果已过期</strong><span>旧 Evidence 仍保留用于对照，但重新提取后才可作为当前资产结果。</span></div><button class="primary-button" :disabled="!!busy" @click="analyzeContent">重新提取资产</button></div>
         <div v-if="hiddenBodyOnlyCandidates > 0" class="asset-warning"><div><strong>当前旧 Run 含 {{ hiddenBodyOnlyCandidates }} 个无 Face/SFace 身份锚点的 body-only 候选</strong><span>这些候选已从正式人物列表隐藏。旧算法会把花、衣服、背景纹理等 HOG 误检当成人物。</span></div><button class="primary-button" :disabled="!!busy" @click="analyzeContent">使用新人物策略重跑</button></div>
 
         <div v-if="!contentRun" class="empty-state large asset-empty"><strong>还没有资产提取结果</strong><span>完成拉片后，从这里顺序分析各集 Shot，并建立人物 / 场景 / 道具 Evidence。</span></div>
