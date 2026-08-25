@@ -1,11 +1,11 @@
 """03「资产」最终工作层：Project Asset + Shot Binding + Revision。
 
-设计原则：
-- AI Candidate / Track / Scene / Prop 只是不可变 Evidence；Final Asset 是人工可修改的生产数据。
-- Character / Scene / Prop 是 Project 级身份，Shot Binding 是它们与当前拉片结果的关系。
-- 第一次资产提取会自动把 AI Evidence 形成 AUTO Revision；之后人工修改形成 MANUAL Revision。
-- 新 AI Run 不覆盖已有 MANUAL/RESTORE；页面显示 STALE，由用户显式“基于新 Evidence 创建新版本”。
-- 历史 Revision 保存完整 JSON 快照；恢复会创建新的 RESTORE Revision，不改写历史。
+职责边界：
+- CharacterCandidate / SceneCandidate / PropCandidate / Track 是不可变 AI Evidence；
+- Character / Scene / Prop 是 Project 级 Final Asset；
+- ShotCharacterBinding / ShotSceneBinding / ShotPropBinding 是可人工修改的 Final Binding；
+- 每个业务写操作都在同一个数据库事务中执行“修改 → flush → 完整快照 → Revision → commit”；
+- 新 AI Run 不静默覆盖 MANUAL/RESTORE，旧人工版本只会变 STALE，用户可显式采用新 Evidence。
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ AssetType = Literal["character", "scene", "prop"]
 
 
 class AssetWorkspaceError(RuntimeError):
-    """资产人工工作台业务错误。"""
+    """资产工作台业务错误。"""
 
 
 class AssetRevision(Base):
@@ -94,8 +94,8 @@ class ShotPropBinding(Base):
 
 def _json(raw: str | None) -> dict[str, Any]:
     try:
-        payload = json.loads(raw or "{}")
-        return payload if isinstance(payload, dict) else {}
+        value = json.loads(raw or "{}")
+        return value if isinstance(value, dict) else {}
     except json.JSONDecodeError:
         return {}
 
@@ -119,18 +119,19 @@ def _current_revision(session: Any, project_id: str) -> AssetRevision | None:
 
 
 def _next_revision(session: Any, project_id: str) -> int:
-    value = session.scalar(select(func.max(AssetRevision.revision)).where(AssetRevision.project_id == project_id))
-    return int(value or 0) + 1
+    latest = session.scalar(select(func.max(AssetRevision.revision)).where(AssetRevision.project_id == project_id))
+    return int(latest or 0) + 1
 
 
 def _serialize_entity(entity_type: AssetType, item: Any, shot_ids: list[str]) -> dict[str, Any]:
     metadata = _json(item.metadata_json)
+    status = item.status if entity_type in {"character", "scene"} else metadata.get("status", "AUTO")
     return {
         "id": item.id,
         "type": entity_type,
         "name": item.name,
-        "status": getattr(item, "status", metadata.get("status", "DRAFT")),
-        "is_key_prop": bool(getattr(item, "is_key_prop", True)) if entity_type == "prop" else None,
+        "status": status,
+        "is_key_prop": bool(item.is_key_prop) if entity_type == "prop" else None,
         "cover_url": metadata.get("cover_url"),
         "source_candidate_ids": metadata.get("source_candidate_ids") or [],
         "confidence": metadata.get("confidence"),
@@ -141,17 +142,18 @@ def _serialize_entity(entity_type: AssetType, item: Any, shot_ids: list[str]) ->
 
 
 def _snapshot(session: Any, project_id: str) -> dict[str, Any]:
+    """读取当前 Final Asset 完整状态；调用前必须 flush。"""
+
     char_bindings = list(session.scalars(select(ShotCharacterBinding).where(ShotCharacterBinding.project_id == project_id)).all())
     scene_bindings = list(session.scalars(select(ShotSceneBinding).where(ShotSceneBinding.project_id == project_id)).all())
     prop_bindings = list(session.scalars(select(ShotPropBinding).where(ShotPropBinding.project_id == project_id)).all())
-
     char_shots: dict[str, list[str]] = {}
+    scene_shots: dict[str, list[str]] = {}
+    prop_shots: dict[str, list[str]] = {}
     for item in char_bindings:
         char_shots.setdefault(item.character_id, []).append(item.shot_id)
-    scene_shots: dict[str, list[str]] = {}
     for item in scene_bindings:
         scene_shots.setdefault(item.scene_id, []).append(item.shot_id)
-    prop_shots: dict[str, list[str]] = {}
     for item in prop_bindings:
         prop_shots.setdefault(item.prop_id, []).append(item.shot_id)
 
@@ -188,12 +190,29 @@ def _create_revision(
     source_run_id: str | None,
     source_revision_id: str | None = None,
 ) -> AssetRevision:
-    for previous in session.scalars(select(AssetRevision).where(AssetRevision.project_id == project_id, AssetRevision.is_current.is_(True))).all():
+    """把“本事务刚修改后的状态”保存成不可变 Revision。
+
+    为什么这里必须主动 flush：V2 Session 使用 autoflush=False；如果不 flush，刚新增的 Binding / Asset
+    不会进入 snapshot，历史版本会比实际业务状态慢一拍。
+    """
+
+    session.flush()
+    snapshot = _snapshot(session, project_id)
+    for previous in session.scalars(select(AssetRevision).where(
+        AssetRevision.project_id == project_id,
+        AssetRevision.is_current.is_(True),
+    )).all():
         previous.is_current = False
     revision = AssetRevision(
-        id=new_id("ASSETREV"), project_id=project_id, revision=_next_revision(session, project_id),
-        kind=kind, is_current=True, source_run_id=source_run_id, source_revision_id=source_revision_id,
-        note=note, snapshot_json=json.dumps(_snapshot(session, project_id), ensure_ascii=False),
+        id=new_id("ASSETREV"),
+        project_id=project_id,
+        revision=_next_revision(session, project_id),
+        kind=kind,
+        is_current=True,
+        source_run_id=source_run_id,
+        source_revision_id=source_revision_id,
+        note=note,
+        snapshot_json=json.dumps(snapshot, ensure_ascii=False),
     )
     session.add(revision)
     session.flush()
@@ -214,41 +233,46 @@ def _replace_from_snapshot(session: Any, project_id: str, snapshot: dict[str, An
     _clear_project_state(session, project_id)
     for item in snapshot.get("characters") or []:
         session.add(Character(
-            id=item["id"], project_id=project_id, name=item["name"], status=item.get("status") or "DRAFT",
+            id=item["id"], project_id=project_id, name=item["name"], status=item.get("status") or "MANUAL",
             metadata_json=json.dumps(item.get("metadata") or {}, ensure_ascii=False),
         ))
     for item in snapshot.get("scenes") or []:
         session.add(Scene(
-            id=item["id"], project_id=project_id, name=item["name"], status=item.get("status") or "DRAFT",
+            id=item["id"], project_id=project_id, name=item["name"], status=item.get("status") or "MANUAL",
             metadata_json=json.dumps(item.get("metadata") or {}, ensure_ascii=False),
         ))
     for item in snapshot.get("props") or []:
+        metadata = dict(item.get("metadata") or {})
+        metadata.setdefault("status", item.get("status") or "MANUAL")
         session.add(Prop(
             id=item["id"], project_id=project_id, name=item["name"], is_key_prop=bool(item.get("is_key_prop", True)),
-            metadata_json=json.dumps(item.get("metadata") or {}, ensure_ascii=False),
+            metadata_json=json.dumps(metadata, ensure_ascii=False),
         ))
     session.flush()
     bindings = snapshot.get("bindings") or {}
     for item in bindings.get("characters") or []:
         session.add(ShotCharacterBinding(
             id=new_id("SHOTCHAR"), project_id=project_id, shot_id=item["shot_id"], character_id=item["entity_id"],
-            source=item.get("source") or "MANUAL", confidence=item.get("confidence"), source_run_id=item.get("source_run_id"), source_candidate_id=item.get("source_candidate_id"),
+            source=item.get("source") or "MANUAL", confidence=item.get("confidence"),
+            source_run_id=item.get("source_run_id"), source_candidate_id=item.get("source_candidate_id"),
         ))
     for item in bindings.get("scenes") or []:
         session.add(ShotSceneBinding(
             id=new_id("SHOTSCENEFINAL"), project_id=project_id, shot_id=item["shot_id"], scene_id=item["entity_id"],
-            source=item.get("source") or "MANUAL", confidence=item.get("confidence"), source_run_id=item.get("source_run_id"), source_candidate_id=item.get("source_candidate_id"),
+            source=item.get("source") or "MANUAL", confidence=item.get("confidence"),
+            source_run_id=item.get("source_run_id"), source_candidate_id=item.get("source_candidate_id"),
         ))
     for item in bindings.get("props") or []:
         session.add(ShotPropBinding(
             id=new_id("SHOTPROPFINAL"), project_id=project_id, shot_id=item["shot_id"], prop_id=item["entity_id"],
-            source=item.get("source") or "MANUAL", confidence=item.get("confidence"), source_run_id=item.get("source_run_id"), source_candidate_id=item.get("source_candidate_id"),
+            source=item.get("source") or "MANUAL", confidence=item.get("confidence"),
+            source_run_id=item.get("source_run_id"), source_candidate_id=item.get("source_candidate_id"),
         ))
     session.flush()
 
 
 def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
-    """把 AI Evidence 转成可编辑 Final Asset；只在 AUTO 初始化/用户显式采用新 Evidence 时调用。"""
+    """把不可变 AI Evidence 映射成新的可编辑 Final Asset 状态。"""
 
     run = session.get(ContentAnalysisRun, run_id)
     if run is None or run.project_id != project_id:
@@ -259,23 +283,24 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
     tracks_by_candidate: dict[str, list[CharacterTrack]] = {}
     for track in tracks:
         tracks_by_candidate.setdefault(track.candidate_id, []).append(track)
-    characters = list(session.scalars(select(CharacterCandidate).where(CharacterCandidate.run_id == run_id).order_by(CharacterCandidate.ordinal)).all())
-    for candidate in characters:
-        candidate_tracks = tracks_by_candidate.get(candidate.id, [])
-        if not any(track.face_visible for track in candidate_tracks):
+    for candidate in session.scalars(select(CharacterCandidate).where(CharacterCandidate.run_id == run_id).order_by(CharacterCandidate.ordinal)).all():
+        members = tracks_by_candidate.get(candidate.id, [])
+        # 最终人物身份必须至少有 Face/SFace 锚点；body-only 不升级为 Character。
+        if not any(track.face_visible for track in members):
             continue
-        final_id = new_id("CHAR")
+        asset_id = new_id("CHAR")
         metadata = {
             "source_run_id": run_id,
             "source_candidate_ids": [candidate.id],
             "cover_url": f"/api/content-analysis/characters/{candidate.id}/cover" if candidate.cover_path else None,
+            "evidence_cover_urls": [f"/api/content-analysis/characters/{candidate.id}/cover"] if candidate.cover_path else [],
             "confidence": candidate.confidence,
             "identity_policy": "Face/SFace anchor + body/clothing auxiliary",
         }
-        session.add(Character(id=final_id, project_id=project_id, name=candidate.auto_label, status="AUTO", metadata_json=json.dumps(metadata, ensure_ascii=False)))
-        for track in candidate_tracks:
+        session.add(Character(id=asset_id, project_id=project_id, name=candidate.auto_label, status="AUTO", metadata_json=json.dumps(metadata, ensure_ascii=False)))
+        for track in members:
             session.add(ShotCharacterBinding(
-                id=new_id("SHOTCHAR"), project_id=project_id, shot_id=track.shot_id, character_id=final_id,
+                id=new_id("SHOTCHAR"), project_id=project_id, shot_id=track.shot_id, character_id=asset_id,
                 source="AUTO", confidence=candidate.confidence, source_run_id=run_id, source_candidate_id=candidate.id,
             ))
 
@@ -283,22 +308,23 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
     links_by_scene: dict[str, list[ShotSceneEvidence]] = {}
     for link in scene_links:
         links_by_scene.setdefault(link.scene_candidate_id, []).append(link)
-    scenes = list(session.scalars(select(SceneCandidate).where(SceneCandidate.run_id == run_id).order_by(SceneCandidate.ordinal)).all())
-    for candidate in scenes:
-        final_id = new_id("SCENE")
+    for candidate in session.scalars(select(SceneCandidate).where(SceneCandidate.run_id == run_id).order_by(SceneCandidate.ordinal)).all():
+        asset_id = new_id("SCENE")
         links = links_by_scene.get(candidate.id, [])
-        confidence_values = [item.confidence for item in links if item.confidence is not None]
-        confidence = sum(confidence_values) / len(confidence_values) if confidence_values else None
+        scores = [item.confidence for item in links if item.confidence is not None]
+        value = sum(scores) / len(scores) if scores else None
+        cover = f"/api/content-analysis/scenes/{candidate.id}/cover" if candidate.cover_path else None
         metadata = {
             "source_run_id": run_id,
             "source_candidate_ids": [candidate.id],
-            "cover_url": f"/api/content-analysis/scenes/{candidate.id}/cover" if candidate.cover_path else None,
-            "confidence": confidence,
+            "cover_url": cover,
+            "evidence_cover_urls": [cover] if cover else [],
+            "confidence": value,
         }
-        session.add(Scene(id=final_id, project_id=project_id, name=candidate.auto_label, status="AUTO", metadata_json=json.dumps(metadata, ensure_ascii=False)))
+        session.add(Scene(id=asset_id, project_id=project_id, name=candidate.auto_label, status="AUTO", metadata_json=json.dumps(metadata, ensure_ascii=False)))
         for link in links:
             session.add(ShotSceneBinding(
-                id=new_id("SHOTSCENEFINAL"), project_id=project_id, shot_id=link.shot_id, scene_id=final_id,
+                id=new_id("SHOTSCENEFINAL"), project_id=project_id, shot_id=link.shot_id, scene_id=asset_id,
                 source="AUTO", confidence=link.confidence, source_run_id=run_id, source_candidate_id=candidate.id,
             ))
 
@@ -306,27 +332,27 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
     links_by_prop: dict[str, list[ShotPropEvidence]] = {}
     for link in prop_links:
         links_by_prop.setdefault(link.prop_candidate_id, []).append(link)
-    props = list(session.scalars(select(PropCandidate).where(PropCandidate.run_id == run_id).order_by(PropCandidate.ordinal)).all())
-    for candidate in props:
-        final_id = new_id("PROP")
+    for candidate in session.scalars(select(PropCandidate).where(PropCandidate.run_id == run_id).order_by(PropCandidate.ordinal)).all():
+        asset_id = new_id("PROP")
         metadata = {
+            "status": "AUTO",
             "source_run_id": run_id,
             "source_candidate_ids": [candidate.id],
             "confidence": candidate.confidence,
         }
-        session.add(Prop(id=final_id, project_id=project_id, name=candidate.auto_label, is_key_prop=True, metadata_json=json.dumps(metadata, ensure_ascii=False)))
+        session.add(Prop(id=asset_id, project_id=project_id, name=candidate.auto_label, is_key_prop=True, metadata_json=json.dumps(metadata, ensure_ascii=False)))
         for link in links_by_prop.get(candidate.id, []):
             session.add(ShotPropBinding(
-                id=new_id("SHOTPROPFINAL"), project_id=project_id, shot_id=link.shot_id, prop_id=final_id,
+                id=new_id("SHOTPROPFINAL"), project_id=project_id, shot_id=link.shot_id, prop_id=asset_id,
                 source="AUTO", confidence=link.confidence, source_run_id=run_id, source_candidate_id=candidate.id,
             ))
     session.flush()
 
 
 def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = False) -> dict[str, Any]:
-    """把新 AI Run 应用为 Final Asset Revision。
+    """把 AI Run 应用成新的 AUTO Final Asset Revision。
 
-    MANUAL/RESTORE 当前版本默认不被覆盖；force=True 表示用户明确选择“基于新 Evidence 创建新版本”。
+    MANUAL/RESTORE 默认受保护；只有用户显式 force=True 才允许基于新 Evidence 建新版本。
     """
 
     with get_session() as session:
@@ -336,25 +362,18 @@ def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = Fals
         current = _current_revision(session, project_id)
         if current is not None and current.kind in {"MANUAL", "RESTORE"} and current.source_run_id != run_id and not force:
             return _serialize_workspace(session, project_id)
+        source_revision_id = current.id if current else None
         _rebuild_from_analysis(session, project_id, run_id)
         _create_revision(
-            session, project_id=project_id, kind="AUTO", source_run_id=run_id,
-            source_revision_id=current.id if current else None,
+            session,
+            project_id=project_id,
+            kind="AUTO",
+            source_run_id=run_id,
+            source_revision_id=source_revision_id,
             note="基于最新 AI Evidence 自动形成资产",
         )
         session.commit()
         return _serialize_workspace(session, project_id)
-
-
-def _validate_entity_ids(session: Any, project_id: str, entity_type: AssetType, ids: list[str]) -> list[str]:
-    table = _asset_table(entity_type)
-    clean = list(dict.fromkeys(ids))
-    if not clean:
-        return []
-    found = list(session.scalars(select(table.id).where(table.project_id == project_id, table.id.in_(clean))).all())
-    if set(found) != set(clean):
-        raise AssetWorkspaceError(f"存在不属于当前项目的{entity_type}资产")
-    return clean
 
 
 def _validate_shot(session: Any, project_id: str, shot_id: str) -> Shot:
@@ -367,6 +386,22 @@ def _validate_shot(session: Any, project_id: str, shot_id: str) -> Shot:
     return shot
 
 
+def _validate_ids(session: Any, project_id: str, entity_type: AssetType, ids: list[str]) -> list[str]:
+    clean = list(dict.fromkeys(ids))
+    if not clean:
+        return []
+    table = _asset_table(entity_type)
+    found = list(session.scalars(select(table.id).where(table.project_id == project_id, table.id.in_(clean))).all())
+    if set(found) != set(clean):
+        raise AssetWorkspaceError(f"存在不属于当前项目的{entity_type}资产")
+    return clean
+
+
+def _manual_revision(session: Any, project_id: str, note: str) -> None:
+    run = _current_analysis(session, project_id)
+    _create_revision(session, project_id=project_id, kind="MANUAL", source_run_id=run.id if run else None, note=note)
+
+
 def set_shot_bindings(
     project_id: str,
     shot_id: str,
@@ -375,26 +410,24 @@ def set_shot_bindings(
     scene_id: str | None,
     prop_ids: list[str],
 ) -> dict[str, Any]:
-    """一次提交当前 Shot 的 Final Binding，避免人物/场景/道具分别保存产生半状态。"""
+    """一次原子保存当前 Shot 的人物、场景、道具 Final Binding。"""
 
     with get_session() as session:
-        _validate_shot(session, project_id, shot_id)
-        character_ids = _validate_entity_ids(session, project_id, "character", character_ids)
-        prop_ids = _validate_entity_ids(session, project_id, "prop", prop_ids)
+        shot = _validate_shot(session, project_id, shot_id)
+        character_ids = _validate_ids(session, project_id, "character", character_ids)
+        prop_ids = _validate_ids(session, project_id, "prop", prop_ids)
         if scene_id:
-            _validate_entity_ids(session, project_id, "scene", [scene_id])
-
+            _validate_ids(session, project_id, "scene", [scene_id])
         session.execute(delete(ShotCharacterBinding).where(ShotCharacterBinding.project_id == project_id, ShotCharacterBinding.shot_id == shot_id))
         session.execute(delete(ShotSceneBinding).where(ShotSceneBinding.project_id == project_id, ShotSceneBinding.shot_id == shot_id))
         session.execute(delete(ShotPropBinding).where(ShotPropBinding.project_id == project_id, ShotPropBinding.shot_id == shot_id))
-        for entity_id in character_ids:
-            session.add(ShotCharacterBinding(id=new_id("SHOTCHAR"), project_id=project_id, shot_id=shot_id, character_id=entity_id, source="MANUAL"))
+        for asset_id in character_ids:
+            session.add(ShotCharacterBinding(id=new_id("SHOTCHAR"), project_id=project_id, shot_id=shot_id, character_id=asset_id, source="MANUAL"))
         if scene_id:
             session.add(ShotSceneBinding(id=new_id("SHOTSCENEFINAL"), project_id=project_id, shot_id=shot_id, scene_id=scene_id, source="MANUAL"))
-        for entity_id in prop_ids:
-            session.add(ShotPropBinding(id=new_id("SHOTPROPFINAL"), project_id=project_id, shot_id=shot_id, prop_id=entity_id, source="MANUAL"))
-        source = _current_analysis(session, project_id)
-        _create_revision(session, project_id=project_id, kind="MANUAL", source_run_id=source.id if source else None, note=f"修改 Shot {shot.ordinal:04d} 资产绑定")
+        for asset_id in prop_ids:
+            session.add(ShotPropBinding(id=new_id("SHOTPROPFINAL"), project_id=project_id, shot_id=shot_id, prop_id=asset_id, source="MANUAL"))
+        _manual_revision(session, project_id, f"修改 Shot {shot.ordinal:04d} 资产绑定")
         session.commit()
         return _serialize_workspace(session, project_id)
 
@@ -411,7 +444,7 @@ def create_asset(project_id: str, entity_type: AssetType, name: str, *, shot_id:
         elif entity_type == "scene":
             item = Scene(id=new_id("SCENE"), project_id=project_id, name=name, status="MANUAL", metadata_json="{}")
         else:
-            item = Prop(id=new_id("PROP"), project_id=project_id, name=name, is_key_prop=True, metadata_json=json.dumps({"status": "MANUAL"}))
+            item = Prop(id=new_id("PROP"), project_id=project_id, name=name, is_key_prop=True, metadata_json=json.dumps({"status": "MANUAL"}, ensure_ascii=False))
         session.add(item)
         session.flush()
         if shot_id:
@@ -422,8 +455,7 @@ def create_asset(project_id: str, entity_type: AssetType, name: str, *, shot_id:
                 session.add(ShotSceneBinding(id=new_id("SHOTSCENEFINAL"), project_id=project_id, shot_id=shot_id, scene_id=item.id, source="MANUAL"))
             else:
                 session.add(ShotPropBinding(id=new_id("SHOTPROPFINAL"), project_id=project_id, shot_id=shot_id, prop_id=item.id, source="MANUAL"))
-        source = _current_analysis(session, project_id)
-        _create_revision(session, project_id=project_id, kind="MANUAL", source_run_id=source.id if source else None, note=f"新建{entity_type}资产：{name}")
+        _manual_revision(session, project_id, f"新建{entity_type}资产：{name}")
         session.commit()
         return _serialize_workspace(session, project_id)
 
@@ -438,14 +470,13 @@ def rename_asset(project_id: str, entity_type: AssetType, entity_id: str, name: 
         if item is None or item.project_id != project_id:
             raise AssetWorkspaceError("资产不存在")
         item.name = name
-        if hasattr(item, "status"):
+        if entity_type in {"character", "scene"}:
             item.status = "MANUAL"
         else:
             metadata = _json(item.metadata_json)
             metadata["status"] = "MANUAL"
             item.metadata_json = json.dumps(metadata, ensure_ascii=False)
-        source = _current_analysis(session, project_id)
-        _create_revision(session, project_id=project_id, kind="MANUAL", source_run_id=source.id if source else None, note=f"重命名{entity_type}资产：{name}")
+        _manual_revision(session, project_id, f"重命名{entity_type}资产：{name}")
         session.commit()
         return _serialize_workspace(session, project_id)
 
@@ -463,8 +494,7 @@ def delete_asset(project_id: str, entity_type: AssetType, entity_id: str) -> dic
         else:
             session.execute(delete(ShotPropBinding).where(ShotPropBinding.project_id == project_id, ShotPropBinding.prop_id == entity_id))
         session.delete(item)
-        source = _current_analysis(session, project_id)
-        _create_revision(session, project_id=project_id, kind="MANUAL", source_run_id=source.id if source else None, note=f"删除{entity_type}资产")
+        _manual_revision(session, project_id, f"删除{entity_type}资产")
         session.commit()
         return _serialize_workspace(session, project_id)
 
@@ -472,26 +502,28 @@ def delete_asset(project_id: str, entity_type: AssetType, entity_id: str) -> dic
 def _merge_metadata(target: Any, sources: list[Any]) -> None:
     metadata = _json(target.metadata_json)
     candidate_ids = list(metadata.get("source_candidate_ids") or [])
-    covers: list[str] = []
+    covers = list(metadata.get("evidence_cover_urls") or [])
     if metadata.get("cover_url"):
         covers.append(str(metadata["cover_url"]))
     confidences: list[float] = []
     if metadata.get("confidence") is not None:
         confidences.append(float(metadata["confidence"]))
-    for item in sources:
-        other = _json(item.metadata_json)
+    for source in sources:
+        other = _json(source.metadata_json)
         candidate_ids.extend(other.get("source_candidate_ids") or [])
+        covers.extend(other.get("evidence_cover_urls") or [])
         if other.get("cover_url"):
             covers.append(str(other["cover_url"]))
         if other.get("confidence") is not None:
             confidences.append(float(other["confidence"]))
     metadata["source_candidate_ids"] = list(dict.fromkeys(candidate_ids))
     metadata["evidence_cover_urls"] = list(dict.fromkeys(covers))
-    if covers and not metadata.get("cover_url"):
-        metadata["cover_url"] = covers[0]
+    if covers:
+        metadata.setdefault("cover_url", covers[0])
     if confidences:
         metadata["confidence"] = max(confidences)
     metadata["merged_manual"] = True
+    metadata["status"] = "MANUAL"
     target.metadata_json = json.dumps(metadata, ensure_ascii=False)
 
 
@@ -500,41 +532,44 @@ def merge_assets(project_id: str, entity_type: AssetType, entity_ids: list[str],
     if len(ids) < 2:
         raise AssetWorkspaceError("至少选择两个资产才能合并")
     with get_session() as session:
-        ids = _validate_entity_ids(session, project_id, entity_type, ids)
+        ids = _validate_ids(session, project_id, entity_type, ids)
         target_id = target_id if target_id in ids else ids[0]
         table = _asset_table(entity_type)
         target = session.get(table, target_id)
+        if target is None:
+            raise AssetWorkspaceError("目标资产不存在")
         sources = [session.get(table, item_id) for item_id in ids if item_id != target_id]
         sources = [item for item in sources if item is not None]
         _merge_metadata(target, sources)
-        if hasattr(target, "status"):
+        if entity_type in {"character", "scene"}:
             target.status = "MANUAL"
 
         if entity_type == "character":
-            existing_shots = set(session.scalars(select(ShotCharacterBinding.shot_id).where(ShotCharacterBinding.character_id == target_id)).all())
+            existing = set(session.scalars(select(ShotCharacterBinding.shot_id).where(ShotCharacterBinding.character_id == target_id)).all())
             for source in sources:
                 for binding in list(session.scalars(select(ShotCharacterBinding).where(ShotCharacterBinding.character_id == source.id)).all()):
-                    if binding.shot_id not in existing_shots:
+                    if binding.shot_id not in existing:
                         session.add(ShotCharacterBinding(id=new_id("SHOTCHAR"), project_id=project_id, shot_id=binding.shot_id, character_id=target_id, source="MANUAL"))
-                        existing_shots.add(binding.shot_id)
+                        existing.add(binding.shot_id)
                     session.delete(binding)
         elif entity_type == "scene":
             for source in sources:
                 for binding in session.scalars(select(ShotSceneBinding).where(ShotSceneBinding.scene_id == source.id)).all():
                     binding.scene_id = target_id
                     binding.source = "MANUAL"
+                    binding.confidence = None
+                    binding.source_candidate_id = None
         else:
-            existing_shots = set(session.scalars(select(ShotPropBinding.shot_id).where(ShotPropBinding.prop_id == target_id)).all())
+            existing = set(session.scalars(select(ShotPropBinding.shot_id).where(ShotPropBinding.prop_id == target_id)).all())
             for source in sources:
                 for binding in list(session.scalars(select(ShotPropBinding).where(ShotPropBinding.prop_id == source.id)).all()):
-                    if binding.shot_id not in existing_shots:
+                    if binding.shot_id not in existing:
                         session.add(ShotPropBinding(id=new_id("SHOTPROPFINAL"), project_id=project_id, shot_id=binding.shot_id, prop_id=target_id, source="MANUAL"))
-                        existing_shots.add(binding.shot_id)
+                        existing.add(binding.shot_id)
                     session.delete(binding)
         for source in sources:
             session.delete(source)
-        source_run = _current_analysis(session, project_id)
-        _create_revision(session, project_id=project_id, kind="MANUAL", source_run_id=source_run.id if source_run else None, note=f"合并 {len(ids)} 个{entity_type}资产")
+        _manual_revision(session, project_id, f"合并 {len(ids)} 个{entity_type}资产")
         session.commit()
         return _serialize_workspace(session, project_id)
 
@@ -583,8 +618,7 @@ def split_asset(project_id: str, entity_type: AssetType, entity_id: str, shot_id
             binding.source = "MANUAL"
             binding.confidence = None
             binding.source_candidate_id = None
-        source_run = _current_analysis(session, project_id)
-        _create_revision(session, project_id=project_id, kind="MANUAL", source_run_id=source_run.id if source_run else None, note=f"拆分{entity_type}资产：{source.name}")
+        _manual_revision(session, project_id, f"拆分{entity_type}资产：{source.name}")
         session.commit()
         return _serialize_workspace(session, project_id)
 
@@ -600,16 +634,20 @@ def set_asset_cover(project_id: str, entity_type: AssetType, entity_id: str, cov
         if metadata.get("cover_url"):
             allowed.add(str(metadata["cover_url"]))
         if cover_url not in allowed:
-            raise AssetWorkspaceError("封面必须来自该资产已有 Evidence")
+            raise AssetWorkspaceError("参考图必须来自该资产已有 Evidence")
         metadata["cover_url"] = cover_url
+        metadata["status"] = "MANUAL"
         item.metadata_json = json.dumps(metadata, ensure_ascii=False)
-        source_run = _current_analysis(session, project_id)
-        _create_revision(session, project_id=project_id, kind="MANUAL", source_run_id=source_run.id if source_run else None, note=f"修改{entity_type}参考图")
+        if entity_type in {"character", "scene"}:
+            item.status = "MANUAL"
+        _manual_revision(session, project_id, f"修改{entity_type}参考图")
         session.commit()
         return _serialize_workspace(session, project_id)
 
 
 def restore_asset_revision(revision_id: str) -> dict[str, Any]:
+    """恢复历史快照，并创建新的 RESTORE Revision；历史 Revision 永不被修改。"""
+
     with get_session() as session:
         source = session.get(AssetRevision, revision_id)
         if source is None:
@@ -619,19 +657,17 @@ def restore_asset_revision(revision_id: str) -> dict[str, Any]:
         except json.JSONDecodeError as exc:
             raise AssetWorkspaceError("资产 Revision 快照损坏") from exc
         _replace_from_snapshot(session, source.project_id, snapshot)
-        current_run = _current_analysis(session, source.project_id)
+        run = _current_analysis(session, source.project_id)
         _create_revision(
-            session, project_id=source.project_id, kind="RESTORE", source_run_id=current_run.id if current_run else source.source_run_id,
-            source_revision_id=source.id, note=f"恢复自资产 R{source.revision}",
+            session,
+            project_id=source.project_id,
+            kind="RESTORE",
+            source_run_id=run.id if run else source.source_run_id,
+            source_revision_id=source.id,
+            note=f"恢复自资产 R{source.revision}",
         )
         session.commit()
         return _serialize_workspace(session, source.project_id)
-
-
-def list_asset_revisions(project_id: str) -> list[dict[str, Any]]:
-    with get_session() as session:
-        items = list(session.scalars(select(AssetRevision).where(AssetRevision.project_id == project_id).order_by(AssetRevision.revision.desc())).all())
-        return [_serialize_revision(item) for item in items]
 
 
 def _serialize_revision(item: AssetRevision) -> dict[str, Any]:
@@ -640,9 +676,15 @@ def _serialize_revision(item: AssetRevision) -> dict[str, Any]:
     except json.JSONDecodeError:
         snapshot = {}
     return {
-        "id": item.id, "project_id": item.project_id, "revision": item.revision, "kind": item.kind,
-        "is_current": item.is_current, "source_run_id": item.source_run_id, "source_revision_id": item.source_revision_id,
-        "note": item.note, "created_at": item.created_at.isoformat(),
+        "id": item.id,
+        "project_id": item.project_id,
+        "revision": item.revision,
+        "kind": item.kind,
+        "is_current": item.is_current,
+        "source_run_id": item.source_run_id,
+        "source_revision_id": item.source_revision_id,
+        "note": item.note,
+        "created_at": item.created_at.isoformat(),
         "counts": {
             "characters": len(snapshot.get("characters") or []),
             "scenes": len(snapshot.get("scenes") or []),
@@ -651,11 +693,17 @@ def _serialize_revision(item: AssetRevision) -> dict[str, Any]:
     }
 
 
-def _evidence_by_shot(session: Any, run: ContentAnalysisRun | None, final_snapshot: dict[str, Any]) -> dict[str, Any]:
+def list_asset_revisions(project_id: str) -> list[dict[str, Any]]:
+    with get_session() as session:
+        items = session.scalars(select(AssetRevision).where(AssetRevision.project_id == project_id).order_by(AssetRevision.revision.desc())).all()
+        return [_serialize_revision(item) for item in items]
+
+
+def _evidence_by_shot(session: Any, run: ContentAnalysisRun | None, snapshot: dict[str, Any]) -> dict[str, Any]:
     if run is None:
         return {}
     candidate_to_asset: dict[str, str] = {}
-    for collection in (final_snapshot.get("characters") or [], final_snapshot.get("scenes") or [], final_snapshot.get("props") or []):
+    for collection in (snapshot.get("characters") or [], snapshot.get("scenes") or [], snapshot.get("props") or []):
         for item in collection:
             for candidate_id in item.get("source_candidate_ids") or []:
                 candidate_to_asset[candidate_id] = item["id"]
@@ -667,10 +715,12 @@ def _evidence_by_shot(session: Any, run: ContentAnalysisRun | None, final_snapsh
         if candidate is None or not track.face_visible:
             continue
         bucket = result.setdefault(track.shot_id, {"characters": [], "scene": None, "props": []})
-        if any(item["candidate_id"] == candidate.id for item in bucket["characters"]):
+        if any(value["candidate_id"] == candidate.id for value in bucket["characters"]):
             continue
         bucket["characters"].append({
-            "candidate_id": candidate.id, "label": candidate.auto_label, "confidence": candidate.confidence,
+            "candidate_id": candidate.id,
+            "label": candidate.auto_label,
+            "confidence": candidate.confidence,
             "cover_url": f"/api/content-analysis/characters/{candidate.id}/cover" if candidate.cover_path else None,
             "final_asset_id": candidate_to_asset.get(candidate.id),
         })
@@ -682,7 +732,9 @@ def _evidence_by_shot(session: Any, run: ContentAnalysisRun | None, final_snapsh
             continue
         bucket = result.setdefault(link.shot_id, {"characters": [], "scene": None, "props": []})
         bucket["scene"] = {
-            "candidate_id": candidate.id, "label": candidate.auto_label, "confidence": link.confidence,
+            "candidate_id": candidate.id,
+            "label": candidate.auto_label,
+            "confidence": link.confidence,
             "cover_url": f"/api/content-analysis/scenes/{candidate.id}/cover" if candidate.cover_path else None,
             "final_asset_id": candidate_to_asset.get(candidate.id),
         }
@@ -694,13 +746,17 @@ def _evidence_by_shot(session: Any, run: ContentAnalysisRun | None, final_snapsh
             continue
         bucket = result.setdefault(link.shot_id, {"characters": [], "scene": None, "props": []})
         bucket["props"].append({
-            "candidate_id": candidate.id, "label": candidate.auto_label, "confidence": link.confidence,
-            "cover_url": None, "final_asset_id": candidate_to_asset.get(candidate.id),
+            "candidate_id": candidate.id,
+            "label": candidate.auto_label,
+            "confidence": link.confidence,
+            "cover_url": None,
+            "final_asset_id": candidate_to_asset.get(candidate.id),
         })
     return result
 
 
 def _serialize_workspace(session: Any, project_id: str) -> dict[str, Any]:
+    session.flush()
     snapshot = _snapshot(session, project_id)
     revision = _current_revision(session, project_id)
     run = _current_analysis(session, project_id)
@@ -713,32 +769,40 @@ def _serialize_workspace(session: Any, project_id: str) -> dict[str, Any]:
         bindings_by_shot.setdefault(item["shot_id"], {"character_ids": [], "scene_id": None, "prop_ids": []})["prop_ids"].append(item["entity_id"])
 
     stale = bool(run and (run.status == "STALE" or revision is None or revision.source_run_id != run.id))
+    revisions = session.scalars(select(AssetRevision).where(AssetRevision.project_id == project_id).order_by(AssetRevision.revision.desc())).all()
     return {
         "project_id": project_id,
         "status": "STALE" if stale else ("READY" if revision else "EMPTY"),
         "stale": stale,
         "revision": _serialize_revision(revision) if revision else None,
         "analysis": {
-            "id": run.id, "status": run.status, "profile_version": run.profile_version,
-            "component_status": _json(run.component_status_json), "counts": _json(run.counts_json),
+            "id": run.id,
+            "status": run.status,
+            "profile_version": run.profile_version,
+            "component_status": _json(run.component_status_json),
+            "counts": _json(run.counts_json),
         } if run else None,
         "characters": snapshot["characters"],
         "scenes": snapshot["scenes"],
         "props": snapshot["props"],
         "bindings_by_shot": bindings_by_shot,
         "evidence_by_shot": _evidence_by_shot(session, run, snapshot),
-        "revisions": [_serialize_revision(item) for item in session.scalars(select(AssetRevision).where(AssetRevision.project_id == project_id).order_by(AssetRevision.revision.desc())).all()],
+        "revisions": [_serialize_revision(item) for item in revisions],
     }
 
 
 def get_asset_workspace(project_id: str, *, auto_bootstrap: bool = True) -> dict[str, Any]:
-    """读取最终资产工作台；必要时把已有 Current AI Run 自动引导成第一个 AUTO Revision。"""
+    """读取资产工作台；已有可用 AI Run 且没有人工保护版本时自动形成 AUTO Revision。"""
 
     if auto_bootstrap:
         with get_session() as session:
             run = _current_analysis(session, project_id)
             revision = _current_revision(session, project_id)
-            should_apply = bool(run and run.status not in {"PROCESSING", "FAILED", "STALE"} and (revision is None or (revision.kind == "AUTO" and revision.source_run_id != run.id)))
+            should_apply = bool(
+                run
+                and run.status not in {"PROCESSING", "FAILED", "STALE"}
+                and (revision is None or (revision.kind == "AUTO" and revision.source_run_id != run.id))
+            )
             run_id = run.id if should_apply and run else None
         if run_id:
             return apply_analysis_to_assets(project_id, run_id)
