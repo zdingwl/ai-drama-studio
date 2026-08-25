@@ -1,12 +1,19 @@
-"""V2 拉片人工修正 API。"""
+"""V2 拉片人工修正 + Revision API。"""
 from __future__ import annotations
 
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from engine.app.shot_editor_v2 import ShotEditError, adjust_boundary, merge_with_next, split_shot
+from engine.app.shot_revision_v2 import (
+    get_revision_item_path,
+    get_shot_revision,
+    list_shot_revisions,
+    restore_shot_revision,
+)
 
 router = APIRouter(prefix="/api", tags=["shot-editing"])
 
@@ -26,6 +33,10 @@ class SplitShotRequest(BaseModel):
 
 def _bad_request(exc: Exception) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
+
+
+def _not_found(message: str) -> HTTPException:
+    return HTTPException(status_code=404, detail=message)
 
 
 @router.patch("/shots/{shot_id}/boundary")
@@ -50,3 +61,49 @@ def api_merge_shot_with_next(shot_id: str):
         return merge_with_next(shot_id=shot_id)
     except ShotEditError as exc:
         raise _bad_request(exc) from exc
+
+
+@router.get("/episodes/{episode_id}/shot-revisions")
+def api_list_shot_revisions(episode_id: str):
+    """列出某一集全部 Shot Revision；第一次读取旧项目会自动补 BASELINE R1。"""
+
+    try:
+        return list_shot_revisions(episode_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+
+
+@router.get("/shot-revisions/{revision_id}")
+def api_get_shot_revision(revision_id: str):
+    payload = get_shot_revision(revision_id)
+    if payload is None:
+        raise _not_found("Shot Revision 不存在")
+    return payload
+
+
+@router.post("/shot-revisions/{revision_id}/restore")
+def api_restore_shot_revision(revision_id: str):
+    """恢复历史版本会创建新的 RESTORE Revision，不改写被恢复的历史记录。"""
+
+    try:
+        return restore_shot_revision(revision_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.get("/shot-revision-items/{item_id}/reference")
+def api_revision_reference(item_id: str) -> FileResponse:
+    path = get_revision_item_path(item_id, "reference")
+    if path is None or not path.is_file():
+        raise _not_found("历史 Reference Clip 不存在")
+    return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+
+@router.get("/shot-revision-items/{item_id}/thumbnail")
+def api_revision_thumbnail(item_id: str) -> FileResponse:
+    path = get_revision_item_path(item_id, "thumbnail")
+    if path is None or not path.is_file():
+        raise _not_found("历史镜头缩略图不存在")
+    return FileResponse(path, media_type="image/jpeg", filename=path.name)
