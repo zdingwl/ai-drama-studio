@@ -1,15 +1,22 @@
-"""F05 V2 人物视觉证据。
+"""F05 V2 人物视觉 Evidence。
 
 职责：
 - YuNet 检测人脸；
 - SFace 生成身份 embedding；
-- OpenCV HOG 补充 body-only 人物检测；
-- 身体/服装 HSV histogram 作为辅助 ReID 证据；
+- OpenCV HOG / 合成人体框补充身体与服装 Evidence；
 - Shot 内 Track；
 - 跨 Shot 保守 Character Candidate 聚类。
 
-原则：人物 != 人脸。人脸身份是高权重证据，但背影/未露脸的人也可以形成低置信 Track。
-body-only 证据不会跨远距离 Shot 激进合并，只在相邻 Shot 且极高相似度时自动连接。
+核心规则：
+- 人物 != 人脸，所以身体 / 服装 Evidence 必须保留；
+- 但 HOG body-only 误检率不足以单独证明“这是一个人物身份”；
+- 正式 Character Candidate 必须至少拥有一个 Face/SFace 身份锚点；
+- body-only Track 只能在相邻 Shot 且身体 Evidence 极高相似时挂回已有的 face-anchored Candidate；
+- 同一 Shot 同时出现的两个 Track 永远不能自动合成同一个 Candidate。
+
+为什么这样改：
+旧版允许任何 body-only Track 自己创建 Candidate，真实短剧中 HOG 会把花、衣服、背景纹理等误检为人体，
+最终产生上千个单镜头“人物”。身体 Evidence 应该是辅助身份连续性的证据，而不是独立身份 Source of Truth。
 """
 from __future__ import annotations
 
@@ -178,7 +185,7 @@ def _detect_bodies(frame: Any, hog: Any) -> list[tuple[tuple[int, int, int, int]
         weight = float(raw_weight)
         if w < 35 or h < 70:
             continue
-        # HOG weight 不是真正概率，这里只做 0..1 展示分数归一化。
+        # HOG weight 不是真正概率，这里只做 0..1 Evidence 分数归一化。
         score = 1.0 / (1.0 + math.exp(-weight))
         results.append(((max(0, x), max(0, y), min(width - max(0, x), w), min(height - max(0, y), h)), score))
     return results
@@ -253,7 +260,8 @@ def detect_observations(shots: list[dict[str, Any]]) -> list[Observation]:
                         face_embedding=embedding, body_hist=_body_histogram(frame, body_box), face_visible=True,
                     ))
 
-            # 未被任何 Face 命中的 HOG Person 也保留为 body-only 证据。
+            # 未被 Face 命中的 HOG Person 只作为 body-only Evidence。
+            # 它之后只能挂回已有 face-anchored Candidate，不能自己生成正式人物身份。
             for index, (body_box, body_score) in enumerate(bodies):
                 if index in used_body_indexes:
                     continue
@@ -308,34 +316,74 @@ def build_tracks(observations: list[Observation]) -> list[TrackDraft]:
     return result
 
 
+def _append_track(candidate: CandidateDraft, track: TrackDraft, score: float | None = None) -> None:
+    """把 Track 追加到 Candidate，并重算 face/body 聚合 Evidence。"""
+
+    candidate.tracks.append(track)
+    if score is not None:
+        candidate.scores.append(score)
+    candidate.face_embedding = mean_vector([member.face_embedding for member in candidate.tracks if member.face_embedding is not None])
+    candidate.body_hist = mean_vector([member.body_hist for member in candidate.tracks if member.body_hist is not None])
+
+
 def cluster_candidates(tracks: list[TrackDraft]) -> list[CandidateDraft]:
+    """把 Track 聚成 Character Candidate，但只有 Face/SFace Track 可以创建身份锚点。
+
+    第 1 轮：先处理有 face embedding 的 Track，它们可以创建/合并正式身份。
+    第 2 轮：再处理 body-only Track；只能以极高身体相似度连接到相邻 Shot 的已有身份，不能新建 Candidate。
+
+    这样既保留背影/未露脸时的身体连续性，又不会让 HOG 的背景误检膨胀成成千上万个人物。
+    """
+
+    ordered = sorted(tracks, key=lambda item: (item.episode_order, item.shot_ordinal))
+    face_tracks = [track for track in ordered if track.face_embedding is not None]
+    body_only_tracks = [track for track in ordered if track.face_embedding is None]
     candidates: list[CandidateDraft] = []
-    for track in sorted(tracks, key=lambda item: (item.episode_order, item.shot_ordinal)):
+
+    # 1) Face/SFace 是身份锚点。
+    for track in face_tracks:
+        best: CandidateDraft | None = None
+        best_score = -1.0
+        for candidate in candidates:
+            # 同一 Shot 同框出现的两个 Track 不能自动认成同一个人。
+            if any(member.shot_id == track.shot_id for member in candidate.tracks):
+                continue
+            face_score = cosine(candidate.face_embedding, track.face_embedding)
+            if face_score is None or face_score < FACE_CLUSTER_THRESHOLD:
+                continue
+            body_score = cosine(candidate.body_hist, track.body_hist)
+            score = face_score * 0.88 + (body_score or 0.0) * 0.12
+            if score > best_score:
+                best, best_score = candidate, score
+        if best is None:
+            best = CandidateDraft(id=new_id("CHAR_CANDIDATE"))
+            candidates.append(best)
+            _append_track(best, track)
+        else:
+            _append_track(best, track, best_score)
+
+    # 2) body-only 只能挂回已有 face identity，绝不单独创建 Candidate。
+    for track in body_only_tracks:
         best: CandidateDraft | None = None
         best_score = -1.0
         for candidate in candidates:
             if any(member.shot_id == track.shot_id for member in candidate.tracks):
                 continue
-            face_score = cosine(candidate.face_embedding, track.face_embedding)
             body_score = cosine(candidate.body_hist, track.body_hist)
-            if face_score is not None:
-                qualifies = face_score >= FACE_CLUSTER_THRESHOLD
-                score = face_score * 0.88 + (body_score or 0.0) * 0.12
-            else:
-                previous = candidate.tracks[-1]
-                adjacent = previous.episode_id == track.episode_id and abs(previous.shot_ordinal - track.shot_ordinal) <= 1
-                qualifies = adjacent and body_score is not None and body_score >= BODY_ONLY_CLUSTER_THRESHOLD
-                score = body_score or 0.0
-            if qualifies and score > best_score:
-                best, best_score = candidate, score
-        if best is None:
-            best = CandidateDraft(id=new_id("CHAR_CANDIDATE"))
-            candidates.append(best)
-        else:
-            best.scores.append(best_score)
-        best.tracks.append(track)
-        best.face_embedding = mean_vector([member.face_embedding for member in best.tracks if member.face_embedding is not None])
-        best.body_hist = mean_vector([member.body_hist for member in best.tracks if member.body_hist is not None])
+            if body_score is None or body_score < BODY_ONLY_CLUSTER_THRESHOLD:
+                continue
+            adjacent = any(
+                member.episode_id == track.episode_id
+                and abs(member.shot_ordinal - track.shot_ordinal) <= 1
+                for member in candidate.tracks
+            )
+            if not adjacent:
+                continue
+            if body_score > best_score:
+                best, best_score = candidate, body_score
+        if best is not None:
+            _append_track(best, track, best_score)
+
     return candidates
 
 
@@ -349,7 +397,7 @@ def save_candidate_cover(run_id: str, candidate: CandidateDraft, ordinal: int) -
     observations = [item for track in candidate.tracks for item in track.observations]
     if not observations:
         return None
-    # 优先露脸且检测分高的 Observation；纯背影候选则使用最佳 body observation。
+    # 正式 Candidate 一定有 Face/SFace 锚点；封面优先取露脸且检测分最高的 Observation。
     representative = max(observations, key=lambda item: (1 if item.face_visible else 0, item.detection_score))
     frame = _read_frame(representative.reference_path, representative.local_time_us)
     if frame is None:
