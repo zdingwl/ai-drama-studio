@@ -123,3 +123,25 @@ def test_unresolved_face_fragment_is_kept_as_evidence_but_not_materialized(monke
         unresolved_candidate = session.get(CharacterCandidate, "C_UNRESOLVED")
         assert unresolved_candidate is not None
         assert json.loads(unresolved_candidate.evidence_json)["identity_status"] == "UNRESOLVED"
+
+
+def test_missing_identity_status_cannot_bypass_resolved_only_gate(monkeypatch, tmp_path: Path) -> None:
+    """旧 Run / 损坏 Evidence 没有明确 RESOLVED 时必须 fail closed。"""
+
+    project_id, run_id = seed(monkeypatch, tmp_path)
+    with studio_v2.get_session() as session:
+        candidate = session.get(CharacterCandidate, "C_RESOLVED")
+        assert candidate is not None
+        candidate.evidence_json = json.dumps({"final_asset_eligible": True})
+        session.commit()
+
+    workspace = apply_analysis_to_assets(project_id, run_id)
+
+    assert workspace["characters"] == []
+    assert workspace["bindings_by_shot"]["SHOT_1"]["character_ids"] == []
+    assert workspace["bindings_by_shot"]["SHOT_2"]["character_ids"] == []
+
+    with studio_v2.get_session() as session:
+        track = session.get(CharacterTrack, "T_RESOLVED")
+        assert track is not None
+        assert track.face_visible is True
