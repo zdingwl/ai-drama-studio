@@ -1,26 +1,25 @@
 """03 资产 Evidence 的可观测执行入口。
 
 职责：
-- 复用 content_analysis_v2 的正式 Run / 持久化逻辑，不复制业务数据模型；
-- 把 Character V5 的逐 Shot progress callback 转换成统一资产进度；
-- 明确暴露“准备 / 人物 Track+Gallery / 场景 / 保存”阶段，让 BackgroundTask 有真实心跳；
-- 正式后台 Run 标记明确的 V5 profile，避免历史 v2.3 名称误导排查；
-- 失败时仍由原 ContentAnalysisRun 规则保留旧 Current，不发布半成品。
+- 复用 content_analysis_v2 的正式 Run / Scene 数据模型；
+- 人物正式链路升级为 Character V6：12fps Person → Mature MOT → Global Identity Graph；
+- RESOLVED / UNRESOLVED 在持久化时明确分层，只有 RESOLVED 后续可形成 Final Character；
+- 把逐 Shot progress callback 转换成统一后台 Task 进度；
+- 新 Run 完整成功后才切 Current，失败保留旧结果。
 """
 from __future__ import annotations
 
 from typing import Callable
 
 from engine.app.character_visual_v2 import CandidateDraft, analyze_characters
+from engine.app.character_persistence_v6 import persist_results_v6
 from engine.app.content_analysis_v2 import (
     ContentAnalysisRun,
-    ContentModelError,
     SceneDraft,
     _cluster_scenes,
     _create_run,
     _fail_run,
     _load_context,
-    _persist_results,
     get_analysis_run,
 )
 from engine.app.studio_v2 import get_session
@@ -30,7 +29,7 @@ AssetEvidenceProgress = Callable[
     None,
 ]
 
-FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v5-track-gallery"
+FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v6-global-identity"
 
 
 def _report(
@@ -55,9 +54,7 @@ def _report(
         )
 
 
-def _mark_v5_profile(run_id: str) -> None:
-    """职责：把正式后台资产 Run 标记为 V5 Track/Gallery profile。"""
-
+def _mark_v6_profile(run_id: str) -> None:
     with get_session() as session:
         run = session.get(ContentAnalysisRun, run_id)
         if run is None:
@@ -71,19 +68,14 @@ def run_content_analysis_with_progress(
     *,
     progress: AssetEvidenceProgress | None = None,
 ) -> dict[str, object]:
-    """执行基础资产 Evidence，并持续报告真实可计算进度。
-
-    人物阶段占主要计算量，因此 5%~82% 使用 Character V5 实际 Shot 完成数映射。
-    V5 每个 Shot 内会做更密集 Person Detection、Track、代表图与 Gallery 身份匹配；
-    Shot 级百分比是真实处理顺序，不伪造模型内部每一次 forward 的百分比。
-    """
+    """执行基础资产 Evidence，并持续报告真实可计算进度。"""
 
     _project, _episodes, shots = _load_context(project_id)
     run_id = _create_run(project_id)
-    _mark_v5_profile(run_id)
+    _mark_v6_profile(run_id)
     component_status: dict[str, str] = {
         "characters": "PENDING",
-        "characters_profile": "V5_TRACK_GALLERY",
+        "characters_profile": "V6_GLOBAL_IDENTITY",
         "scenes": "PENDING",
         "props": "NOT_CONFIGURED",
     }
@@ -98,7 +90,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            f"已读取 {total_shots} 个 Current Shots，正在加载人物 V5 GPU-first 模型",
+            f"已读取 {total_shots} 个 Current Shots，正在加载人物 V6 GPU-first 模型与 Mature MOT",
         )
 
         candidates: list[CandidateDraft] = []
@@ -113,29 +105,40 @@ def run_content_analysis_with_progress(
                 progress,
                 5.0 + ratio * 77.0,
                 "characters",
-                "人物 V5 · Track / Gallery / Identity",
+                "人物 V6 · Person / MOT / Global Identity",
                 current_item,
                 current,
                 total,
                 message,
             )
 
-        try:
-            candidates = analyze_characters(shots, progress=character_progress)
-            component_status["characters"] = "READY" if candidates else "NO_CHARACTER"
-        except (ContentModelError, ImportError) as exc:
-            component_status["characters"] = "MODEL_NOT_READY"
-            component_status["characters_detail"] = str(exc)
+        candidates = analyze_characters(shots, progress=character_progress)
+        resolved_count = sum(1 for item in candidates if item.identity_status == "RESOLVED")
+        unresolved_count = len(candidates) - resolved_count
+        component_status["characters"] = "READY" if candidates else "NO_CHARACTER"
+        component_status["resolved_characters"] = str(resolved_count)
+        component_status["unresolved_character_evidence"] = str(unresolved_count)
 
         _report(
             progress,
             84.0,
+            "identity_resolve",
+            "全局人物身份解析完成",
+            None,
+            total_shots,
+            total_shots,
+            f"Global Identity Graph：{resolved_count} 个可发布人物 · {unresolved_count} 个待解析 Evidence",
+        )
+
+        _report(
+            progress,
+            87.0,
             "scenes",
             "连续场景 Evidence",
             None,
             0,
             total_shots,
-            "人物 Track / Character Gallery 完成，正在计算 Scene Segment",
+            "人物 V6 完成，正在计算 Scene Segment",
         )
         scenes: list[SceneDraft] = _cluster_scenes(run_id, project_id, shots)
         component_status["scenes"] = "READY" if scenes else "NO_SCENE"
@@ -145,15 +148,15 @@ def run_content_analysis_with_progress(
 
         _report(
             progress,
-            94.0,
+            95.0,
             "persist",
             "保存 Asset Evidence",
             None,
             total_shots,
             total_shots,
-            f"正在保存 {len(candidates)} 个 Character Candidate、单人 Gallery、{len(scenes)} 个 Scene Segment 与 Shot Evidence",
+            f"正在保存 {resolved_count} 个 RESOLVED Character、{unresolved_count} 个 Unresolved Evidence、{len(scenes)} 个 Scene Segment",
         )
-        _persist_results(
+        persist_results_v6(
             run_id=run_id,
             project_id=project_id,
             shots=shots,
@@ -172,7 +175,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            "人物 Track / Character Gallery / 场景基础 Evidence 已完成",
+            f"人物 V6 完成：{resolved_count} Final-ready · {unresolved_count} 待解析 Evidence",
         )
         return get_analysis_run(run_id) or {"id": run_id, "status": "READY"}
     except Exception as exc:
