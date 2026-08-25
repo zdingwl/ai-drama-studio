@@ -2,6 +2,7 @@
 
 所有写操作都修改 Final Asset / Shot Binding，并在同一事务中创建新的 MANUAL Revision。
 AI Evidence 只读，不会被人工操作覆盖或删除。
+Character V6 只有 RESOLVED Identity 才能进入 Final Character；UNRESOLVED 只保留 Evidence。
 """
 from __future__ import annotations
 
@@ -11,10 +12,10 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
 from engine.app.asset_analysis_progress_v4 import run_content_analysis_with_progress
+from engine.app.asset_final_gate_v6 import apply_analysis_to_assets
 from engine.app.asset_semantics_v3 import enrich_asset_run, semantic_model_status
 from engine.app.asset_workspace_v3 import (
     AssetWorkspaceError,
-    apply_analysis_to_assets,
     create_asset,
     delete_asset,
     get_asset_workspace,
@@ -77,11 +78,10 @@ def _bad(exc: Exception) -> HTTPException:
 
 
 def _run_full_asset_task(task_id: str, project_id: str) -> None:
-    """完整资产任务：基础 Evidence → optional VLM → Final Asset → Shot Binding。
+    """完整资产任务：V6 人物 Evidence → optional VLM → Final Asset → Shot Binding。
 
-    基础人物 V5 已经能按真实 Shot 报进度，这里把它映射到总任务前 55%。
-    Qwen3-VL 是语义增强而不是人物身份 Source of Truth，所以它未配置或临时失败时，
-    人物与基础连续场景仍然必须形成 Final Asset；任务以 READY_WITH_WARNINGS 完成，而不是整批失败。
+    Character V6 的身份解析只负责人物；Qwen3-VL 是场景/道具语义增强，不是 Character_ID Source of Truth。
+    Qwen 未配置/失败时，人物 Final Asset 仍可正常完成，任务以 READY_WITH_WARNINGS 结束。
     """
 
     try:
@@ -89,7 +89,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
             task_id,
             stage_key="asset_prepare",
             stage_label="准备资产提取",
-            message="正在读取 Final Shots 与人物 V5 Track/Gallery 模型",
+            message="正在读取 Final Shots 与人物 V6 Mature MOT / Global Identity",
         )
         update_task(
             task_id,
@@ -109,8 +109,6 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
             total_items: int | None,
             message: str,
         ) -> None:
-            # 基础 Evidence 占完整资产任务前 55%。人物 V5 内部的 percent 来自实际 Shot 进度，
-            # 不是前端估算；场景/持久化阶段也会持续更新心跳。
             update_task(
                 task_id,
                 progress_mode="determinate",
@@ -125,6 +123,9 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
 
         result = run_content_analysis_with_progress(project_id, progress=evidence_progress)
         run_id = str(result["id"])
+        counts = dict(result.get("counts") or {})
+        resolved_characters = int(counts.get("resolved_character_candidates") or 0)
+        unresolved_evidence = int(counts.get("unresolved_character_candidates") or 0)
 
         vlm = semantic_model_status()
         semantic_result: dict[str, object] = {"status": "NOT_CONFIGURED", "shot_count": 0, "prop_count": 0}
@@ -167,7 +168,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
                     stage_key="asset_semantics",
                     stage_label="Qwen3-VL 增强失败",
                     current_item=None,
-                    message="已保留人物与基础场景 Evidence；场景语义/道具可人工维护或稍后重跑",
+                    message="人物 V6 Evidence 已保留；场景语义/道具可人工维护或稍后重跑",
                 )
         else:
             semantic_warning = True
@@ -190,22 +191,24 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
             current_item=None,
             current_index=None,
             total_items=None,
-            message="正在建立人物 / 场景 / 道具与 Shot Binding",
+            message=f"只发布 {resolved_characters} 个 RESOLVED 人物；{unresolved_evidence} 个身份碎片仅保留 Evidence",
         )
         workspace = apply_analysis_to_assets(project_id, run_id)
         manual_preserved = bool(workspace.get("stale"))
-        warning = semantic_warning or manual_preserved
+        warning = semantic_warning or manual_preserved or unresolved_evidence > 0
         if manual_preserved:
             message = "资产 Evidence 已更新；当前人工版本已保留，请按需采用新 Evidence"
-        elif semantic_warning:
-            message = "人物 / 基础场景资产已完成；Qwen3-VL 语义增强未完成"
         else:
-            message = "资产提取与 Shot Binding 完成"
+            message = f"人物 V6：{resolved_characters} Final Character · {unresolved_evidence} 待解析 Evidence"
+            if semantic_warning:
+                message += "；Qwen3-VL 语义增强未完成"
         finish_task(
             task_id,
             result={
                 "run_id": run_id,
                 "profile_version": result.get("profile_version"),
+                "resolved_characters": resolved_characters,
+                "unresolved_character_evidence": unresolved_evidence,
                 "semantic": semantic_result,
                 "asset_revision": (workspace.get("revision") or {}).get("revision"),
                 "manual_preserved": manual_preserved,
@@ -227,7 +230,7 @@ def api_asset_workspace(project_id: str):
 
 @router.get("/assets/models/status")
 def api_asset_model_status():
-    """Qwen3-VL 语义增强配置状态；人物 V5 模型由 /api/models/f05/status 提供。"""
+    """Qwen3-VL 语义增强配置状态；人物 V6 模型由 /api/models/f05/status 提供。"""
     return semantic_model_status()
 
 
