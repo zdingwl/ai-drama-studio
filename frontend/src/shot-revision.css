@@ -1,0 +1,112 @@
+.shot-revision-current {
+  grid-area: content;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid #cdd9f6;
+  border-radius: 12px;
+  background: #f6f8ff;
+}
+
+.shot-revision-current > div {
+  display: grid;
+  gap: 2px;
+}
+
+.shot-revision-current span,
+.shot-revision-heading span,
+.shot-revision-copy small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.shot-revision-current > div > span {
+  color: var(--accent);
+  font-weight: 850;
+  letter-spacing: .09em;
+}
+
+.shot-revision-current strong {
+  font-size: 15px;
+}
+
+.shot-revision-history {
+  grid-area: content;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.shot-revision-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--line);
+  background: #f8fafc;
+}
+
+.shot-revision-list {
+  display: grid;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.shot-revision-row {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.shot-revision-row:last-child {
+  border-bottom: 0;
+}
+
+.shot-revision-row.current {
+  background: #f4f8ff;
+}
+
+.shot-revision-number {
+  font-size: 15px;
+  font-weight: 900;
+  color: #31415a;
+}
+
+.shot-revision-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.shot-revision-copy strong {
+  font-size: 13px;
+}
+
+/* Current 与历史面板位于 action 和 Shot 内容之间；打开历史时仍保持三层管理结构。 */
+.shots-workspace:has(.shot-revision-current) {
+  grid-template-areas:
+    "title title"
+    "help help"
+    "episodes action"
+    "episodes content";
+}
+
+@media (max-width: 1350px) {
+  .shot-revision-row {
+    grid-template-columns: 48px minmax(0, 1fr) auto;
+  }
+
+  .shot-revision-row > .ghost-button {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+}
