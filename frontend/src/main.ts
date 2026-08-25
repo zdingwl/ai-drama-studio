@@ -7,6 +7,7 @@ import './shot-manager.css'
 import './shot-editor.css'
 import './shot-revision.css'
 import './shot-workbench-v3.css'
+import './shot-workbench-v3-overrides.css'
 import './task-progress.css'
 
 createApp(App).use(router).mount('#app')
