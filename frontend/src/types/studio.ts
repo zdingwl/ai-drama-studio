@@ -42,6 +42,32 @@ export interface Shot {
   status: string
 }
 
+export interface ShotRevisionItem {
+  id: string
+  revision_id: string
+  original_shot_id: string
+  ordinal: number
+  start_us: number
+  end_us: number
+  duration_us: number
+  reference_url: string
+  thumbnail_url: string | null
+  status: string
+}
+
+export interface ShotRevision {
+  id: string
+  episode_id: string
+  revision: number
+  kind: 'AUTO' | 'MANUAL' | 'RESTORE' | 'BASELINE' | string
+  is_current: boolean
+  source_revision_id: string | null
+  note: string | null
+  shot_count: number
+  created_at: string
+  shots?: ShotRevisionItem[]
+}
+
 export interface CharacterTrackEvidence {
   id: string
   shot_id: string
