@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from engine.app.character_visual_v5 import (
-    CandidateDraft,
+from engine.app.character_visual_v2 import (
     Observation,
     TrackDraft,
     build_tracks,
@@ -54,7 +53,7 @@ def observation(
     )
 
 
-def test_track_representatives_prefer_clean_person_over_crowded_frame() -> None:
+def test_track_representatives_use_only_clean_frames_when_clean_evidence_exists() -> None:
     track = TrackDraft(
         shot_id="SHOT_1",
         episode_id="EP_1",
@@ -77,7 +76,7 @@ def test_track_representatives_prefer_clean_person_over_crowded_frame() -> None:
     reps = select_track_representatives(track)
 
     assert reps
-    assert reps[0].clean is True
+    assert all(rep.clean for rep in reps)
     assert reps[0].observation.source_time_us == 500_000
 
 
@@ -108,7 +107,6 @@ def test_character_gallery_never_absorbs_dirty_multi_person_representative() -> 
     )
 
     for track in (clean_track, dirty_track):
-        # build_tracks 正式流程会完成 embedding refresh + representative selection；这里直接复用实际入口。
         built = build_tracks(track.observations)
         track.face_embedding = built[0].face_embedding
         track.reid_embedding = built[0].reid_embedding
