@@ -135,8 +135,8 @@ def test_distant_body_only_track_remains_unresolved_instead_of_silent_drop() -> 
     assert unresolved.tracks == [distant]
 
 
-def test_adaptive_sampling_uses_more_than_three_frames_for_normal_short_drama_shot() -> None:
+def test_v5_tracking_sampling_is_denser_than_old_three_five_seven_frame_strategy() -> None:
     assert len(sample_ratios(300_000)) == 3
-    assert len(sample_ratios(700_000)) == 5
-    assert len(sample_ratios(1_600_000)) == 7
-    assert len(sample_ratios(4_000_000)) == 9
+    assert len(sample_ratios(700_000)) >= 5
+    assert len(sample_ratios(1_600_000)) >= 10
+    assert len(sample_ratios(4_000_000)) >= 20
