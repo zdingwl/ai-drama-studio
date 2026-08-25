@@ -1,4 +1,4 @@
-.task-dock { position: fixed; left: 286px; right: 22px; top: 14px; z-index: 120; border: 1px solid #d7dfef; border-radius: 13px; background: rgba(255,255,255,.97); box-shadow: 0 10px 34px rgba(33,48,76,.14); overflow: hidden; backdrop-filter: blur(10px); }
+.task-dock { position: fixed; left: 286px; right: 22px; bottom: 18px; z-index: 120; border: 1px solid #d7dfef; border-radius: 13px; background: rgba(255,255,255,.97); box-shadow: 0 10px 34px rgba(33,48,76,.14); overflow: hidden; backdrop-filter: blur(10px); }
 .task-dock-summary { width: 100%; min-height: 58px; display: grid; grid-template-columns: 12px minmax(0,1fr) auto auto; gap: 12px; align-items: center; padding: 8px 14px; border: 0; background: transparent; text-align: left; color: #192536; cursor: pointer; }
 .task-state-dot { width: 9px; height: 9px; border-radius: 50%; background: #a5adba; }
 .task-state-dot.processing, .task-state-dot.queued { background: #5578e8; box-shadow: 0 0 0 4px #eef2ff; }
@@ -29,4 +29,4 @@
 .task-mini-track { height: 3px; margin-top: 8px; border-radius: 999px; overflow: hidden; background: #e9edf4; }
 .task-mini-track > span { display: block; height: 100%; background: #647fe1; }
 .task-panel-error, .task-error-detail { color: #c44747 !important; }
-@media (max-width: 900px) { .task-dock { left: 12px; right: 12px; top: 10px; } .task-dock-count { display: none; } }
+@media (max-width: 900px) { .task-dock { left: 12px; right: 12px; bottom: 10px; } .task-dock-count { display: none; } }
