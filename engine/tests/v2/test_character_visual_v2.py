@@ -76,6 +76,29 @@ def test_same_shot_face_tracks_never_auto_merge_even_with_identical_identity_evi
     assert all(item.identity_status == "RESOLVED" for item in candidates)
 
 
+def test_cross_shot_face_angle_change_can_merge_when_reid_supports_same_actor() -> None:
+    """脸角度使 SFace 变弱时，专用 ReID 应避免把同一演员拆成两个 Final Character。"""
+
+    frontal = face_track(
+        shot_id="SHOT_2",
+        shot_ordinal=2,
+        face_vector=[1.0, 0.0, 0.0],
+        body_vector=[1.0, 0.04, 0.0],
+    )
+    profile = face_track(
+        shot_id="SHOT_7",
+        shot_ordinal=7,
+        face_vector=[0.42, 0.9075, 0.0],
+        body_vector=[1.0, 0.05, 0.0],
+    )
+
+    candidates = cluster_candidates([frontal, profile])
+
+    assert len(candidates) == 1
+    assert candidates[0].identity_status == "RESOLVED"
+    assert set(item.shot_id for item in candidates[0].tracks) == {"SHOT_2", "SHOT_7"}
+
+
 def test_adjacent_body_only_track_can_extend_existing_face_anchored_identity() -> None:
     anchor = face_track(
         shot_id="SHOT_2",
