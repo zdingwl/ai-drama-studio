@@ -77,29 +77,42 @@ def _bad(exc: Exception) -> HTTPException:
 
 
 def _run_full_asset_task(task_id: str, project_id: str) -> None:
-    """完整资产任务：Evidence → VLM optional → Final Asset → Shot Binding。
+    """完整资产任务：基础 Evidence → optional VLM → Final Asset → Shot Binding。
 
-    基础人物/场景算法内部暂时无法诚实汇报细粒度百分比，所以前半段使用 indeterminate；
-    Qwen3-VL 配置后按 Shot 数量给真实进度，最终落 Final Asset 后完成。
+    Qwen3-VL 是语义增强而不是人物身份 Source of Truth，所以它未配置或临时失败时，
+    人物与基础连续场景仍然必须形成 Final Asset；任务以 READY_WITH_WARNINGS 完成，而不是整批失败。
     """
 
     try:
         start_task(task_id, stage_key="asset_evidence", stage_label="人物 / 场景 Evidence", message="正在分析人物身份、Track 与连续场景")
-        update_task(task_id, progress_mode="indeterminate", stage_key="asset_evidence", stage_label="人物 / 场景 Evidence", message="Face/SFace + Body/服装辅助 Evidence 正在运行")
+        update_task(
+            task_id,
+            progress_mode="indeterminate",
+            stage_key="asset_evidence",
+            stage_label="人物 / 场景 Evidence",
+            message="Face/SFace + Body/服装辅助 Evidence 正在运行",
+        )
         result = run_content_analysis(project_id)
         run_id = str(result["id"])
 
         vlm = semantic_model_status()
-        semantic_result = {"status": "NOT_CONFIGURED", "shot_count": 0, "prop_count": 0}
+        semantic_result: dict[str, object] = {"status": "NOT_CONFIGURED", "shot_count": 0, "prop_count": 0}
+        semantic_warning = False
         if vlm["ready"]:
-            update_task(task_id, progress_mode="determinate", progress_percent=55, stage_key="asset_semantics", stage_label="Qwen3-VL 场景 / 道具", message="正在启动多模态语义分析")
+            update_task(
+                task_id,
+                progress_mode="determinate",
+                progress_percent=55,
+                stage_key="asset_semantics",
+                stage_label="Qwen3-VL 场景 / 道具",
+                message="正在启动多模态语义分析",
+            )
 
             def semantic_progress(current: int, total: int, message: str) -> None:
-                percent = 55 + (current / max(1, total)) * 35
                 update_task(
                     task_id,
                     progress_mode="determinate",
-                    progress_percent=percent,
+                    progress_percent=55 + (current / max(1, total)) * 35,
                     stage_key="asset_semantics",
                     stage_label="Qwen3-VL 场景 / 道具",
                     current_index=current,
@@ -107,8 +120,21 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
                     message=message,
                 )
 
-            semantic_result = enrich_asset_run(run_id, project_id, progress=semantic_progress)
+            try:
+                semantic_result = enrich_asset_run(run_id, project_id, progress=semantic_progress)
+            except Exception as exc:
+                semantic_warning = True
+                semantic_result = {"status": "FAILED", "error": str(exc), "shot_count": 0, "prop_count": 0}
+                update_task(
+                    task_id,
+                    progress_mode="determinate",
+                    progress_percent=90,
+                    stage_key="asset_semantics",
+                    stage_label="Qwen3-VL 增强失败",
+                    message="已保留人物与基础场景 Evidence；场景语义/道具可人工维护或稍后重跑",
+                )
         else:
+            semantic_warning = True
             update_task(
                 task_id,
                 progress_mode="determinate",
@@ -118,9 +144,23 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
                 message="Qwen3-VL 未配置：保留基础场景 Evidence，道具可人工维护",
             )
 
-        update_task(task_id, progress_mode="determinate", progress_percent=94, stage_key="asset_finalize", stage_label="形成 Final Asset", message="正在建立人物 / 场景 / 道具与 Shot Binding")
+        update_task(
+            task_id,
+            progress_mode="determinate",
+            progress_percent=94,
+            stage_key="asset_finalize",
+            stage_label="形成 Final Asset",
+            message="正在建立人物 / 场景 / 道具与 Shot Binding",
+        )
         workspace = apply_analysis_to_assets(project_id, run_id)
         manual_preserved = bool(workspace.get("stale"))
+        warning = semantic_warning or manual_preserved
+        if manual_preserved:
+            message = "资产 Evidence 已更新；当前人工版本已保留，请按需采用新 Evidence"
+        elif semantic_warning:
+            message = "人物 / 基础场景资产已完成；Qwen3-VL 语义增强未完成"
+        else:
+            message = "资产提取与 Shot Binding 完成"
         finish_task(
             task_id,
             result={
@@ -130,8 +170,8 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
                 "asset_revision": (workspace.get("revision") or {}).get("revision"),
                 "manual_preserved": manual_preserved,
             },
-            message="资产 Evidence 已更新；人工版本已保留" if manual_preserved else "资产提取与 Shot Binding 完成",
-            status="READY_WITH_WARNINGS" if manual_preserved else "READY",
+            message=message,
+            status="READY_WITH_WARNINGS" if warning else "READY",
         )
     except Exception as exc:
         fail_task(task_id, exc)
@@ -147,7 +187,7 @@ def api_asset_workspace(project_id: str):
 
 @router.get("/assets/models/status")
 def api_asset_model_status():
-    """Qwen3-VL 语义增强配置状态；YuNet/SFace 仍由 /api/models/f05/status 提供。"""
+    """Qwen3-VL 语义增强配置状态；YuNet/SFace 由兼容模型接口提供。"""
     return semantic_model_status()
 
 
@@ -172,7 +212,7 @@ def api_start_full_asset_task(project_id: str, background: BackgroundTasks):
 
 @router.post("/projects/{project_id}/assets/apply-analysis")
 def api_apply_analysis(project_id: str):
-    """用户显式选择基于最新 AI Evidence 创建新的 AUTO Revision。"""
+    """用户显式选择：基于最新 AI Evidence 创建新的 AUTO Revision。"""
     workspace = get_asset_workspace(project_id, auto_bootstrap=False)
     analysis = workspace.get("analysis")
     if not analysis:
@@ -187,7 +227,8 @@ def api_apply_analysis(project_id: str):
 def api_set_shot_bindings(project_id: str, shot_id: str, payload: ShotBindingsRequest):
     try:
         return set_shot_bindings(
-            project_id, shot_id,
+            project_id,
+            shot_id,
             character_ids=payload.character_ids,
             scene_id=payload.scene_id,
             prop_ids=payload.prop_ids,
