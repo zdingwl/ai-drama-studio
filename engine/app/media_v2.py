@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -16,6 +18,7 @@ MIN_SHOT_DURATION_US = 120_000
 
 # percent, stage_key, message, current, total
 ProgressReporter = Callable[[float, str, str, int | None, int | None], None]
+_PLAYABLE_PROXY_LOCK = threading.RLock()
 
 
 class MediaPipelineError(RuntimeError):
@@ -85,8 +88,65 @@ def probe_media(path: Path) -> dict[str, Any]:
     }
 
 
+def ensure_playable_proxy(episode_id: str) -> Path:
+    """确保整集拉片播放器拿到带原声的 Proxy。
+
+    输入：Episode ID；输出：可直接给浏览器播放的 Proxy 路径。
+    为什么：历史 V2 Proxy 曾使用 ``-an`` 生成无声视频。旧项目已有独立 audio.wav，
+    因此这里只需把现有 H.264 视频流原样复制并重新封装 AAC 音频，不必重跑镜头检测或重编码视频。
+    修复通过临时文件 + os.replace 原子替换；之后该 Episode 永久复用修复后的 Proxy。
+    """
+
+    with _PLAYABLE_PROXY_LOCK:
+        episode = get_episode_record(episode_id)
+        if episode is None:
+            raise LookupError("剧集不存在")
+        preprocess = episode.preprocess
+        if preprocess is None or preprocess.status != "READY" or not preprocess.proxy_path:
+            raise MediaPipelineError("当前剧集的分析视频尚未准备完成")
+
+        proxy = Path(preprocess.proxy_path)
+        if not proxy.is_file():
+            raise MediaPipelineError("分析视频不存在")
+        proxy_info = probe_media(proxy)
+        if proxy_info["has_audio"]:
+            return proxy
+
+        source = Path(episode.source_path)
+        if not source.is_file():
+            raise MediaPipelineError("原视频文件不存在")
+        source_info = probe_media(source)
+        if not source_info["has_audio"]:
+            return proxy
+
+        audio = Path(preprocess.audio_path) if preprocess.audio_path else None
+        audio_input = audio if audio is not None and audio.is_file() else source
+        temp = proxy.with_name(f".{proxy.stem}.audio-repair.tmp.mp4")
+        if temp.exists():
+            temp.unlink()
+        try:
+            _run([
+                "ffmpeg", "-y",
+                "-i", str(proxy),
+                "-i", str(audio_input),
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "160k", "-ac", "2",
+                "-movflags", "+faststart",
+                str(temp),
+            ])
+            repaired = probe_media(temp)
+            if not repaired["has_audio"]:
+                raise MediaPipelineError("修复后的 Proxy 仍未检测到音轨")
+            os.replace(temp, proxy)
+            return proxy
+        finally:
+            if temp.exists():
+                temp.unlink(missing_ok=True)
+
+
 def preprocess_episode(episode_id: str, progress: ProgressReporter | None = None) -> dict[str, Any]:
-    """生成 Proxy / Audio，并向调用方报告真实阶段进度。"""
+    """生成播放/分析共用 Proxy 与独立 Audio，并向调用方报告真实阶段进度。"""
 
     episode = get_episode_record(episode_id)
     if episode is None:
@@ -105,16 +165,18 @@ def preprocess_episode(episode_id: str, progress: ProgressReporter | None = None
         _report(progress, 5, "probe", "正在读取媒体信息")
         info = probe_media(source)
 
-        _report(progress, 15, "proxy", "正在生成分析用 Proxy")
+        _report(progress, 15, "proxy", "正在生成带原声的分析 Proxy")
         _run([
             "ffmpeg", "-y", "-i", str(source),
-            "-map", "0:v:0", "-an",
+            "-map", "0:v:0", "-map", "0:a:0?",
             "-vf", "scale='min(1280,iw)':-2,fps=25",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "160k", "-ac", "2",
+            "-movflags", "+faststart",
             "-avoid_negative_ts", "make_zero", str(proxy),
         ])
-        _report(progress, 70, "proxy", "Proxy 已生成")
+        _report(progress, 70, "proxy", "带原声 Proxy 已生成")
 
         if info["has_audio"]:
             _report(progress, 75, "audio", "正在提取独立音轨")
