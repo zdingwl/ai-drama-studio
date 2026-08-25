@@ -2,7 +2,7 @@
 
 当前可用范围：
 F01 项目管理、F02 多剧集导入与排序、F03 视频预处理、F04 自动拉片与 Reference Clip、
-F05 智能内容识别第一版。
+F05 资产提取，以及统一后台 Task / Progress API。
 """
 from __future__ import annotations
 
@@ -37,16 +37,19 @@ from engine.app.studio_v2 import (
     list_shots,
     reorder_episodes,
 )
+from engine.app.task_progress_v2 import recover_interrupted_tasks
+from engine.app.task_routes_v2 import router as task_router
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # content_analysis_v2 在本模块顶层已经导入，因此 F05 新表也会进入同一个 Base metadata。
+    # content_analysis_v2 / task_progress_v2 已在本模块 import，所有 V2 表会进入同一个 Base metadata。
     init_database()
+    recover_interrupted_tasks()
     yield
 
 
-app = FastAPI(title="AI Drama Studio", version="2.1.0", lifespan=lifespan)
+app = FastAPI(title="AI Drama Studio", version="2.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -54,6 +57,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(task_router)
 
 
 class ProjectCreate(BaseModel):
@@ -77,7 +81,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "architecture": "reference-video-v2", "app_version": "2.1.0"}
+    return {"status": "ok", "architecture": "reference-video-v2", "app_version": "2.2.0"}
 
 
 @app.get("/api/projects")
@@ -150,6 +154,7 @@ def api_get_episode(episode_id: str) -> dict[str, Any]:
     return episode
 
 
+# 下面同步接口继续保留兼容旧测试/调试；正式 UI 已改走 /tasks/* 后台任务接口。
 @app.post("/api/episodes/{episode_id}/preprocess")
 def api_preprocess_episode(episode_id: str) -> dict[str, Any]:
     try:
@@ -223,7 +228,7 @@ def api_shot_thumbnail(shot_id: str) -> FileResponse:
     return FileResponse(path, media_type="image/jpeg", filename=path.name)
 
 
-# ---------------------------- F05 智能内容识别 ----------------------------
+# ---------------------------- F05 资产提取 ----------------------------
 
 
 @app.get("/api/models/f05/status")
@@ -243,7 +248,7 @@ def api_prepare_f05_models() -> dict[str, object]:
 
 @app.post("/api/projects/{project_id}/content-analysis")
 def api_run_content_analysis(project_id: str) -> dict[str, Any]:
-    """按 Episode.sort_order 顺序对整个 Project 执行 F05，跨集建立统一人物候选。"""
+    """同步兼容接口；正式 UI 使用 /api/projects/{project_id}/tasks/assets。"""
     if get_project(project_id) is None:
         raise _not_found("项目不存在")
     try:
