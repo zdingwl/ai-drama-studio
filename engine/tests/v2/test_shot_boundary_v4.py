@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from engine.app import media_v4
+import pytest
+
+from engine.app import media_v4, reference_render_v4
 
 
 def candidate(cut_us: int, peak: float = 0.94) -> media_v4.TransNetCandidate:
@@ -62,26 +64,75 @@ def test_review_out_frame_is_strictly_before_exclusive_end() -> None:
     assert out_us < 160_000
 
 
-def test_reference_renderer_uses_accurate_seek_plus_exclusive_trim(monkeypatch, tmp_path: Path) -> None:
+def test_adjacent_shots_never_share_the_cut_frame() -> None:
+    """公共 Cut 帧必须只属于右 Shot；这是 [start,end) 的数据库级帧语义。"""
+
+    pts = (0, 40_000, 80_000, 120_000, 160_000, 200_000, 240_000)
+    left_start, left_end = reference_render_v4.frame_span_indices(pts, 0, 160_000)
+    right_start, right_end = reference_render_v4.frame_span_indices(pts, 160_000, 240_000)
+
+    assert (left_start, left_end) == (0, 4)
+    assert (right_start, right_end) == (4, 6)
+    assert left_end == right_start
+    assert pts[left_end - 1] == 120_000
+    assert pts[right_start] == 160_000
+
+
+def test_frame_ownership_survives_integer_microsecond_boundary_rounding() -> None:
+    """即使业务边界来自取整 PTS，也不再让 FFmpeg 浮点比较决定最后一帧。"""
+
+    pts = (0, 40_000, 80_000, 120_000, 160_000, 200_000)
+    start_index, end_index = reference_render_v4.frame_span_indices(pts, 0, 160_000)
+
+    assert list(pts[start_index:end_index]) == [0, 40_000, 80_000, 120_000]
+    assert 160_000 not in pts[start_index:end_index]
+
+
+def test_reference_renderer_trims_by_owned_frame_count_not_float_end(monkeypatch, tmp_path: Path) -> None:
     captured: list[list[str]] = []
+    source_pts = (0, 40_000, 80_000, 120_000, 160_000, 200_000, 240_000)
 
     monkeypatch.setattr(media_v4.v2, "probe_media", lambda _path: {"has_audio": False})
     monkeypatch.setattr(media_v4.v2, "_run", lambda command, **_kwargs: captured.append(command))
+    # [80ms, 200ms) 应恰好拥有 80/120/160 三帧；模拟编码后 ffprobe 也返回三帧。
+    monkeypatch.setattr(media_v4.v2, "_frame_pts_us", lambda _path: (0, 40_000, 80_000))
 
     media_v4.render_reference_exact(
         tmp_path / "source.mp4",
         tmp_path / "shot.mp4",
-        1_000_000,
-        2_000_000,
+        80_000,
+        120_000,
+        frame_pts=source_pts,
     )
 
     assert captured
     command = captured[0]
-    assert command[command.index("-ss") + 1] == "1.000000"
+    # 第一 owned frame=80ms；seek 安全落在上一帧 40ms 与目标帧 80ms 中间。
+    assert command[command.index("-ss") + 1] == "0.060000"
     filter_complex = command[command.index("-filter_complex") + 1]
-    assert "trim=start=0:end=2.000000" in filter_complex
+    assert "trim=start_frame=0:end_frame=3" in filter_complex
+    assert "trim=start=0:end=" not in filter_complex
     assert "setpts=PTS-STARTPTS" in filter_complex
     assert "-t" not in command
+    assert "passthrough" in command
+
+
+def test_reference_renderer_fails_closed_when_encoded_frame_count_is_wrong(monkeypatch, tmp_path: Path) -> None:
+    source_pts = (0, 40_000, 80_000, 120_000, 160_000, 200_000, 240_000)
+
+    monkeypatch.setattr(media_v4.v2, "probe_media", lambda _path: {"has_audio": False})
+    monkeypatch.setattr(media_v4.v2, "_run", lambda _command, **_kwargs: None)
+    # 期望三帧却只返回两帧：新 Run 必须失败，不能切 Current。
+    monkeypatch.setattr(media_v4.v2, "_frame_pts_us", lambda _path: (0, 40_000))
+
+    with pytest.raises(media_v4.v2.MediaPipelineError, match="帧数校验失败"):
+        media_v4.render_reference_exact(
+            tmp_path / "source.mp4",
+            tmp_path / "shot.mp4",
+            80_000,
+            120_000,
+            frame_pts=source_pts,
+        )
 
 
 def test_low_confidence_boundary_is_marked_for_review() -> None:
