@@ -5,10 +5,8 @@
 - 在当前 Shot 内拆分；
 - 合并当前 Shot 与下一 Shot；
 - 为每次人工修正生成独立媒体，不覆盖历史 Revision；
-- 修改成功后创建新的 MANUAL Shot Revision；
+- Shot 修改与 MANUAL Revision 在同一数据库事务提交；
 - Shot 结构变化后把当前资产分析标记为 STALE。
-
-为什么存在：拉片页面只有在用户能够真正修正错误 Cut 时才有意义。
 """
 from __future__ import annotations
 
@@ -21,7 +19,7 @@ from sqlalchemy import select
 
 from engine.app.content_analysis_v2 import ContentAnalysisRun
 from engine.app.media_v2 import MIN_SHOT_DURATION_US, _render_reference, _render_thumbnail
-from engine.app.shot_revision_v2 import ensure_current_revision, record_manual_revision
+from engine.app.shot_revision_v2 import _create_revision_from_current, ensure_current_revision
 from engine.app.studio_v2 import Episode, Shot, episode_dir, get_session, new_id, serialize_shot, utcnow
 
 
@@ -81,8 +79,6 @@ def _edit_paths(episode: Episode, shot_id: str, edit_token: str) -> tuple[Path, 
 
 
 def _render_pending(source: Path, reference: Path, thumbnail: Path, start_us: int, end_us: int) -> _PendingMedia:
-    """先生成临时文件，全部成功后再落到本次独立人工版本目录。"""
-
     duration_us = end_us - start_us
     reference.parent.mkdir(parents=True, exist_ok=True)
     thumbnail.parent.mkdir(parents=True, exist_ok=True)
@@ -113,8 +109,6 @@ def _update_shot_media_fields(shot: Shot, reference: Path, thumbnail: Path) -> N
 
 
 def _mark_assets_stale(session: Any, project_id: str) -> None:
-    """镜头时间轴改变后旧资产 Evidence 仍可查看，但不能继续当作最新结果。"""
-
     runs = session.scalars(
         select(ContentAnalysisRun).where(
             ContentAnalysisRun.project_id == project_id,
@@ -132,8 +126,6 @@ def _validate_duration(start_us: int, end_us: int, *, label: str) -> None:
 
 
 def _renumber_after_split(session: Any, shots: list[Shot], split_index: int) -> None:
-    """两阶段移动 ordinal，避免 SQLite 唯一约束在更新途中碰撞。"""
-
     following = shots[split_index + 1 :]
     for item in following:
         item.ordinal = -item.ordinal
@@ -160,9 +152,7 @@ def adjust_boundary(*, shot_id: str, side: str, source_time_us: int) -> list[dic
         raise ShotEditError("side 只能是 start 或 end")
 
     pending: list[_PendingMedia] = []
-    episode_id: str | None = None
     try:
-        # 编辑前先保证旧 Current 已经成为不可变历史基线。
         with get_session() as lookup:
             current = lookup.get(Shot, shot_id)
             if current is None:
@@ -217,11 +207,14 @@ def adjust_boundary(*, shot_id: str, side: str, source_time_us: int) -> list[dic
             episode.status = "SHOTS_EDITED"
             episode.updated_at = utcnow()
             _mark_assets_stale(session, episode.project_id)
+            _create_revision_from_current(
+                session,
+                episode_id=episode.id,
+                kind="MANUAL",
+                note=f"修改 Shot 公共{'开始' if side == 'start' else '结束'}边界",
+            )
             session.commit()
-            result = [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
-
-        record_manual_revision(episode_id, note=f"修改 Shot 公共{ '开始' if side == 'start' else '结束' }边界")
-        return result
+            return [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
     except Exception:
         for item in pending:
             item.cleanup()
@@ -232,7 +225,6 @@ def split_shot(*, shot_id: str, source_time_us: int) -> list[dict[str, Any]]:
     """在当前 Shot 内拆分。左段保留原 Shot ID，右段生成新 ID。"""
 
     pending: list[_PendingMedia] = []
-    episode_id: str | None = None
     try:
         with get_session() as lookup:
             current = lookup.get(Shot, shot_id)
@@ -275,7 +267,6 @@ def split_shot(*, shot_id: str, source_time_us: int) -> list[dict[str, Any]]:
             shot.end_us = split_us
             shot.duration_us = split_us - shot.start_us
             _update_shot_media_fields(shot, left_ref, left_thumb)
-
             right = Shot(
                 id=right_id,
                 episode_id=episode.id,
@@ -292,14 +283,13 @@ def split_shot(*, shot_id: str, source_time_us: int) -> list[dict[str, Any]]:
                 status="MANUAL",
             )
             session.add(right)
+            session.flush()
             episode.status = "SHOTS_EDITED"
             episode.updated_at = utcnow()
             _mark_assets_stale(session, episode.project_id)
+            _create_revision_from_current(session, episode_id=episode.id, kind="MANUAL", note="在播放头拆分 Shot")
             session.commit()
-            result = [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
-
-        record_manual_revision(episode_id, note="在播放头拆分 Shot")
-        return result
+            return [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
     except Exception:
         for item in pending:
             item.cleanup()
@@ -310,7 +300,6 @@ def merge_with_next(*, shot_id: str) -> list[dict[str, Any]]:
     """合并当前 Shot 与下一 Shot；保留左 Shot ID。"""
 
     pending: list[_PendingMedia] = []
-    episode_id: str | None = None
     try:
         with get_session() as lookup:
             current = lookup.get(Shot, shot_id)
@@ -350,11 +339,9 @@ def merge_with_next(*, shot_id: str) -> list[dict[str, Any]]:
             episode.status = "SHOTS_EDITED"
             episode.updated_at = utcnow()
             _mark_assets_stale(session, episode.project_id)
+            _create_revision_from_current(session, episode_id=episode.id, kind="MANUAL", note="合并相邻 Shot")
             session.commit()
-            result = [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
-
-        record_manual_revision(episode_id, note="合并相邻 Shot")
-        return result
+            return [serialize_shot(item) for item in _ordered_shots(session, episode.id)]
     except Exception:
         for item in pending:
             item.cleanup()
