@@ -8,8 +8,9 @@ python-multipart==0.0.29
 httpx==0.28.1
 pytest==9.0.2
 
-# F04 本地 TransNetV2 Shot Boundary Detection。
+# 02 拉片 V4：TransNetV2 提候选，PySceneDetect 提供第二证据，最终回到 Source PTS 帧级精修。
 transnetv2-pytorch==1.0.5
+scenedetect==0.6.7.1
 torch==2.5.1
 numpy==2.1.3
 pandas==2.2.3
