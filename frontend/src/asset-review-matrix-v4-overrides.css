@@ -1,1 +1,32 @@
-.shot-review-table th.visual-col{display:table-cell}.shot-review-table td.visual-col{display:flex}.matrix-table-wrap{overflow-x:auto;overflow-y:visible}.matrix-table-wrap .shot-review-table{min-width:1040px}.matrix-work-area.drawer-open .matrix-table-wrap .shot-review-table{min-width:980px}@media(max-height:900px){.studio-main.asset-stage-main .asset-matrix-v4{padding-top:12px}.asset-matrix-header{margin-bottom:6px}.shot-review-table td{height:68px}.matrix-thumb{height:50px}.matrix-pagination{min-height:38px}}
+.shot-review-table th.visual-col{display:table-cell}.shot-review-table td.visual-col{display:flex}.matrix-table-wrap{overflow-x:auto;overflow-y:visible}.matrix-table-wrap .shot-review-table{min-width:1040px}.matrix-work-area.drawer-open .matrix-table-wrap .shot-review-table{min-width:980px}
+
+/*
+ * 职责：把人物/道具选择器里的 checkbox 固定回原生控件尺寸。
+ * 输入：AssetReviewMatrixV4 行内 picker / 右侧 Final Binding 的 checkbox。
+ * 输出：14px 小勾选框，不再被全局 input 样式撑成 40px 空白方块。
+ * 为什么：大方块会被误认为人物头像加载失败，也严重压缩人物名称的可读空间。
+ */
+.asset-matrix-v4 .matrix-picker input[type="checkbox"],
+.asset-matrix-v4 .drawer-options input[type="checkbox"],
+.asset-matrix-v4 .matrix-option-list input[type="checkbox"],
+.asset-matrix-v4 .asset-library-list input[type="checkbox"],
+.asset-matrix-v4 .asset-library-shot-grid input[type="checkbox"]{
+  width:14px!important;
+  height:14px!important;
+  min-width:14px!important;
+  min-height:14px!important;
+  max-width:14px!important;
+  max-height:14px!important;
+  flex:0 0 14px!important;
+  margin:0!important;
+  padding:0!important;
+  accent-color:#2f5fea;
+}
+
+.asset-matrix-v4 .matrix-picker label,
+.asset-matrix-v4 .drawer-options label{
+  min-height:34px;
+  align-items:center;
+}
+
+@media(max-height:900px){.studio-main.asset-stage-main .asset-matrix-v4{padding-top:12px}.asset-matrix-header{margin-bottom:6px}.shot-review-table td{height:68px}.matrix-thumb{height:50px}.matrix-pagination{min-height:38px}}
