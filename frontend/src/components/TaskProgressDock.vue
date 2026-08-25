@@ -139,6 +139,20 @@ function restartPolling(): void {
 }
 
 /**
+ * 职责：业务工作区创建 BackgroundTask 后立即把它放进 Dock。
+ * 输入：studio-task-created 的 BackgroundTask；输出：立即显示任务，并切换到活动任务 1 秒轮询。
+ * 为什么：无任务时 Dock 只做 10 秒低频查询；如果创建任务后仍等下一次轮询，用户会误以为按钮没有反应。
+ */
+function onTaskCreated(event: Event): void {
+  const task = (event as CustomEvent<BackgroundTask>).detail
+  if (!task || task.project_id !== projectId.value) return
+  tasks.value = [task, ...tasks.value.filter((item) => item.id !== task.id)]
+  error.value = ''
+  // 当前 task 已经进入本地列表，因此 nextPollDelay() 会自动使用 1 秒活动频率。
+  schedulePoll(false)
+}
+
+/**
  * 职责：标签页重新可见时立即刷新；退到后台后自动进入 30 秒低频轮询。
  * 为什么：用户切回来时应马上看到真实进度，同时后台标签不需要每秒发请求。
  */
@@ -150,12 +164,14 @@ watch(projectId, restartPolling)
 onMounted(() => {
   disposed = false
   document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('studio-task-created', onTaskCreated)
   restartPolling()
 })
 onUnmounted(() => {
   disposed = true
   clearTimer()
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('studio-task-created', onTaskCreated)
 })
 </script>
 
