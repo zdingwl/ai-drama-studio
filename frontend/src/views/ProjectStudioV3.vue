@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import AssetReviewMatrixV4 from '../components/AssetReviewMatrixV4.vue'
+import AssetStageV4 from '../components/AssetStageV4.vue'
 import EpisodeManagerV3 from '../components/EpisodeManagerV3.vue'
 import ShotWorkbenchV3 from '../components/ShotWorkbenchV3.vue'
 import { api } from '../api/client'
@@ -61,7 +61,7 @@ onMounted(refreshProject)
         </button>
       </nav>
       <div class="sidebar-footer">
-        <span>REFERENCE VIDEO V2.4</span>
+        <span>REFERENCE VIDEO V2.5</span>
         <small>{{ project.episodes.length }} 集 · 本地工作流</small>
       </div>
     </aside>
@@ -69,7 +69,7 @@ onMounted(refreshProject)
     <main :class="['studio-main', { 'shot-stage-main': activeStage === 2, 'asset-stage-main': activeStage === 3 }]">
       <EpisodeManagerV3 v-if="activeStage === 1" :project="project" @refresh="refreshProject" />
       <ShotWorkbenchV3 v-else-if="activeStage === 2" :project-id="project.id" :episodes="project.episodes" @refresh-project="refreshProject" />
-      <AssetReviewMatrixV4 v-else-if="activeStage === 3" :project-id="project.id" :episodes="project.episodes" />
+      <AssetStageV4 v-else-if="activeStage === 3" :project-id="project.id" :episodes="project.episodes" />
 
       <section v-else class="workspace-panel planned-panel">
         <div class="planned-icon">{{ String(activeStage).padStart(2, '0') }}</div>
