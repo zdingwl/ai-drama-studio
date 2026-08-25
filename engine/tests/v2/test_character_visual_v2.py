@@ -42,7 +42,7 @@ def face_track(
     return track
 
 
-def test_body_only_tracks_become_unresolved_person_evidence_not_resolved_identity() -> None:
+def test_adjacent_body_only_tracks_become_one_unresolved_continuity_candidate() -> None:
     left = body_track(shot_id="SHOT_1", shot_ordinal=1, vector=[1.0, 0.0, 0.0])
     right = body_track(shot_id="SHOT_2", shot_ordinal=2, vector=[1.0, 0.01, 0.0])
 
@@ -76,8 +76,8 @@ def test_same_shot_face_tracks_never_auto_merge_even_with_identical_identity_evi
     assert all(item.identity_status == "RESOLVED" for item in candidates)
 
 
-def test_cross_shot_face_angle_change_can_merge_when_reid_supports_same_actor() -> None:
-    """脸角度使 SFace 变弱时，专用 ReID 应避免把同一演员拆成两个 Final Character。"""
+def test_weak_face_match_cannot_merge_across_distant_shots_even_when_reid_is_similar() -> None:
+    """V5.1 宁可留下碎片，也不允许弱 Face + 相似衣服跨多个 Shot 串人。"""
 
     frontal = face_track(
         shot_id="SHOT_2",
@@ -94,9 +94,8 @@ def test_cross_shot_face_angle_change_can_merge_when_reid_supports_same_actor() 
 
     candidates = cluster_candidates([frontal, profile])
 
-    assert len(candidates) == 1
-    assert candidates[0].identity_status == "RESOLVED"
-    assert set(item.shot_id for item in candidates[0].tracks) == {"SHOT_2", "SHOT_7"}
+    assert len(candidates) == 2
+    assert all(item.identity_status == "RESOLVED" for item in candidates)
 
 
 def test_adjacent_body_only_track_can_extend_existing_face_anchored_identity() -> None:
