@@ -32,14 +32,15 @@ export const api = {
   }),
   deleteEpisode: (episodeId: string) => request<void>(`/api/episodes/${episodeId}`, { method: 'DELETE' }),
 
-  // 兼容旧同步接口。
-  preprocessEpisode: (episodeId: string) => request(`/api/episodes/${episodeId}/preprocess`, { method: 'POST' }),
-  preprocessBatch: (projectId: string) => request(`/api/projects/${projectId}/preprocess-batch`, { method: 'POST' }),
-  analyzeEpisodeShots: (episodeId: string) => request<Shot[]>(`/api/episodes/${episodeId}/shots/analyze`, { method: 'POST' }),
-  analyzeBatchShots: (projectId: string) => request(`/api/projects/${projectId}/shots/analyze-batch`, { method: 'POST' }),
+  // 正式 UI：耗时操作全部立即返回 BackgroundTask，不再让 HTTP 请求一直挂着。
+  preprocessEpisode: (episodeId: string) => request<BackgroundTask>(`/api/episodes/${episodeId}/tasks/preprocess`, { method: 'POST' }),
+  preprocessBatch: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/preprocess-batch`, { method: 'POST' }),
+  analyzeEpisodeShots: (episodeId: string) => request<BackgroundTask>(`/api/episodes/${episodeId}/tasks/shots`, { method: 'POST' }),
+  analyzeBatchShots: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/shots-batch`, { method: 'POST' }),
+  runContentAnalysis: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/assets`, { method: 'POST' }),
   listShots: (episodeId: string) => request<Shot[]>(`/api/episodes/${episodeId}/shots`),
 
-  // 正式 UI 使用后台 Task API。POST 立即返回 task_id，前端轮询状态。
+  // 显式 Task API，给后续独立工作区复用。
   startEpisodePreprocessTask: (episodeId: string) => request<BackgroundTask>(`/api/episodes/${episodeId}/tasks/preprocess`, { method: 'POST' }),
   startBatchPreprocessTask: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/preprocess-batch`, { method: 'POST' }),
   startEpisodeShotsTask: (episodeId: string) => request<BackgroundTask>(`/api/episodes/${episodeId}/tasks/shots`, { method: 'POST' }),
@@ -48,9 +49,15 @@ export const api = {
   listProjectTasks: (projectId: string, limit = 30) => request<BackgroundTask[]>(`/api/projects/${projectId}/tasks?limit=${limit}`),
   getTask: (taskId: string) => request<BackgroundTask>(`/api/tasks/${taskId}`),
 
+  // 同步兼容接口仅供测试/调试，不给正式页面使用。
+  preprocessEpisodeSync: (episodeId: string) => request(`/api/episodes/${episodeId}/preprocess`, { method: 'POST' }),
+  preprocessBatchSync: (projectId: string) => request(`/api/projects/${projectId}/preprocess-batch`, { method: 'POST' }),
+  analyzeEpisodeShotsSync: (episodeId: string) => request<Shot[]>(`/api/episodes/${episodeId}/shots/analyze`, { method: 'POST' }),
+  analyzeBatchShotsSync: (projectId: string) => request(`/api/projects/${projectId}/shots/analyze-batch`, { method: 'POST' }),
+  runContentAnalysisSync: (projectId: string) => request<ContentAnalysisRun>(`/api/projects/${projectId}/content-analysis`, { method: 'POST' }),
+
   getF05ModelStatus: () => request<F05ModelStatus>('/api/models/f05/status'),
   prepareF05Models: () => request<F05ModelStatus>('/api/models/f05/prepare', { method: 'POST' }),
-  runContentAnalysis: (projectId: string) => request<ContentAnalysisRun>(`/api/projects/${projectId}/content-analysis`, { method: 'POST' }),
   getCurrentContentAnalysis: (projectId: string) => request<ContentAnalysisRun | null>(`/api/projects/${projectId}/content-analysis/current`),
   getContentAnalysis: (runId: string) => request<ContentAnalysisRun>(`/api/content-analysis/${runId}`),
 }
