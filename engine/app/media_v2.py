@@ -15,6 +15,7 @@ from engine.app.studio_v2 import episode_dir, get_episode_record, new_id, upsert
 FFMPEG_TIMEOUT_SECONDS = 60 * 60
 SHOT_THRESHOLD = 0.5
 MIN_SHOT_DURATION_US = 120_000
+TRANSNET_FRAME_COUNT_TOLERANCE = 2
 
 # percent, stage_key, message, current, total
 ProgressReporter = Callable[[float, str, str, int | None, int | None], None]
@@ -260,6 +261,31 @@ def _frame_pts_us(proxy_path: Path) -> tuple[int, ...]:
     return tuple(pts)
 
 
+def _align_transnet_timeline(scores: Any, frame_pts: tuple[int, ...]) -> tuple[Any, tuple[int, ...]]:
+    """对齐 TransNet 解码帧和 FFprobe PTS 的极小尾帧差异。
+
+    输入：模型逐帧分数 + FFprobe PTS；输出：可一一映射的共同时间轴。
+    为什么：25fps CFR Proxy 在 Windows FFmpeg rawvideo 解码与 ffprobe ``show_frames`` 之间，
+    偶尔会在视频尾部出现 1～2 帧计数差异。这不是码流损坏，也不应让整集拉片失败。
+    最后一个 Shot 的真实结束时间由原视频 duration_us 收口，所以只丢弃无法一一映射的尾部帧。
+    """
+
+    score_count = len(scores)
+    pts_count = len(frame_pts)
+    difference = abs(score_count - pts_count)
+    if difference == 0:
+        return scores, frame_pts
+    if difference <= TRANSNET_FRAME_COUNT_TOLERANCE:
+        usable = min(score_count, pts_count)
+        if usable <= 0:
+            raise MediaPipelineError("TransNetV2 / FFprobe 没有可用的共同帧时间轴")
+        return scores[:usable], frame_pts[:usable]
+    raise MediaPipelineError(
+        f"TransNetV2 帧数 {score_count} 与 FFprobe 帧数 {pts_count} 不一致，"
+        f"差 {difference} 帧，超过允许的尾帧误差 {TRANSNET_FRAME_COUNT_TOLERANCE}"
+    )
+
+
 def _transnet_cut_points(proxy_path: Path, frame_pts: tuple[int, ...]) -> list[int]:
     """运行 TransNetV2，但由项目自己负责 FFmpeg 解码。"""
 
@@ -297,8 +323,7 @@ def _transnet_cut_points(proxy_path: Path, frame_pts: tuple[int, ...]) -> list[i
     if hasattr(raw_scores, "detach"):
         raw_scores = raw_scores.detach().cpu().numpy()
     scores = np.asarray(raw_scores, dtype=np.float64).reshape(-1)
-    if len(scores) != len(frame_pts):
-        raise MediaPipelineError(f"TransNetV2 帧数 {len(scores)} 与 FFprobe 帧数 {len(frame_pts)} 不一致")
+    scores, aligned_pts = _align_transnet_timeline(scores, frame_pts)
 
     cuts: list[int] = []
     index = 0
@@ -309,8 +334,8 @@ def _transnet_cut_points(proxy_path: Path, frame_pts: tuple[int, ...]) -> list[i
         while index + 1 < len(scores) and float(scores[index + 1]) > SHOT_THRESHOLD:
             index += 1
         next_index = index + 1
-        if next_index < len(frame_pts):
-            cuts.append(frame_pts[next_index])
+        if next_index < len(aligned_pts):
+            cuts.append(aligned_pts[next_index])
         index += 1
     return cuts
 
@@ -410,11 +435,13 @@ def detect_episode_shots(episode_id: str, progress: ProgressReporter | None = No
         try:
             cuts = _transnet_cut_points(proxy, frame_pts)
         except MediaPipelineError as retry_error:
-            raise MediaPipelineError(
-                "分析 Proxy 已自动重建，但 TransNetV2 仍无法解码。"
-                "这通常说明原视频本身存在严重码流损坏。\n"
-                f"首次错误：{first_error}\n重试错误：{retry_error}"
-            ) from retry_error
+            if _is_transnet_decode_error(retry_error):
+                raise MediaPipelineError(
+                    "分析 Proxy 已自动重建并完成校验，但 TransNetV2 仍出现视频解码错误。"
+                    "这时才可能是原视频自身存在严重码流问题。\n"
+                    f"首次错误：{first_error}\n重试错误：{retry_error}"
+                ) from retry_error
+            raise retry_error
 
     _report(progress, 24, "boundaries", "正在整理 Cut 与 Shot 边界")
     boundaries = _normalize_boundaries(duration_us, cuts)
