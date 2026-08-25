@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from engine.app.media_v2 import MediaPipelineError, ensure_playable_proxy
+from engine.app.playback_proxy_v2 import PlaybackProxyError, ensure_playback_proxy
 from engine.app.shot_editor_v2 import ShotEditError, adjust_boundary, merge_with_next, split_shot
 from engine.app.shot_revision_v2 import (
     get_revision_item_path,
@@ -42,19 +42,28 @@ def _not_found(message: str) -> HTTPException:
 
 @router.get("/episodes/{episode_id}/proxy")
 def api_episode_proxy(episode_id: str) -> FileResponse:
-    """给拉片工作台播放整集、带原声的 Proxy。
+    """给拉片工作台返回专用的整集有声播放代理。
 
-    历史 V2 Proxy 如果没有音轨，会在第一次请求时利用已有 audio.wav 进行一次快速封装修复；
-    视频流直接 copy，不重编码，也不会重新执行 TransNetV2。后续请求直接复用修复结果。
+    输入：Episode ID；输出：浏览器可播放 MP4。
+    为什么：分析 Proxy 与播放器文件必须分离。历史 video-only Proxy 不再原地改写，
+    而是快速封装成 playback-v2.mp4；同时禁止浏览器复用旧无声 MP4 缓存。
     """
 
     try:
-        path = ensure_playable_proxy(episode_id)
+        path = ensure_playback_proxy(episode_id)
     except LookupError as exc:
         raise _not_found(str(exc)) from exc
-    except MediaPipelineError as exc:
+    except PlaybackProxyError as exc:
         raise _bad_request(exc) from exc
-    return FileResponse(path, media_type="video/mp4", filename=path.name)
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "X-Playback-Proxy": "v2",
+        },
+    )
 
 
 @router.patch("/shots/{shot_id}/boundary")
