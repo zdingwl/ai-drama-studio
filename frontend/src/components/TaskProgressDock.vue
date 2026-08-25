@@ -15,6 +15,8 @@ const activeTasks = computed(() => tasks.value.filter((item) => item.status === 
 const currentTask = computed(() => activeTasks.value[0] ?? null)
 const recentTasks = computed(() => tasks.value.slice(0, 8))
 
+const STALL_WARNING_MS = 120_000
+
 function isFinished(task: BackgroundTask) {
   return ['READY', 'READY_WITH_WARNINGS', 'FAILED', 'CANCELLED'].includes(task.status)
 }
@@ -29,6 +31,31 @@ function statusLabel(task: BackgroundTask) {
 function percentLabel(task: BackgroundTask) {
   if (task.progress_mode === 'indeterminate' || task.progress_percent === null) return '处理中'
   return `${Math.round(task.progress_percent)}%`
+}
+
+/**
+ * 职责：识别“数据库仍写 PROCESSING，但后台长时间没有任何心跳”的任务。
+ * 输入：BackgroundTask.updated_at；输出：是否需要警告。
+ * 为什么：长模型任务不能无限显示“处理中”而不给用户判断它是否卡住的依据。
+ */
+function isStalled(task: BackgroundTask): boolean {
+  if (task.status !== 'PROCESSING') return false
+  const updated = Date.parse(task.updated_at)
+  return Number.isFinite(updated) && Date.now() - updated >= STALL_WARNING_MS
+}
+
+function stallLabel(task: BackgroundTask): string {
+  const updated = Date.parse(task.updated_at)
+  if (!Number.isFinite(updated)) return '长时间无进度更新'
+  const minutes = Math.max(2, Math.floor((Date.now() - updated) / 60_000))
+  return `${minutes} 分钟无进度更新，可能卡住`
+}
+
+function itemProgressLabel(task: BackgroundTask): string {
+  if (task.current_index !== null && task.total_items !== null && task.total_items > 0) {
+    return `${task.current_index} / ${task.total_items}`
+  }
+  return ''
 }
 
 async function refresh() {
@@ -66,12 +93,17 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-if="projectId && currentTask" class="task-dock" :class="{ expanded }">
+  <div v-if="projectId && currentTask" class="task-dock" :class="{ expanded, stalled: isStalled(currentTask) }">
     <button class="task-dock-summary" @click="expanded = !expanded">
       <span :class="['task-state-dot', currentTask.status.toLowerCase()]" />
       <span class="task-dock-copy">
         <strong>{{ currentTask.title }}</strong>
-        <small>{{ currentTask.stage_label || statusLabel(currentTask) }}<template v-if="currentTask.current_item"> · {{ currentTask.current_item }}</template></small>
+        <small v-if="isStalled(currentTask)" class="task-stall-copy">⚠ {{ stallLabel(currentTask) }}</small>
+        <small v-else>
+          {{ currentTask.stage_label || statusLabel(currentTask) }}
+          <template v-if="currentTask.current_item"> · {{ currentTask.current_item }}</template>
+          <template v-if="itemProgressLabel(currentTask)"> · {{ itemProgressLabel(currentTask) }}</template>
+        </small>
       </span>
       <span class="task-dock-percent">{{ percentLabel(currentTask) }}</span>
       <span class="task-dock-count">进行中 {{ activeTasks.length }}</span>
@@ -86,19 +118,28 @@ onUnmounted(() => {
       <div class="task-panel-head"><strong>后台任务</strong><span>页面切换或刷新不会丢失</span></div>
       <p v-if="error" class="task-panel-error">{{ error }}</p>
       <div class="task-panel-list">
-        <article v-for="task in recentTasks" :key="task.id" class="task-panel-item">
+        <article v-for="task in recentTasks" :key="task.id" class="task-panel-item" :class="{ 'task-item-stalled': isStalled(task) }">
           <div class="task-item-head">
             <span :class="['task-state-dot', task.status.toLowerCase()]" />
-            <div><strong>{{ task.title }}</strong><small>{{ task.stage_label || statusLabel(task) }}</small></div>
+            <div><strong>{{ task.title }}</strong><small>{{ task.stage_label || statusLabel(task) }}<template v-if="task.current_item"> · {{ task.current_item }}</template></small></div>
             <b>{{ percentLabel(task) }}</b>
           </div>
           <div v-if="task.progress_mode === 'determinate' && task.progress_percent !== null" class="task-mini-track"><span :style="{ width: `${task.progress_percent}%` }" /></div>
           <div v-else-if="task.status === 'PROCESSING' || task.status === 'QUEUED'" class="task-mini-track indeterminate"><span /></div>
           <p>{{ task.message || statusLabel(task) }}</p>
-          <small v-if="task.current_index && task.total_items">{{ task.current_index }} / {{ task.total_items }} 项</small>
+          <small v-if="itemProgressLabel(task)">{{ itemProgressLabel(task) }} 项</small>
+          <small v-if="isStalled(task)" class="task-stall-detail">⚠ {{ stallLabel(task) }}。如果后端进程仍在运行，请查看控制台；重启后该旧任务会被标记为中断，可重新执行。</small>
           <small v-if="task.error_message" class="task-error-detail">{{ task.error_message }}</small>
         </article>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.task-dock.stalled .task-progress-track,
+.task-item-stalled .task-mini-track { opacity: .65; }
+.task-stall-copy { color: #a35c00 !important; font-weight: 700; }
+.task-stall-detail { display: block; margin-top: 5px; color: #9a6400; line-height: 1.45; }
+.task-item-stalled { background: #fffaf0; }
+</style>
