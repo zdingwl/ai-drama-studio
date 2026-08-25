@@ -24,6 +24,14 @@ const playheadUs = ref(0)
 const startSeconds = ref(0)
 const endSeconds = ref(0)
 
+/**
+ * 职责：记录用户点击 Shot 后正在进行的手动 seek。
+ * 输入：被用户点击的 Shot ID；输出：seek 完成前阻止 timeupdate 抢回旧 Shot。
+ * 为什么：浏览器设置 currentTime 后可能先发旧时间的 timeupdate，公共 Cut 又有浮点舍入，
+ * 会出现点击 SHOT 0005 后立刻被 SHOT 0004 抢回的问题。
+ */
+const manualSeekShotId = ref<string | null>(null)
+
 const selectedEpisode = computed(() => props.episodes.find((item) => item.id === selectedEpisodeId.value) ?? null)
 const selectedShotIndex = computed(() => selectedShot.value ? shots.value.findIndex((item) => item.id === selectedShot.value?.id) : -1)
 const suspiciousShots = computed(() => shots.value.filter((shot) => shot.duration_us < 500_000))
@@ -60,18 +68,25 @@ function thumbnailUrl(shot: Shot): string {
 }
 
 /**
- * 职责：更新当前 Shot Inspector，但不一定移动视频播放头。
- * 输入：Shot + 是否跳转到 Shot 开始；输出：更新选中状态。
- * 为什么：用户点击卡片时需要跳转，而视频自然播放跨 Cut 时只应高亮，不能把播放头拉回 Shot 开头。
+ * 职责：更新当前 Shot Inspector，并在用户主动点击时移动整集播放器。
+ * 输入：Shot + seek；输出：当前 Shot、编辑字段、播放头。
+ * 为什么：自动播放跨 Cut 只更新高亮；用户点击 Shot 才主动跳转。
  */
 function applySelectedShot(shot: Shot | null, seek: boolean): void {
   selectedShot.value = shot
   if (!shot) return
   startSeconds.value = shot.start_us / 1_000_000
   endSeconds.value = shot.end_us / 1_000_000
+
   if (seek && videoRef.value) {
-    videoRef.value.currentTime = shot.start_us / 1_000_000
-    playheadUs.value = shot.start_us
+    manualSeekShotId.value = shot.id
+
+    // 不改变真实 Shot start_us，只让播放器落在 Cut 后一个极小安全区域。
+    // 这样浏览器即使把公共边界时间舍入到上一帧，也不会把选中状态判回前一个 Shot。
+    const insetUs = Math.min(20_000, Math.max(1_000, Math.floor(shot.duration_us / 10)))
+    const targetUs = Math.min(Math.max(shot.start_us, shot.end_us - 1_000), shot.start_us + insetUs)
+    videoRef.value.currentTime = targetUs / 1_000_000
+    playheadUs.value = targetUs
   }
 }
 
@@ -83,6 +98,7 @@ async function loadEpisodeData(episodeId: string): Promise<void> {
   if (!episodeId) {
     shots.value = []
     revisions.value = []
+    manualSeekShotId.value = null
     applySelectedShot(null, false)
     return
   }
@@ -99,6 +115,7 @@ async function loadEpisodeData(episodeId: string): Promise<void> {
 async function chooseEpisode(episodeId: string): Promise<void> {
   selectedEpisodeId.value = episodeId
   revisionOpen.value = false
+  manualSeekShotId.value = null
   playheadUs.value = 0
   error.value = ''
   try {
@@ -146,6 +163,7 @@ async function applyEdit(label: string, action: () => Promise<Shot[]>, preferred
       ?? updated.find((item) => oldPlayhead >= item.start_us && oldPlayhead < item.end_us)
       ?? updated[Math.max(0, Math.min(oldIndex, updated.length - 1))]
       ?? null
+    manualSeekShotId.value = null
     applySelectedShot(nextSelected, false)
     revisions.value = selectedEpisodeId.value ? await api.listShotRevisions(selectedEpisodeId.value) : []
     emit('refreshProject')
@@ -174,10 +192,19 @@ function onVideoLoaded(): void {
   playheadUs.value = shot.start_us
 }
 
+/**
+ * 职责：整集自然播放时，让当前 Shot 跟随播放头。
+ * 输入：video.currentTime；输出：自动选中的 Shot。
+ * 为什么：手动点击 Shot 的 seek 尚未完成时必须让路，否则旧 timeupdate 会覆盖用户选择。
+ */
 function onVideoTimeUpdate(): void {
   const sourceUs = playheadSourceUs()
   if (sourceUs === null) return
   playheadUs.value = sourceUs
+
+  const video = videoRef.value
+  if (video?.seeking || manualSeekShotId.value) return
+
   const current = shots.value.find((shot, index) => {
     if (index === shots.value.length - 1) return sourceUs >= shot.start_us && sourceUs <= shot.end_us
     return sourceUs >= shot.start_us && sourceUs < shot.end_us
@@ -185,6 +212,25 @@ function onVideoTimeUpdate(): void {
   if (current && current.id !== selectedShot.value?.id) {
     applySelectedShot(current, false)
   }
+}
+
+/**
+ * 职责：手动点击 Shot 后，在浏览器真正完成 seek 时释放选中锁。
+ * 输入：seeked 事件；输出：保持用户点中的 Shot，并恢复自然播放跟随。
+ */
+function onVideoSeeked(): void {
+  const sourceUs = playheadSourceUs()
+  if (sourceUs !== null) playheadUs.value = sourceUs
+
+  const pendingId = manualSeekShotId.value
+  if (pendingId) {
+    const pendingShot = shots.value.find((shot) => shot.id === pendingId) ?? null
+    if (pendingShot) applySelectedShot(pendingShot, false)
+    manualSeekShotId.value = null
+    return
+  }
+
+  onVideoTimeUpdate()
 }
 
 async function usePlayheadAsStart(): Promise<void> {
@@ -349,6 +395,7 @@ onMounted(async () => {
               preload="metadata"
               @loadedmetadata="onVideoLoaded"
               @timeupdate="onVideoTimeUpdate"
+              @seeked="onVideoSeeked"
             ></video>
             <div class="shot-v3-player-meta">
               <span>SHOT {{ String(selectedShot.ordinal).padStart(4, '0') }}</span>
