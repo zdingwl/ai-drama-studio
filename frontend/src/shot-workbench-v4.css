@@ -1,0 +1,27 @@
+.shot-v4 .shot-v3-layout {
+  grid-template-columns: 190px minmax(540px, 1fr) 430px;
+}
+
+.shot-v4 .shot-v3-inspector {
+  padding: 12px;
+}
+
+.shot-v4 .shot-v3-card-foot i.ready,
+.shot-v4 .shot-v3-card-foot i.warning {
+  font-weight: 900;
+}
+
+@media (max-width: 1500px) {
+  .shot-v4 .shot-v3-layout {
+    grid-template-columns: 175px minmax(470px, 1fr) 390px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .shot-v4 .shot-v3-layout {
+    grid-template-columns: 170px minmax(0, 1fr);
+  }
+  .shot-v4 .shot-v3-inspector {
+    grid-column: 2;
+  }
+}
