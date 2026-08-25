@@ -4,6 +4,7 @@
 - 复用 content_analysis_v2 的正式 Run / 持久化逻辑，不复制业务数据模型；
 - 把 Character V5 的逐 Shot progress callback 转换成统一资产进度；
 - 明确暴露“准备 / 人物 Track+Gallery / 场景 / 保存”阶段，让 BackgroundTask 有真实心跳；
+- 正式后台 Run 标记明确的 V5 profile，避免历史 v2.3 名称误导排查；
 - 失败时仍由原 ContentAnalysisRun 规则保留旧 Current，不发布半成品。
 """
 from __future__ import annotations
@@ -12,6 +13,7 @@ from typing import Callable
 
 from engine.app.character_visual_v2 import CandidateDraft, analyze_characters
 from engine.app.content_analysis_v2 import (
+    ContentAnalysisRun,
     ContentModelError,
     SceneDraft,
     _cluster_scenes,
@@ -21,11 +23,14 @@ from engine.app.content_analysis_v2 import (
     _persist_results,
     get_analysis_run,
 )
+from engine.app.studio_v2 import get_session
 
 AssetEvidenceProgress = Callable[
     [float, str, str, str | None, int | None, int | None, str],
     None,
 ]
+
+FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v5-track-gallery"
 
 
 def _report(
@@ -50,6 +55,17 @@ def _report(
         )
 
 
+def _mark_v5_profile(run_id: str) -> None:
+    """职责：把正式后台资产 Run 标记为 V5 Track/Gallery profile。"""
+
+    with get_session() as session:
+        run = session.get(ContentAnalysisRun, run_id)
+        if run is None:
+            return
+        run.profile_version = FORMAL_ASSET_PROFILE_VERSION
+        session.commit()
+
+
 def run_content_analysis_with_progress(
     project_id: str,
     *,
@@ -64,8 +80,10 @@ def run_content_analysis_with_progress(
 
     _project, _episodes, shots = _load_context(project_id)
     run_id = _create_run(project_id)
+    _mark_v5_profile(run_id)
     component_status: dict[str, str] = {
         "characters": "PENDING",
+        "characters_profile": "V5_TRACK_GALLERY",
         "scenes": "PENDING",
         "props": "NOT_CONFIGURED",
     }
