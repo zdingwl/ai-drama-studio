@@ -45,7 +45,7 @@ def _run(command: list[str], *, timeout: int = FFMPEG_TIMEOUT_SECONDS) -> subpro
     except subprocess.TimeoutExpired as exc:
         raise MediaPipelineError(f"媒体处理超时：{command[0]}") from exc
     except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or exc.stdout or "").strip()[-2000:]
+        detail = (exc.stderr or exc.stdout or "").strip()[-4000:]
         raise MediaPipelineError(f"媒体处理失败：{detail or command[0]}") from exc
 
 
@@ -88,14 +88,37 @@ def probe_media(path: Path) -> dict[str, Any]:
     }
 
 
-def ensure_playable_proxy(episode_id: str) -> Path:
-    """确保整集拉片播放器拿到带原声的 Proxy。
+def _validate_video_decode(path: Path, *, label: str = "视频") -> None:
+    """完整解码一次视频流，只有零解码错误才视为可用于分析。
 
-    输入：Episode ID；输出：可直接给浏览器播放的 Proxy 路径。
-    为什么：历史 V2 Proxy 曾使用 ``-an`` 生成无声视频。旧项目已有独立 audio.wav，
-    因此这里只需把现有 H.264 视频流原样复制并重新封装 AAC 音频，不必重跑镜头检测或重编码视频。
-    修复通过临时文件 + os.replace 原子替换；之后该 Episode 永久复用修复后的 Proxy。
+    输入：本地视频路径；输出：无，失败抛 MediaPipelineError。
+    为什么：FFprobe 只读取容器/流元数据，损坏 H.264 的 MP4 仍可能被误判为 READY。
+    ``-xerror`` 会在首个真实解码错误时退出，避免坏 Proxy 进入 TransNet。
     """
+
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-v", "error", "-xerror", "-err_detect", "explode",
+                "-i", str(path), "-map", "0:v:0", "-an", "-f", "null", "-",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+            timeout=FFMPEG_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError as exc:
+        raise MediaPipelineError("找不到媒体工具：ffmpeg，请确认 FFmpeg 已加入 PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise MediaPipelineError(f"{label}完整解码校验超时") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()[-4000:]
+        raise MediaPipelineError(f"{label}完整解码校验失败：{detail or 'FFmpeg decode error'}") from exc
+
+
+def ensure_playable_proxy(episode_id: str) -> Path:
+    """确保整集拉片播放器拿到带原声的 Proxy。"""
 
     with _PLAYABLE_PROXY_LOCK:
         episode = get_episode_record(episode_id)
@@ -146,7 +169,11 @@ def ensure_playable_proxy(episode_id: str) -> Path:
 
 
 def preprocess_episode(episode_id: str, progress: ProgressReporter | None = None) -> dict[str, Any]:
-    """生成播放/分析共用 Proxy 与独立 Audio，并向调用方报告真实阶段进度。"""
+    """生成播放/分析共用 Proxy 与独立 Audio，并向调用方报告真实阶段进度。
+
+    Proxy 使用临时文件生成，完整解码校验通过后才原子替换正式文件并标记 READY。
+    这样服务中断或编码异常不会留下“容器能读但 H.264 码流损坏”的 READY Proxy。
+    """
 
     episode = get_episode_record(episode_id)
     if episode is None:
@@ -158,8 +185,12 @@ def preprocess_episode(episode_id: str, progress: ProgressReporter | None = None
     root = episode_dir(episode.project_id, episode.id) / "preprocess"
     root.mkdir(parents=True, exist_ok=True)
     proxy = root / "proxy.mp4"
+    proxy_temp = root / ".proxy.build.tmp.mp4"
     audio = root / "audio.wav"
+    audio_temp = root / ".audio.build.tmp.wav"
 
+    proxy_temp.unlink(missing_ok=True)
+    audio_temp.unlink(missing_ok=True)
     upsert_preprocess(episode_id=episode_id, status="PROCESSING")
     try:
         _report(progress, 5, "probe", "正在读取媒体信息")
@@ -174,20 +205,28 @@ def preprocess_episode(episode_id: str, progress: ProgressReporter | None = None
             "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "160k", "-ac", "2",
             "-movflags", "+faststart",
-            "-avoid_negative_ts", "make_zero", str(proxy),
+            "-avoid_negative_ts", "make_zero", str(proxy_temp),
         ])
-        _report(progress, 70, "proxy", "带原声 Proxy 已生成")
+
+        _report(progress, 68, "proxy_validate", "正在完整校验分析 Proxy 视频流")
+        _validate_video_decode(proxy_temp, label="新分析 Proxy")
+        validated = probe_media(proxy_temp)
+        if validated["duration_us"] <= 0:
+            raise MediaPipelineError("新分析 Proxy 时长无效")
+        os.replace(proxy_temp, proxy)
+        _report(progress, 72, "proxy", "分析 Proxy 已通过完整解码校验")
 
         if info["has_audio"]:
-            _report(progress, 75, "audio", "正在提取独立音轨")
+            _report(progress, 76, "audio", "正在提取独立音轨")
             _run([
                 "ffmpeg", "-y", "-i", str(source), "-map", "0:a:0",
-                "-vn", "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", str(audio),
+                "-vn", "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", str(audio_temp),
             ])
+            os.replace(audio_temp, audio)
         elif audio.exists():
             audio.unlink()
-        _report(progress, 92, "persist", "正在保存预处理结果")
 
+        _report(progress, 92, "persist", "正在保存预处理结果")
         upsert_preprocess(
             episode_id=episode_id,
             status="READY",
@@ -200,6 +239,9 @@ def preprocess_episode(episode_id: str, progress: ProgressReporter | None = None
     except Exception as exc:
         upsert_preprocess(episode_id=episode_id, status="FAILED", error_message=str(exc))
         raise
+    finally:
+        proxy_temp.unlink(missing_ok=True)
+        audio_temp.unlink(missing_ok=True)
 
 
 def _frame_pts_us(proxy_path: Path) -> tuple[int, ...]:
@@ -219,12 +261,7 @@ def _frame_pts_us(proxy_path: Path) -> tuple[int, ...]:
 
 
 def _transnet_cut_points(proxy_path: Path, frame_pts: tuple[int, ...]) -> list[int]:
-    """运行 TransNetV2，但由项目自己负责 FFmpeg 解码。
-
-    transnetv2-pytorch 1.0.5 的 predict_video 使用 ffmpeg-python；FFmpeg 失败时异常文本只剩
-    ``ffmpeg error (see stderr output for detail)``。这里改为系统 FFmpeg → 48x27 RGB →
-    官方 model.predict_frames，模型权重、阈值和 PTS 映射均保持不变。
-    """
+    """运行 TransNetV2，但由项目自己负责 FFmpeg 解码。"""
 
     try:
         import numpy as np
@@ -278,6 +315,16 @@ def _transnet_cut_points(proxy_path: Path, frame_pts: tuple[int, ...]) -> list[i
     return cuts
 
 
+def _is_transnet_decode_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "transnetv2 输入视频 ffmpeg 解码失败".lower() in text
+        or "invalid nal unit size" in text
+        or "error splitting the input into nal units" in text
+        or "decoding error" in text
+    )
+
+
 def _normalize_boundaries(duration_us: int, cuts: list[int]) -> list[int]:
     clean: list[int] = [0]
     for value in sorted(set(cuts)):
@@ -312,11 +359,7 @@ def _render_thumbnail(reference: Path, output: Path, duration_us: int) -> None:
 
 
 def detect_episode_shots(episode_id: str, progress: ProgressReporter | None = None) -> list[dict[str, Any]]:
-    """安全自动拉片：先完整生成新 Run，成功后才原子切换 Current Revision。
-
-    重新拉片期间旧 Shot / Reference Clip 始终保持可读。TransNetV2、FFmpeg 或数据库任一步失败，
-    旧 Current 不变；只清理本次尚未提交的临时 Run 目录。
-    """
+    """安全自动拉片；损坏历史 Proxy 会自动重建并只重试一次 TransNet。"""
 
     episode = get_episode_record(episode_id)
     if episode is None:
@@ -336,7 +379,42 @@ def detect_episode_shots(episode_id: str, progress: ProgressReporter | None = No
     frame_pts = _frame_pts_us(proxy)
 
     _report(progress, 15, "transnet", "TransNetV2 正在检测镜头边界")
-    cuts = _transnet_cut_points(proxy, frame_pts)
+    try:
+        cuts = _transnet_cut_points(proxy, frame_pts)
+    except MediaPipelineError as first_error:
+        if not _is_transnet_decode_error(first_error):
+            raise
+
+        # 历史 READY Proxy 可能只通过过 FFprobe 元数据检查。遇到真实 H.264 解码错误时，
+        # 从 Source 原子重建一次，然后重新读取 PTS 并只重试一次 TransNet。
+        _report(progress, 16, "proxy_repair", "检测到分析 Proxy 损坏，正在从原片自动重建")
+
+        def repair_progress(
+            percent: float,
+            stage_key: str,
+            message: str,
+            current: int | None,
+            total: int | None,
+        ) -> None:
+            mapped = 16.0 + (max(0.0, min(100.0, percent)) / 100.0) * 6.0
+            _report(progress, mapped, "proxy_repair", f"自动修复 Proxy · {message}", current, total)
+
+        preprocess_episode(episode_id, progress=repair_progress)
+        repaired_episode = get_episode_record(episode_id)
+        if repaired_episode is None or repaired_episode.preprocess is None or not repaired_episode.preprocess.proxy_path:
+            raise MediaPipelineError("分析 Proxy 自动重建后状态异常") from first_error
+        proxy = Path(repaired_episode.preprocess.proxy_path)
+        _report(progress, 22, "frame_pts", "Proxy 已重建，正在重新读取逐帧 PTS")
+        frame_pts = _frame_pts_us(proxy)
+        _report(progress, 23, "transnet", "Proxy 已修复，正在重新执行 TransNetV2")
+        try:
+            cuts = _transnet_cut_points(proxy, frame_pts)
+        except MediaPipelineError as retry_error:
+            raise MediaPipelineError(
+                "分析 Proxy 已自动重建，但 TransNetV2 仍无法解码。"
+                "这通常说明原视频本身存在严重码流损坏。\n"
+                f"首次错误：{first_error}\n重试错误：{retry_error}"
+            ) from retry_error
 
     _report(progress, 24, "boundaries", "正在整理 Cut 与 Shot 边界")
     boundaries = _normalize_boundaries(duration_us, cuts)
@@ -379,7 +457,6 @@ def detect_episode_shots(episode_id: str, progress: ProgressReporter | None = No
         _report(progress, 100, "ready", f"拉片完成：{len(result)} Shots", len(result), len(result))
         return result
     except Exception:
-        # 只有尚未进入 Current 的本次 Run 才允许清理；历史 Revision 的媒体目录永不在这里删除。
         if run_root.exists():
             shutil.rmtree(run_root, ignore_errors=True)
         raise
