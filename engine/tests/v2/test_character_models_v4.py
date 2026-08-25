@@ -7,17 +7,17 @@ import pytest
 from engine.app import content_models_v2
 
 
-def test_require_models_fails_hard_when_character_v5_model_is_missing(monkeypatch, tmp_path: Path) -> None:
+def test_require_models_fails_hard_when_character_v6_model_is_missing(monkeypatch, tmp_path: Path) -> None:
     """职责：锁住“缺模型不能发布空人物新版本”的底层门槛。"""
 
     monkeypatch.setattr(content_models_v2, "model_dir", lambda: tmp_path)
 
-    with pytest.raises(content_models_v2.RequiredCharacterModelError, match="人物识别 V5 模型未准备完整"):
+    with pytest.raises(content_models_v2.RequiredCharacterModelError, match="人物识别 V6 模型未准备完整"):
         content_models_v2.require_models()
 
 
-def test_model_status_exposes_all_four_character_v5_capabilities_and_runtime(monkeypatch, tmp_path: Path) -> None:
-    """职责：前端必须能明确看到 Face / Person / ReID 四项模型与实际 GPU/CPU 策略。"""
+def test_model_status_exposes_v6_models_runtime_tracking_and_final_gate(monkeypatch, tmp_path: Path) -> None:
+    """职责：前端必须能看到 Person/ReID GPU、Face provider、MOT 与 Global Identity Final Gate。"""
 
     monkeypatch.setattr(content_models_v2, "model_dir", lambda: tmp_path)
     status = content_models_v2.model_status()
@@ -30,6 +30,8 @@ def test_model_status_exposes_all_four_character_v5_capabilities_and_runtime(mon
         "person_reid.youtu.2021nov",
     }
     assert status["ready"] is False
-    assert status["profile"] == "character-v5-track-gallery"
+    assert status["profile"] == "character-v6-global-identity"
     assert "runtime" in status
-    assert status["identity_policy"] == "Track First → Clean Track Gallery → Character Gallery"
+    assert "tracking_runtime" in status
+    assert "Global Identity Graph" in str(status["identity_policy"])
+    assert status["final_policy"] == "Only RESOLVED Identity can become Final Character"
