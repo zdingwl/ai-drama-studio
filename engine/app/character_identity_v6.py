@@ -32,8 +32,6 @@ REID_STRONG_EDGE = 0.89
 BODY_ATTACH_REID = 0.91
 BODY_ATTACH_MAX_SHOT_GAP = 1
 FACE_ANCHOR_MIN_SCORE = 0.70
-SINGLE_TRACK_RESOLVE_FACE_SAMPLES = 3
-SINGLE_TRACK_RESOLVE_FACE_SCORE = 0.86
 
 
 @dataclass(frozen=True)
@@ -120,7 +118,9 @@ def _directed_best_median(left: list[Any], right: list[Any]) -> float | None:
         clean = [float(item) for item in similarities if item is not None]
         if clean:
             values.append(max(clean))
-    return float(median(values)) if values else None
+    if not values:
+        return None
+    return float(median(values))
 
 
 def _symmetric_similarity(left: list[Any], right: list[Any]) -> float | None:
@@ -158,29 +158,41 @@ def _identity_edge(left_index: int, right_index: int, left: TrackDraft, right: T
 
     if face is not None and face >= FACE_STRONG_EDGE:
         return IdentityEdge(
-            left_index, right_index,
+            left_index,
+            right_index,
             min(0.99, face * 0.88 + max(0.0, reid or 0.0) * 0.12),
-            face, reid, "strong-face",
+            face,
+            reid,
+            "strong-face",
         )
 
     if face is not None and face >= FACE_SUPPORTED_EDGE and reid is not None and reid >= REID_SUPPORT_EDGE:
         temporal = 0.03 if gap is not None and gap <= 2 else 0.0
         return IdentityEdge(
-            left_index, right_index,
+            left_index,
+            right_index,
             min(0.97, face * 0.70 + reid * 0.27 + temporal),
-            face, reid, "face+clean-reid",
+            face,
+            reid,
+            "face+clean-reid",
         )
 
-    # SFace 在极端侧脸/小脸时可能只落在 0.33~0.36；只有相邻镜头且 CLEAN ReID 极强才允许连边。
+    # 极端侧脸/小脸只允许在相邻镜头 + 极强 CLEAN ReID 时连边。
     if (
-        face is not None and face >= 0.32
-        and reid is not None and reid >= REID_STRONG_EDGE
-        and gap is not None and gap <= 1
+        face is not None
+        and face >= 0.32
+        and reid is not None
+        and reid >= REID_STRONG_EDGE
+        and gap is not None
+        and gap <= 1
     ):
         return IdentityEdge(
-            left_index, right_index,
+            left_index,
+            right_index,
             min(0.94, face * 0.62 + reid * 0.35 + 0.03),
-            face, reid, "adjacent-face+strong-reid",
+            face,
+            reid,
+            "adjacent-face+strong-reid",
         )
     return None
 
@@ -217,32 +229,23 @@ def _face_sample_count(indices: set[int], tracks: list[TrackDraft]) -> int:
     return sum(len(_face_vectors(tracks[index])) for index in indices)
 
 
-def _best_face_score(indices: set[int], tracks: list[TrackDraft]) -> float:
-    values = [
-        float(getattr(item, "face_score", item.detection_score))
-        for index in indices
-        for item in tracks[index].observations
-        if item.face_embedding is not None
-    ]
-    return max(values) if values else 0.0
-
-
 def _resolved_cluster(indices: set[int], tracks: list[TrackDraft]) -> bool:
+    """Final Character 自动发布门槛。
+
+    只在同一身份已经跨至少两个 Shot 得到 Face Track 支持时自动 RESOLVED。
+    单 Shot 即使脸很清楚也先保留为 UNRESOLVED，避免一个演员的孤立侧脸/特写碎片再次制造人物020。
+    一次性小角色后续可由 VLM/人工显式晋级，不牺牲主角身份稳定性。
+    """
+
     face_tracks = _face_track_count(indices, tracks)
-    if face_tracks <= 0:
+    if face_tracks < 2:
         return False
-    shot_count = len({tracks[index].shot_id for index in indices})
-    if face_tracks >= 2 and shot_count >= 2:
-        return True
-    # 只有一条 Face Track 时，允许它凭连续多张高质量脸完成 Resolve。
-    # 同 cluster 后续挂入 body-only Track 不得反向降低已经充分的 Face anchor 等级。
-    if (
-        face_tracks == 1
-        and _face_sample_count(indices, tracks) >= SINGLE_TRACK_RESOLVE_FACE_SAMPLES
-        and _best_face_score(indices, tracks) >= SINGLE_TRACK_RESOLVE_FACE_SCORE
-    ):
-        return True
-    return False
+    face_shots = {
+        tracks[index].shot_id
+        for index in indices
+        if _face_vectors(tracks[index])
+    }
+    return len(face_shots) >= 2
 
 
 def _candidate_from_indices(
@@ -256,11 +259,14 @@ def _candidate_from_indices(
         id=v5.new_id("CHAR_CANDIDATE"),
         identity_status="RESOLVED" if resolved else "UNRESOLVED",
     )
-    for index in sorted(indices, key=lambda value: (
-        tracks[value].episode_order,
-        tracks[value].shot_ordinal,
-        tracks[value].start_us if tracks[value].start_us is not None else -1,
-    )):
+    for index in sorted(
+        indices,
+        key=lambda value: (
+            tracks[value].episode_order,
+            tracks[value].shot_ordinal,
+            tracks[value].start_us if tracks[value].start_us is not None else -1,
+        ),
+    ):
         v5._append_track(candidate, tracks[index])
     candidate.identity_status = "RESOLVED" if resolved else "UNRESOLVED"
     if edge_scores:
@@ -270,6 +276,11 @@ def _candidate_from_indices(
         "resolved": resolved,
         "face_track_count": _face_track_count(indices, tracks),
         "face_sample_count": _face_sample_count(indices, tracks),
+        "face_shot_count": len({
+            tracks[index].shot_id
+            for index in indices
+            if _face_vectors(tracks[index])
+        }),
         "shot_count": len({tracks[index].shot_id for index in indices}),
     }
     return candidate
@@ -278,11 +289,14 @@ def _candidate_from_indices(
 def resolve_global_identities(tracks: list[TrackDraft]) -> list[CandidateDraft]:
     """整项目 Track -> Global Identity Graph -> Character Candidates。"""
 
-    ordered = sorted(tracks, key=lambda item: (
-        item.episode_order,
-        item.shot_ordinal,
-        item.start_us if item.start_us is not None else -1,
-    ))
+    ordered = sorted(
+        tracks,
+        key=lambda item: (
+            item.episode_order,
+            item.shot_ordinal,
+            item.start_us if item.start_us is not None else -1,
+        ),
+    )
     if not ordered:
         return []
 
@@ -312,7 +326,6 @@ def resolve_global_identities(tracks: list[TrackDraft]) -> list[CandidateDraft]:
         accepted_scores[new_root] = merged_scores
 
     all_clusters = _clusters(uf, len(ordered))
-    # union-find 还包含所有 body-only singleton；先只取拥有 Face 的 cluster。
     face_clusters: list[set[int]] = []
     body_only_indices: list[int] = []
     for indices in all_clusters.values():
@@ -352,17 +365,21 @@ def resolve_global_identities(tracks: list[TrackDraft]) -> list[CandidateDraft]:
     for indices in face_clusters:
         resolved = _resolved_cluster(indices, ordered)
         root = uf.find(next(iter(indices)))
-        candidates.append(_candidate_from_indices(
-            indices,
-            ordered,
-            resolved=resolved,
-            edge_scores=accepted_scores.get(root),
-        ))
+        candidates.append(
+            _candidate_from_indices(
+                indices,
+                ordered,
+                resolved=resolved,
+                edge_scores=accepted_scores.get(root),
+            )
+        )
 
     # Final ordering：RESOLVED 在前，之后才是 Unresolved Evidence；两者绝不能在 Final Asset 层混为一谈。
-    candidates.sort(key=lambda item: (
-        0 if item.identity_status == "RESOLVED" else 1,
-        min((track.episode_order for track in item.tracks), default=999999),
-        min((track.shot_ordinal for track in item.tracks), default=999999),
-    ))
+    candidates.sort(
+        key=lambda item: (
+            0 if item.identity_status == "RESOLVED" else 1,
+            min((track.episode_order for track in item.tracks), default=999999),
+            min((track.shot_ordinal for track in item.tracks), default=999999),
+        )
+    )
     return candidates
