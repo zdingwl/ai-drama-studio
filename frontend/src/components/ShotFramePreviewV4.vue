@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   src: string
@@ -17,25 +17,19 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 const loading = ref(true)
 const failed = ref(false)
 const captureUrl = ref('')
-let objectUrl = ''
-
-function clearObjectUrl(): void {
-  if (objectUrl) URL.revokeObjectURL(objectUrl)
-  objectUrl = ''
-}
 
 function drawFrame(): void {
   const video = videoRef.value
   const canvas = canvasRef.value
   if (!video || !canvas || !video.videoWidth || !video.videoHeight) return
-  const width = 640
+  const width = Math.min(1280, Math.max(640, video.videoWidth))
   const height = Math.max(1, Math.round(width * video.videoHeight / video.videoWidth))
   canvas.width = width
   canvas.height = height
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   ctx.drawImage(video, 0, 0, width, height)
-  captureUrl.value = canvas.toDataURL('image/jpeg', 0.92)
+  captureUrl.value = canvas.toDataURL('image/jpeg', 0.94)
   loading.value = false
   failed.value = false
 }
@@ -61,10 +55,8 @@ function reload(): void {
   loading.value = true
   failed.value = false
   captureUrl.value = ''
-  clearObjectUrl()
   const video = videoRef.value
-  if (!video) return
-  video.load()
+  if (video) video.load()
 }
 
 function onError(): void {
@@ -73,9 +65,7 @@ function onError(): void {
 }
 
 watch(() => [props.src, props.atUs], reload)
-
 onMounted(reload)
-onBeforeUnmount(clearObjectUrl)
 </script>
 
 <template>
