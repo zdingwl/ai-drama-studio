@@ -26,7 +26,16 @@ DOWNLOAD_TIMEOUT_SECONDS = 300
 
 
 class ContentModelError(RuntimeError):
-    """资产人物模型准备错误。"""
+    """模型准备 / 下载 / 校验阶段错误。"""
+
+
+class RequiredCharacterModelError(RuntimeError):
+    """正式人物 V4 Run 缺少必需模型。
+
+    这个异常故意不继承 ContentModelError：旧 content_analysis_v2 会把 ContentModelError
+    当成可降级组件错误并继续生成 Run；人物 V4 不允许这样做，否则可能把“模型没准备”
+    错误发布成“0 人物”的新 AUTO 资产版本。
+    """
 
 
 @dataclass(frozen=True)
@@ -60,8 +69,8 @@ SFACE_SPEC = ModelSpec(
     ),
 )
 
-# OpenCV Zoo LFS metadata at MODEL_SOURCE_COMMIT:
-# oid sha256:c5c2...8063 / size 35,858,002 bytes.
+# OpenCV Zoo LFS metadata at MODEL_SOURCE_COMMIT：
+# oid sha256:c5c2...8063 / size 35,858,002 bytes。
 YOLOX_SPEC = ModelSpec(
     logical_id="person_detection.yolox.2022nov",
     filename="object_detection_yolox_2022nov.onnx",
@@ -73,8 +82,8 @@ YOLOX_SPEC = ModelSpec(
     ),
 )
 
-# OpenCV Zoo LFS metadata at MODEL_SOURCE_COMMIT:
-# oid sha256:0579...580d / size 106,878,407 bytes.
+# OpenCV Zoo LFS metadata at MODEL_SOURCE_COMMIT：
+# oid sha256:0579...580d / size 106,878,407 bytes。
 YOUTU_REID_SPEC = ModelSpec(
     logical_id="person_reid.youtu.2021nov",
     filename="person_reid_youtu_2021nov.onnx",
@@ -139,13 +148,22 @@ def model_status() -> dict[str, object]:
 
 
 def require_models() -> dict[str, Path]:
-    """正式人物 Run 的硬门槛：四个固定模型都必须已在本机准备完成。"""
+    """正式人物 Run 的硬门槛。
+
+    输入：本机模型目录；输出：四个已校验模型路径。
+    为什么：缺任一 V4 模型时必须让本次 Run 失败，保留旧 Current，禁止降级成空人物结果。
+    """
 
     root = model_dir()
     result: dict[str, Path] = {}
     for spec in MODEL_SPECS:
         path = root / spec.filename
-        _verify(path, spec)
+        try:
+            _verify(path, spec)
+        except ContentModelError as exc:
+            raise RequiredCharacterModelError(
+                f"人物识别 V4 模型未准备完整：{exc}。请先执行人物模型准备，再重新提取资产。"
+            ) from exc
         result[spec.logical_id] = path
     return result
 
