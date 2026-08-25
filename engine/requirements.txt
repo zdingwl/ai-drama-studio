@@ -19,8 +19,12 @@ tqdm==4.67.1
 ffmpeg-python==0.2.0
 future==1.0.0
 
-# 03 资产人物视觉：YuNet / SFace 继续走 OpenCV CPU；
-# YOLOX Person Detection + YoutuReID 默认 ONNX Runtime CUDA，CUDA 不可用自动 CPU fallback。
+# 03 人物 V6：YOLOX Person + 成熟 MOT + Global Identity Resolver。
+# trackers 2.6.0 提供 ByteTrack / BoT-SORT；supervision 负责标准 Detections 数据结构。
+# 当前 Face provider 继续使用已校验的 YuNet/SFace；V6 已把 Face provider 与 Global Identity 解耦，
+# 后续可以替换成有明确商用授权的 ArcFace 权重，而不改变 Track / Final Asset 数据结构。
+trackers==2.6.0
+supervision==0.30.0
 opencv-python==4.11.0.86
 onnxruntime-gpu==1.20.2
 
