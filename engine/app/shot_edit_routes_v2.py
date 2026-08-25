@@ -1,13 +1,13 @@
 """V2 拉片人工修正 + Revision API。"""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from engine.app.media_v2 import MediaPipelineError, ensure_playable_proxy
 from engine.app.shot_editor_v2 import ShotEditError, adjust_boundary, merge_with_next, split_shot
 from engine.app.shot_revision_v2 import (
     get_revision_item_path,
@@ -15,7 +15,6 @@ from engine.app.shot_revision_v2 import (
     list_shot_revisions,
     restore_shot_revision,
 )
-from engine.app.studio_v2 import get_episode_record
 
 router = APIRouter(prefix="/api", tags=["shot-editing"])
 
@@ -43,21 +42,18 @@ def _not_found(message: str) -> HTTPException:
 
 @router.get("/episodes/{episode_id}/proxy")
 def api_episode_proxy(episode_id: str) -> FileResponse:
-    """给拉片工作台播放整集 Proxy。
+    """给拉片工作台播放整集、带原声的 Proxy。
 
-    为什么存在：人工移动 Cut / 拆分时需要在完整 Source 时间轴上自由拖动播放头，
-    不能只播放当前 Shot 的 Reference Clip。
+    历史 V2 Proxy 如果没有音轨，会在第一次请求时利用已有 audio.wav 进行一次快速封装修复；
+    视频流直接 copy，不重编码，也不会重新执行 TransNetV2。后续请求直接复用修复结果。
     """
 
-    episode = get_episode_record(episode_id)
-    if episode is None:
-        raise _not_found("剧集不存在")
-    preprocess = episode.preprocess
-    if preprocess is None or preprocess.status != "READY" or not preprocess.proxy_path:
-        raise _bad_request(ValueError("当前剧集的分析视频尚未准备完成"))
-    path = Path(preprocess.proxy_path)
-    if not path.is_file():
-        raise _not_found("分析视频不存在")
+    try:
+        path = ensure_playable_proxy(episode_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+    except MediaPipelineError as exc:
+        raise _bad_request(exc) from exc
     return FileResponse(path, media_type="video/mp4", filename=path.name)
 
 
