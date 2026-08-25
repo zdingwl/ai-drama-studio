@@ -1,6 +1,7 @@
 """V2 拉片人工修正 + Revision API。"""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -14,6 +15,7 @@ from engine.app.shot_revision_v2 import (
     list_shot_revisions,
     restore_shot_revision,
 )
+from engine.app.studio_v2 import get_episode_record
 
 router = APIRouter(prefix="/api", tags=["shot-editing"])
 
@@ -37,6 +39,26 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 def _not_found(message: str) -> HTTPException:
     return HTTPException(status_code=404, detail=message)
+
+
+@router.get("/episodes/{episode_id}/proxy")
+def api_episode_proxy(episode_id: str) -> FileResponse:
+    """给拉片工作台播放整集 Proxy。
+
+    为什么存在：人工移动 Cut / 拆分时需要在完整 Source 时间轴上自由拖动播放头，
+    不能只播放当前 Shot 的 Reference Clip。
+    """
+
+    episode = get_episode_record(episode_id)
+    if episode is None:
+        raise _not_found("剧集不存在")
+    preprocess = episode.preprocess
+    if preprocess is None or preprocess.status != "READY" or not preprocess.proxy_path:
+        raise _bad_request(ValueError("当前剧集的分析视频尚未准备完成"))
+    path = Path(preprocess.proxy_path)
+    if not path.is_file():
+        raise _not_found("分析视频不存在")
+    return FileResponse(path, media_type="video/mp4", filename=path.name)
 
 
 @router.patch("/shots/{shot_id}/boundary")
