@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from engine.app import media_v2, media_v4
+from engine.app import media_v2, media_v4, media_v5
+from engine.app.reference_render_v4 import render_reference_exact
 
 
-def test_formal_media_v2_entry_is_wired_to_v4() -> None:
-    assert media_v2.detect_episode_shots is media_v4.detect_episode_shots
-    assert media_v2._render_reference is media_v4.render_reference_exact
+def test_formal_media_v2_entry_is_wired_to_v5_transvlm() -> None:
+    assert media_v2.detect_episode_shots is media_v5.detect_episode_shots
+    assert media_v2.detect_episode_shots is not media_v4.detect_episode_shots
+    assert media_v2._render_reference is render_reference_exact
 
 
 def test_frame_pts_reader_is_zero_based_wrapper(monkeypatch) -> None:
