@@ -9,6 +9,8 @@ const tasks = ref<BackgroundTask[]>([])
 const expanded = ref(false)
 const error = ref('')
 let timer: number | null = null
+let refreshing = false
+let disposed = false
 
 const projectId = computed(() => String(route.params.projectId || ''))
 const activeTasks = computed(() => tasks.value.filter((item) => item.status === 'QUEUED' || item.status === 'PROCESSING'))
@@ -16,6 +18,9 @@ const currentTask = computed(() => activeTasks.value[0] ?? null)
 const recentTasks = computed(() => tasks.value.slice(0, 8))
 
 const STALL_WARNING_MS = 120_000
+const ACTIVE_POLL_MS = 1_000
+const IDLE_POLL_MS = 10_000
+const HIDDEN_POLL_MS = 30_000
 
 function isFinished(task: BackgroundTask) {
   return ['READY', 'READY_WITH_WARNINGS', 'FAILED', 'CANCELLED'].includes(task.status)
@@ -58,6 +63,11 @@ function itemProgressLabel(task: BackgroundTask): string {
   return ''
 }
 
+/**
+ * 职责：读取当前 Project 的后台任务，并检测任务是否刚刚结束。
+ * 输入：当前 projectId；输出：更新 tasks / error，并在任务结束时派发 studio-task-finished。
+ * 为什么：业务页面需要在后台任务完成后刷新 Shot / Asset 等正式结果。
+ */
 async function refresh() {
   if (!projectId.value) {
     tasks.value = []
@@ -78,17 +88,74 @@ async function refresh() {
   }
 }
 
-function restartTimer() {
-  if (timer !== null) window.clearInterval(timer)
-  if (!projectId.value) return
-  void refresh()
-  timer = window.setInterval(() => void refresh(), 1000)
+/**
+ * 职责：根据当前状态决定下一次任务查询时间。
+ * 输入：页面可见性 + 是否存在 QUEUED/PROCESSING Task；输出：下一次轮询延迟。
+ * 为什么：运行中的任务需要 1 秒级进度，无任务时没必要持续刷 SQLite 和后端日志。
+ */
+function nextPollDelay(): number {
+  if (document.hidden) return HIDDEN_POLL_MS
+  return activeTasks.value.length > 0 ? ACTIVE_POLL_MS : IDLE_POLL_MS
 }
 
-watch(projectId, restartTimer)
-onMounted(restartTimer)
+function clearTimer(): void {
+  if (timer !== null) {
+    window.clearTimeout(timer)
+    timer = null
+  }
+}
+
+/**
+ * 职责：安排一次“请求完成后再计时”的自适应轮询。
+ * 输入：可选立即执行标记；输出：无。
+ * 为什么：setInterval 可能在接口变慢时产生重叠请求；setTimeout 串行调度不会堆积 Fetch。
+ */
+function schedulePoll(immediate = false): void {
+  clearTimer()
+  if (disposed || !projectId.value) return
+  timer = window.setTimeout(() => void pollOnce(), immediate ? 0 : nextPollDelay())
+}
+
+async function pollOnce(): Promise<void> {
+  if (disposed || !projectId.value || refreshing) return
+  refreshing = true
+  try {
+    await refresh()
+  } finally {
+    refreshing = false
+    schedulePoll(false)
+  }
+}
+
+/**
+ * 职责：Project 切换时停止旧 Project 轮询并立即读取新 Project 状态。
+ * 输入：route.params.projectId；输出：重置 Task 并重新调度。
+ */
+function restartPolling(): void {
+  clearTimer()
+  tasks.value = []
+  if (!projectId.value) return
+  schedulePoll(true)
+}
+
+/**
+ * 职责：标签页重新可见时立即刷新；退到后台后自动进入 30 秒低频轮询。
+ * 为什么：用户切回来时应马上看到真实进度，同时后台标签不需要每秒发请求。
+ */
+function onVisibilityChange(): void {
+  schedulePoll(!document.hidden)
+}
+
+watch(projectId, restartPolling)
+onMounted(() => {
+  disposed = false
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  restartPolling()
+})
 onUnmounted(() => {
-  if (timer !== null) window.clearInterval(timer)
+  disposed = true
+  clearTimer()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 </script>
 
