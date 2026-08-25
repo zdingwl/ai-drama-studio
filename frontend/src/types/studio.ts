@@ -120,6 +120,31 @@ export interface F05ModelStatus {
   }>
 }
 
+export type BackgroundTaskStatus = 'QUEUED' | 'PROCESSING' | 'READY' | 'READY_WITH_WARNINGS' | 'FAILED' | 'CANCELLED'
+
+export interface BackgroundTask {
+  id: string
+  project_id: string
+  episode_id: string | null
+  task_type: string
+  title: string
+  status: BackgroundTaskStatus
+  progress_mode: 'determinate' | 'indeterminate'
+  progress_percent: number | null
+  stage_key: string | null
+  stage_label: string | null
+  current_item: string | null
+  current_index: number | null
+  total_items: number | null
+  message: string | null
+  error_message: string | null
+  result: unknown
+  created_at: string
+  started_at: string | null
+  updated_at: string
+  completed_at: string | null
+}
+
 export interface ProjectCreatePayload {
   name: string
   source_language: string
