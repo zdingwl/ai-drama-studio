@@ -185,6 +185,16 @@ export interface ShotAssetBindings {
   prop_ids: string[]
 }
 
+export interface BatchShotAssetBindings {
+  shot_ids: string[]
+  apply_characters: boolean
+  character_ids: string[]
+  apply_scene: boolean
+  scene_id: string | null
+  apply_props: boolean
+  prop_ids: string[]
+}
+
 export interface AssetEvidenceItem {
   candidate_id: string
   label: string
