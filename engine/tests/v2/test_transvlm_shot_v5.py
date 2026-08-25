@@ -29,6 +29,59 @@ def test_transvlm_jsonl_parser_converts_seconds_to_microseconds(tmp_path: Path) 
     ]
 
 
+def test_transvlm_jsonl_parser_preserves_zero_length_hard_cut(tmp_path: Path) -> None:
+    output = tmp_path / "out.jsonl"
+    output.write_text(
+        json.dumps(
+            {
+                "video": "demo.mp4",
+                "segments": [
+                    {"start_time": 0.9, "end_time": 0.9},
+                ],
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    segments = transvlm_runtime_v5._parse_output(output)
+
+    assert [(item.start_us, item.end_us) for item in segments] == [(900_000, 900_000)]
+
+
+def test_transvlm_jsonl_parser_matches_official_reverse_range_semantics(tmp_path: Path) -> None:
+    output = tmp_path / "out.jsonl"
+    output.write_text(
+        json.dumps(
+            {
+                "video": "demo.mp4",
+                "segments": [
+                    {"start_time": 1.2, "end_time": 1.0},
+                ],
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    segments = transvlm_runtime_v5._parse_output(output)
+
+    assert [(item.start_us, item.end_us) for item in segments] == [(1_000_000, 1_200_000)]
+
+
+def test_zero_length_hard_cut_resolves_to_strongest_nearby_source_break() -> None:
+    pts = tuple(index * 40_000 for index in range(40))
+    visual = [0.0] + [0.04] * 39
+    visual[23] = 0.94  # 920ms，模型只给 900ms 单点时仍应回到真实 Source break。
+    segment = transvlm_runtime_v5.TransVLMTransition(start_us=900_000, end_us=900_000)
+
+    result = media_v5._resolve_transition(segment, pts, visual)
+
+    assert result is not None
+    assert result.kind == "HARD_LIKE"
+    assert result.cut_us == 920_000
+    assert result.source_frame_index == 23
+    assert result.visual_score == 0.94
+
+
 def test_hard_like_transition_uses_strongest_source_frame_break() -> None:
     pts = tuple(index * 40_000 for index in range(30))
     visual = [0.0] + [0.04] * 29
