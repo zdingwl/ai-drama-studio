@@ -46,6 +46,15 @@ def _has_audio(path: Path) -> bool:
     return bool(payload.get("streams"))
 
 
+def _is_fresh(playback: Path, analysis_proxy: Path, audio_input: Path) -> bool:
+    """判断播放代理是否仍然基于最新的视频/音频输入。"""
+
+    if not playback.is_file() or playback.stat().st_size <= 0:
+        return False
+    newest_input_mtime = max(analysis_proxy.stat().st_mtime_ns, audio_input.stat().st_mtime_ns)
+    return playback.stat().st_mtime_ns >= newest_input_mtime
+
+
 def ensure_playback_proxy(episode_id: str) -> Path:
     """返回带声音的拉片播放器 MP4。
 
@@ -76,16 +85,17 @@ def ensure_playback_proxy(episode_id: str) -> Path:
         if not _has_audio(source):
             return analysis_proxy
 
+        audio = Path(preprocess.audio_path) if preprocess.audio_path else None
+        audio_input = audio if audio is not None and audio.is_file() else source
         playback = analysis_proxy.with_name("playback-v2.mp4")
-        if playback.is_file():
+
+        if _is_fresh(playback, analysis_proxy, audio_input):
             try:
                 if _has_audio(playback):
                     return playback
             except PlaybackProxyError:
                 pass
 
-        audio = Path(preprocess.audio_path) if preprocess.audio_path else None
-        audio_input = audio if audio is not None and audio.is_file() else source
         temp = playback.with_name(".playback-v2.tmp.mp4")
         if temp.exists():
             temp.unlink(missing_ok=True)
