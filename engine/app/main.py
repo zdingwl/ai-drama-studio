@@ -1,8 +1,7 @@
 """AI Drama Studio V2 FastAPI 入口。
 
 当前可用范围：
-F01 项目管理、F02 多剧集导入与排序、F03 视频预处理、F04 自动拉片与 Reference Clip、
-F05 资产提取，以及统一后台 Task / Progress API。
+多剧集管理、自动初始化 + 拉片、Shot 人工修正、资产提取，以及统一后台 Task / Progress API。
 """
 from __future__ import annotations
 
@@ -24,6 +23,7 @@ from engine.app.content_analysis_v2 import (
 )
 from engine.app.content_models_v2 import ContentModelError, prepare_models
 from engine.app.media_v2 import MediaPipelineError, detect_episode_shots, preprocess_episode
+from engine.app.shot_edit_routes_v2 import router as shot_edit_router
 from engine.app.studio_v2 import (
     create_project,
     delete_episode,
@@ -49,7 +49,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="AI Drama Studio", version="2.2.0", lifespan=lifespan)
+app = FastAPI(title="AI Drama Studio", version="2.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -58,6 +58,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(task_router)
+app.include_router(shot_edit_router)
 
 
 class ProjectCreate(BaseModel):
@@ -81,7 +82,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "architecture": "reference-video-v2", "app_version": "2.2.0"}
+    return {"status": "ok", "architecture": "reference-video-v2", "app_version": "2.3.0"}
 
 
 @app.get("/api/projects")
@@ -228,7 +229,7 @@ def api_shot_thumbnail(shot_id: str) -> FileResponse:
     return FileResponse(path, media_type="image/jpeg", filename=path.name)
 
 
-# ---------------------------- F05 资产提取 ----------------------------
+# ---------------------------- 资产提取 ----------------------------
 
 
 @app.get("/api/models/f05/status")
@@ -239,7 +240,7 @@ def api_f05_model_status() -> dict[str, object]:
 
 @app.post("/api/models/f05/prepare")
 def api_prepare_f05_models() -> dict[str, object]:
-    """显式下载并校验 F05 固定人物视觉模型。运行分析时不会静默联网下载。"""
+    """显式下载并校验固定人物视觉模型。运行分析时不会静默联网下载。"""
     try:
         return prepare_models()
     except ContentModelError as exc:
@@ -270,7 +271,7 @@ def api_current_content_analysis(project_id: str) -> dict[str, Any] | None:
 def api_get_content_analysis(run_id: str) -> dict[str, Any]:
     payload = get_analysis_run(run_id)
     if payload is None:
-        raise _not_found("F05 分析 Run 不存在")
+        raise _not_found("资产分析 Run 不存在")
     return payload
 
 
