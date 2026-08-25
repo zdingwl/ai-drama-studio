@@ -4,6 +4,8 @@
 - 不把 TransVLM 的 Python 3.12 / torch 2.9.1 / cuDNN 9.16+ 依赖塞进主工程 .venv；
 - 默认从 ``.runtime/TransVLM/inference`` 调官方 ``infer_video.py``；
 - 使用官方 HuggingFace backend，读取 transition segments；
+- 与官方 parser 语义保持一致：允许 ``start_time == end_time`` 的零长度 hard cut，
+  ``end_time < start_time`` 时交换两端而不是丢弃；
 - 运行失败时把 stderr/stdout 尾部转换为稳定的 MediaPipelineError；
 - 只接受本地已准备好的 Runtime / checkpoint，不在正式拉片过程中静默安装依赖。
 
@@ -112,6 +114,12 @@ def _error_tail(stdout: str | None, stderr: str | None, limit: int = 5000) -> st
 
 
 def _parse_output(path: Path) -> list[TransVLMTransition]:
+    """读取官方 infer_video JSONL，并保留官方 SegmentPrediction 的时间语义。
+
+    官方 ``parse_model_output`` 只会修正 ``end < start``，不会丢弃 ``end == start``。
+    零长度 segment 对 hard cut 很重要：模型可能把单帧切点表达为同一个 start/end 时间。
+    """
+
     if not path.is_file():
         raise v2.MediaPipelineError("TransVLM 推理完成但没有生成 output JSONL")
 
@@ -144,9 +152,13 @@ def _parse_output(path: Path) -> list[TransVLMTransition]:
             end_us = int(round(float(item["end_time"]) * 1_000_000))
         except (KeyError, TypeError, ValueError):
             continue
-        if end_us <= start_us:
-            continue
-        segments.append(TransVLMTransition(start_us=max(0, start_us), end_us=max(0, end_us)))
+
+        # 与 TransVLM 官方 parser.py 保持一致：反向区间交换，零长度 hard cut 保留。
+        if end_us < start_us:
+            start_us, end_us = end_us, start_us
+        start_us = max(0, start_us)
+        end_us = max(0, end_us)
+        segments.append(TransVLMTransition(start_us=start_us, end_us=end_us))
 
     segments.sort(key=lambda item: (item.start_us, item.end_us))
     deduped: list[TransVLMTransition] = []
