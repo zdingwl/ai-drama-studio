@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from engine.app import shot_revision_v2, studio_v2
+from engine.app import content_analysis_v2, shot_revision_v2, studio_v2  # noqa: F401
 
 
 def setup_episode(monkeypatch, tmp_path: Path):
@@ -112,7 +112,7 @@ def test_failed_database_switch_rolls_back_old_current(monkeypatch, tmp_path: Pa
     assert baseline is not None and baseline["is_current"] is True
 
     invalid = new_payloads(tmp_path)
-    invalid[1]["ordinal"] = 1  # 触发 episode_id + ordinal 唯一约束。
+    invalid[1]["ordinal"] = 1
     with pytest.raises(Exception):
         shot_revision_v2.commit_auto_shot_revision("EPISODE_1", invalid)
 
