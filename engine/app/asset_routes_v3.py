@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
-from engine.app.asset_semantics_v3 import semantic_model_status
+from engine.app.asset_semantics_v3 import enrich_asset_run, semantic_model_status
 from engine.app.asset_workspace_v3 import (
     AssetWorkspaceError,
     apply_analysis_to_assets,
@@ -23,6 +23,17 @@ from engine.app.asset_workspace_v3 import (
     set_asset_cover,
     set_shot_bindings,
     split_asset,
+)
+from engine.app.content_analysis_v2 import run_content_analysis
+from engine.app.studio_v2 import get_project
+from engine.app.task_progress_v2 import (
+    ACTIVE_TASK_STATUSES,
+    create_task,
+    fail_task,
+    finish_task,
+    list_project_tasks,
+    start_task,
+    update_task,
 )
 
 router = APIRouter(prefix="/api", tags=["asset-workspace"])
@@ -65,6 +76,67 @@ def _bad(exc: Exception) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
+def _run_full_asset_task(task_id: str, project_id: str) -> None:
+    """完整资产任务：Evidence → VLM optional → Final Asset → Shot Binding。
+
+    基础人物/场景算法内部暂时无法诚实汇报细粒度百分比，所以前半段使用 indeterminate；
+    Qwen3-VL 配置后按 Shot 数量给真实进度，最终落 Final Asset 后完成。
+    """
+
+    try:
+        start_task(task_id, stage_key="asset_evidence", stage_label="人物 / 场景 Evidence", message="正在分析人物身份、Track 与连续场景")
+        update_task(task_id, progress_mode="indeterminate", stage_key="asset_evidence", stage_label="人物 / 场景 Evidence", message="Face/SFace + Body/服装辅助 Evidence 正在运行")
+        result = run_content_analysis(project_id)
+        run_id = str(result["id"])
+
+        vlm = semantic_model_status()
+        semantic_result = {"status": "NOT_CONFIGURED", "shot_count": 0, "prop_count": 0}
+        if vlm["ready"]:
+            update_task(task_id, progress_mode="determinate", progress_percent=55, stage_key="asset_semantics", stage_label="Qwen3-VL 场景 / 道具", message="正在启动多模态语义分析")
+
+            def semantic_progress(current: int, total: int, message: str) -> None:
+                percent = 55 + (current / max(1, total)) * 35
+                update_task(
+                    task_id,
+                    progress_mode="determinate",
+                    progress_percent=percent,
+                    stage_key="asset_semantics",
+                    stage_label="Qwen3-VL 场景 / 道具",
+                    current_index=current,
+                    total_items=total,
+                    message=message,
+                )
+
+            semantic_result = enrich_asset_run(run_id, project_id, progress=semantic_progress)
+        else:
+            update_task(
+                task_id,
+                progress_mode="determinate",
+                progress_percent=90,
+                stage_key="asset_semantics",
+                stage_label="场景 / 道具语义",
+                message="Qwen3-VL 未配置：保留基础场景 Evidence，道具可人工维护",
+            )
+
+        update_task(task_id, progress_mode="determinate", progress_percent=94, stage_key="asset_finalize", stage_label="形成 Final Asset", message="正在建立人物 / 场景 / 道具与 Shot Binding")
+        workspace = apply_analysis_to_assets(project_id, run_id)
+        manual_preserved = bool(workspace.get("stale"))
+        finish_task(
+            task_id,
+            result={
+                "run_id": run_id,
+                "profile_version": result.get("profile_version"),
+                "semantic": semantic_result,
+                "asset_revision": (workspace.get("revision") or {}).get("revision"),
+                "manual_preserved": manual_preserved,
+            },
+            message="资产 Evidence 已更新；人工版本已保留" if manual_preserved else "资产提取与 Shot Binding 完成",
+            status="READY_WITH_WARNINGS" if manual_preserved else "READY",
+        )
+    except Exception as exc:
+        fail_task(task_id, exc)
+
+
 @router.get("/projects/{project_id}/assets/workspace")
 def api_asset_workspace(project_id: str):
     try:
@@ -77,6 +149,25 @@ def api_asset_workspace(project_id: str):
 def api_asset_model_status():
     """Qwen3-VL 语义增强配置状态；YuNet/SFace 仍由 /api/models/f05/status 提供。"""
     return semantic_model_status()
+
+
+@router.post("/projects/{project_id}/assets/tasks/extract", status_code=202)
+def api_start_full_asset_task(project_id: str, background: BackgroundTasks):
+    if get_project(project_id) is None:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    for task in list_project_tasks(project_id, limit=100):
+        if task["task_type"] == "ASSET_EXTRACTION_V3" and task["status"] in ACTIVE_TASK_STATUSES:
+            return task
+    task = create_task(
+        project_id=project_id,
+        episode_id=None,
+        task_type="ASSET_EXTRACTION_V3",
+        title="资产提取",
+        progress_mode="indeterminate",
+        deduplicate_active=False,
+    )
+    background.add_task(_run_full_asset_task, task["id"], project_id)
+    return task
 
 
 @router.post("/projects/{project_id}/assets/apply-analysis")
