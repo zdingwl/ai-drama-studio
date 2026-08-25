@@ -110,7 +110,8 @@ def test_reference_renderer_trims_by_owned_frame_count_not_float_end(monkeypatch
     # 第一 owned frame=80ms；seek 安全落在上一帧 40ms 与目标帧 80ms 中间。
     assert command[command.index("-ss") + 1] == "0.060000"
     filter_complex = command[command.index("-filter_complex") + 1]
-    assert "trim=start_frame=0:end_frame=3" in filter_complex
+    # FFmpeg trim 的 end_frame 使用 1-based 结束计数；保留 3 帧需要 end_frame=4。
+    assert "trim=start_frame=0:end_frame=4" in filter_complex
     assert "trim=start=0:end=" not in filter_complex
     assert "setpts=PTS-STARTPTS" in filter_complex
     assert "-t" not in command
