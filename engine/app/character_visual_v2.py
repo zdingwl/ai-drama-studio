@@ -7,6 +7,8 @@
 - 同一 Character_ID 随视频分析持续吸收新的干净代表图；
 - YOLOX / YoutuReID 仍保持 GPU 优先、CPU fallback。
 
+保存层额外经过 character_gallery_persistence_v5：正式 Gallery 与 face-only cover 都不允许带入其他人物。
+
 保留本文件只为了让 content_analysis_v2 / 历史测试 import 路径稳定。
 """
 
@@ -27,9 +29,11 @@ from engine.app.character_visual_v5 import (  # noqa: F401
     mean_vector,
     sample_ratios,
     sample_times_us,
+    select_track_representatives,
+)
+from engine.app.character_gallery_persistence_v5 import (  # noqa: F401
     save_candidate_cover,
     save_candidate_gallery,
-    select_track_representatives,
 )
 
 __all__ = [
