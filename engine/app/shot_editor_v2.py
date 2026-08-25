@@ -8,7 +8,6 @@
 - Shot 结构变化后把当前资产分析标记为 STALE。
 
 为什么存在：拉片页面只有在用户能够真正修正错误 Cut 时才有意义。
-自动 TransNet 结果仍保留在执行历史里；本模块只维护当前可生产 Shot 集合。
 """
 from __future__ import annotations
 
@@ -56,6 +55,22 @@ def _shot_index(shots: list[Shot], shot_id: str) -> int:
         if shot.id == shot_id:
             return index
     raise ShotEditError("Shot 不存在")
+
+
+def _park_ordinals(session: Any, shots: list[Shot]) -> None:
+    """先把当前 ordinal 临时停到负数，避免唯一约束在插入/删除中途碰撞。"""
+
+    for index, shot in enumerate(shots, start=1):
+        shot.ordinal = -index
+    session.flush()
+
+
+def _assign_ordinals(session: Any, shots: list[Shot]) -> None:
+    """按当前列表顺序恢复 1..N 连续 ordinal。"""
+
+    for index, shot in enumerate(shots, start=1):
+        shot.ordinal = index
+    session.flush()
 
 
 def _paths_for_new_shot(episode: Episode, shot_id: str) -> tuple[Path, Path]:
@@ -115,12 +130,7 @@ def _validate_duration(start_us: int, end_us: int, *, label: str) -> None:
 
 
 def adjust_boundary(*, shot_id: str, side: str, source_time_us: int) -> list[dict[str, Any]]:
-    """移动公共边界。
-
-    输入：当前 Shot、start/end 侧、新 Source Domain 微秒时间。
-    输出：该 Episode 完整 Shot 列表。
-    为什么：公共边界必须同时更新左右两 Shot，禁止产生 gap / overlap。
-    """
+    """移动公共边界，并同时更新左右两 Shot，禁止产生 gap / overlap。"""
 
     if side not in {"start", "end"}:
         raise ShotEditError("side 只能是 start 或 end")
@@ -147,15 +157,14 @@ def adjust_boundary(*, shot_id: str, side: str, source_time_us: int) -> list[dic
                 left, right = shots[index], shots[index + 1]
 
             boundary_us = int(source_time_us)
-            _validate_duration(left.start_us, boundary_us, label="左侧 Shot")
-            _validate_duration(boundary_us, right.end_us, label="右侧 Shot")
             if not left.start_us < boundary_us < right.end_us:
                 raise ShotEditError("新边界必须位于两个相邻 Shot 的总区间内部")
+            _validate_duration(left.start_us, boundary_us, label="左侧 Shot")
+            _validate_duration(boundary_us, right.end_us, label="右侧 Shot")
 
             source = Path(episode.source_path)
             if not source.is_file():
                 raise ShotEditError("原视频文件不存在")
-
             left_ref = Path(left.reference_clip_path)
             left_thumb = Path(left.thumbnail_path) if left.thumbnail_path else _paths_for_new_shot(episode, left.id)[1]
             right_ref = Path(right.reference_clip_path)
@@ -200,24 +209,17 @@ def split_shot(*, shot_id: str, source_time_us: int) -> list[dict[str, Any]]:
             shots = _ordered_shots(session, episode.id)
             index = _shot_index(shots, shot_id)
             split_us = int(source_time_us)
-            _validate_duration(shot.start_us, split_us, label="拆分后的左 Shot")
-            _validate_duration(split_us, shot.end_us, label="拆分后的右 Shot")
             if not shot.start_us < split_us < shot.end_us:
                 raise ShotEditError("拆分点必须位于当前 Shot 内部")
+            _validate_duration(shot.start_us, split_us, label="拆分后的左 Shot")
+            _validate_duration(split_us, shot.end_us, label="拆分后的右 Shot")
 
             source = Path(episode.source_path)
             if not source.is_file():
                 raise ShotEditError("原视频文件不存在")
-
-            # 从末尾向后移动 ordinal，避免唯一约束冲突。
-            for following in reversed(shots[index + 1 :]):
-                following.ordinal += 1
-            session.flush()
-
             old_end = shot.end_us
             left_ref = Path(shot.reference_clip_path)
             left_thumb = Path(shot.thumbnail_path) if shot.thumbnail_path else _paths_for_new_shot(episode, shot.id)[1]
-
             right_id = new_id("SHOT")
             right_ref, right_thumb = _paths_for_new_shot(episode, right_id)
             pending = [
@@ -225,14 +227,15 @@ def split_shot(*, shot_id: str, source_time_us: int) -> list[dict[str, Any]]:
                 _render_pending(source, right_ref, right_thumb, split_us, old_end),
             ]
 
+            # 两阶段重编号：先清空所有正 ordinal，再插入新 Shot，最后恢复 1..N。
+            _park_ordinals(session, shots)
             shot.end_us = split_us
             shot.duration_us = split_us - shot.start_us
             _update_shot_media_fields(shot, left_ref, left_thumb)
-
             right = Shot(
                 id=right_id,
                 episode_id=episode.id,
-                ordinal=shot.ordinal + 1,
+                ordinal=-(len(shots) + 1),
                 start_us=split_us,
                 end_us=old_end,
                 duration_us=old_end - split_us,
@@ -245,6 +248,9 @@ def split_shot(*, shot_id: str, source_time_us: int) -> list[dict[str, Any]]:
                 status="MANUAL",
             )
             session.add(right)
+            session.flush()
+            final_order = shots[: index + 1] + [right] + shots[index + 1 :]
+            _assign_ordinals(session, final_order)
             episode.status = "SHOTS_EDITED"
             episode.updated_at = utcnow()
             _mark_assets_stale(session, episode.project_id)
@@ -284,19 +290,19 @@ def merge_with_next(*, shot_id: str) -> list[dict[str, Any]]:
             left_ref = Path(left.reference_clip_path)
             left_thumb = Path(left.thumbnail_path) if left.thumbnail_path else _paths_for_new_shot(episode, left.id)[1]
             pending = [_render_pending(source, left_ref, left_thumb, left.start_us, right.end_us)]
-
             if right.reference_clip_path:
                 remove_after_commit.append(Path(right.reference_clip_path))
             if right.thumbnail_path:
                 remove_after_commit.append(Path(right.thumbnail_path))
 
+            _park_ordinals(session, shots)
             left.end_us = right.end_us
             left.duration_us = left.end_us - left.start_us
             _update_shot_media_fields(left, left_ref, left_thumb)
             session.delete(right)
             session.flush()
-            for following in shots[index + 2 :]:
-                following.ordinal -= 1
+            final_order = shots[: index + 1] + shots[index + 2 :]
+            _assign_ordinals(session, final_order)
             episode.status = "SHOTS_EDITED"
             episode.updated_at = utcnow()
             _mark_assets_stale(session, episode.project_id)
