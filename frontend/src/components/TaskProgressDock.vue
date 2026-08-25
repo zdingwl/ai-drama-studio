@@ -8,6 +8,7 @@ const route = useRoute()
 const tasks = ref<BackgroundTask[]>([])
 const expanded = ref(false)
 const error = ref('')
+const dismissedTaskIds = ref<string[]>([])
 let timer: number | null = null
 let refreshing = false
 let disposed = false
@@ -15,6 +16,11 @@ let disposed = false
 const projectId = computed(() => String(route.params.projectId || ''))
 const activeTasks = computed(() => tasks.value.filter((item) => item.status === 'QUEUED' || item.status === 'PROCESSING'))
 const currentTask = computed(() => activeTasks.value[0] ?? null)
+const attentionTask = computed(() => tasks.value.find((item) => (
+  (item.status === 'FAILED' || item.status === 'READY_WITH_WARNINGS')
+  && !dismissedTaskIds.value.includes(item.id)
+)) ?? null)
+const displayTask = computed(() => currentTask.value ?? attentionTask.value)
 const recentTasks = computed(() => tasks.value.slice(0, 8))
 
 const STALL_WARNING_MS = 120_000
@@ -34,6 +40,10 @@ function statusLabel(task: BackgroundTask) {
 }
 
 function percentLabel(task: BackgroundTask) {
+  if (task.status === 'FAILED') return '失败'
+  if (task.status === 'READY_WITH_WARNINGS') return '有警告'
+  if (task.status === 'CANCELLED') return '已取消'
+  if (task.status === 'READY') return '100%'
   if (task.progress_mode === 'indeterminate' || task.progress_percent === null) return '处理中'
   return `${Math.round(task.progress_percent)}%`
 }
@@ -63,10 +73,17 @@ function itemProgressLabel(task: BackgroundTask): string {
   return ''
 }
 
+function dismissTask(taskId: string): void {
+  if (!dismissedTaskIds.value.includes(taskId)) {
+    dismissedTaskIds.value = [...dismissedTaskIds.value, taskId]
+  }
+  expanded.value = false
+}
+
 /**
  * 职责：读取当前 Project 的后台任务，并检测任务是否刚刚结束。
  * 输入：当前 projectId；输出：更新 tasks / error，并在任务结束时派发 studio-task-finished。
- * 为什么：业务页面需要在后台任务完成后刷新 Shot / Asset 等正式结果。
+ * 为什么：业务页面需要在后台任务完成后刷新 Shot / Asset 等正式结果；失败任务必须保留错误而不是瞬间隐藏。
  */
 async function refresh() {
   if (!projectId.value) {
@@ -80,6 +97,9 @@ async function refresh() {
     for (const task of tasks.value) {
       const oldStatus = before.get(task.id)
       if (oldStatus && oldStatus !== task.status && isFinished(task)) {
+        if (task.status === 'FAILED' || task.status === 'READY_WITH_WARNINGS') {
+          expanded.value = true
+        }
         window.dispatchEvent(new CustomEvent('studio-task-finished', { detail: task }))
       }
     }
@@ -127,13 +147,12 @@ async function pollOnce(): Promise<void> {
   }
 }
 
-/**
- * 职责：Project 切换时停止旧 Project 轮询并立即读取新 Project 状态。
- * 输入：route.params.projectId；输出：重置 Task 并重新调度。
- */
+/** Project 切换时清理旧状态并立即读取新 Project Task。 */
 function restartPolling(): void {
   clearTimer()
   tasks.value = []
+  dismissedTaskIds.value = []
+  expanded.value = false
   if (!projectId.value) return
   schedulePoll(true)
 }
@@ -141,21 +160,18 @@ function restartPolling(): void {
 /**
  * 职责：业务工作区创建 BackgroundTask 后立即把它放进 Dock。
  * 输入：studio-task-created 的 BackgroundTask；输出：立即显示任务，并切换到活动任务 1 秒轮询。
- * 为什么：无任务时 Dock 只做 10 秒低频查询；如果创建任务后仍等下一次轮询，用户会误以为按钮没有反应。
  */
 function onTaskCreated(event: Event): void {
   const task = (event as CustomEvent<BackgroundTask>).detail
   if (!task || task.project_id !== projectId.value) return
+  dismissedTaskIds.value = dismissedTaskIds.value.filter((id) => id !== task.id)
   tasks.value = [task, ...tasks.value.filter((item) => item.id !== task.id)]
   error.value = ''
-  // 当前 task 已经进入本地列表，因此 nextPollDelay() 会自动使用 1 秒活动频率。
+  expanded.value = false
   schedulePoll(false)
 }
 
-/**
- * 职责：标签页重新可见时立即刷新；退到后台后自动进入 30 秒低频轮询。
- * 为什么：用户切回来时应马上看到真实进度，同时后台标签不需要每秒发请求。
- */
+/** 标签页重新可见时立即刷新；退到后台后自动进入低频轮询。 */
 function onVisibilityChange(): void {
   schedulePoll(!document.hidden)
 }
@@ -176,24 +192,49 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-if="projectId && currentTask" class="task-dock" :class="{ expanded, stalled: isStalled(currentTask) }">
-    <button class="task-dock-summary" @click="expanded = !expanded">
-      <span :class="['task-state-dot', currentTask.status.toLowerCase()]" />
-      <span class="task-dock-copy">
-        <strong>{{ currentTask.title }}</strong>
-        <small v-if="isStalled(currentTask)" class="task-stall-copy">⚠ {{ stallLabel(currentTask) }}</small>
-        <small v-else>
-          {{ currentTask.stage_label || statusLabel(currentTask) }}
-          <template v-if="currentTask.current_item"> · {{ currentTask.current_item }}</template>
-          <template v-if="itemProgressLabel(currentTask)"> · {{ itemProgressLabel(currentTask) }}</template>
-        </small>
-      </span>
-      <span class="task-dock-percent">{{ percentLabel(currentTask) }}</span>
-      <span class="task-dock-count">进行中 {{ activeTasks.length }}</span>
-    </button>
+  <div
+    v-if="projectId && displayTask"
+    class="task-dock"
+    :class="{
+      expanded,
+      stalled: isStalled(displayTask),
+      failed: displayTask.status === 'FAILED',
+      warning: displayTask.status === 'READY_WITH_WARNINGS',
+    }"
+  >
+    <div class="task-dock-summary-row">
+      <button class="task-dock-summary" @click="expanded = !expanded">
+        <span :class="['task-state-dot', displayTask.status.toLowerCase()]" />
+        <span class="task-dock-copy">
+          <strong>{{ displayTask.title }}</strong>
+          <small v-if="isStalled(displayTask)" class="task-stall-copy">⚠ {{ stallLabel(displayTask) }}</small>
+          <small v-else-if="displayTask.status === 'FAILED'" class="task-failed-copy">
+            {{ displayTask.error_message || displayTask.message || '任务执行失败' }}
+          </small>
+          <small v-else>
+            {{ displayTask.stage_label || statusLabel(displayTask) }}
+            <template v-if="displayTask.current_item"> · {{ displayTask.current_item }}</template>
+            <template v-if="itemProgressLabel(displayTask)"> · {{ itemProgressLabel(displayTask) }}</template>
+          </small>
+        </span>
+        <span class="task-dock-percent">{{ percentLabel(displayTask) }}</span>
+        <span v-if="currentTask" class="task-dock-count">进行中 {{ activeTasks.length }}</span>
+        <span v-else class="task-dock-count">点击查看错误</span>
+      </button>
+      <button
+        v-if="!currentTask && attentionTask"
+        class="task-dock-dismiss"
+        title="关闭这条任务提示"
+        @click="dismissTask(attentionTask.id)"
+      >×</button>
+    </div>
 
-    <div class="task-progress-track" :class="{ indeterminate: currentTask.progress_mode === 'indeterminate' || currentTask.progress_percent === null }">
-      <span v-if="currentTask.progress_mode === 'determinate' && currentTask.progress_percent !== null" :style="{ width: `${currentTask.progress_percent}%` }" />
+    <div
+      v-if="displayTask.status === 'PROCESSING' || displayTask.status === 'QUEUED'"
+      class="task-progress-track"
+      :class="{ indeterminate: displayTask.progress_mode === 'indeterminate' || displayTask.progress_percent === null }"
+    >
+      <span v-if="displayTask.progress_mode === 'determinate' && displayTask.progress_percent !== null" :style="{ width: `${displayTask.progress_percent}%` }" />
       <span v-else />
     </div>
 
@@ -201,18 +242,23 @@ onUnmounted(() => {
       <div class="task-panel-head"><strong>后台任务</strong><span>页面切换或刷新不会丢失</span></div>
       <p v-if="error" class="task-panel-error">{{ error }}</p>
       <div class="task-panel-list">
-        <article v-for="task in recentTasks" :key="task.id" class="task-panel-item" :class="{ 'task-item-stalled': isStalled(task) }">
+        <article
+          v-for="task in recentTasks"
+          :key="task.id"
+          class="task-panel-item"
+          :class="{ 'task-item-stalled': isStalled(task), 'task-item-failed': task.status === 'FAILED' }"
+        >
           <div class="task-item-head">
             <span :class="['task-state-dot', task.status.toLowerCase()]" />
             <div><strong>{{ task.title }}</strong><small>{{ task.stage_label || statusLabel(task) }}<template v-if="task.current_item"> · {{ task.current_item }}</template></small></div>
             <b>{{ percentLabel(task) }}</b>
           </div>
-          <div v-if="task.progress_mode === 'determinate' && task.progress_percent !== null" class="task-mini-track"><span :style="{ width: `${task.progress_percent}%` }" /></div>
+          <div v-if="task.progress_mode === 'determinate' && task.progress_percent !== null && (task.status === 'PROCESSING' || task.status === 'QUEUED')" class="task-mini-track"><span :style="{ width: `${task.progress_percent}%` }" /></div>
           <div v-else-if="task.status === 'PROCESSING' || task.status === 'QUEUED'" class="task-mini-track indeterminate"><span /></div>
           <p>{{ task.message || statusLabel(task) }}</p>
           <small v-if="itemProgressLabel(task)">{{ itemProgressLabel(task) }} 项</small>
           <small v-if="isStalled(task)" class="task-stall-detail">⚠ {{ stallLabel(task) }}。如果后端进程仍在运行，请查看控制台；重启后该旧任务会被标记为中断，可重新执行。</small>
-          <small v-if="task.error_message" class="task-error-detail">{{ task.error_message }}</small>
+          <pre v-if="task.error_message" class="task-error-detail task-error-pre">{{ task.error_message }}</pre>
         </article>
       </div>
     </div>
@@ -220,9 +266,5 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.task-dock.stalled .task-progress-track,
-.task-item-stalled .task-mini-track { opacity: .65; }
-.task-stall-copy { color: #a35c00 !important; font-weight: 700; }
-.task-stall-detail { display: block; margin-top: 5px; color: #9a6400; line-height: 1.45; }
-.task-item-stalled { background: #fffaf0; }
+.task-dock-summary-row{display:flex;align-items:stretch}.task-dock-summary-row>.task-dock-summary{flex:1;min-width:0}.task-dock-dismiss{width:38px;border:0;border-left:1px solid #ead0d0;background:#fff6f6;color:#a33b3b;font-size:20px;cursor:pointer}.task-dock.failed{border-color:#e4aaaa}.task-dock.failed .task-dock-summary-row{background:#fff7f7}.task-dock.warning .task-dock-summary-row{background:#fffaf0}.task-dock.stalled .task-progress-track,.task-item-stalled .task-mini-track{opacity:.65}.task-stall-copy{color:#a35c00!important;font-weight:700}.task-failed-copy{display:block;max-width:900px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#b33b3b!important;font-weight:700}.task-stall-detail{display:block;margin-top:5px;color:#9a6400;line-height:1.45}.task-item-stalled{background:#fffaf0}.task-item-failed{background:#fff8f8}.task-error-pre{display:block;margin:7px 0 0;padding:8px 10px;max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #efcaca;border-radius:7px;background:#fff;color:#a92828;font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
 </style>
