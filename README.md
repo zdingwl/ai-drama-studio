@@ -2,6 +2,11 @@
 
 本项目是 Windows 本地使用的 AI 短剧本地化重制工作台。
 
+> **Windows 首次安装 / TransVLM Runtime / 前后端启动 / 更新 / 故障排查请优先阅读：**
+> `docs/INSTALL_AND_RUN_WINDOWS.md`
+>
+> 当前 02 拉片正式基线已经升级为 **Shot V5 TransVLM-first**。README 中较早的 F04/F05 技术描述仅保留项目演进背景；安装运行以以上手册和当前代码为准。
+
 当前架构不再把“拉片”理解为生成一份尽可能详细的文字分析，而是把原视频拆成独立 Shot，并保存每个 Shot 的 **Reference Video**。后续人物、场景、关键道具、目标语言对白和声音作为控制条件参与重制。
 
 ## 当前实现
@@ -10,14 +15,14 @@
 F01 项目管理                    ✅
 F02 多剧集导入 / 拖动排序         ✅
 F03 视频预处理                  ✅ 代码完成，待本机真实视频验收
-F04 自动拉片 / Reference Clip    ✅ 代码完成，待本机真实视频验收
-F05 智能内容识别                ✅ V1 完成，待本机真实素材验收
+F04 自动拉片 / Reference Clip    ✅ 当前正式基线：Shot V5 TransVLM-first
+F05 智能内容识别                ⚠️ 当前人物策略待重新规划
 F06-F13                       ⏳ 按 V2 架构继续开发
 ```
 
 完整架构：`docs/REFERENCE_VIDEO_V2_ARCHITECTURE.md`
 
-F05 详细 Contract：`docs/F05_CONTENT_ANALYSIS_V2.md`
+当前 Windows 安装运行手册：`docs/INSTALL_AND_RUN_WINDOWS.md`
 
 ## 核心流程
 
@@ -38,121 +43,76 @@ F05 详细 Contract：`docs/F05_CONTENT_ANALYSIS_V2.md`
 
 批量处理始终按 `Episode.sort_order` 一集一集执行，不并行跑多个剧集。
 
-## 技术栈
+## 当前拉片技术栈
 
 Backend：
-- Python
-- FastAPI
-- SQLAlchemy
-- SQLite
+- Python / FastAPI / SQLAlchemy / SQLite
 - FFmpeg / FFprobe
-- TransNetV2（F04 本地切镜）
-- OpenCV YuNet + SFace + HOG（F05 人物视觉证据）
-- faster-whisper（F05 源对白 ASR）
+- TransVLM V5（独立 Python 3.12 Runtime，当前正式 Shot Transition 模型）
+- Source PTS 帧级边界落点
+- Frame-exact Reference Clip
 
 Frontend：
 - Vue 3
 - TypeScript
 - Vue Router
-- Vite
+- Vite 8
 
-## 本地运行
+TransNetV2 / PySceneDetect 仍可能保留在 Legacy 代码或历史测试中，但不再是当前正式自动拉片入口。
 
-### 1. Python 环境
+## 快速运行
 
-Windows PowerShell 示例：
+完整首次安装不要只看本节，请阅读 `docs/INSTALL_AND_RUN_WINDOWS.md`。
+
+### 后端
 
 ```powershell
-python -m venv .venv
+cd E:\ai-drama-studio
 .\.venv\Scripts\Activate.ps1
-pip install -r engine\requirements.txt
-```
-
-确认：
-
-```powershell
-ffmpeg -version
-ffprobe -version
-```
-
-### 2. 准备 F05 人物视觉模型
-
-可以在 F05 页面点击“准备人物模型”，也可以命令行执行：
-
-```powershell
-python -m engine.app.content_models_v2
-```
-
-固定下载并校验：
-- YuNet；
-- SFace。
-
-模型默认保存到：
-
-```text
-data_v2/models/f05/
-```
-
-### 3. F05 Whisper 配置
-
-默认：
-
-```text
-AI_DRAMA_WHISPER_MODEL=small
-AI_DRAMA_WHISPER_DEVICE=auto
-```
-
-可选覆盖：
-
-```powershell
-$env:AI_DRAMA_WHISPER_MODEL="small"
-$env:AI_DRAMA_WHISPER_DEVICE="cuda"
-$env:AI_DRAMA_WHISPER_COMPUTE_TYPE="float16"
-```
-
-如果 CUDA 运行初始化失败，F05 会尝试退回 CPU int8。
-
-### 4. 可选 Speaker Diarization
-
-Speaker 不是默认强制依赖。
-
-如果你已经在本机准备好兼容的 pyannote Pipeline，并安装了对应 `pyannote.audio`，设置：
-
-```powershell
-$env:AI_DRAMA_DIARIZATION_MODEL_PATH="E:\models\pyannote-speaker-diarization-community-1"
-```
-
-未配置时 F05 会明确显示：
-
-```text
-Speaker = NOT_CONFIGURED
-```
-
-不会让人物/Scene/ASR 一起失败。
-
-### 5. 启动后端
-
-```powershell
 uvicorn engine.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 健康检查：
 
-```text
-GET http://127.0.0.1:8000/api/health
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/health
 ```
 
-应返回 architecture=`reference-video-v2`。
-
-### 6. 启动前端
+### 前端
 
 ```powershell
-cd frontend
-npm install
+cd E:\ai-drama-studio\frontend
 npm run dev
 ```
 
-Vite 会把 `/api` 代理到 `127.0.0.1:8000`。
+浏览器：
+
+```text
+http://127.0.0.1:5173
+```
+
+## TransVLM Runtime
+
+首次安装：
+
+```powershell
+cd E:\ai-drama-studio
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_transvlm_runtime.ps1
+```
+
+检查 Runtime：
+
+```powershell
+python -c "from engine.app.transvlm_runtime_v5 import runtime_status; import json; print(json.dumps(runtime_status(), ensure_ascii=False, indent=2))"
+```
+
+必须看到：
+
+```text
+ready = true
+```
+
+完整依赖、CUDA/cuDNN、Node、uv、模型下载及故障处理见安装手册。
 
 ## V2 本地数据
 
@@ -162,7 +122,6 @@ Vite 会把 `/api` 代理到 `127.0.0.1:8000`。
 data_v2/
 ├ studio_v2.sqlite3
 ├ models/
-│  └ f05/
 └ workspace/
 ```
 
@@ -172,7 +131,13 @@ data_v2/
 $env:AI_DRAMA_STUDIO_HOME="E:\ai-drama-studio-data"
 ```
 
-再启动后端，把数据库、模型和视频工作区放到指定目录。
+TransVLM 独立 Runtime 默认在：
+
+```text
+.runtime/TransVLM/
+```
+
+模型 Runtime 和业务数据都不应提交到 Git。
 
 ## 当前用户操作
 
@@ -190,16 +155,22 @@ $env:AI_DRAMA_STUDIO_HOME="E:\ai-drama-studio-data"
 
 ### F03 视频预处理
 
-支持单集处理或“顺序批量预处理”。
+拉片任务会自动确保分析素材已经准备；内部输出包括 Proxy / Audio / Media Info。
 
-输出：
-- proxy.mp4；
-- audio.wav（原视频有音轨时）；
-- Media Info。
-
-### F04 自动拉片
+### F04 / Shot V5 自动拉片
 
 支持单集拉片 / 重新拉片和顺序批量拉片。
+
+正式链路：
+
+```text
+Source Video
+→ TransVLM transition segments
+→ Source PTS
+→ Shot boundaries
+→ frame-exact Reference Clip
+→ Current Shot Revision
+```
 
 每个 Shot 输出：
 - start/end/duration；
@@ -208,52 +179,34 @@ $env:AI_DRAMA_STUDIO_HOME="E:\ai-drama-studio-data"
 
 Reference Clip 是后续视频重制的正式输入资产。
 
-### F05 智能内容识别
+### 03 资产
 
-按整个 Project 顺序分析全部 Episode，当前输出：
-
-```text
-Character Candidate
-Character Track
-Scene Candidate
-Analysis Dialogue
-Speaker Segment（可选）
-Speaker → Character Candidate（证据足够时）
-```
-
-人物识别不是纯 Face：
-
-```text
-YuNet / SFace
-+ HOG Person Detection
-+ Body / Clothing Evidence
-```
-
-背影可以形成 body-only Track；但无脸身体证据只做保守相邻 Shot 合并。
-
-关键道具目前已经有正式数据结构，但默认对象模型尚未配置，因此不会把普通环境物体伪造成“剧情关键道具”。
-
-F05 页面会分别显示每个子组件的真实状态。
+当前资产工作区和历史 Evidence 仍保留，但人物身份策略正在重新规划。在新的资产方案稳定前，优先完成 Shot V5 的真实视频验收。
 
 ## 测试
 
 V2 默认测试：
 
 ```powershell
-pytest
+python -m pytest engine/tests/v2 -q
 ```
 
-当前 `pyproject.toml` 只把 `engine/tests/v2` 作为新架构默认 Gate。旧 `engine/tests/unit` 属于 Legacy 测试资料。
+当前拉片重点测试：
 
-F03-F05 仍必须用真实短剧视频在目标 Windows 机器验收，因为需要确认：
-- FFmpeg；
-- TransNetV2；
-- YuNet/SFace/HOG；
-- Faster Whisper；
-- 真实多剧集人物跨 Shot 聚类；
-- Scene 聚类；
-- Vue 浏览器交互。
+```powershell
+python -m pytest engine/tests/v2/test_transvlm_shot_v5.py -q
+python -m pytest engine/tests/v2/test_shot_v4_runtime_wiring.py -q
+python -m pytest engine/tests/v2/test_shot_boundary_v4.py -q
+```
+
+真实 Windows 短剧视频仍是 Shot V5 的最终验收 Gate，重点检查：
+- TransVLM Runtime；
+- hard cut 是否漏检；
+- 渐变转场；
+- Shot 是否产生异常碎片；
+- 相邻 Reference Clip 是否严格按帧所有权切分；
+- OUT / NEXT IN 是否分别属于正确的左右镜头。
 
 ## Legacy
 
-仓库里可能仍存在旧业务代码和旧文档，以便必要时参考算法实现；它们不属于 V2 产品 Contract，也不会从 V2 FastAPI 入口或新 Router 加载。
+仓库里可能仍存在旧业务代码、旧模型入口和旧文档，以便必要时参考历史算法实现；它们不自动代表当前正式产品 Contract。正式安装运行以 `docs/INSTALL_AND_RUN_WINDOWS.md`、`AGENTS.md`、`SKILL.md` 和当前代码为准。
