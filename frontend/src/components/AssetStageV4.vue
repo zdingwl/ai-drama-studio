@@ -24,11 +24,17 @@ const unresolvedShots = ref<UnresolvedShot[]>([])
 
 const missingModels = computed(() => (status.value?.models ?? []).filter((item) => !item.ready))
 const unresolvedPreview = computed(() => unresolvedShots.value.slice(0, 12))
+const runtimeLabel = computed(() => {
+  const runtime = status.value?.runtime
+  if (!runtime) return '运行时未知'
+  if (runtime.device === 'GPU') return `GPU · CUDA · ${runtime.provider || 'CUDAExecutionProvider'}`
+  return `CPU fallback · ${runtime.provider || 'CPUExecutionProvider'}`
+})
 
 /**
- * 职责：只读取人物 V4 固定模型状态，不触发联网。
- * 输入：无；输出：YuNet / SFace / YOLOX / YoutuReID 准备状态。
- * 为什么：正式资产 Run 不能在后台静默下载模型，用户必须明确知道当前人物能力是否完整。
+ * 职责：只读取人物 V5 固定模型和推理设备状态，不触发联网。
+ * 输入：无；输出：YuNet / SFace / YOLOX / YoutuReID + GPU/CPU 状态。
+ * 为什么：正式资产 Run 不能在后台静默下载模型，也不能静默从 GPU 降级 CPU。
  */
 async function refreshModelStatus(): Promise<void> {
   try {
@@ -42,10 +48,9 @@ async function refreshModelStatus(): Promise<void> {
 }
 
 /**
- * 职责：从当前不可变 Character Evidence 中找出“Person 已检测到，但没有任何 Face identity anchor”的 Shot。
+ * 职责：从当前不可变 Character Evidence 中找出“Person Track 已建立，但没有任何 Face identity anchor”的 Shot。
  * 输入：Current ContentAnalysisRun + Current Shot；输出：需要人工关注的 EP / Shot 列表。
- * 为什么：V4 的核心原则是“身份不确定可以，但不能静默漏人”；这类 Evidence 不创建 Final Character，
- * 但必须明确暴露给用户，而不能被资产矩阵误判成正常空人物。
+ * 为什么：V5 允许身份暂时不确定，但绝不允许把检测到的人静默当成“无人”。
  */
 async function refreshPersonCompleteness(): Promise<void> {
   try {
@@ -66,8 +71,6 @@ async function refreshPersonCompleteness(): Promise<void> {
     const seen = new Set<string>()
     const result: UnresolvedShot[] = []
     for (const candidate of analysis.characters) {
-      // 至少一个 Track 有脸，说明该 Candidate 已拥有 Face/SFace identity anchor；
-      // 它在其它 Shot 的无脸 Track 由 ReID 延续，不属于“身份未确定”。
       if (candidate.tracks.some((track) => track.face_visible)) continue
       for (const track of candidate.tracks) {
         if (seen.has(track.shot_id)) continue
@@ -86,23 +89,18 @@ async function refreshPersonCompleteness(): Promise<void> {
       left.episodeOrder - right.episodeOrder || left.shotOrdinal - right.shotOrdinal
     ))
   } catch {
-    // 完整性提示属于 Evidence 辅助层；读取失败不能阻塞 Final Asset 工作台。
     unresolvedShots.value = []
   }
 }
 
-/**
- * 职责：用户显式准备人物 V4 所需全部固定模型。
- * 输入：点击动作；输出：更新后的模型状态。
- * 为什么：YOLOX / YoutuReID 权重较大，必须由用户明确触发，而不是资产分析时偷偷联网。
- */
+/** 用户显式准备人物 V5 所需全部固定模型。 */
 async function prepareModels(): Promise<void> {
   preparing.value = true
   error.value = ''
   try {
     status.value = await api.prepareF05Models()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '人物 V4 模型准备失败'
+    error.value = err instanceof Error ? err.message : '人物 V5 模型准备失败'
   } finally {
     preparing.value = false
   }
@@ -117,24 +115,25 @@ onMounted(async () => {
   <div class="asset-stage-v4">
     <div v-if="!loading && status && !status.ready" class="character-v4-banner warning">
       <div>
-        <strong>人物识别 V4 模型未准备完整</strong>
-        <span>新人物链需要 YOLOX Person Detection + YuNet/SFace + YoutuReID。模型未准备前不要重新提取资产，旧 Current 会继续保留。</span>
+        <strong>人物识别 V5 模型未准备完整</strong>
+        <span>Track First 需要 YOLOX Person Detection + YuNet/SFace + YoutuReID。模型未准备前不要重新提取资产，旧 Current 会继续保留。</span>
         <small v-if="missingModels.length">缺少：{{ missingModels.map((item) => item.filename).join('、') }}</small>
       </div>
-      <button :disabled="preparing" @click="prepareModels">{{ preparing ? '正在准备模型…' : '准备人物 V4 模型' }}</button>
+      <button :disabled="preparing" @click="prepareModels">{{ preparing ? '正在准备模型…' : '准备人物 V5 模型' }}</button>
     </div>
 
     <div v-else-if="!loading && status?.ready" class="character-v4-banner ready">
       <div>
-        <strong>人物识别 V4 · READY</strong>
-        <span>YOLOX Person + YuNet/SFace + YoutuReID 已就绪；重新提取资产后会使用新人物 Evidence。</span>
+        <strong>人物识别 V5 · READY · {{ runtimeLabel }}</strong>
+        <span>Track First → Clean Track Gallery → Character Gallery；多人镜头的正式人物图库只保存目标人物自己的干净代表图。</span>
+        <small v-if="status.runtime?.fallback">⚠ CUDA 未实际启用，当前已自动降级 CPU；结果不受影响，但人物 Track 分析会明显变慢。</small>
       </div>
     </div>
 
     <div v-if="unresolvedShots.length" class="character-v4-banner unresolved">
       <div>
-        <strong>⚠ 人物完整性：{{ unresolvedShots.length }} 个 Shot 检测到人物，但身份尚未确定</strong>
-        <span>这些 Shot 不会被自动创建成假人物，也不会再静默当成“无人”。请在资产矩阵中结合前后镜头绑定已有人物。</span>
+        <strong>⚠ 人物完整性：{{ unresolvedShots.length }} 个 Shot 检测到人物 Track，但身份尚未确定</strong>
+        <span>这些 Track 不会被自动创建成假人物，也不会静默当成“无人”；后续镜头出现更强 Face/ReID Evidence 时仍可归并到已有 Character_ID。</span>
         <div class="unresolved-shot-list">
           <span v-for="item in unresolvedPreview" :key="item.shotId">
             E{{ String(item.episodeOrder).padStart(2, '0') }} · SHOT {{ String(item.shotOrdinal).padStart(4, '0') }}
@@ -150,5 +149,5 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.asset-stage-v4{min-height:100%}.character-v4-banner{margin:14px 22px 0;padding:10px 13px;border:1px solid;border-radius:11px;display:flex;align-items:center;justify-content:space-between;gap:16px;font-size:12px}.character-v4-banner>div{min-width:0;display:grid;gap:2px}.character-v4-banner strong{font-size:13px}.character-v4-banner span,.character-v4-banner small{line-height:1.45}.character-v4-banner.warning{background:#fff9eb;border-color:#f1d58d;color:#73510b}.character-v4-banner.warning span,.character-v4-banner.warning small{color:#8b6a25}.character-v4-banner.ready{background:#effbf5;border-color:#bfe7d2;color:#176a45}.character-v4-banner.ready span{color:#49806a}.character-v4-banner.unresolved{background:#fff8ee;border-color:#efc982;color:#7b4d08}.character-v4-banner.unresolved span{color:#835f28}.character-v4-banner button{flex:0 0 auto;border:0;border-radius:8px;padding:8px 12px;background:#2f60e8;color:#fff;font-weight:750;cursor:pointer}.character-v4-banner button:disabled{opacity:.6;cursor:wait}.character-v4-error{margin:8px 22px 0;padding:8px 11px;border-radius:8px;background:#fff0f0;color:#b53a3a;font-size:12px}.unresolved-shot-list{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}.unresolved-shot-list span,.unresolved-shot-list em{padding:3px 7px;border-radius:999px;background:#fff;border:1px solid #efd7a9;font-style:normal;font-size:10px;font-weight:700;color:#815a18}
+.asset-stage-v4{min-height:100%}.character-v4-banner{margin:14px 22px 0;padding:10px 13px;border:1px solid;border-radius:11px;display:flex;align-items:center;justify-content:space-between;gap:16px;font-size:12px}.character-v4-banner>div{min-width:0;display:grid;gap:2px}.character-v4-banner strong{font-size:13px}.character-v4-banner span,.character-v4-banner small{line-height:1.45}.character-v4-banner.warning{background:#fff9eb;border-color:#f1d58d;color:#73510b}.character-v4-banner.warning span,.character-v4-banner.warning small{color:#8b6a25}.character-v4-banner.ready{background:#effbf5;border-color:#bfe7d2;color:#176a45}.character-v4-banner.ready span{color:#49806a}.character-v4-banner.ready small{color:#7a5a13}.character-v4-banner.unresolved{background:#fff8ee;border-color:#efc982;color:#7b4d08}.character-v4-banner.unresolved span{color:#835f28}.character-v4-banner button{flex:0 0 auto;border:0;border-radius:8px;padding:8px 12px;background:#2f60e8;color:#fff;font-weight:750;cursor:pointer}.character-v4-banner button:disabled{opacity:.6;cursor:wait}.character-v4-error{margin:8px 22px 0;padding:8px 11px;border-radius:8px;background:#fff0f0;color:#b53a3a;font-size:12px}.unresolved-shot-list{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}.unresolved-shot-list span,.unresolved-shot-list em{padding:3px 7px;border-radius:999px;background:#fff;border:1px solid #efd7a9;font-style:normal;font-size:10px;font-weight:700;color:#815a18}
 </style>
