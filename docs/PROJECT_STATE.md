@@ -1,7 +1,7 @@
 # AI Drama Studio — Project State (Reference Video V2)
 
 > 当前开发基线：`main`。
-> 产品已经从“一个技术 Feature 一个页面”切换为“后台自动能力 + 少量人工审核工作区”。
+> 产品已经从“一个技术 Feature 一个页面”切换为“后台自动能力 + 少量可操作工作区”。
 
 ## 当前基线
 
@@ -10,17 +10,15 @@ Repository: zdingwl/ai-drama-studio
 Branch: main
 Architecture: Reference Video V2
 Project Format: 2.0
-App Version: 2.1.0
+App Version: 2.3.0
 ```
 
 ## 正式用户工作区
 
-左侧主导航只保留真正需要用户管理、审核或创作的工作区：
-
 ```text
 01 剧集管理
-02 拉片审核
-03 资产审核
+02 拉片
+03 资产
 04 内容剧本
 05 重制设计
 06 生成 / 导出
@@ -31,28 +29,19 @@ App Version: 2.1.0
 ```text
 不可修改、无需确认的技术中间结果
 → 后台自动执行
-→ 不单独做生产阶段页面
+→ 不单独做阶段页面
 
-容易出错、影响下游、用户可以修正的结果
-→ 做审核工作区
+容易出错，而且用户能够修正的结果
+→ 提供编辑 / 修正能力
+
+正常结果
+→ 不要求用户逐项确认
+
+异常或用户主动发现问题
+→ 再进入人工修正
 ```
 
-因此下列能力不再单独占导航：
-
-```text
-FFprobe / Media Info
-Proxy
-Audio WAV
-Frame PTS
-关键帧缓存
-Face / Body Embedding
-SAM Mask / Track
-OCR 原始框
-Camera Trajectory
-模型内部日志
-```
-
-需要排错时通过详情 / Evidence 查看。
+因此 FFprobe、Proxy、Audio WAV、Frame PTS、关键帧缓存、Embedding、SAM Mask、OCR 原始框、Camera Trajectory、模型内部日志等都不是独立生产页面。
 
 ## 01 剧集管理
 
@@ -69,24 +58,16 @@ Camera Trajectory
 
 `Episode.sort_order` 是所有批量任务的正式处理顺序。
 
-项目级属性：
+项目名称、原项目语言、目标语言、目标地区属于 Project 设置，不单独占一个生产阶段。
+
+## 02 拉片
+
+正式用户动作：
 
 ```text
-项目名称
-原项目语言
-目标语言
-目标地区
-```
-
-属于 Project 设置，不再占一个生产阶段。
-
-## 02 拉片审核
-
-正式用户动作只有：
-
-```text
-单集拉片 / 重新拉片
+单集拉片 / 重新自动拉片
 顺序批量拉片
+必要时打开“修正镜头”
 ```
 
 拉片 Workflow 内部自动执行：
@@ -115,9 +96,9 @@ Thumbnail / Keyframe
 Shot Result
 ```
 
-也就是说，原来的“F03 视频预处理”仍然是后端基础能力，但已经不再是用户页面。
+原来的“视频预处理”仍然是后端基础能力，但已经不再是用户页面。
 
-批量拉片严格：
+批量拉片严格按 Episode.sort_order 顺序：
 
 ```text
 EP01 完整处理完
@@ -130,11 +111,52 @@ EP03
 
 不并行跑多个 Episode。
 
-拉片结果属于高风险结果，因此保留审核工作台：Shot 边界、拆分、合并、重新执行等人工能力继续在这里完成。
+### 拉片结果不要求逐镜确认
 
-## 03 资产审核
+如果用户没有发现问题，可以直接继续资产阶段。
 
-目标：从 Final Shot / Reference Clip 中提取并审核：
+页面目前用 `< 500ms` 短镜头作为一个简单的“建议检查”提示，但它只是异常提示，不代表 Shot 一定错误，也不会阻塞下游。
+
+### 只有需要时才进入 Shot 修正
+
+V2 已实现真正可写的 Shot 修正：
+
+```text
+修改当前 Shot Start 公共边界
+修改当前 Shot End 公共边界
+在播放器当前播放头拆分 Shot
+合并上一镜
+合并下一镜
+```
+
+硬约束：
+
+```text
+Source Domain integer microseconds
+相邻 Shot 必须连续
+不允许 gap
+不允许 overlap
+单 Shot 最短 120ms
+```
+
+边界修改会同时更新边界两侧的 Shot；拆分保留左 Shot ID 并创建新的右 Shot ID；合并保留左 Shot ID并删除右侧边界。
+
+受影响 Shot 的 Reference Clip / Thumbnail 会重新生成。
+
+一旦 Shot 结构被人工修改：
+
+```text
+Episode.status = SHOTS_EDITED
+当前资产 ContentAnalysisRun.status = STALE
+```
+
+旧资产 Evidence 保留用于对照，但不能继续假装是基于最新 Shot Timeline 的结果。
+
+> 当前 V2 Shot 集合仍是“Current mutable Shot set”；完整 Shot Run / Revision 历史版本模型还未完成，不能把当前实现描述成已经具备完整 R1/R2 历史回退能力。
+
+## 03 资产
+
+目标：从当前 Shot / Reference Clip 中提取：
 
 ```text
 人物
@@ -142,7 +164,7 @@ EP03
 关键道具
 ```
 
-全部绑定回 Shot。
+并绑定回 Shot。
 
 人物当前策略：
 
@@ -153,7 +175,7 @@ Body / Clothing / HOG = 辅助 Evidence
 
 body-only Detection 不能单独创建正式人物身份，避免花、衣服、背景纹理被误识别成 Character。
 
-资产页面默认按：
+资产页面按：
 
 ```text
 Episode
@@ -163,7 +185,9 @@ Episode
 
 组织，不再把几千个 AI Candidate 平铺成卡片墙。
 
-ASR / Speaker / Dialogue 不再属于资产提取，后续进入“内容剧本”。
+当前资产页已经可以检查 Evidence 和 Shot Binding，但“合并 / 拆分 / 改名 / 添加移除 Binding”的 Final Asset 编辑层尚未完成，因此目前正式名称只叫“资产”，不把只读部分冒充完整“资产审核”。
+
+ASR / Speaker / Dialogue 不属于资产提取，后续进入“内容剧本”。
 
 ## 04 内容剧本
 
@@ -181,15 +205,7 @@ Qwen3-VL / 可选云端 VLM
 
 这些不会各自做页面。
 
-用户最终审核：
-
-```text
-结构化源剧本
-人物对白
-Scene 内容
-动作 / 重要视觉语义
-剧情概括
-```
+用户最终需要修改的是结构化源剧本、人物对白、Scene 内容、重要动作/视觉语义和剧情概括。
 
 ## 05 重制设计
 
@@ -218,7 +234,7 @@ Timeline Assembly
 Final Export
 ```
 
-默认采用异常驱动审核，不要求用户逐项确认所有正常结果。
+默认采用异常驱动，不要求用户逐项确认所有正常结果。
 
 ## 统一后台 Task Progress
 
@@ -233,14 +249,7 @@ FAILED
 CANCELLED
 ```
 
-任务状态保存在数据库中，因此：
-
-```text
-页面刷新不会丢进度
-切换工作区不会丢进度
-重复点击不会重复创建同作用域活动任务
-服务重启后遗留 PROCESSING 会明确标记为中断失败
-```
+任务状态保存在数据库中，因此页面刷新 / 切换工作区不会丢进度；重复点击不会重复创建同作用域活动任务；服务重启后遗留 PROCESSING 会明确标记为中断失败。
 
 第一批已接入：
 
@@ -262,6 +271,8 @@ Reference Clip 18 / 31
 
 无法诚实计算模型内部百分比时使用阶段型 indeterminate 进度，不伪造百分比。
 
+Shot 边界/拆分/合并目前只重建 1～2 个 Reference Clip，暂时使用页面局部 busy 状态；如果真实素材上耗时明显，再接入统一 Task Progress。
+
 ## 当前 V2 数据模型
 
 基础实体：
@@ -281,7 +292,7 @@ Generation
 BackgroundTaskRecord
 ```
 
-AI Evidence 仍然和人工 Final / Revision 分开保存。
+AI Evidence 仍然和人工 Final / Revision 分开设计。
 
 当前数据目录：
 
@@ -306,28 +317,29 @@ data_v2/
 
 ```text
 01 剧集管理: IMPLEMENTED / NEEDS LOCAL REGRESSION
-02 拉片审核: IMPLEMENTED V1 / AUTO-PREPROCESS INTEGRATED / NEEDS LOCAL REGRESSION
-03 资产审核: IMPLEMENTED V1 / ALGORITHM + UI STILL UNDER REAL-VIDEO REVIEW
+02 拉片: AUTO-PREPROCESS + TASK PROGRESS + MANUAL SHOT EDIT IMPLEMENTED / NEEDS LOCAL REGRESSION
+03 资产: IMPLEMENTED AUTO EVIDENCE V1 / FINAL MANUAL BINDING NOT IMPLEMENTED
 04 内容剧本: PLANNED
 05 重制设计: PLANNED
 06 生成 / 导出: PLANNED
 
 Task Progress: IMPLEMENTED V1 / NEEDS LOCAL REGRESSION
-Run / Revision / Rerun: GLOBAL CONTRACT CONFIRMED, NEEDS FURTHER DATA-MODEL IMPLEMENTATION
+Run / Revision / Rerun: GLOBAL CONTRACT CONFIRMED, FULL DATA-MODEL VERSIONING NOT YET COMPLETE
 ```
 
 ## 近期优先级
 
 ```text
-P0-1 本机验证：拉片自动预处理 + 全局真实进度
-P0-2 完善拉片人工 Revision / 重跑版本化
-P0-3 完善人物 / 场景 / 道具资产算法与 Final Binding
+P0-1 本机验证：拉片自动初始化 + 真实进度 + Shot 边界/拆分/合并
+P0-2 完善 Shot Run / Revision 历史版本化
+P0-3 完成人物 / 场景 / 道具 Final Asset Binding 人工编辑
 P0-4 开发内容剧本（ASR + Speaker + VLM + Structured Script）
 ```
 
 ## 测试入口
 
 ```text
+python -m pytest engine/tests/v2/test_shot_editor_v2.py -q
 python -m pytest engine/tests/v2 -q
 
 cd frontend
