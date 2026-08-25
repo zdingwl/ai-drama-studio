@@ -42,19 +42,20 @@ def face_track(
     return track
 
 
-def test_adjacent_body_only_tracks_become_one_unresolved_continuity_candidate() -> None:
+def test_body_only_tracks_never_create_global_character_identity() -> None:
+    """V6 body-only 只能挂已有 Face Identity；不能互相抱团制造人物。"""
+
     left = body_track(shot_id="SHOT_1", shot_ordinal=1, vector=[1.0, 0.0, 0.0])
     right = body_track(shot_id="SHOT_2", shot_ordinal=2, vector=[1.0, 0.01, 0.0])
 
     candidates = cluster_candidates([left, right])
 
-    assert len(candidates) == 1
-    assert candidates[0].identity_status == "UNRESOLVED"
-    assert candidates[0].has_face_anchor is False
-    assert candidates[0].tracks == [left, right]
+    assert len(candidates) == 2
+    assert all(item.identity_status == "UNRESOLVED" for item in candidates)
+    assert all(item.has_face_anchor is False for item in candidates)
 
 
-def test_same_shot_face_tracks_never_auto_merge_even_with_identical_identity_evidence() -> None:
+def test_same_shot_face_tracks_never_auto_merge_even_with_identical_embedding() -> None:
     left = face_track(
         shot_id="SHOT_1",
         shot_ordinal=1,
@@ -73,12 +74,11 @@ def test_same_shot_face_tracks_never_auto_merge_even_with_identical_identity_evi
     assert len(candidates) == 2
     assert candidates[0].tracks == [left]
     assert candidates[1].tracks == [right]
-    assert all(item.identity_status == "RESOLVED" for item in candidates)
+    # 这里只有历史聚合 embedding、没有连续人脸 samples；V6 不允许它们直接升级 Final。
+    assert all(item.identity_status == "UNRESOLVED" for item in candidates)
 
 
 def test_weak_face_match_cannot_merge_across_distant_shots_even_when_reid_is_similar() -> None:
-    """V5.1 宁可留下碎片，也不允许弱 Face + 相似衣服跨多个 Shot 串人。"""
-
     frontal = face_track(
         shot_id="SHOT_2",
         shot_ordinal=2,
@@ -95,10 +95,11 @@ def test_weak_face_match_cannot_merge_across_distant_shots_even_when_reid_is_sim
     candidates = cluster_candidates([frontal, profile])
 
     assert len(candidates) == 2
-    assert all(item.identity_status == "RESOLVED" for item in candidates)
 
 
-def test_adjacent_body_only_track_can_extend_existing_face_anchored_identity() -> None:
+def test_adjacent_body_only_track_can_attach_to_face_cluster_but_not_make_it_resolved_by_itself() -> None:
+    """历史无 samples 的 Face Track 本身不足以通过 Final Gate；Body 只能附着，不能提高 Face 证据等级。"""
+
     anchor = face_track(
         shot_id="SHOT_2",
         shot_ordinal=2,
@@ -110,13 +111,12 @@ def test_adjacent_body_only_track_can_extend_existing_face_anchored_identity() -
     candidates = cluster_candidates([back_view, anchor])
 
     assert len(candidates) == 1
-    assert candidates[0].identity_status == "RESOLVED"
+    assert candidates[0].identity_status == "UNRESOLVED"
     assert anchor in candidates[0].tracks
     assert back_view in candidates[0].tracks
-    assert len(candidates[0].tracks) == 2
 
 
-def test_distant_body_only_track_remains_unresolved_instead_of_silent_drop() -> None:
+def test_distant_body_only_track_remains_separate_unresolved_evidence() -> None:
     anchor = face_track(
         shot_id="SHOT_1",
         shot_ordinal=1,
@@ -128,14 +128,11 @@ def test_distant_body_only_track_remains_unresolved_instead_of_silent_drop() -> 
     candidates = cluster_candidates([anchor, distant])
 
     assert len(candidates) == 2
-    resolved = next(item for item in candidates if item.identity_status == "RESOLVED")
-    unresolved = next(item for item in candidates if item.identity_status == "UNRESOLVED")
-    assert resolved.tracks == [anchor]
-    assert unresolved.tracks == [distant]
+    assert all(item.identity_status == "UNRESOLVED" for item in candidates)
 
 
-def test_v5_tracking_sampling_is_denser_than_old_three_five_seven_frame_strategy() -> None:
-    assert len(sample_ratios(300_000)) == 3
-    assert len(sample_ratios(700_000)) >= 5
-    assert len(sample_ratios(1_600_000)) >= 10
-    assert len(sample_ratios(4_000_000)) >= 20
+def test_v6_tracking_sampling_is_dense_enough_for_mature_mot() -> None:
+    assert len(sample_ratios(300_000)) >= 4
+    assert len(sample_ratios(700_000)) >= 9
+    assert len(sample_ratios(1_600_000)) >= 20
+    assert len(sample_ratios(4_000_000)) >= 40
