@@ -1,12 +1,14 @@
 """V2 后台任务 API 与顺序执行器。
 
-第一批接入：
-- 单集 / 批量视频预处理；
-- 单集 / 批量拉片；
-- Project 级资产提取。
+正式用户 Workflow：
+- 拉片任务会自动检查当前 Episode 的预处理状态；
+- 未准备时先生成 Proxy / Audio / Media Info，再继续 Shot Detection；
+- 已准备时直接复用，不重复执行预处理；
+- 批量拉片严格按 Episode.sort_order 顺序逐集完成“初始化 + 拉片”，不并行处理多个视频；
+- Project 级资产提取继续使用同一套 Task Progress。
 
-批量任务严格按 Episode.sort_order 顺序执行，不并行占用多个视频任务资源。
-某一集失败时记录失败并继续后续剧集，最终 Task 标记 READY_WITH_WARNINGS，用户可单独重试失败集。
+单独 preprocess Task 路由暂时保留给兼容、测试和故障排查，不再作为正式 UI 阶段。
+某一集批量处理失败时记录失败并继续后续剧集，最终 Task 标记 READY_WITH_WARNINGS。
 """
 from __future__ import annotations
 
@@ -30,10 +32,15 @@ from engine.app.task_progress_v2 import (
 
 router = APIRouter(prefix="/api", tags=["background-tasks"])
 
+# 拉片 Workflow 中预处理约占前 25%，Shot Detection / Reference Clip 占后 75%。
+# 这里只是把已有内部真实进度映射到统一 Task 百分比，不伪造模型内部进度。
+SHOT_WORKFLOW_PREPROCESS_WEIGHT = 0.25
+
 STAGE_LABELS = {
     "probe": "读取媒体信息",
-    "proxy": "生成 Proxy",
-    "audio": "提取 Audio",
+    "proxy": "准备分析视频",
+    "audio": "提取音频",
+    "reuse_preprocess": "复用分析资产",
     "frame_pts": "读取真实 PTS",
     "transnet": "TransNetV2 镜头检测",
     "boundaries": "整理 Shot 边界",
@@ -66,7 +73,12 @@ def _create_and_enqueue(
     progress_mode: str = "determinate",
     total_items: int | None = None,
 ) -> dict[str, Any]:
-    """防重复创建并把同步 runner 放入 FastAPI 后台线程执行。"""
+    """创建并入队后台任务。
+
+    输入：Project / Episode 作用域、Task 类型、runner。
+    输出：持久化 Task DTO。
+    为什么：正式页面只发一次“开始任务”请求，真正耗时工作在后台执行；重复点击返回已有活动任务。
+    """
 
     existing = _active_task(project_id, task_type, episode_id)
     if existing is not None:
@@ -85,6 +97,8 @@ def _create_and_enqueue(
 
 
 def _episode_name(episode: Any) -> str:
+    if isinstance(episode, dict):
+        return f"EP{int(episode['sort_order']):02d} · {episode['title']}"
     return f"EP{int(episode.sort_order):02d} · {episode.title}"
 
 
@@ -92,12 +106,24 @@ def _stage_label(stage_key: str) -> str:
     return STAGE_LABELS.get(stage_key, stage_key)
 
 
+def _needs_preprocess(episode: dict[str, Any]) -> bool:
+    """判断拉片前是否需要自动准备媒体分析资产。
+
+    当前 V2 以 preprocess_status=READY 代表当前 Episode 已有可复用 Proxy / Audio。
+    后续 Source Versioning 接入后，这里再增加 source_version / source_sha 依赖校验。
+    """
+
+    return episode.get("preprocess_status") != "READY"
+
+
 def run_episode_preprocess_task(task_id: str, episode_id: str) -> None:
+    """兼容/诊断用单集预处理任务；正式 UI 不再把它作为独立生产步骤。"""
+
     try:
         episode = get_episode(episode_id)
         if episode is None:
             raise LookupError("剧集不存在")
-        start_task(task_id, stage_key="preprocess", stage_label="视频初始化", message="正在读取媒体并生成 Proxy / Audio")
+        start_task(task_id, stage_key="probe", stage_label="读取媒体信息", message="正在准备 Proxy / Audio / Media Info")
 
         def report(percent: float, stage_key: str, message: str, current: int | None, total: int | None) -> None:
             update_task(
@@ -119,18 +145,29 @@ def run_episode_preprocess_task(task_id: str, episode_id: str) -> None:
 
 
 def run_batch_preprocess_task(task_id: str, project_id: str) -> None:
+    """兼容/诊断用批量预处理任务；正式批量拉片会自行完成这一阶段。"""
+
     try:
         episodes = list_episode_records(project_id)
         total = len(episodes)
         if total == 0:
             raise ValueError("项目还没有剧集")
-        start_task(task_id, stage_key="preprocess_batch", stage_label="批量视频初始化", message="按照剧集顺序逐集处理")
+        start_task(task_id, stage_key="probe", stage_label="批量视频初始化", message="按照剧集顺序逐集处理")
         results: list[dict[str, Any]] = []
         failures = 0
         for index, episode in enumerate(episodes, start=1):
             episode_name = _episode_name(episode)
 
-            def report(percent: float, stage_key: str, message: str, current: int | None, inner_total: int | None, *, _index: int = index, _name: str = episode_name) -> None:
+            def report(
+                percent: float,
+                stage_key: str,
+                message: str,
+                current: int | None,
+                inner_total: int | None,
+                *,
+                _index: int = index,
+                _name: str = episode_name,
+            ) -> None:
                 overall = ((_index - 1) + percent / 100.0) / total * 100.0
                 update_task(
                     task_id,
@@ -150,7 +187,7 @@ def run_batch_preprocess_task(task_id: str, project_id: str) -> None:
                 current_item=episode_name,
                 current_index=index,
                 total_items=total,
-                stage_key="episode_preprocess",
+                stage_key="probe",
                 stage_label="视频初始化",
                 message=f"正在处理 {episode_name}",
             )
@@ -176,45 +213,116 @@ def run_batch_preprocess_task(task_id: str, project_id: str) -> None:
 
 
 def run_episode_shots_task(task_id: str, episode_id: str) -> None:
+    """执行单集“拉片”Workflow：必要时自动预处理，再执行 Shot Detection。
+
+    用户不需要知道 F03；如果 Proxy / Audio 已经 READY 就直接复用。
+    """
+
     try:
         episode = get_episode(episode_id)
         if episode is None:
             raise LookupError("剧集不存在")
-        start_task(task_id, stage_key="shot_detection", stage_label="自动拉片", message="正在分析镜头边界并生成 Reference Clip")
+        start_task(task_id, stage_key="probe", stage_label="准备拉片", message="正在检查视频分析资产")
 
-        def report(percent: float, stage_key: str, message: str, current: int | None, total: int | None) -> None:
+        if _needs_preprocess(episode):
+            def preprocess_report(
+                percent: float,
+                stage_key: str,
+                message: str,
+                current: int | None,
+                total: int | None,
+            ) -> None:
+                workflow_percent = percent * SHOT_WORKFLOW_PREPROCESS_WEIGHT
+                update_task(
+                    task_id,
+                    progress_mode="determinate",
+                    progress_percent=workflow_percent,
+                    stage_key=stage_key,
+                    stage_label=_stage_label(stage_key),
+                    current_item=episode["title"],
+                    current_index=1,
+                    total_items=1,
+                    message=message,
+                )
+
+            preprocess_episode(episode_id, progress=preprocess_report)
+        else:
             update_task(
                 task_id,
                 progress_mode="determinate",
-                progress_percent=percent,
+                progress_percent=SHOT_WORKFLOW_PREPROCESS_WEIGHT * 100,
+                stage_key="reuse_preprocess",
+                stage_label=_stage_label("reuse_preprocess"),
+                current_item=episode["title"],
+                current_index=1,
+                total_items=1,
+                message="Proxy / Audio 已就绪，直接复用",
+            )
+
+        def shot_report(
+            percent: float,
+            stage_key: str,
+            message: str,
+            current: int | None,
+            total: int | None,
+        ) -> None:
+            workflow_percent = (
+                SHOT_WORKFLOW_PREPROCESS_WEIGHT
+                + (percent / 100.0) * (1.0 - SHOT_WORKFLOW_PREPROCESS_WEIGHT)
+            ) * 100.0
+            detail = message
+            if current is not None and total is not None and stage_key == "reference_clips":
+                detail = f"Reference Clip {current} / {total}"
+            update_task(
+                task_id,
+                progress_mode="determinate",
+                progress_percent=workflow_percent,
                 stage_key=stage_key,
                 stage_label=_stage_label(stage_key),
                 current_item=episode["title"],
-                current_index=current if current is not None else 1,
-                total_items=total if total is not None else 1,
-                message=message,
+                current_index=1,
+                total_items=1,
+                message=detail,
             )
 
-        shots = detect_episode_shots(episode_id, progress=report)
+        shots = detect_episode_shots(episode_id, progress=shot_report)
         finish_task(task_id, result={"episode_id": episode_id, "shot_count": len(shots)}, message=f"拉片完成：{len(shots)} Shots")
     except Exception as exc:
         fail_task(task_id, exc)
 
 
 def run_batch_shots_task(task_id: str, project_id: str) -> None:
+    """按剧集顺序执行批量拉片；每一集内部先自动确保预处理，再完成拉片。"""
+
     try:
         episodes = list_episode_records(project_id)
         total = len(episodes)
         if total == 0:
             raise ValueError("项目还没有剧集")
-        start_task(task_id, stage_key="shot_batch", stage_label="批量拉片", message="严格按照剧集顺序逐集拉片")
+        start_task(task_id, stage_key="probe", stage_label="批量拉片", message="严格按照剧集顺序逐集处理")
         results: list[dict[str, Any]] = []
         failures = 0
-        for index, episode in enumerate(episodes, start=1):
+
+        for index, episode_record in enumerate(episodes, start=1):
+            episode = get_episode(episode_record.id)
+            if episode is None:
+                failures += 1
+                results.append({"episode_id": episode_record.id, "status": "FAILED", "error": "剧集不存在"})
+                continue
+
             episode_name = _episode_name(episode)
 
-            def report(percent: float, stage_key: str, message: str, current: int | None, inner_total: int | None, *, _index: int = index, _name: str = episode_name) -> None:
-                overall = ((_index - 1) + percent / 100.0) / total * 100.0
+            def update_episode_progress(
+                local_percent: float,
+                stage_key: str,
+                message: str,
+                current: int | None = None,
+                inner_total: int | None = None,
+                *,
+                _index: int = index,
+                _name: str = episode_name,
+            ) -> None:
+                overall = ((_index - 1) + max(0.0, min(100.0, local_percent)) / 100.0) / total * 100.0
                 detail = message
                 if current is not None and inner_total is not None and stage_key == "reference_clips":
                     detail = f"{_name} · Reference Clip {current} / {inner_total}"
@@ -230,31 +338,54 @@ def run_batch_shots_task(task_id: str, project_id: str) -> None:
                     message=detail,
                 )
 
-            update_task(
-                task_id,
-                progress_mode="determinate",
-                progress_percent=((index - 1) / total) * 100,
-                current_item=episode_name,
-                current_index=index,
-                total_items=total,
-                stage_key="episode_shots",
-                stage_label="镜头检测 / Reference Clip",
-                message=f"正在拉片 {episode_name}",
-            )
+            update_episode_progress(0, "probe", f"正在准备 {episode_name}")
+
             try:
-                shots = detect_episode_shots(episode.id, progress=report)
-                results.append({"episode_id": episode.id, "status": "READY", "shot_count": len(shots)})
+                if _needs_preprocess(episode):
+                    def preprocess_report(
+                        percent: float,
+                        stage_key: str,
+                        message: str,
+                        current: int | None,
+                        inner_total: int | None,
+                    ) -> None:
+                        update_episode_progress(
+                            percent * SHOT_WORKFLOW_PREPROCESS_WEIGHT,
+                            stage_key,
+                            message,
+                            current,
+                            inner_total,
+                        )
+
+                    preprocess_episode(episode["id"], progress=preprocess_report)
+                else:
+                    update_episode_progress(
+                        SHOT_WORKFLOW_PREPROCESS_WEIGHT * 100,
+                        "reuse_preprocess",
+                        "Proxy / Audio 已就绪，直接复用",
+                    )
+
+                def shot_report(
+                    percent: float,
+                    stage_key: str,
+                    message: str,
+                    current: int | None,
+                    inner_total: int | None,
+                ) -> None:
+                    local_percent = (
+                        SHOT_WORKFLOW_PREPROCESS_WEIGHT
+                        + (percent / 100.0) * (1.0 - SHOT_WORKFLOW_PREPROCESS_WEIGHT)
+                    ) * 100.0
+                    update_episode_progress(local_percent, stage_key, message, current, inner_total)
+
+                shots = detect_episode_shots(episode["id"], progress=shot_report)
+                results.append({"episode_id": episode["id"], "status": "READY", "shot_count": len(shots)})
             except Exception as exc:
                 failures += 1
-                results.append({"episode_id": episode.id, "status": "FAILED", "error": str(exc)})
-            update_task(
-                task_id,
-                progress_percent=(index / total) * 100,
-                current_item=episode_name,
-                current_index=index,
-                total_items=total,
-                message=f"已完成 {index} / {total} 集",
-            )
+                results.append({"episode_id": episode["id"], "status": "FAILED", "error": str(exc)})
+
+            update_episode_progress(100, "ready", f"已完成 {index} / {total} 集")
+
         status = "READY_WITH_WARNINGS" if failures else "READY"
         message = f"批量拉片完成：{total - failures} 成功，{failures} 失败" if failures else f"批量拉片完成：{total} 集"
         finish_task(task_id, result={"mode": "sequential", "results": results}, message=message, status=status)
@@ -293,6 +424,7 @@ def api_get_task(task_id: str) -> dict[str, Any]:
     return task
 
 
+# 兼容/诊断接口：正式 UI 不再单独暴露“预处理”阶段。
 @router.post("/episodes/{episode_id}/tasks/preprocess", status_code=202)
 def api_start_episode_preprocess(episode_id: str, background: BackgroundTasks) -> dict[str, Any]:
     episode = get_episode(episode_id)
