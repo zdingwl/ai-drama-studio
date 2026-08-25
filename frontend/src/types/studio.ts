@@ -137,6 +137,7 @@ export interface ContentAnalysisRun {
 
 export interface F05ModelStatus {
   ready: boolean
+  profile?: string
   models: Array<{
     logical_id: string
     filename: string
@@ -144,6 +145,23 @@ export interface F05ModelStatus {
     path: string
     error: string | null
   }>
+  runtime?: {
+    installed: boolean
+    preference: string
+    device: 'GPU' | 'CPU' | string
+    provider: string | null
+    available_providers: string[]
+    gpu_available: boolean
+    fallback: boolean
+    detail: string
+  }
+  face_runtime?: {
+    device: string
+    provider: string
+    detail: string
+  }
+  identity_policy?: string
+  gallery_policy?: string
 }
 
 export type AssetEntityType = 'character' | 'scene' | 'prop'
