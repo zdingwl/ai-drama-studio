@@ -82,7 +82,9 @@ def test_adjacent_body_only_track_can_extend_existing_face_anchored_identity() -
     candidates = cluster_candidates([back_view, anchor])
 
     assert len(candidates) == 1
-    assert set(candidates[0].tracks) == {anchor, back_view}
+    assert anchor in candidates[0].tracks
+    assert back_view in candidates[0].tracks
+    assert len(candidates[0].tracks) == 2
 
 
 def test_distant_body_only_track_does_not_attach_to_face_identity() -> None:
