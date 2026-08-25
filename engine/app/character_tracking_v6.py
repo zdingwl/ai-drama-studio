@@ -3,7 +3,8 @@
 职责：
 - 接收已经完成 YOLOX / Face / ReID 的逐帧 Person Observation；
 - 默认使用 trackers 2.6 的 BoT-SORT 做 Shot 内人物轨迹，启用 Camera Motion Compensation；
-- BoT-SORT 初始化失败时仅降级为同库 ByteTrack，不再退回 V5 的自制 greedy tracker；
+- BoT-SORT 初始化或 Shot 运行失败时，整条 Shot 从头重跑 ByteTrack；
+- 把真实采样 timestamp 传给 tracker，避免长 Shot 因采样上限导致 Kalman 时间尺度错误；
 - tracker 只回答“当前 Shot 内这是不是同一条连续轨迹”，绝不直接创建 Character_ID；
 - MOT 结束后仍执行 Face hard-conflict 拆轨，防止遮挡/交叉造成 ID switch 污染整条 Track。
 
@@ -45,8 +46,22 @@ def _to_xywh(box: Any) -> tuple[int, int, int, int]:
     return left, top, max(1, int(round(x2 - x1))), max(1, int(round(y2 - y1)))
 
 
+def _make_bytetrack() -> tuple[Any, str]:
+    from trackers import ByteTrackTracker
+
+    tracker = ByteTrackTracker(
+        frame_rate=TRACK_FRAME_RATE,
+        lost_track_buffer=TRACK_LOST_BUFFER,
+        track_activation_threshold=TRACK_ACTIVATION_THRESHOLD,
+        minimum_consecutive_frames=TRACK_MIN_CONSECUTIVE,
+        high_conf_det_threshold=TRACK_HIGH_CONF_THRESHOLD,
+        minimum_iou_threshold=0.18,
+    )
+    return tracker, "ByteTrack fallback"
+
+
 def _make_tracker() -> tuple[Any, str]:
-    """优先 BoT-SORT；仅同库 ByteTrack fallback，不回到自制 greedy。"""
+    """优先 BoT-SORT；初始化失败时仅降级为同库 ByteTrack，不回到自制 greedy。"""
 
     try:
         from trackers import BoTSORTTracker
@@ -62,24 +77,21 @@ def _make_tracker() -> tuple[Any, str]:
         )
         return tracker, "BoT-SORT"
     except Exception:
-        from trackers import ByteTrackTracker
-
-        tracker = ByteTrackTracker(
-            frame_rate=TRACK_FRAME_RATE,
-            lost_track_buffer=TRACK_LOST_BUFFER,
-            track_activation_threshold=TRACK_ACTIVATION_THRESHOLD,
-            minimum_consecutive_frames=TRACK_MIN_CONSECUTIVE,
-            high_conf_det_threshold=TRACK_HIGH_CONF_THRESHOLD,
-            minimum_iou_threshold=0.18,
-        )
-        return tracker, "ByteTrack fallback"
+        return _make_bytetrack()
 
 
 def tracker_runtime_status() -> dict[str, object]:
     try:
         tracker, name = _make_tracker()
         del tracker
-        return {"ready": True, "tracker": name, "package": "trackers 2.6.0", "frame_rate": TRACK_FRAME_RATE}
+        return {
+            "ready": True,
+            "tracker": name,
+            "package": "trackers 2.6.0",
+            "frame_rate": TRACK_FRAME_RATE,
+            "timestamps": True,
+            "runtime_fallback": "ByteTrack",
+        }
     except Exception as exc:
         return {"ready": False, "tracker": None, "package": "trackers 2.6.0", "error": str(exc)}
 
@@ -94,7 +106,10 @@ def _frame_detections(observations: list[Observation]) -> Any:
             class_id=np.empty((0,), dtype=np.int32),
         )
     xyxy = np.asarray([_to_xyxy(item.bbox) for item in observations], dtype=np.float32)
-    confidence = np.asarray([max(0.0, min(1.0, float(item.detection_score))) for item in observations], dtype=np.float32)
+    confidence = np.asarray(
+        [max(0.0, min(1.0, float(item.detection_score))) for item in observations],
+        dtype=np.float32,
+    )
     class_id = np.zeros((len(observations),), dtype=np.int32)
     return sv.Detections(xyxy=xyxy, confidence=confidence, class_id=class_id)
 
@@ -149,10 +164,65 @@ def _build_track(observations: list[Observation]) -> TrackDraft:
     return track
 
 
+def _track_shot(
+    shot_observations: list[Observation],
+    tracker: Any,
+    tracker_name: str,
+) -> dict[int, list[Observation]]:
+    """用一个 tracker 完整跑完单 Shot。
+
+    失败时由调用方丢弃本次局部结果并从 Shot 开头重跑 fallback，避免半条 BoT-SORT + 半条 ByteTrack
+    造成 ID 空间和时序状态混杂。
+    """
+
+    by_time: dict[int, list[Observation]] = defaultdict(list)
+    for observation in shot_observations:
+        by_time[observation.source_time_us].append(observation)
+
+    first_observation = shot_observations[0]
+    local_times = sorted({item.local_time_us for item in shot_observations})
+    frame_map = {
+        int(local_us): frame
+        for local_us, frame in v5._read_frames(first_observation.reference_path, local_times)
+    }
+
+    tracks_by_id: dict[int, list[Observation]] = defaultdict(list)
+    fallback_counter = -1
+    for source_time_us in sorted(by_time):
+        frame_observations = by_time[source_time_us]
+        detections = _frame_detections(frame_observations)
+        local_us = frame_observations[0].local_time_us if frame_observations else 0
+        timestamp = max(0.0, float(local_us) / 1_000_000.0)
+
+        if tracker_name == "BoT-SORT":
+            frame = frame_map.get(local_us)
+            if frame is None:
+                raise RuntimeError("BoT-SORT CMC 缺少当前采样帧")
+            tracked = tracker.update(detections, frame=frame, timestamp=timestamp)
+        else:
+            tracked = tracker.update(detections, timestamp=timestamp)
+
+        assigned = _assign_tracker_rows(frame_observations, tracked)
+        assigned_objects = {id(item) for item in assigned.values()}
+        for tracker_id, observation in assigned.items():
+            tracks_by_id[tracker_id].append(observation)
+
+        # MOT 未确认/过滤掉的 observation 仍保留 Evidence，但只形成临时单独 Track。
+        # 后续 Global Resolver 可以把有可靠 Face 的碎片重新并回身份；不会静默漏人。
+        for observation in frame_observations:
+            if id(observation) in assigned_objects:
+                continue
+            tracks_by_id[fallback_counter].append(observation)
+            fallback_counter -= 1
+
+    return tracks_by_id
+
+
 def build_tracks(observations: list[Observation]) -> list[TrackDraft]:
     """Person Observations -> Mature MOT Tracks。
 
     每个 Shot 重置 tracker；Shot 之间绝不沿用 MOT ID。跨 Shot 是身份问题，由 Global Resolver 处理。
+    BoT-SORT 若在任意采样点运行失败，当前 Shot 的部分结果全部丢弃，并从头用 ByteTrack 重跑。
     """
 
     by_shot: dict[str, list[Observation]] = defaultdict(list)
@@ -161,50 +231,23 @@ def build_tracks(observations: list[Observation]) -> list[TrackDraft]:
 
     result: list[TrackDraft] = []
     for shot_observations in by_shot.values():
-        tracker, _tracker_name = _make_tracker()
-        by_time: dict[int, list[Observation]] = defaultdict(list)
-        for observation in shot_observations:
-            by_time[observation.source_time_us].append(observation)
+        if not shot_observations:
+            continue
 
-        sample_times = sorted(by_time)
-        first_observation = shot_observations[0]
-        local_times = sorted({item.local_time_us for item in shot_observations})
-        frame_map = {
-            int(local_us): frame
-            for local_us, frame in v5._read_frames(first_observation.reference_path, local_times)
-        }
-
-        tracks_by_id: dict[int, list[Observation]] = defaultdict(list)
-        fallback_counter = -1
-        for source_time_us in sample_times:
-            frame_observations = by_time[source_time_us]
-            detections = _frame_detections(frame_observations)
-            local_us = frame_observations[0].local_time_us if frame_observations else 0
-            frame = frame_map.get(local_us)
-            try:
-                tracked = tracker.update(detections, frame=frame)
-            except TypeError:
-                # ByteTrack 等实现接受统一 update API，但不需要 frame。
-                tracked = tracker.update(detections)
-
-            assigned = _assign_tracker_rows(frame_observations, tracked)
-            assigned_objects = {id(item) for item in assigned.values()}
-            for tracker_id, observation in assigned.items():
-                tracks_by_id[tracker_id].append(observation)
-
-            # MOT 未确认/过滤掉的 observation 仍保留 Evidence，但只形成临时单独 Track。
-            # 后续 Global Resolver 可以把有可靠 Face 的碎片重新并回身份；不会静默漏人。
-            for observation in frame_observations:
-                if id(observation) in assigned_objects:
-                    continue
-                tracks_by_id[fallback_counter].append(observation)
-                fallback_counter -= 1
+        tracker, tracker_name = _make_tracker()
+        try:
+            tracks_by_id = _track_shot(shot_observations, tracker, tracker_name)
+        except Exception:
+            if tracker_name != "BoT-SORT":
+                raise
+            fallback_tracker, fallback_name = _make_bytetrack()
+            tracks_by_id = _track_shot(shot_observations, fallback_tracker, fallback_name)
 
         for track_observations in tracks_by_id.values():
             if not track_observations:
                 continue
             base = _build_track(track_observations)
-            # BoT-SORT 也可能在复杂交叉处发生 ID switch；Face hard conflict 作为最后一道 cannot-link。
+            # 成熟 MOT 仍可能在复杂交叉处发生 ID switch；Face hard conflict 作为最后一道 cannot-link。
             result.extend(_split_track_on_face_conflict(base))
 
     return sorted(
