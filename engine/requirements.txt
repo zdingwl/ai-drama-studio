@@ -21,7 +21,7 @@ future==1.0.0
 # 03 资产人物视觉：YuNet / SFace 继续走 OpenCV CPU；
 # YOLOX Person Detection + YoutuReID 默认 ONNX Runtime CUDA，CUDA 不可用自动 CPU fallback。
 opencv-python==4.11.0.86
-onnxruntime-gpu==1.20.1
+onnxruntime-gpu==1.20.2
 
 # F05 源对白 ASR。默认模型由 AI_DRAMA_WHISPER_MODEL 控制，首次使用需要准备对应模型缓存。
 faster-whisper==1.2.1
