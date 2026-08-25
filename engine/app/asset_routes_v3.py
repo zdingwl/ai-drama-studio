@@ -79,7 +79,7 @@ def _bad(exc: Exception) -> HTTPException:
 def _run_full_asset_task(task_id: str, project_id: str) -> None:
     """完整资产任务：基础 Evidence → optional VLM → Final Asset → Shot Binding。
 
-    基础人物 V4 已经能按真实 Shot 报进度，这里把它映射到总任务前 55%。
+    基础人物 V5 已经能按真实 Shot 报进度，这里把它映射到总任务前 55%。
     Qwen3-VL 是语义增强而不是人物身份 Source of Truth，所以它未配置或临时失败时，
     人物与基础连续场景仍然必须形成 Final Asset；任务以 READY_WITH_WARNINGS 完成，而不是整批失败。
     """
@@ -89,7 +89,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
             task_id,
             stage_key="asset_prepare",
             stage_label="准备资产提取",
-            message="正在读取 Final Shots 与人物 V4 模型",
+            message="正在读取 Final Shots 与人物 V5 Track/Gallery 模型",
         )
         update_task(
             task_id,
@@ -109,7 +109,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
             total_items: int | None,
             message: str,
         ) -> None:
-            # 基础 Evidence 占完整资产任务前 55%。人物 V4 内部的 percent 来自实际 Shot 进度，
+            # 基础 Evidence 占完整资产任务前 55%。人物 V5 内部的 percent 来自实际 Shot 进度，
             # 不是前端估算；场景/持久化阶段也会持续更新心跳。
             update_task(
                 task_id,
@@ -227,7 +227,7 @@ def api_asset_workspace(project_id: str):
 
 @router.get("/assets/models/status")
 def api_asset_model_status():
-    """Qwen3-VL 语义增强配置状态；人物 V4 模型由 /api/models/f05/status 提供。"""
+    """Qwen3-VL 语义增强配置状态；人物 V5 模型由 /api/models/f05/status 提供。"""
     return semantic_model_status()
 
 
