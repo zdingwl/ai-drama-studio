@@ -3,6 +3,7 @@ import type {
   AssetSemanticModelStatus,
   AssetWorkspace,
   BackgroundTask,
+  BatchShotAssetBindings,
   ContentAnalysisRun,
   Episode,
   F05ModelStatus,
@@ -75,6 +76,9 @@ export const api = {
   startFullAssetExtractionTask: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/assets/tasks/extract`, { method: 'POST' }),
   applyLatestAssetAnalysis: (projectId: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/apply-analysis`, { method: 'POST' }),
   setShotAssetBindings: (projectId: string, shotId: string, payload: ShotAssetBindings) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/shots/${shotId}/bindings`, {
+    method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload),
+  }),
+  batchSetShotAssetBindings: (projectId: string, payload: BatchShotAssetBindings) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/bindings/batch`, {
     method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload),
   }),
   createFinalAsset: (projectId: string, entityType: AssetEntityType, name: string, shotId?: string | null) => request<AssetWorkspace>(`/api/projects/${projectId}/assets`, {
