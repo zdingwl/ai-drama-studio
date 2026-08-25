@@ -7,7 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
-from engine.app.studio_v2 import episode_dir, get_episode_record, replace_shots, upsert_preprocess
+from engine.app.shot_revision_v2 import commit_auto_shot_revision
+from engine.app.studio_v2 import episode_dir, get_episode_record, new_id, upsert_preprocess
 
 FFMPEG_TIMEOUT_SECONDS = 60 * 60
 SHOT_THRESHOLD = 0.5
@@ -237,7 +238,11 @@ def _render_thumbnail(reference: Path, output: Path, duration_us: int) -> None:
 
 
 def detect_episode_shots(episode_id: str, progress: ProgressReporter | None = None) -> list[dict[str, Any]]:
-    """自动拉片并报告 PTS / 模型 / Reference Clip 的真实阶段进度。"""
+    """安全自动拉片：先完整生成新 Run，成功后才原子切换 Current Revision。
+
+    重新拉片期间旧 Shot / Reference Clip 始终保持可读。TransNetV2、FFmpeg 或数据库任一步失败，
+    旧 Current 不变；只清理本次尚未提交的临时 Run 目录。
+    """
 
     episode = get_episode_record(episode_id)
     if episode is None:
@@ -262,40 +267,45 @@ def detect_episode_shots(episode_id: str, progress: ProgressReporter | None = No
     _report(progress, 24, "boundaries", "正在整理 Cut 与 Shot 边界")
     boundaries = _normalize_boundaries(duration_us, cuts)
 
-    shots_root = episode_dir(episode.project_id, episode.id) / "shots"
-    if shots_root.exists():
-        shutil.rmtree(shots_root)
-    refs = shots_root / "reference"
-    thumbs = shots_root / "thumbnails"
+    run_id = new_id("SHOTRUN")
+    run_root = episode_dir(episode.project_id, episode.id) / "shots" / "runs" / run_id
+    refs = run_root / "reference"
+    thumbs = run_root / "thumbnails"
     refs.mkdir(parents=True, exist_ok=True)
     thumbs.mkdir(parents=True, exist_ok=True)
 
     payloads: list[dict[str, Any]] = []
     total_shots = max(1, len(boundaries) - 1)
-    for index, (start_us, end_us) in enumerate(zip(boundaries, boundaries[1:]), start=1):
-        duration = end_us - start_us
-        reference = refs / f"shot_{index:04d}.mp4"
-        thumbnail = thumbs / f"shot_{index:04d}.jpg"
-        progress_percent = 25 + ((index - 1) / total_shots) * 70
-        _report(progress, progress_percent, "reference_clips", f"正在生成 Reference Clip {index} / {total_shots}", index, total_shots)
-        _render_reference(source, reference, start_us, duration)
-        _render_thumbnail(reference, thumbnail, duration)
-        payloads.append({
-            "ordinal": index,
-            "start_us": start_us,
-            "end_us": end_us,
-            "duration_us": duration,
-            "reference_clip_path": str(reference),
-            "thumbnail_path": str(thumbnail) if thumbnail.exists() else None,
-            "keyframes_json": json.dumps([{"kind": "middle", "path": str(thumbnail)}], ensure_ascii=False),
-            "short_description": None,
-            "shot_type": None,
-            "camera_motion": None,
-            "status": "READY",
-        })
-        _report(progress, 25 + (index / total_shots) * 70, "reference_clips", f"已生成 {index} / {total_shots} 个 Reference Clip", index, total_shots)
+    try:
+        for index, (start_us, end_us) in enumerate(zip(boundaries, boundaries[1:]), start=1):
+            duration = end_us - start_us
+            reference = refs / f"shot_{index:04d}.mp4"
+            thumbnail = thumbs / f"shot_{index:04d}.jpg"
+            progress_percent = 25 + ((index - 1) / total_shots) * 70
+            _report(progress, progress_percent, "reference_clips", f"正在生成 Reference Clip {index} / {total_shots}", index, total_shots)
+            _render_reference(source, reference, start_us, duration)
+            _render_thumbnail(reference, thumbnail, duration)
+            payloads.append({
+                "ordinal": index,
+                "start_us": start_us,
+                "end_us": end_us,
+                "duration_us": duration,
+                "reference_clip_path": str(reference),
+                "thumbnail_path": str(thumbnail) if thumbnail.exists() else None,
+                "keyframes_json": json.dumps([{"kind": "middle", "path": str(thumbnail)}], ensure_ascii=False),
+                "short_description": None,
+                "shot_type": None,
+                "camera_motion": None,
+                "status": "READY",
+            })
+            _report(progress, 25 + (index / total_shots) * 70, "reference_clips", f"已生成 {index} / {total_shots} 个 Reference Clip", index, total_shots)
 
-    _report(progress, 97, "persist", "正在保存 Shot 结果", total_shots, total_shots)
-    result = replace_shots(episode_id, payloads)
-    _report(progress, 100, "ready", f"拉片完成：{len(result)} Shots", len(result), len(result))
-    return result
+        _report(progress, 97, "persist", "新拉片结果已完整生成，正在安全切换 Current Revision", total_shots, total_shots)
+        result = commit_auto_shot_revision(episode_id, payloads, note=f"自动拉片 {run_id}")
+        _report(progress, 100, "ready", f"拉片完成：{len(result)} Shots", len(result), len(result))
+        return result
+    except Exception:
+        # 只有尚未进入 Current 的本次 Run 才允许清理；历史 Revision 的媒体目录永不在这里删除。
+        if run_root.exists():
+            shutil.rmtree(run_root, ignore_errors=True)
+        raise
