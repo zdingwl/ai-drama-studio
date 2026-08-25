@@ -5,18 +5,18 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from engine.app import shot_editor_v2, studio_v2
+from engine.app import shot_editor_v2, shot_revision_v2, studio_v2
 
 
 class FakePending:
-    def commit(self) -> None:
+    def commit_files(self) -> None:
         pass
 
     def cleanup(self) -> None:
         pass
 
 
-def setup_timeline(monkeypatch, tmp_path: Path) -> tuple[str, list[str]]:
+def setup_timeline(monkeypatch, tmp_path: Path) -> tuple[str, list[str], sessionmaker]:
     engine = create_engine(
         f"sqlite:///{(tmp_path / 'studio.sqlite3').as_posix()}",
         connect_args={"check_same_thread": False},
@@ -74,7 +74,7 @@ def setup_timeline(monkeypatch, tmp_path: Path) -> tuple[str, list[str]]:
                 status="READY",
             ))
         session.commit()
-    return "EPISODE_1", shot_ids
+    return "EPISODE_1", shot_ids, session_factory
 
 
 def assert_continuous(shots: list[dict]) -> None:
@@ -87,28 +87,42 @@ def assert_continuous(shots: list[dict]) -> None:
     assert shots[-1]["duration_us"] == shots[-1]["end_us"] - shots[-1]["start_us"]
 
 
-def test_adjust_boundary_updates_both_adjacent_shots(monkeypatch, tmp_path: Path) -> None:
-    _, shot_ids = setup_timeline(monkeypatch, tmp_path)
+def assert_manual_revision_created(episode_id: str) -> None:
+    revisions = shot_revision_v2.list_shot_revisions(episode_id)
+    assert len(revisions) == 2
+    assert revisions[0]["revision"] == 2
+    assert revisions[0]["kind"] == "MANUAL"
+    assert revisions[0]["is_current"] is True
+    assert revisions[1]["revision"] == 1
+    assert revisions[1]["kind"] == "BASELINE"
+    assert revisions[1]["is_current"] is False
+
+
+def test_adjust_boundary_updates_both_adjacent_shots_and_versions(monkeypatch, tmp_path: Path) -> None:
+    episode_id, shot_ids, _ = setup_timeline(monkeypatch, tmp_path)
     shots = shot_editor_v2.adjust_boundary(shot_id=shot_ids[1], side="start", source_time_us=1_200_000)
     assert shots[0]["end_us"] == 1_200_000
     assert shots[1]["start_us"] == 1_200_000
     assert_continuous(shots)
+    assert_manual_revision_created(episode_id)
 
 
 def test_split_keeps_left_id_and_creates_continuous_ordinals(monkeypatch, tmp_path: Path) -> None:
-    _, shot_ids = setup_timeline(monkeypatch, tmp_path)
+    episode_id, shot_ids, _ = setup_timeline(monkeypatch, tmp_path)
     shots = shot_editor_v2.split_shot(shot_id=shot_ids[1], source_time_us=1_500_000)
     assert len(shots) == 4
     assert shots[1]["id"] == shot_ids[1]
     assert shots[1]["end_us"] == 1_500_000
     assert shots[2]["start_us"] == 1_500_000
     assert_continuous(shots)
+    assert_manual_revision_created(episode_id)
 
 
 def test_merge_with_next_removes_one_boundary_and_keeps_timeline_continuous(monkeypatch, tmp_path: Path) -> None:
-    _, shot_ids = setup_timeline(monkeypatch, tmp_path)
+    episode_id, shot_ids, _ = setup_timeline(monkeypatch, tmp_path)
     shots = shot_editor_v2.merge_with_next(shot_id=shot_ids[0])
     assert len(shots) == 2
     assert shots[0]["id"] == shot_ids[0]
     assert shots[0]["end_us"] == 2_000_000
     assert_continuous(shots)
+    assert_manual_revision_created(episode_id)
