@@ -219,11 +219,19 @@ def _frame_pts_us(proxy_path: Path) -> tuple[int, ...]:
 
 
 def _transnet_cut_points(proxy_path: Path, frame_pts: tuple[int, ...]) -> list[int]:
+    """运行 TransNetV2，但由项目自己负责 FFmpeg 解码。
+
+    transnetv2-pytorch 1.0.5 的 predict_video 使用 ffmpeg-python；FFmpeg 失败时异常文本只剩
+    ``ffmpeg error (see stderr output for detail)``。这里改为系统 FFmpeg → 48x27 RGB →
+    官方 model.predict_frames，模型权重、阈值和 PTS 映射均保持不变。
+    """
+
     try:
         import numpy as np
         import torch
         import transnetv2_pytorch
         from transnetv2_pytorch import TransNetV2
+        from engine.app.transnet_runtime_v3 import TransNetRuntimeError, predict_single_frame_scores
     except ImportError as exc:
         raise MediaPipelineError("未安装 TransNetV2 本地依赖，请执行 pip install -r engine/requirements.txt") from exc
 
@@ -243,8 +251,12 @@ def _transnet_cut_points(proxy_path: Path, frame_pts: tuple[int, ...]) -> list[i
         state_dict = torch.load(weights_path, map_location=getattr(model, "device", "cpu"))
     model.load_state_dict(state_dict)
     model.eval()
-    with torch.no_grad():
-        _, raw_scores, _ = model.predict_video(str(proxy_path))
+
+    try:
+        raw_scores = predict_single_frame_scores(model, proxy_path)
+    except TransNetRuntimeError as exc:
+        raise MediaPipelineError(str(exc)) from exc
+
     if hasattr(raw_scores, "detach"):
         raw_scores = raw_scores.detach().cpu().numpy()
     scores = np.asarray(raw_scores, dtype=np.float64).reshape(-1)
