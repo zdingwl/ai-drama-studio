@@ -30,6 +30,20 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+/**
+ * 职责：创建后台任务后立即通知全局 Task Dock。
+ * 输入：Task API URL；输出：BackgroundTask。
+ * 为什么：无活动任务时 Task Dock 只做 10 秒低频轮询。如果 POST 成功后不主动通知，
+ * 用户会看到按钮恢复正常却没有任何进度反馈，误以为“点击没反应”。
+ */
+async function requestTask(url: string, options?: RequestInit): Promise<BackgroundTask> {
+  const task = await request<BackgroundTask>(url, options)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('studio-task-created', { detail: task }))
+  }
+  return task
+}
+
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
 export const api = {
@@ -48,12 +62,12 @@ export const api = {
   }),
   deleteEpisode: (episodeId: string) => request<void>(`/api/episodes/${episodeId}`, { method: 'DELETE' }),
 
-  // 正式 UI：耗时操作全部立即返回 BackgroundTask，不再让 HTTP 请求一直挂着。
-  preprocessEpisode: (episodeId: string) => request<BackgroundTask>(`/api/episodes/${episodeId}/tasks/preprocess`, { method: 'POST' }),
-  preprocessBatch: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/preprocess-batch`, { method: 'POST' }),
-  analyzeEpisodeShots: (episodeId: string) => request<BackgroundTask>(`/api/episodes/${episodeId}/tasks/shots`, { method: 'POST' }),
-  analyzeBatchShots: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/shots-batch`, { method: 'POST' }),
-  runContentAnalysis: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/assets`, { method: 'POST' }),
+  // 正式 UI：耗时操作全部立即返回 BackgroundTask，并立刻通知全局任务栏。
+  preprocessEpisode: (episodeId: string) => requestTask(`/api/episodes/${episodeId}/tasks/preprocess`, { method: 'POST' }),
+  preprocessBatch: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/preprocess-batch`, { method: 'POST' }),
+  analyzeEpisodeShots: (episodeId: string) => requestTask(`/api/episodes/${episodeId}/tasks/shots`, { method: 'POST' }),
+  analyzeBatchShots: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/shots-batch`, { method: 'POST' }),
+  runContentAnalysis: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/assets`, { method: 'POST' }),
   listShots: (episodeId: string) => request<Shot[]>(`/api/episodes/${episodeId}/shots`),
 
   // Shot 人工修正：修改当前生产 Shot；每次成功修改后后端创建新的 MANUAL Revision。
@@ -73,7 +87,7 @@ export const api = {
   // 03 Final Asset 工作台：AI Evidence 与人工 Final Asset 完全分层。
   getAssetWorkspace: (projectId: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/workspace`),
   getAssetSemanticModelStatus: () => request<AssetSemanticModelStatus>('/api/assets/models/status'),
-  startFullAssetExtractionTask: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/assets/tasks/extract`, { method: 'POST' }),
+  startFullAssetExtractionTask: (projectId: string) => requestTask(`/api/projects/${projectId}/assets/tasks/extract`, { method: 'POST' }),
   applyLatestAssetAnalysis: (projectId: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/apply-analysis`, { method: 'POST' }),
   setShotAssetBindings: (projectId: string, shotId: string, payload: ShotAssetBindings) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/shots/${shotId}/bindings`, {
     method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload),
@@ -101,12 +115,12 @@ export const api = {
   }),
   restoreAssetRevision: (revisionId: string) => request<AssetWorkspace>(`/api/asset-revisions/${revisionId}/restore`, { method: 'POST' }),
 
-  // 显式 Task API，给后续独立工作区复用。
-  startEpisodePreprocessTask: (episodeId: string) => request<BackgroundTask>(`/api/episodes/${episodeId}/tasks/preprocess`, { method: 'POST' }),
-  startBatchPreprocessTask: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/preprocess-batch`, { method: 'POST' }),
-  startEpisodeShotsTask: (episodeId: string) => request<BackgroundTask>(`/api/episodes/${episodeId}/tasks/shots`, { method: 'POST' }),
-  startBatchShotsTask: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/shots-batch`, { method: 'POST' }),
-  startAssetExtractionTask: (projectId: string) => request<BackgroundTask>(`/api/projects/${projectId}/tasks/assets`, { method: 'POST' }),
+  // 显式 Task API，给各工作区复用。所有创建动作都会触发 studio-task-created。
+  startEpisodePreprocessTask: (episodeId: string) => requestTask(`/api/episodes/${episodeId}/tasks/preprocess`, { method: 'POST' }),
+  startBatchPreprocessTask: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/preprocess-batch`, { method: 'POST' }),
+  startEpisodeShotsTask: (episodeId: string) => requestTask(`/api/episodes/${episodeId}/tasks/shots`, { method: 'POST' }),
+  startBatchShotsTask: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/shots-batch`, { method: 'POST' }),
+  startAssetExtractionTask: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/assets`, { method: 'POST' }),
   listProjectTasks: (projectId: string, limit = 30) => request<BackgroundTask[]>(`/api/projects/${projectId}/tasks?limit=${limit}`),
   getTask: (taskId: string) => request<BackgroundTask>(`/api/tasks/${taskId}`),
 
