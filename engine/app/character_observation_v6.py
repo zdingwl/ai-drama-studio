@@ -1,12 +1,14 @@
-"""Character V6 Person Observation。
+"""Character V6.1 Person Observation。
 
 职责：
 - 复用已校验的 YOLOX Person / YoutuReID / YuNet / SFace 模型；
-- 把 Shot 内人物检测采样从 V5 的约 6fps 提升到约 12fps，为成熟 MOT 提供连续轨迹；
-- 每个采样帧先数清 Person，再把 Face / ReID / 清晰度 / 多人干扰作为 Observation Evidence；
+- Shot 内约 12fps 采样，为成熟 MOT 提供连续轨迹；
+- 正常 Person 继续使用正式阈值；贴边、截断、无头近景允许以低分 partial-person proposal 进入 MOT；
+- partial-person 这里只回答“这里可能有人”，后续必须经过时序 Track / ReID / Global Identity Gate，
+  不能因为降低检测阈值直接创建 Final Character；
 - 大特写 Person Detector 失败时仍保留高置信 Face fallback。
 
-这里只负责“这个时刻画面里有谁的视觉观测”，不做 Track，不创建 Character_ID。
+这里只负责“这个时刻画面里有谁的视觉观测”，不创建 Character_ID。
 """
 from __future__ import annotations
 
@@ -24,6 +26,15 @@ V6_SAMPLE_FPS = 12.0
 V6_MIN_SAMPLES = 4
 V6_MAX_SAMPLES = 60
 
+# 正常 Person 不变；只有局部/截断人体走更低的 proposal 阈值，并由后续时序层确认。
+STRONG_PERSON_SCORE = float(v5.legacy.PERSON_SCORE_THRESHOLD)
+PARTIAL_PERSON_SCORE = 0.10
+PARTIAL_MIN_AREA_RATIO = 0.020
+PARTIAL_SUBSTANTIAL_AREA_RATIO = 0.060
+PARTIAL_MIN_WIDTH_RATIO = 0.045
+PARTIAL_MIN_HEIGHT_RATIO = 0.140
+PARTIAL_EDGE_MARGIN_RATIO = 0.035
+
 
 def sample_times_us(duration_us: int) -> tuple[int, ...]:
     duration = max(1, int(duration_us))
@@ -36,6 +47,89 @@ def sample_times_us(duration_us: int) -> tuple[int, ...]:
         return (duration // 2,)
     step = (end - start) / max(1, count - 1)
     return tuple(sorted({max(0, min(duration - 1, int(round(start + step * index)))) for index in range(count)}))
+
+
+def _partial_person_box_plausible(
+    box: tuple[int, int, int, int],
+    frame_width: int,
+    frame_height: int,
+) -> bool:
+    """只让“像局部人体”的低分框进入时序确认，避免全局降阈值放大背景误检。"""
+
+    width = max(1, int(frame_width))
+    height = max(1, int(frame_height))
+    x, y, w, h = box
+    area_ratio = max(0.0, (w * h) / float(width * height))
+    width_ratio = w / float(width)
+    height_ratio = h / float(height)
+    if area_ratio < PARTIAL_MIN_AREA_RATIO:
+        return False
+    if width_ratio < PARTIAL_MIN_WIDTH_RATIO and height_ratio < PARTIAL_MIN_HEIGHT_RATIO:
+        return False
+
+    margin_x = max(2, int(round(width * PARTIAL_EDGE_MARGIN_RATIO)))
+    margin_y = max(2, int(round(height * PARTIAL_EDGE_MARGIN_RATIO)))
+    touches_edge = (
+        x <= margin_x
+        or y <= margin_y
+        or x + w >= width - margin_x
+        or y + h >= height - margin_y
+    )
+    return touches_edge or area_ratio >= PARTIAL_SUBSTANTIAL_AREA_RATIO
+
+
+def _detect_person_proposals(
+    detector: _YoloXOrtPersonDetector,
+    frame: Any,
+    *,
+    score_threshold: float,
+) -> list[tuple[tuple[int, int, int, int], float]]:
+    """一次 YOLOX forward 保留低分 person proposals；正式 V4.1 detector 默认阈值保持不变。"""
+
+    cv2, np = detector.cv2, detector.np
+    tensor, ratio = detector._letterbox(frame)
+    outputs = detector.session.run(None, {detector.input_name: tensor})
+    if not outputs:
+        return []
+    raw = np.asarray(outputs[0])
+    dets = raw[0].copy() if raw.ndim == 3 else raw.copy()
+    if dets.ndim != 2 or dets.shape[0] != detector.grids.shape[0] or dets.shape[1] < 6:
+        return []
+
+    dets[:, :2] = (dets[:, :2] + detector.grids) * detector.expanded_strides
+    dets[:, 2:4] = np.exp(dets[:, 2:4]) * detector.expanded_strides
+    person_scores = dets[:, 4] * dets[:, 5]
+    mask = person_scores >= float(score_threshold)
+    if not np.any(mask):
+        return []
+
+    chosen = dets[mask]
+    scores = person_scores[mask]
+    boxes = np.empty((chosen.shape[0], 4), dtype=np.float32)
+    boxes[:, 0] = chosen[:, 0] - chosen[:, 2] / 2.0
+    boxes[:, 1] = chosen[:, 1] - chosen[:, 3] / 2.0
+    boxes[:, 2] = chosen[:, 2]
+    boxes[:, 3] = chosen[:, 3]
+    keep = cv2.dnn.NMSBoxes(
+        boxes.tolist(),
+        scores.tolist(),
+        float(score_threshold),
+        v5.legacy.PERSON_NMS_THRESHOLD,
+    )
+    if len(keep) == 0:
+        return []
+
+    height, width = frame.shape[:2]
+    result: list[tuple[tuple[int, int, int, int], float]] = []
+    for index in np.asarray(keep).reshape(-1):
+        box = boxes[int(index)] / max(ratio, 1e-9)
+        clamped = v5.legacy._clamp_box(tuple(float(value) for value in box), width, height)
+        if clamped is None:
+            continue
+        score = float(scores[int(index)])
+        if score >= STRONG_PERSON_SCORE or _partial_person_box_plausible(clamped, width, height):
+            result.append((clamped, score))
+    return result
 
 
 def detect_observations(
@@ -66,13 +160,17 @@ def detect_observations(
             progress(
                 shot_index,
                 total,
-                f"人物 V6 · 12fps Person Evidence · {runtime_label}：Shot {shot_index} / {total}",
+                f"人物 V6.1 · 12fps Person + Partial Evidence · {runtime_label}：Shot {shot_index} / {total}",
             )
         duration_us = max(1, int(shot["duration_us"]))
         local_times = list(sample_times_us(duration_us))
         for local_us, frame in v5._read_frames(shot["reference_path"], local_times):
             height, width = frame.shape[:2]
-            persons = person_detector.detect(frame)
+            persons = _detect_person_proposals(
+                person_detector,
+                frame,
+                score_threshold=PARTIAL_PERSON_SCORE,
+            )
             person_boxes = [item[0] for item in persons]
 
             face_detector.setInputSize((width, height))
@@ -103,6 +201,7 @@ def detect_observations(
                     face_index, face_row, face_box, face_score = max(matching, key=lambda item: item[3])
                     used_faces.add(face_index)
 
+                is_partial = person_score < STRONG_PERSON_SCORE and face_row is None
                 observations.append(Observation(
                     shot_id=shot["id"],
                     episode_id=shot["episode_id"],
@@ -118,7 +217,13 @@ def detect_observations(
                     reid_embedding=reid.infer(frame, person_box),
                     body_hist=v5.legacy._body_histogram(frame, person_box),
                     face_visible=face_row is not None,
-                    detection_source="v6-yolox+face" if face_row is not None else "v6-yolox",
+                    detection_source=(
+                        "v6.1-yolox+face"
+                        if face_row is not None
+                        else "v6.1-yolox-partial"
+                        if is_partial
+                        else "v6.1-yolox"
+                    ),
                     frame_width=width,
                     frame_height=height,
                     face_score=face_score,
@@ -148,7 +253,7 @@ def detect_observations(
                     reid_embedding=reid.infer(frame, person_box),
                     body_hist=v5.legacy._body_histogram(frame, person_box),
                     face_visible=True,
-                    detection_source="v6-face-fallback",
+                    detection_source="v6.1-face-fallback",
                     frame_width=width,
                     frame_height=height,
                     face_score=face_score,
