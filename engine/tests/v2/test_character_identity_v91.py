@@ -96,8 +96,6 @@ def resolved(candidates: list[v5.CandidateDraft]) -> list[v5.CandidateDraft]:
 
 
 def test_progressive_gallery_bridges_realistic_view_changes() -> None:
-    # Adjacent views strongly match, but Shot 1 and later views do not all directly MATCH.
-    # Old V9C seed-only grouping would stop before reaching three independent Shots.
     tracks = [
         make_track(make_observation(shot=1, vector=angle_vector(0))),
         make_track(make_observation(shot=2, vector=angle_vector(25))),
@@ -120,7 +118,8 @@ def test_confirmed_gallery_absorbs_a_later_view_through_multiview_support() -> N
         make_observation(shot=1, vector=angle_vector(0)),
         make_observation(shot=2, vector=angle_vector(25)),
         make_observation(shot=3, vector=angle_vector(50)),
-        make_observation(shot=4, vector=angle_vector(75)),
+        # 77° has only one MATCH to the Gallery and is below the old 0.90 single-match exception.
+        make_observation(shot=4, vector=angle_vector(77)),
     ]
     evidence = [
         identity.PersonEvidence(index, index, observation, observation.person_feature_bundle, 0.92)
@@ -128,7 +127,6 @@ def test_confirmed_gallery_absorbs_a_later_view_through_multiview_support() -> N
     ]
     gallery = identity.ConfirmedGallery(ordinal=0, evidence_indices={0, 1, 2}, seed_index=0)
 
-    # Shot 4 is far from the first anchor but strongly matches the newer Gallery view.
     decision = identity._progressive_gallery_decision(evidence[3], gallery, evidence)
 
     assert decision.status == "MATCH"
@@ -138,17 +136,12 @@ def test_confirmed_gallery_absorbs_a_later_view_through_multiview_support() -> N
 def test_one_ambiguous_image_does_not_hide_a_clearly_novel_third_person() -> None:
     tracks: list[v5.TrackDraft] = []
 
-    # Person A: stable existing gallery.
     for shot in (1, 2, 3, 4):
         tracks.append(make_track(make_observation(shot=shot, vector=angle_vector(0))))
 
-    # Person B: clearly separate.
     for shot in (5, 6, 7, 8):
         tracks.append(make_track(make_observation(shot=shot, vector=unit(2))))
 
-    # Person C: first view is moderately similar to A (about 0.65 cosine -> AMBIGUOUS),
-    # but later views are clearly different from A while remaining strongly connected
-    # to adjacent C views. Gallery-level novelty should confirm C instead of hiding it.
     tracks.extend([
         make_track(make_observation(shot=9, vector=angle_vector(49.5))),
         make_track(make_observation(shot=10, vector=angle_vector(72.5))),
@@ -181,7 +174,6 @@ def test_three_people_many_fragments_still_have_three_final_identities() -> None
     for shot in (9, 10, 11, 12):
         tracks.append(make_track(make_observation(shot=shot, vector=unit(3))))
 
-    # Raw fragments are allowed to be numerous and unresolved.
     for shot in range(13, 25):
         tracks.append(make_track(make_observation(shot=shot, vector=unit(2), instance_class="PARTIAL")))
 
