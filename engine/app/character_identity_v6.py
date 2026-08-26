@@ -1,15 +1,12 @@
-"""Character V6 Global Identity Resolver。
+"""Character V6.2 Global Identity Resolver。
 
 职责：
 - 等整集/整项目所有 Person Track 完成以后，再统一解决“到底有几个人”；
-- 不再按视频顺序遇到一个不匹配 Track 就立即创建 Final Character；
 - Face 是跨 Shot 身份主证据，CLEAN Body ReID / Shot 连续性只做支持；
+- partial-person 只能补“有人”和挂回已有身份，不能作为新身份 Face anchor；
 - 同 Shot 同时存在是永久 cannot-link；明显 Face 冲突禁止任何传递合并；
-- 先构建全局 Track Identity Graph，再生成 RESOLVED / UNRESOLVED Candidate；
+- 初始 Global Identity Graph 后再做一次保守的 Face fragment consolidation，解决同一演员被拆成多个 RESOLVED；
 - UNRESOLVED Candidate 只保留 Evidence，不允许自动物化成 Final Character。
-
-当前 Face provider：YuNet + SFace（接口与 Global Resolver 解耦）。
-后续替换为有明确授权的 ArcFace 权重时，本模块不需要改业务结构。
 """
 from __future__ import annotations
 
@@ -22,8 +19,6 @@ from engine.app import character_visual_v5 as v5
 TrackDraft = v5.TrackDraft
 CandidateDraft = v5.CandidateDraft
 
-# SFace cosine 官方常见同人阈值在 0.36 左右。V6 不再用单一高阈值；
-# 强 Face 可独立连边，中等 Face 必须由 CLEAN ReID / 时间连续支持。
 FACE_STRONG_EDGE = 0.48
 FACE_SUPPORTED_EDGE = 0.35
 FACE_CLUSTER_HARD_CONFLICT = 0.20
@@ -32,6 +27,12 @@ REID_STRONG_EDGE = 0.89
 BODY_ATTACH_REID = 0.91
 BODY_ATTACH_MAX_SHOT_GAP = 1
 FACE_ANCHOR_MIN_SCORE = 0.70
+
+# V6.2 二次去碎片：只针对已经各自形成 Face cluster 的候选。
+# 不直接降低首轮阈值；只有 cluster centroid Face + CLEAN ReID 同时支持，或 centroid Face 很强时才合并。
+FRAGMENT_FACE_STRONG = 0.52
+FRAGMENT_FACE_SUPPORTED = 0.40
+FRAGMENT_REID_SUPPORT = 0.64
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,10 @@ class _UnionFind:
         return left_root
 
 
+def _observation_is_partial(observation: Any) -> bool:
+    return "partial" in str(getattr(observation, "detection_source", "") or "").lower()
+
+
 def _interval(track: TrackDraft) -> tuple[int | None, int | None]:
     if not track.observations:
         return None, None
@@ -87,13 +92,18 @@ def _simultaneous(left: TrackDraft, right: TrackDraft) -> bool:
 
 
 def _face_vectors(track: TrackDraft) -> list[Any]:
+    """只返回可创建身份的 Face anchors；partial Face 不能成为新 Character 的根。"""
+
     values = [
         item.face_embedding
         for item in track.observations
         if item.face_embedding is not None
+        and not _observation_is_partial(item)
         and float(getattr(item, "face_score", item.detection_score)) >= FACE_ANCHOR_MIN_SCORE
     ]
-    if not values and track.face_embedding is not None:
+    # 只给没有 Observation 明细的历史/测试 Track 使用聚合 fallback；
+    # 有 Observation 但全部来自 partial 时，绝不能通过 track.face_embedding 绕回 Face anchor。
+    if not values and not track.observations and track.face_embedding is not None:
         values.append(track.face_embedding)
     return values
 
@@ -177,7 +187,6 @@ def _identity_edge(left_index: int, right_index: int, left: TrackDraft, right: T
             "face+clean-reid",
         )
 
-    # 极端侧脸/小脸只允许在相邻镜头 + 极强 CLEAN ReID 时连边。
     if (
         face is not None
         and face >= 0.32
@@ -205,8 +214,6 @@ def _clusters(uf: _UnionFind, size: int) -> dict[int, set[int]]:
 
 
 def _cluster_compatible(left: set[int], right: set[int], tracks: list[TrackDraft]) -> bool:
-    """阻断图传递错误：任何同框或明确 Face 冲突都禁止两个 cluster 合并。"""
-
     for left_index in left:
         for right_index in right:
             a, b = tracks[left_index], tracks[right_index]
@@ -221,6 +228,109 @@ def _cluster_compatible(left: set[int], right: set[int], tracks: list[TrackDraft
     return True
 
 
+def _cluster_face_vectors(indices: set[int], tracks: list[TrackDraft]) -> list[Any]:
+    values: list[Any] = []
+    for index in indices:
+        values.extend(_face_vectors(tracks[index]))
+    return values
+
+
+def _cluster_reid_vectors(indices: set[int], tracks: list[TrackDraft]) -> list[Any]:
+    values: list[Any] = []
+    for index in indices:
+        values.extend(_clean_reid_vectors(tracks[index]))
+    return values
+
+
+def _fragment_merge_score(
+    left: set[int],
+    right: set[int],
+    tracks: list[TrackDraft],
+) -> float | None:
+    """V6.2 保守二次去碎片。
+
+    约束：
+    - 两个 cluster 不能共享 Shot；共享 Shot 默认视为不同人，避免多人场景误合并；
+    - 继续尊重 simultaneous / hard Face conflict；
+    - 使用 cluster centroid，只有强 Face，或 Face + CLEAN ReID 同时支持才允许合并。
+    """
+
+    left_shots = {tracks[index].shot_id for index in left}
+    right_shots = {tracks[index].shot_id for index in right}
+    if left_shots & right_shots:
+        return None
+    if not _cluster_compatible(left, right, tracks):
+        return None
+
+    left_faces = _cluster_face_vectors(left, tracks)
+    right_faces = _cluster_face_vectors(right, tracks)
+    if not left_faces or not right_faces:
+        return None
+
+    face_centroid = v5.cosine(v5.mean_vector(left_faces), v5.mean_vector(right_faces))
+    left_reids = _cluster_reid_vectors(left, tracks)
+    right_reids = _cluster_reid_vectors(right, tracks)
+    reid_centroid = (
+        v5.cosine(v5.mean_vector(left_reids), v5.mean_vector(right_reids))
+        if left_reids and right_reids
+        else None
+    )
+
+    qualifies = bool(
+        face_centroid is not None
+        and (
+            face_centroid >= FRAGMENT_FACE_STRONG
+            or (
+                face_centroid >= FRAGMENT_FACE_SUPPORTED
+                and reid_centroid is not None
+                and reid_centroid >= FRAGMENT_REID_SUPPORT
+            )
+        )
+    )
+    if not qualifies:
+        return None
+    return max(0.0, float(face_centroid or 0.0)) * 0.78 + max(0.0, float(reid_centroid or 0.0)) * 0.22
+
+
+def _merge_resolved_fragments(
+    uf: _UnionFind,
+    tracks: list[TrackDraft],
+    accepted_scores: dict[int, list[float]],
+) -> None:
+    """反复选择最可信的 cluster pair 合并，直到没有满足严格条件的同人碎片。"""
+
+    while True:
+        current = _clusters(uf, len(tracks))
+        face_clusters = [
+            set(indices)
+            for indices in current.values()
+            if any(_face_vectors(tracks[index]) for index in indices)
+        ]
+        best: tuple[float, set[int], set[int]] | None = None
+        for left_pos, left in enumerate(face_clusters):
+            for right in face_clusters[left_pos + 1:]:
+                score = _fragment_merge_score(left, right, tracks)
+                if score is None:
+                    continue
+                if best is None or score > best[0]:
+                    best = (score, left, right)
+        if best is None:
+            return
+
+        score, left, right = best
+        left_root = uf.find(next(iter(left)))
+        right_root = uf.find(next(iter(right)))
+        if left_root == right_root:
+            continue
+        new_root = uf.union(left_root, right_root)
+        merged_scores = (
+            accepted_scores.pop(left_root, [])
+            + accepted_scores.pop(right_root, [])
+            + [score]
+        )
+        accepted_scores[new_root] = merged_scores
+
+
 def _face_track_count(indices: set[int], tracks: list[TrackDraft]) -> int:
     return sum(1 for index in indices if _face_vectors(tracks[index]))
 
@@ -230,13 +340,6 @@ def _face_sample_count(indices: set[int], tracks: list[TrackDraft]) -> int:
 
 
 def _resolved_cluster(indices: set[int], tracks: list[TrackDraft]) -> bool:
-    """Final Character 自动发布门槛。
-
-    只在同一身份已经跨至少两个 Shot 得到 Face Track 支持时自动 RESOLVED。
-    单 Shot 即使脸很清楚也先保留为 UNRESOLVED，避免一个演员的孤立侧脸/特写碎片再次制造人物020。
-    一次性小角色后续可由 VLM/人工显式晋级，不牺牲主角身份稳定性。
-    """
-
     face_tracks = _face_track_count(indices, tracks)
     if face_tracks < 2:
         return False
@@ -272,7 +375,7 @@ def _candidate_from_indices(
     if edge_scores:
         candidate.scores = list(edge_scores)
     candidate.v6_metadata = {  # type: ignore[attr-defined]
-        "resolver": "global-identity-graph",
+        "resolver": "global-identity-graph-v6.2",
         "resolved": resolved,
         "face_track_count": _face_track_count(indices, tracks),
         "face_sample_count": _face_sample_count(indices, tracks),
@@ -287,8 +390,6 @@ def _candidate_from_indices(
 
 
 def resolve_global_identities(tracks: list[TrackDraft]) -> list[CandidateDraft]:
-    """整项目 Track -> Global Identity Graph -> Character Candidates。"""
-
     ordered = sorted(
         tracks,
         key=lambda item: (
@@ -300,7 +401,7 @@ def resolve_global_identities(tracks: list[TrackDraft]) -> list[CandidateDraft]:
     if not ordered:
         return []
 
-    # 只有 Face anchored Track 参与身份 cluster 建图；body-only 不允许自行创造 Character。
+    # 只有非 partial Face anchored Track 参与身份建图。
     face_indices = [index for index, track in enumerate(ordered) if _face_vectors(track)]
     uf = _UnionFind(len(ordered))
     edges: list[IdentityEdge] = []
@@ -325,6 +426,9 @@ def resolve_global_identities(tracks: list[TrackDraft]) -> list[CandidateDraft]:
         merged_scores = accepted_scores.pop(left_root, []) + accepted_scores.pop(right_root, []) + [edge.score]
         accepted_scores[new_root] = merged_scores
 
+    # 首轮图聚类后做一次保守的二次去碎片，目标是减少“同一演员被拆成两个人物”。
+    _merge_resolved_fragments(uf, ordered, accepted_scores)
+
     all_clusters = _clusters(uf, len(ordered))
     face_clusters: list[set[int]] = []
     body_only_indices: list[int] = []
@@ -334,7 +438,7 @@ def resolve_global_identities(tracks: list[TrackDraft]) -> list[CandidateDraft]:
         else:
             body_only_indices.extend(indices)
 
-    # Body-only 只能挂到已经由 Face 建立的 cluster；相邻 Shot + 极强 CLEAN ReID。
+    # Body/partial-only 只能挂到已经由正常 Face 建立的 cluster；不能自行创造 Final Character。
     for body_index in body_only_indices:
         body_track = ordered[body_index]
         best_cluster: set[int] | None = None
@@ -364,17 +468,19 @@ def resolve_global_identities(tracks: list[TrackDraft]) -> list[CandidateDraft]:
     candidates: list[CandidateDraft] = []
     for indices in face_clusters:
         resolved = _resolved_cluster(indices, ordered)
-        root = uf.find(next(iter(indices)))
+        roots = {uf.find(index) for index in indices}
+        scores: list[float] = []
+        for root in roots:
+            scores.extend(accepted_scores.get(root, []))
         candidates.append(
             _candidate_from_indices(
                 indices,
                 ordered,
                 resolved=resolved,
-                edge_scores=accepted_scores.get(root),
+                edge_scores=scores or None,
             )
         )
 
-    # Final ordering：RESOLVED 在前，之后才是 Unresolved Evidence；两者绝不能在 Final Asset 层混为一谈。
     candidates.sort(
         key=lambda item: (
             0 if item.identity_status == "RESOLVED" else 1,
