@@ -14,6 +14,8 @@ def partial(
     bbox: tuple[int, int, int, int] = (600, 120, 120, 720),
     score: float = 0.18,
     reid: tuple[float, ...] = (1.0, 0.0, 0.0),
+    face_visible: bool = False,
+    detection_source: str = "v6.2-yolox-partial",
 ) -> v5.Observation:
     return v5.Observation(
         shot_id="SHOT_1",
@@ -23,17 +25,17 @@ def partial(
         source_time_us=at_us,
         local_time_us=local_us,
         bbox=bbox,
-        face_bbox=None,
+        face_bbox=(620, 140, 50, 50) if face_visible else None,
         reference_path="unused.mp4",
         detection_score=score,
-        face_embedding=None,
+        face_embedding=np.asarray([1.0, 0.0, 0.0], dtype=np.float32) if face_visible else None,
         reid_embedding=np.asarray(reid, dtype=np.float32),
         body_hist=None,
-        face_visible=False,
-        detection_source="v6.1-yolox-partial",
+        face_visible=face_visible,
+        detection_source=detection_source,
         frame_width=720,
         frame_height=1280,
-        face_score=0.0,
+        face_score=0.95 if face_visible else 0.0,
         clarity_score=0.7,
         body_completeness=0.4,
         interference_ratio=0.0,
@@ -70,15 +72,31 @@ def test_right_edge_retry_box_maps_back_to_full_frame_coordinates() -> None:
 
 def test_edge_retry_duplicate_does_not_create_second_person_observation() -> None:
     values = [
-        ((520, 100, 180, 800), 0.28, "v6.1-yolox-partial"),
-        ((525, 105, 175, 795), 0.46, "v6.1-yolox-edge-partial"),
+        ((520, 100, 180, 800), 0.28, "v6.2-yolox-partial"),
+        ((525, 105, 175, 795), 0.46, "v6.2-yolox-edge-partial"),
     ]
 
     deduped = observation_v61._dedupe_person_proposals(values)
 
     assert len(deduped) == 1
     assert deduped[0][1] == 0.46
-    assert deduped[0][2] == "v6.1-yolox-edge-partial"
+    assert deduped[0][2] == "v6.2-yolox-edge-partial"
+
+
+def test_face_does_not_erase_partial_provenance() -> None:
+    assert observation_v61._source_with_face("v6.2-yolox-partial") == "v6.2-yolox-partial+face"
+    assert observation_v61._source_with_face("v6.2-yolox-edge-partial") == "v6.2-yolox-edge-partial+face"
+    assert observation_v61._source_with_face("v6.2-yolox") == "v6.2-yolox+face"
+
+
+def test_tracking_still_treats_partial_with_face_as_partial() -> None:
+    value = partial(
+        at_us=900_000,
+        local_us=100_000,
+        face_visible=True,
+        detection_source="v6.2-yolox-edge-partial+face",
+    )
+    assert tracking._is_partial(value) is True
 
 
 def test_isolated_partial_detection_cannot_survive_as_person_track() -> None:
