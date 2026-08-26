@@ -1,17 +1,17 @@
-"""Character V9 Phase B formal runtime entry.
+"""Character V9 Phase C formal runtime entry.
 
-Phase A/B scope:
 Person + Partial-Person Observation (12fps)
-→ one explicit Person Instance per detected person
-→ CLEAN / OCCLUDED / CONTAMINATED / PARTIAL classification
-→ explicit single-person crop bbox + same-sample cannot-link metadata
+→ explicit Person Instance split and crop safety
 → multi-channel Person Image features (ReID / clothing / body / optional face)
 → Mature MOT (BoT-SORT / ByteTrack fallback)
-→ CLEAN-only gallery representatives + feature sidecars
-→ existing V8 Anchor-first identity decisions through a V9 clean-gallery adapter
+→ CLEAN-only Person Gallery evidence
+→ V9C Anchor-first Person Gallery identity
+→ confirm A -> absorb all remaining -> confirm B -> absorb against A+B -> ...
+→ partial/occluded/contaminated evidence may only extend confirmed identities or remain UNRESOLVED
 
-Identity is intentionally still temporary V8 during Phase B. Phase C will replace it
-with the confirmed Person Gallery absorb-first resolver.
+Track count and Face count never determine Final Character count. A new Character can only be
+created by a stable, multi-shot CLEAN Person Gallery that is clearly different from every already
+confirmed Person Gallery.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import logging
 from typing import Any
 
 from engine.app import character_visual_v5 as v5
-from engine.app.character_identity_v9a import resolve_global_identities
+from engine.app.character_identity_v9c import resolve_global_identities
 from engine.app.character_observation_v9 import detect_observations
 from engine.app.character_person_features_v9 import FEATURE_VERSION
 from engine.app.character_tracking_v9 import build_tracks, tracker_runtime_status
@@ -51,7 +51,7 @@ def analyze_characters(
             for channel in bundle.available_channels:
                 channels[channel] = channels.get(channel, 0) + 1
         logger.warning(
-            "[CharacterV9B] observations=%s feature_ready=%s tracks=%s confirmed_identities=%s "
+            "[CharacterV9C] observations=%s feature_ready=%s tracks=%s confirmed_galleries=%s "
             "unresolved_evidence=%s instance_classes=%s feature_channels=%s",
             len(observations),
             ready_features,
@@ -61,17 +61,28 @@ def analyze_characters(
             classes,
             channels,
         )
+        for index, candidate in enumerate(resolved, start=1):
+            metadata = dict(getattr(candidate, "v9_metadata", {}) or {})
+            logger.warning(
+                "[CharacterV9C] gallery=%s images=%s shots=%s face_images=%s tracks=%s bound_shots=%s",
+                index,
+                metadata.get("confirmed_gallery_images"),
+                metadata.get("confirmed_gallery_shots"),
+                metadata.get("face_images"),
+                len(candidate.tracks),
+                len({track.shot_id for track in candidate.tracks}),
+            )
         return candidates
     except (ImportError, ModuleNotFoundError) as exc:
         raise RequiredCharacterModelError(
-            "人物识别 V9 Phase B 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
+            "人物识别 V9 Phase C 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
             "YOLOX/ReID CUDA 不可用可以 CPU fallback，但 trackers/supervision 运行时缺失不能发布人物结果。"
         ) from exc
 
 
 def runtime_status() -> dict[str, object]:
     return {
-        "profile": "character-v9b-person-multichannel-gallery-v8-identity",
+        "profile": "character-v9c-person-gallery-anchor-first",
         "observation": {
             "sample_fps": 12.0,
             "normal_person_threshold": 0.32,
@@ -102,12 +113,17 @@ def runtime_status() -> dict[str, object]:
             "formal_representatives": "CLEAN Person Instance crops only",
             "quality_basis": "whole-person quality; face prominence is not required",
             "feature_sidecar": "compressed NPZ per gallery image",
-            "occluded_contaminated_partial": "Evidence only; forbidden as gallery seed/cover",
+            "occluded_contaminated_partial": "may extend confirmed gallery only; never seed a Character",
             "whole_frame_gallery_image": False,
-            "post_identity_rebuild": True,
         },
         "identity": {
-            "resolver": "V8 Anchor-first decisions via V9 clean-gallery adapter (temporary)",
-            "v9_person_gallery_identity": "PHASE_C_NOT_YET_ENABLED",
+            "resolver": "V9C Person Gallery Anchor-first Confirm-then-Absorb",
+            "comparison_order": "all remaining images compare to every confirmed gallery before any new gallery may be created",
+            "outcomes": ["MATCH", "AMBIGUOUS", "DIFFERENT"],
+            "ambiguous_policy": "UNRESOLVED; cannot seed duplicate Character",
+            "new_identity_gate": "3+ independent CLEAN Person Gallery shots + multichannel consistency + clear novelty",
+            "face_role": "optional supporting channel; never sole identity definition",
+            "track_role": "presence/evidence only; never identity cardinality",
+            "v8_identity": "DISABLED",
         },
     }
