@@ -1,3 +1,9 @@
+> **历史方案 / 已停止继续扩展**
+>
+> 当前人物资产重规划目标请使用：[`ASSET_CHARACTER_RECOGNITION_V9_PLAN.md`](./ASSET_CHARACTER_RECOGNITION_V9_PLAN.md)。
+>
+> V9 的核心变化：身份识别最小单位改为单独 `Person Instance`；多人画面必须先拆人；Final Character 由稳定 `Person Gallery` 产生；Face 只是人物图综合证据之一；Track / Partial / Body-only 不再决定人物数量。
+
 # 03 资产 — Character Recognition V4
 
 ## 为什么重做
