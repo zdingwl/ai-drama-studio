@@ -17,6 +17,8 @@ def observation(*, face: np.ndarray | None = None, reid: np.ndarray | None = Non
         instance_id="SHOT_1:1000000:P01",
         instance_class="CLEAN",
         gallery_eligible=True,
+        shot_id="SHOT_1",
+        source_time_us=1_000_000,
         frame_width=120,
         frame_height=200,
         bbox=(30, 20, 60, 160),
@@ -123,8 +125,39 @@ def test_gallery_feature_sidecar_keeps_channels_separate(tmp_path) -> None:
     feature_path, dimensions = gallery._save_feature_sidecar(tmp_path, 1, obs)
 
     assert feature_path is not None
-    arrays = np.load(feature_path)
-    assert set(arrays.files) == set(bundle.available_channels)
+    with np.load(feature_path) as arrays:
+        assert set(arrays.files) == set(bundle.available_channels)
     assert dimensions["person_reid"] == 3
     assert dimensions["face"] == 3
     assert bundle.feature_version == FEATURE_VERSION
+
+
+def test_cross_shot_person_images_are_kept_as_independent_gallery_support() -> None:
+    reid = np.asarray([1.0, 0.0, 0.0], dtype=np.float32)
+    frame = frame_with_clothes(upper=(0, 0, 255), lower=(255, 0, 0))
+    left_obs = observation(reid=reid)
+    right_obs = observation(reid=reid)
+    right_obs.shot_id = "SHOT_2"
+    right_obs.source_time_us = 2_000_000
+    left_obs.person_feature_bundle = extract_person_features(frame, left_obs)
+    right_obs.person_feature_bundle = extract_person_features(frame, right_obs)
+
+    left = SimpleNamespace(observation=left_obs, quality_score=0.9, clean=True)
+    right = SimpleNamespace(observation=right_obs, quality_score=0.9, clean=True)
+
+    assert gallery.representatives_diverse(left, right) is True
+
+
+def test_near_duplicate_same_shot_person_images_do_not_fill_gallery() -> None:
+    reid = np.asarray([1.0, 0.0, 0.0], dtype=np.float32)
+    frame = frame_with_clothes(upper=(0, 0, 255), lower=(255, 0, 0))
+    left_obs = observation(reid=reid)
+    right_obs = observation(reid=reid)
+    right_obs.source_time_us = 1_200_000
+    left_obs.person_feature_bundle = extract_person_features(frame, left_obs)
+    right_obs.person_feature_bundle = extract_person_features(frame, right_obs)
+
+    left = SimpleNamespace(observation=left_obs, quality_score=0.9, clean=True)
+    right = SimpleNamespace(observation=right_obs, quality_score=0.9, clean=True)
+
+    assert gallery.representatives_diverse(left, right) is False
