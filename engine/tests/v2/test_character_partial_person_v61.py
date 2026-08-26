@@ -57,6 +57,30 @@ def test_tiny_center_low_score_box_is_rejected_before_mot() -> None:
     ) is False
 
 
+def test_right_edge_retry_box_maps_back_to_full_frame_coordinates() -> None:
+    mapped = observation_v61._offset_box(
+        (300, 100, 150, 700),
+        230,
+        0,
+        720,
+        1280,
+    )
+    assert mapped == (530, 100, 150, 700)
+
+
+def test_edge_retry_duplicate_does_not_create_second_person_observation() -> None:
+    values = [
+        ((520, 100, 180, 800), 0.28, "v6.1-yolox-partial"),
+        ((525, 105, 175, 795), 0.46, "v6.1-yolox-edge-partial"),
+    ]
+
+    deduped = observation_v61._dedupe_person_proposals(values)
+
+    assert len(deduped) == 1
+    assert deduped[0][1] == 0.46
+    assert deduped[0][2] == "v6.1-yolox-edge-partial"
+
+
 def test_isolated_partial_detection_cannot_survive_as_person_track() -> None:
     value = partial(at_us=1_000_000, local_us=100_000)
     assert tracking._partial_track_is_supported([value]) is False
