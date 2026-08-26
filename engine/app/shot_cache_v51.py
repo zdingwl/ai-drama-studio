@@ -1,12 +1,15 @@
-"""Stage 02 Shot V5.1 Episode 级缓存基础设施。
+"""Stage 02 Shot V5.1 Episode-level cache infrastructure.
 
-目标：
-- 缓存只存在于 Episode ``cache/shot_v51``，与 source / shots / revision 成品严格隔离；
-- source、TransVLM Runtime 或关键参数变化时自动整体失效；
-- 支持按依赖层级清除：preprocess -> flow -> transvlm -> transitions；
-- 当前第一阶段正式复用的是 TransVLM transition segments；后续 RGB / Flow / Window cache
-  直接挂到同一依赖图，不再重新发明缓存规则；
-- 所有写入使用临时文件 + replace，避免任务中断留下半个 manifest。
+The cache is deliberately outside ``source/`` and ``shots/``.  A cache purge can never delete the
+original video, Current Shot Revision, or Reference Clips.
+
+Dependency order is strict::
+
+    preprocess RGB -> optical flow -> raw TransVLM window output -> merged transitions
+
+Clearing one layer clears every downstream layer.  The manifest is a strict contract over source
+identity, the official TransVLM runtime, and every signal-affecting production parameter.  Any
+contract change invalidates the whole cache before reuse.
 """
 from __future__ import annotations
 
@@ -15,13 +18,13 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
-from typing import Any
+from typing import Any, Iterable
 
-CACHE_SCHEMA_VERSION = "shot-v5.1-cache-1"
+CACHE_SCHEMA_VERSION = "shot-v5.1-cache-2"
 CACHE_DIR_NAME = "shot_v51"
 VALID_RECOMPUTE_SCOPES = ("auto", "transitions", "transvlm", "flow", "preprocess", "all")
 
-# 清除某层时必须同时删除所有下游产物。
+# Clearing an upstream layer MUST remove all descendants.
 _SCOPE_DIRS: dict[str, tuple[str, ...]] = {
     "transitions": ("transitions",),
     "transvlm": ("transvlm", "transitions"),
@@ -36,21 +39,30 @@ class ShotCachePaths:
     root: Path
     manifest: Path
     preprocess: Path
+    model_rgb: Path
     flow: Path
+    model_flow: Path
     transvlm: Path
+    transvlm_output: Path
     transitions: Path
     transition_segments: Path
 
 
 def cache_paths(episode_root: Path) -> ShotCachePaths:
     root = Path(episode_root) / "cache" / CACHE_DIR_NAME
+    preprocess = root / "preprocess"
+    flow = root / "flow"
+    transvlm = root / "transvlm"
     transitions = root / "transitions"
     return ShotCachePaths(
         root=root,
         manifest=root / "manifest.json",
-        preprocess=root / "preprocess",
-        flow=root / "flow",
-        transvlm=root / "transvlm",
+        preprocess=preprocess,
+        model_rgb=preprocess / "model_rgb.mp4",
+        flow=flow,
+        model_flow=flow / "model_flow.mp4",
+        transvlm=transvlm,
+        transvlm_output=transvlm / "transvlm.jsonl",
         transitions=transitions,
         transition_segments=transitions / "segments.json",
     )
@@ -69,23 +81,34 @@ def _sha256_file(path: Path) -> str | None:
     return digest.hexdigest()
 
 
-def runtime_signature(inference_root: Path, checkpoint_dir: Path) -> str:
-    """对会改变 TransVLM/NeuFlow 信号的关键 Runtime 文件做轻量签名。
+def runtime_signature(
+    inference_root: Path,
+    checkpoint_dir: Path,
+    *,
+    extra_files: Iterable[Path] = (),
+) -> str:
+    """Hash code/config that can alter the cached model signal.
 
-    不哈希多 GB safetensors；checkpoint 由 config.json + 固定模型 profile 标识，Runtime 代码、
-    prompt、flow pipeline 直接哈希。setup 更新官方仓库或 prompt 后会自动得到新签名。
+    Multi-GB safetensors are intentionally not hashed on every run.  The checkpoint config plus the
+    fixed model profile identifies the weights, while the executable inference/resize/flow/prompt
+    code is hashed directly.  App-side cache capture code may be supplied through ``extra_files``.
     """
 
     inference_root = Path(inference_root)
-    candidates = (
+    candidates = [
         inference_root / "infer_video.py",
         inference_root / "transvlm" / "data" / "flow_computer.py",
+        inference_root / "transvlm" / "data" / "flow_config.py",
+        inference_root / "transvlm" / "data" / "flow_writer.py",
+        inference_root / "transvlm" / "data" / "resize_video_helper.py",
+        inference_root / "transvlm" / "inference" / "clip_engine.py",
         inference_root / "transvlm" / "assets" / "prompts" / "prompt_only_timestamps.txt",
         Path(checkpoint_dir) / "config.json",
-    )
+        *[Path(item) for item in extra_files],
+    ]
     digest = hashlib.sha256()
     for path in candidates:
-        digest.update(str(path.name).encode("utf-8"))
+        digest.update(str(path).encode("utf-8"))
         value = _sha256_file(path)
         digest.update((value or "MISSING").encode("ascii"))
     return digest.hexdigest()
@@ -110,12 +133,16 @@ def build_manifest(
         "preprocess": {
             "fps": float(transvlm_profile["fps"]),
             "resize": "official-smart-resize",
-            "max_pixels_override": transvlm_profile.get("max_pixels_override"),
+            "max_pixels_override": int(transvlm_profile["max_pixels_override"]),
+            "image_patch_size": int(transvlm_profile["image_patch_size"]),
+            "nframes_for_resize": int(transvlm_profile["nframes_for_resize"]),
         },
         "flow": {
             "engine": "NeuFlow-v2",
             "normalization": "whole-video-global",
             "codec": transvlm_profile["flow_codec"],
+            "viz_device": transvlm_profile["flow_viz_device"],
+            "mini_batch_size": int(transvlm_profile["flow_mini_batch_size"]),
             "runtime_signature": runtime_signature_value,
         },
         "transvlm": {
@@ -123,7 +150,11 @@ def build_manifest(
             "backend": transvlm_profile["backend"],
             "window_size": float(transvlm_profile["window_size"]),
             "stride": float(transvlm_profile["stride"]),
+            "strict_tail": bool(transvlm_profile["strict_tail"]),
+            "merge_eps": float(transvlm_profile["merge_eps"]),
             "timestamp_format": transvlm_profile["timestamp_format"],
+            "max_new_tokens": int(transvlm_profile["max_new_tokens"]),
+            "prefix_caching": bool(transvlm_profile["prefix_caching"]),
             "runtime_signature": runtime_signature_value,
         },
     }
@@ -147,10 +178,8 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
 
 
 def manifests_match(stored: dict[str, Any] | None, expected: dict[str, Any]) -> bool:
-    if stored is None:
-        return False
-    # 当前 schema 下 manifest 是严格合同。任何上游版本/参数变化都让下游缓存失效。
-    return stored == expected
+    # The current schema uses an exact manifest contract.  No stale/partial compatibility layer.
+    return stored is not None and stored == expected
 
 
 def clear_cache(paths: ShotCachePaths, scope: str = "all") -> dict[str, Any]:
@@ -181,7 +210,7 @@ def clear_cache(paths: ShotCachePaths, scope: str = "all") -> dict[str, Any]:
 
     if scope == "all":
         paths.manifest.unlink(missing_ok=True)
-        # 只删除 cache/shot_v51；绝不向上删除 source / shots。
+        # Only remove cache/shot_v51.  Never walk upward into source/ or shots/.
         if paths.root.exists():
             try:
                 paths.root.rmdir()
@@ -247,12 +276,18 @@ def load_transition_segments(paths: ShotCachePaths, expected_manifest: dict[str,
     return result
 
 
+def cached_transvlm_output(paths: ShotCachePaths, expected_manifest: dict[str, Any]) -> Path | None:
+    if not manifests_match(_read_manifest(paths.manifest), expected_manifest):
+        return None
+    return paths.transvlm_output if paths.transvlm_output.is_file() else None
+
+
 def store_transition_segments(
     paths: ShotCachePaths,
     expected_manifest: dict[str, Any],
     segments: list[dict[str, int]],
 ) -> None:
-    # 写 artifact 前再次写 manifest，确保一个成功 Run 的 cache 总是自描述。
+    # Re-write the manifest before the artifact so every successful cache is self-describing.
     paths.root.mkdir(parents=True, exist_ok=True)
     _atomic_write_json(paths.manifest, expected_manifest)
     _atomic_write_json(
@@ -284,9 +319,9 @@ def cache_status(paths: ShotCachePaths, expected_manifest: dict[str, Any]) -> di
         return total
 
     layers = {
-        "preprocess": paths.preprocess.exists(),
-        "flow": paths.flow.exists(),
-        "transvlm": paths.transvlm.exists(),
+        "preprocess": paths.model_rgb.is_file(),
+        "flow": paths.model_flow.is_file(),
+        "transvlm": paths.transvlm_output.is_file(),
         "transitions": paths.transition_segments.is_file(),
     }
     return {
