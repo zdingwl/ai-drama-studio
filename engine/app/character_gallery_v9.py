@@ -1,15 +1,16 @@
-"""Character V9 Phase A gallery safety.
+"""Character V9 Phase A/B gallery safety and feature persistence.
 
-Only CLEAN Person Instance crops can enter a formal person gallery. Dirty/partial
-observations remain Track Evidence and may still be used later for conservative
-presence attachment, but never become gallery representatives or covers.
+Phase A: only CLEAN Person Instance crops can enter a formal person gallery.
+Phase B: every saved gallery image keeps its multi-channel person features in a
+compressed sidecar so identity logic can compare ReID/clothing/body/face channels
+separately without recomputing from a whole frame.
 """
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from engine.app import character_visual_v5 as v5
+from engine.app.character_person_features_v9 import FEATURE_VERSION, feature_dimensions
 from engine.app.character_person_instance_v9 import classify_person_instance, gallery_crop_is_valid
 from engine.app.studio_v2 import workspace_root
 
@@ -26,11 +27,20 @@ def _observation_is_clean(observation: Observation) -> bool:
     return observation.interference_ratio <= v5.CLEAN_INTERFERENCE_MAX
 
 
+def _quality(observation: Observation) -> float:
+    feature_quality = getattr(observation, "person_feature_quality", None)
+    if feature_quality is not None:
+        return max(0.0, min(1.0, float(feature_quality)))
+    return v5._representative_quality(observation)
+
+
 def select_track_representatives(track: TrackDraft) -> list[TrackRepresentative]:
+    """Prefer CLEAN whole-person quality, not face prominence, for gallery representatives."""
+
     scored = [
         TrackRepresentative(
             observation=item,
-            quality_score=v5._representative_quality(item),
+            quality_score=_quality(item),
             clean=_observation_is_clean(item),
         )
         for item in track.observations
@@ -74,8 +84,38 @@ def _safe_crop(representative: TrackRepresentative):
     return crop, safety
 
 
+def _save_feature_sidecar(root, index: int, observation: Observation) -> tuple[str | None, dict[str, int]]:
+    bundle = getattr(observation, "person_feature_bundle", None)
+    if bundle is None:
+        return None, {}
+
+    import numpy as np
+
+    arrays = {
+        name: getattr(bundle, name)
+        for name in (
+            "person_reid",
+            "clothing_upper",
+            "clothing_lower",
+            "body_hist",
+            "body_structure",
+            "face",
+        )
+        if getattr(bundle, name) is not None
+    }
+    if not arrays:
+        return None, {}
+
+    path = root / f"features_{index:02d}.npz"
+    np.savez_compressed(
+        str(path),
+        **{name: np.asarray(value, dtype=np.float32) for name, value in arrays.items()},
+    )
+    return str(path), feature_dimensions(bundle)
+
+
 def save_candidate_gallery(run_id: str, candidate: CandidateDraft, ordinal: int) -> list[str]:
-    """Persist only explicit CLEAN Person Instance crops; never save a whole frame."""
+    """Persist CLEAN Person crops + separate multi-channel feature sidecars."""
 
     import cv2
 
@@ -92,8 +132,14 @@ def save_candidate_gallery(run_id: str, candidate: CandidateDraft, ordinal: int)
             continue
         saved.append(str(path))
         observation = representative.observation
+        feature_path, dimensions = _save_feature_sidecar(root, index, observation)
+        bundle = getattr(observation, "person_feature_bundle", None)
         manifest_images.append({
             "path": str(path),
+            "feature_path": feature_path,
+            "feature_version": getattr(bundle, "feature_version", None),
+            "feature_channels": list(getattr(bundle, "available_channels", ()) or ()),
+            "feature_dimensions": dimensions,
             "shot_id": observation.shot_id,
             "source_time_us": observation.source_time_us,
             "instance_id": getattr(observation, "instance_id", None),
@@ -101,6 +147,7 @@ def save_candidate_gallery(run_id: str, candidate: CandidateDraft, ordinal: int)
             "crop_bbox": list(safety.crop_bbox),
             "quality": round(representative.quality_score, 6),
             "face_visible": bool(observation.face_visible),
+            "face_score": round(float(getattr(observation, "face_score", 0.0)), 6),
             "instance_class": safety.instance_class,
             "gallery_eligible": True,
             "contamination_ratio": round(safety.contamination_ratio, 6),
@@ -111,7 +158,11 @@ def save_candidate_gallery(run_id: str, candidate: CandidateDraft, ordinal: int)
     (root / "gallery.json").write_text(json.dumps({
         "candidate_id": candidate.id,
         "identity_status": candidate.identity_status,
-        "policy": "V9 Phase A: formal gallery contains CLEAN Person Instance crops only; whole frames forbidden",
+        "feature_version": FEATURE_VERSION,
+        "policy": (
+            "V9 Phase B: formal gallery contains CLEAN Person Instance crops only; "
+            "ReID/clothing/body/face channels are preserved separately; whole frames forbidden"
+        ),
         "image_count": len(manifest_images),
         "images": manifest_images,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
