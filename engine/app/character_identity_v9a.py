@@ -1,9 +1,10 @@
-"""Character V9 Phase A identity adapter.
+"""Character V9 Phase A/B identity adapter.
 
-Identity decisions intentionally remain V8 during Phase A. This adapter exists to
-make the Person Instance safety contract end-to-end: V8 may rebuild sub-tracks
-internally with its historical representative selector, so after identity returns
-we recompute every track/candidate gallery from V9 CLEAN Person Instances only.
+Identity decisions intentionally remain V8 until Phase C. This adapter exists to
+make the V9 Person Instance + Person Image contracts end-to-end: V8 may rebuild
+sub-tracks internally with historical selectors, so after identity returns we
+recompute every track/candidate gallery from V9 CLEAN Person Instances and V9B
+multi-channel diversity.
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ def _rebuild_candidate_gallery(candidate: CandidateDraft) -> None:
     pool.sort(key=lambda item: item.quality_score, reverse=True)
     selected: list[v5.TrackRepresentative] = []
     for item in pool:
-        if selected and not any(v5._representative_diverse(item, existing) for existing in selected):
+        if selected and not any(gallery.representatives_diverse(item, existing) for existing in selected):
             continue
         selected.append(item)
         if len(selected) >= v5.CHARACTER_GALLERY_LIMIT:
