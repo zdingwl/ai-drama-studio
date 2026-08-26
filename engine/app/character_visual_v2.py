@@ -1,6 +1,6 @@
 """人物视觉兼容入口。
 
-正式实现当前处于 Character V9 Phase B：
+正式实现当前处于 Character V9 Phase C：
 - Shot 内约 12fps Person / Partial-Person Observation；
 - 一帧多人先拆成独立 Person Instance，禁止整帧做人身份图；
 - 每个 Instance 标记 CLEAN / OCCLUDED / CONTAMINATED / PARTIAL；
@@ -8,10 +8,9 @@
 - 每个单人人物图分别保留 Person ReID、上下身服装/纹理、Body histogram、身体结构、可选 Face；
 - 不生成一个不可解释的“人物总 embedding”；Face 只是可选强证据；
 - Track / Candidate Gallery 只允许 CLEAN Person Instance crop 作为正式代表图；
-- Gallery 图片同时保存独立特征 sidecar；
-- OCCLUDED / CONTAMINATED / PARTIAL 只保留 Evidence，不进入正式 Gallery；
-- 身份判断暂时继续复用 V8 Anchor-first，但通过 V9 adapter 重建 CLEAN Gallery；
-- V9 Phase C 再替换成完整 Person Gallery Confirm-then-Absorb identity；
+- V9C 身份采用 Person Gallery Anchor-first：先确认 A，再让剩余全部比 A；再确认 B，再比 A+B；
+- MATCH 吸收，AMBIGUOUS 留 UNRESOLVED，只有明确 DIFFERENT 且多 Shot 稳定的 Person Gallery 才能创建新人；
+- OCCLUDED / CONTAMINATED / PARTIAL 只能保守挂回已确认 Gallery 或留 UNRESOLVED，不能创建新人物；
 - YOLOX / YoutuReID 继续 GPU 优先、CPU fallback。
 
 保留本文件只为了让 content_analysis_v2 / 历史测试 import 路径稳定。
@@ -36,7 +35,7 @@ from engine.app.character_gallery_v9 import (  # noqa: F401
 )
 from engine.app.character_observation_v9 import detect_observations, sample_times_us  # noqa: F401
 from engine.app.character_tracking_v9 import build_tracks, tracker_runtime_status  # noqa: F401
-from engine.app.character_identity_v9a import resolve_global_identities as cluster_candidates  # noqa: F401
+from engine.app.character_identity_v9c import resolve_global_identities as cluster_candidates  # noqa: F401
 from engine.app.character_runtime_v6 import analyze_characters, runtime_status  # noqa: F401
 
 
