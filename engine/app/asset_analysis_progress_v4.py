@@ -2,9 +2,11 @@
 
 职责：
 - 复用 content_analysis_v2 的正式 Run / Scene 数据模型；
-- 人物正式链路为 Character V7：12fps Person + Partial → Safe Face Ownership → Mature MOT → Face-first Global Identity；
-- Face observation 是唯一身份节点；Person Track 数量不再决定 Final Character 数量；
-- partial/body-only 只能在稳定 Face Identity 建立以后挂回，否则只保留 UNRESOLVED Evidence；
+- 人物正式链路为 Character V8：12fps Person + Partial → Safe Face Ownership → Mature MOT → Anchor-first Identity；
+- 先确认高质量人物，再让后续 Face 依次与所有已确认人物比较；
+- 只有高质量、跨 Shot 支持、且明确不同于全部已确认人物的 Face 才能创建新 Character Identity；
+- Person Track 只表达 Evidence / Shot presence，不决定 Final Character 数量；
+- partial/body-only 只能挂回已确认人物，否则只保留 UNRESOLVED Evidence；
 - RESOLVED / UNRESOLVED 在持久化时明确分层，只有 RESOLVED 后续可形成 Final Character；
 - 新 Run 完整成功后才切 Current，失败保留旧结果。
 """
@@ -30,7 +32,7 @@ AssetEvidenceProgress = Callable[
     None,
 ]
 
-FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v7-face-first-global-identity"
+FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v8-anchor-first-confirm-then-absorb"
 
 
 def _report(
@@ -76,7 +78,7 @@ def run_content_analysis_with_progress(
     _mark_formal_profile(run_id)
     component_status: dict[str, str] = {
         "characters": "PENDING",
-        "characters_profile": "V7_FACE_FIRST_GLOBAL_IDENTITY",
+        "characters_profile": "V8_ANCHOR_FIRST_CONFIRM_THEN_ABSORB",
         "scenes": "PENDING",
         "props": "NOT_CONFIGURED",
     }
@@ -91,7 +93,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            f"已读取 {total_shots} 个 Current Shots，正在加载人物 V7 Safe Face / MOT / Face-first Identity",
+            f"已读取 {total_shots} 个 Current Shots，正在加载人物 V8 Safe Face / MOT / Anchor-first Identity",
         )
 
         candidates: list[CandidateDraft] = []
@@ -106,7 +108,7 @@ def run_content_analysis_with_progress(
                 progress,
                 5.0 + ratio * 77.0,
                 "characters",
-                "人物 V7 · Safe Face / MOT / Face-first Global Identity",
+                "人物 V8 · Safe Face / MOT / Confirm-then-Absorb",
                 current_item,
                 current,
                 total,
@@ -124,11 +126,11 @@ def run_content_analysis_with_progress(
             progress,
             84.0,
             "identity_resolve",
-            "全局人物身份解析完成",
+            "人物身份确认完成",
             None,
             total_shots,
             total_shots,
-            f"Face-first Identity V7：{resolved_count} 个可发布人物 · {unresolved_count} 个待解析 Evidence",
+            f"Anchor-first Identity V8：{resolved_count} 个已确认人物 · {unresolved_count} 个待解析 Evidence",
         )
 
         _report(
@@ -139,7 +141,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            "人物 V7 完成，正在计算 Scene Segment",
+            "人物 V8 完成，正在计算 Scene Segment",
         )
         scenes: list[SceneDraft] = _cluster_scenes(run_id, project_id, shots)
         component_status["scenes"] = "READY" if scenes else "NO_SCENE"
@@ -155,7 +157,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            f"正在保存 {resolved_count} 个 RESOLVED Character、{unresolved_count} 个 Unresolved Evidence、{len(scenes)} 个 Scene Segment",
+            f"正在保存 {resolved_count} 个已确认 Character、{unresolved_count} 个 Unresolved Evidence、{len(scenes)} 个 Scene Segment",
         )
         persist_results_v6(
             run_id=run_id,
@@ -167,7 +169,7 @@ def run_content_analysis_with_progress(
             speaker_segments=speaker_segments,
             component_status=component_status,
         )
-        # persistence 模块仍兼容历史调用；正式入口最终覆盖为 V7 profile。
+        # persistence 模块保留历史兼容；正式入口最终覆盖为 V8 profile。
         _mark_formal_profile(run_id)
 
         _report(
@@ -178,7 +180,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            f"人物 V7 完成：{resolved_count} Final-ready · {unresolved_count} 待解析 Evidence",
+            f"人物 V8 完成：{resolved_count} Final-ready · {unresolved_count} 待解析 Evidence",
         )
         return get_analysis_run(run_id) or {"id": run_id, "status": "READY"}
     except Exception as exc:
