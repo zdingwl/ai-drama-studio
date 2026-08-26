@@ -10,6 +10,84 @@ function Test-Command([string]$Name) {
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Get-FfmpegMajor([string]$BinDir) {
+    $exe = Join-Path $BinDir 'ffmpeg.exe'
+    if (-not (Test-Path $exe)) {
+        return $null
+    }
+    try {
+        $firstLine = (& $exe -version 2>$null | Select-Object -First 1)
+        if ($firstLine -match 'ffmpeg version\s+([0-9]+)') {
+            return [int]$Matches[1]
+        }
+    } catch {
+        return $null
+    }
+    return $null
+}
+
+function Test-SharedFfmpegBin([string]$BinDir) {
+    if (-not $BinDir -or -not (Test-Path $BinDir)) {
+        return $false
+    }
+    $major = Get-FfmpegMajor $BinDir
+    # TorchCodec 0.8/0.9 wheels used by TransVLM ship core loaders for FFmpeg 4..8.
+    if ($null -eq $major -or $major -lt 4 -or $major -gt 8) {
+        return $false
+    }
+    foreach ($pattern in @('avcodec-*.dll', 'avformat-*.dll', 'avutil-*.dll')) {
+        $match = Get-ChildItem -Path $BinDir -Filter $pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $match) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Find-SharedFfmpegBin {
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    if ($env:AI_DRAMA_TRANSVLM_FFMPEG_BIN) {
+        $candidates.Add($env:AI_DRAMA_TRANSVLM_FFMPEG_BIN)
+    }
+
+    $ffmpegCommand = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    if ($ffmpegCommand -and $ffmpegCommand.Source) {
+        $candidates.Add((Split-Path $ffmpegCommand.Source -Parent))
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-SharedFfmpegBin $candidate) {
+            return (Resolve-Path $candidate).Path
+        }
+    }
+
+    $packageRoots = @()
+    if ($env:LOCALAPPDATA) {
+        $packageRoots += (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages')
+    }
+    if ($env:ProgramFiles) {
+        $packageRoots += (Join-Path $env:ProgramFiles 'WinGet\Packages')
+    }
+
+    foreach ($root in $packageRoots) {
+        if (-not (Test-Path $root)) {
+            continue
+        }
+        $packageDirs = Get-ChildItem -Path $root -Directory -Filter 'Gyan.FFmpeg.Shared*' -ErrorAction SilentlyContinue
+        foreach ($packageDir in $packageDirs) {
+            $executables = Get-ChildItem -Path $packageDir.FullName -Recurse -File -Filter 'ffmpeg.exe' -ErrorAction SilentlyContinue
+            foreach ($exe in $executables) {
+                $binDir = $exe.Directory.FullName
+                if (Test-SharedFfmpegBin $binDir) {
+                    return $binDir
+                }
+            }
+        }
+    }
+    return $null
+}
+
 $requiredCommands = @('git', 'uv', 'ffmpeg', 'nvidia-smi')
 $missingCommands = @($requiredCommands | Where-Object { -not (Test-Command $_) })
 if ($missingCommands.Count -gt 0) {
@@ -33,6 +111,7 @@ $InferenceRoot = Join-Path $RuntimeRoot 'inference'
 $PythonExe = Join-Path $InferenceRoot '.venv\Scripts\python.exe'
 $CheckpointDir = Join-Path $InferenceRoot 'pretrained\TransVLM-v1'
 $CudnnStageScript = Join-Path $RepoRoot 'scripts\stage_transvlm_cudnn_windows.py'
+$FfmpegPathFile = Join-Path $RuntimeRoot 'ffmpeg_shared_bin.txt'
 $IsWindowsPlatform = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 
 Write-Host "[TransVLM] Runtime: $RuntimeRoot"
@@ -117,6 +196,37 @@ try {
         throw "TransVLM requires cuDNN >= 9.16; detected $cudnnText."
     }
 
+    if ($IsWindowsPlatform) {
+        Write-Host '[TransVLM] Checking for an FFmpeg shared build required by TorchCodec.'
+        $SharedFfmpegBin = Find-SharedFfmpegBin
+        if (-not $SharedFfmpegBin) {
+            if (Test-Command 'winget') {
+                Write-Host '[TransVLM] Shared FFmpeg not found; installing Gyan.FFmpeg.Shared 8.1.1 for the current user.'
+                winget install --id Gyan.FFmpeg.Shared -e --version 8.1.1 --source winget --accept-package-agreements --accept-source-agreements --silent
+                if ($LASTEXITCODE -ne 0) {
+                    throw 'WinGet failed to install Gyan.FFmpeg.Shared 8.1.1.'
+                }
+                $SharedFfmpegBin = Find-SharedFfmpegBin
+            }
+        }
+        if (-not $SharedFfmpegBin) {
+            throw 'TorchCodec requires FFmpeg shared DLLs on Windows. Install Gyan.FFmpeg.Shared 8.1.1 or set AI_DRAMA_TRANSVLM_FFMPEG_BIN to a compatible shared-build bin directory.'
+        }
+
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($FfmpegPathFile, $SharedFfmpegBin, $utf8NoBom)
+        $TorchLib = Join-Path $InferenceRoot '.venv\Lib\site-packages\torch\lib'
+        $env:PATH = "$SharedFfmpegBin;$TorchLib;$env:PATH"
+        $ffmpegMajor = Get-FfmpegMajor $SharedFfmpegBin
+        Write-Host "[TransVLM] Shared FFmpeg = $SharedFfmpegBin (major $ffmpegMajor)"
+
+        Write-Host '[TransVLM] Verifying TorchCodec can load its FFmpeg-backed native library.'
+        & $PythonExe -c "from torchcodec.decoders import VideoDecoder; import torchcodec; print('torchcodec=OK')"
+        if ($LASTEXITCODE -ne 0) {
+            throw 'TorchCodec still cannot load with the selected shared FFmpeg runtime.'
+        }
+    }
+
     New-Item -ItemType Directory -Force -Path $CheckpointDir | Out-Null
     $env:AI_DRAMA_TRANSVLM_SETUP_CKPT = $CheckpointDir
     Write-Host '[TransVLM] Downloading TransVLM and NeuFlow checkpoints. This can take a while.'
@@ -138,6 +248,9 @@ try {
     Write-Host "  Checkpoint: $CheckpointDir"
     Write-Host '  Backend: hf'
     Write-Host "  CUDA group: $Cuda"
+    if ($IsWindowsPlatform) {
+        Write-Host "  Shared FFmpeg: $SharedFfmpegBin"
+    }
 } finally {
     Remove-Item Env:AI_DRAMA_TRANSVLM_SETUP_CKPT -ErrorAction SilentlyContinue
     Pop-Location
