@@ -1,16 +1,17 @@
-"""Character V9 Phase A formal runtime entry.
+"""Character V9 Phase B formal runtime entry.
 
-Phase A scope only:
+Phase A/B scope:
 Person + Partial-Person Observation (12fps)
 → one explicit Person Instance per detected person
 → CLEAN / OCCLUDED / CONTAMINATED / PARTIAL classification
 → explicit single-person crop bbox + same-sample cannot-link metadata
+→ multi-channel Person Image features (ReID / clothing / body / optional face)
 → Mature MOT (BoT-SORT / ByteTrack fallback)
-→ CLEAN-only gallery representatives
+→ CLEAN-only gallery representatives + feature sidecars
 → existing V8 Anchor-first identity decisions through a V9 clean-gallery adapter
 
-Hard product rule for this phase: whole frames must never become person gallery images.
-Multi-person frames are split before tracking/identity and dirty crops never seed a gallery.
+Identity is intentionally still temporary V8 during Phase B. Phase C will replace it
+with the confirmed Person Gallery absorb-first resolver.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from typing import Any
 from engine.app import character_visual_v5 as v5
 from engine.app.character_identity_v9a import resolve_global_identities
 from engine.app.character_observation_v9 import detect_observations
+from engine.app.character_person_features_v9 import FEATURE_VERSION
 from engine.app.character_tracking_v9 import build_tracks, tracker_runtime_status
 from engine.app.content_models_v2 import RequiredCharacterModelError
 
@@ -37,28 +39,39 @@ def analyze_characters(
         resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
         unresolved = [item for item in candidates if item.identity_status != "RESOLVED"]
         classes: dict[str, int] = {}
+        channels: dict[str, int] = {}
+        ready_features = 0
         for item in observations:
             key = str(getattr(item, "instance_class", "UNKNOWN"))
             classes[key] = classes.get(key, 0) + 1
+            bundle = getattr(item, "person_feature_bundle", None)
+            if bundle is None:
+                continue
+            ready_features += 1
+            for channel in bundle.available_channels:
+                channels[channel] = channels.get(channel, 0) + 1
         logger.warning(
-            "[CharacterV9A] observations=%s tracks=%s confirmed_identities=%s unresolved_evidence=%s instance_classes=%s",
+            "[CharacterV9B] observations=%s feature_ready=%s tracks=%s confirmed_identities=%s "
+            "unresolved_evidence=%s instance_classes=%s feature_channels=%s",
             len(observations),
+            ready_features,
             len(tracks),
             len(resolved),
             len(unresolved),
             classes,
+            channels,
         )
         return candidates
     except (ImportError, ModuleNotFoundError) as exc:
         raise RequiredCharacterModelError(
-            "人物识别 V9 Phase A 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
+            "人物识别 V9 Phase B 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
             "YOLOX/ReID CUDA 不可用可以 CPU fallback，但 trackers/supervision 运行时缺失不能发布人物结果。"
         ) from exc
 
 
 def runtime_status() -> dict[str, object]:
     return {
-        "profile": "character-v9a-person-instance-safety-v8-identity",
+        "profile": "character-v9b-person-multichannel-gallery-v8-identity",
         "observation": {
             "sample_fps": 12.0,
             "normal_person_threshold": 0.32,
@@ -69,15 +82,32 @@ def runtime_status() -> dict[str, object]:
             "same_sample_cannot_link": True,
             "face_ownership": "global one-to-one geometry gate; partial cannot own face",
         },
+        "features": {
+            "version": FEATURE_VERSION,
+            "unit": "isolated Person Instance image",
+            "channels": [
+                "person_reid",
+                "clothing_upper",
+                "clothing_lower",
+                "body_hist",
+                "body_structure",
+                "face(optional)",
+            ],
+            "single_total_embedding": False,
+            "demographic_inference": False,
+            "whole_frame_feature": False,
+        },
         "tracking": tracker_runtime_status(),
         "gallery": {
             "formal_representatives": "CLEAN Person Instance crops only",
+            "quality_basis": "whole-person quality; face prominence is not required",
+            "feature_sidecar": "compressed NPZ per gallery image",
             "occluded_contaminated_partial": "Evidence only; forbidden as gallery seed/cover",
             "whole_frame_gallery_image": False,
             "post_identity_rebuild": True,
         },
         "identity": {
-            "resolver": "V8 Anchor-first decisions via V9A clean-gallery adapter",
-            "v9_person_gallery_identity": "NOT_YET_ENABLED",
+            "resolver": "V8 Anchor-first decisions via V9 clean-gallery adapter (temporary)",
+            "v9_person_gallery_identity": "PHASE_C_NOT_YET_ENABLED",
         },
     }
