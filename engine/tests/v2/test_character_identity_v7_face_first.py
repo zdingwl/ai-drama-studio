@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from engine.app import character_identity_v7 as v7
+from engine.app import character_resolution_gate_v7 as gate
 from engine.app import character_visual_v5 as v5
 
 
@@ -110,7 +111,6 @@ def test_three_real_people_with_many_track_fragments_still_publish_three() -> No
             ))
             shot += 1
 
-    # 同一个真人在两个已经存在的 Shot 中额外产生重复 MOT Track。
     tracks.extend([
         track(
             shot_id="SHOT_9", shot_ordinal=9,
@@ -125,6 +125,7 @@ def test_three_real_people_with_many_track_fragments_still_publish_three() -> No
     ])
 
     candidates = v7.resolve_global_identities(tracks)
+    gate.enforce_resolution_gate(candidates)
 
     assert len(resolved(candidates)) == 3
 
@@ -147,6 +148,7 @@ def test_body_and_partial_tracks_never_increase_final_character_count() -> None:
         ))
 
     candidates = v7.resolve_global_identities(tracks)
+    gate.enforce_resolution_gate(candidates)
 
     assert len(resolved(candidates)) == 1
 
@@ -160,9 +162,27 @@ def test_two_shot_face_fragment_with_only_two_samples_per_shot_stays_unresolved(
     ]
 
     candidates = v7.resolve_global_identities(tracks)
+    gate.enforce_resolution_gate(candidates)
 
     assert len(resolved(candidates)) == 0
     assert any(item.identity_status == "UNRESOLVED" for item in candidates)
+
+
+def test_even_extremely_strong_two_shot_face_identity_is_not_auto_final() -> None:
+    face = vec(1, 0, 0)
+    reid = vec(1, 0.001, 0)
+    tracks = [
+        track(shot_id="SHOT_22", shot_ordinal=22, face=face, reid=reid, bbox=(100, 100, 180, 650), samples=6),
+        track(shot_id="SHOT_23", shot_ordinal=23, face=face, reid=reid, bbox=(100, 100, 180, 650), samples=6),
+    ]
+
+    candidates = v7.resolve_global_identities(tracks)
+    assert len(resolved(candidates)) == 1  # identity resolver may recognize it strongly
+
+    gate.enforce_resolution_gate(candidates)
+
+    assert len(resolved(candidates)) == 0
+    assert candidates[0].v6_metadata["v7_resolution_reason"] == "fewer-than-3-distinct-face-shots"
 
 
 def test_same_sample_spatially_distinct_faces_cannot_merge_even_if_embedding_is_similar() -> None:
