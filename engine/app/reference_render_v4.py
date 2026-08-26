@@ -116,14 +116,13 @@ def render_reference_exact(
     seek_us = _safe_seek_us(source_pts, start_index, start_us)
 
     # accurate input seek 会丢弃 seek 点之前的帧。seek 被选在“上一帧之后、第一目标帧之前”，
-    # 因此 filter 看到的第一帧就是当前 Shot 的第一 owned frame。
-    # FFmpeg trim 的 end_frame 使用 1-based 结束计数：end_frame=4 才会保留前三帧，
-    # 所以要把业务期望帧数 N 映射为 end_frame=N+1。编码后仍会再次按实际帧数硬校验。
+    # 因此 filter 看到的第 0 帧就是当前 Shot 的第一 owned frame。
+    # trim.end_frame 是排他的 zero-based frame index：end_frame=N 会保留 n=0..N-1，
+    # 即恰好 N 帧。这里绝不能 +1，否则会把下一 Shot 的第一帧带进当前 Reference Clip。
     seek_s = seek_us / 1_000_000
-    ffmpeg_end_frame = expected_frames + 1
     video_filter = (
         "[0:v:0]setpts=PTS-STARTPTS,"
-        f"trim=start_frame=0:end_frame={ffmpeg_end_frame},"
+        f"trim=start_frame=0:end_frame={expected_frames},"
         "setpts=PTS-STARTPTS[v]"
     )
     command = ["ffmpeg", "-y", "-ss", f"{seek_s:.6f}", "-i", str(source)]
