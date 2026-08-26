@@ -1,12 +1,14 @@
-"""Character V6 正式运行入口。
+"""Character V6.1 正式运行入口。
 
-Person Observation (12fps)
+Person + Partial-Person Observation (12fps)
 → Mature MOT (BoT-SORT / ByteTrack fallback)
+→ Partial Track temporal confirmation
 → Clean Track Gallery
 → Global Identity Graph
 → RESOLVED / UNRESOLVED Candidate
 
-注意：UNRESOLVED 只保留 Evidence，Final Asset 层会显式过滤。
+重要边界：partial/body-only 必须能够表达“这里有人”，但不能独立创建 Final Character；
+UNRESOLVED 只保留 Evidence，Final Asset 层继续使用 RESOLVED-only allow-list。
 """
 from __future__ import annotations
 
@@ -29,14 +31,20 @@ def analyze_characters(
         return resolve_global_identities(tracks)
     except (ImportError, ModuleNotFoundError) as exc:
         raise RequiredCharacterModelError(
-            "人物识别 V6 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
+            "人物识别 V6.1 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
             "YOLOX/ReID CUDA 不可用可以 CPU fallback，但 trackers/supervision 运行时缺失不能发布人物结果。"
         ) from exc
 
 
 def runtime_status() -> dict[str, object]:
     return {
-        "profile": "character-v6-global-identity",
+        "profile": "character-v6.1-partial-person-global-identity",
+        "observation": {
+            "sample_fps": 12.0,
+            "normal_person_threshold": 0.32,
+            "partial_person_proposal_threshold": 0.10,
+            "partial_policy": "temporal confirmation before Evidence; never direct Final Character",
+        },
         "tracking": tracker_runtime_status(),
         "identity": {
             "resolver": "Global Identity Graph",
