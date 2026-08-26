@@ -1,16 +1,16 @@
-"""Character V7 formal runtime entry.
+"""Character V8 formal runtime entry.
 
 Person + Partial-Person Observation (12fps)
 → Geometry-safe Face Ownership
 → Mature MOT (BoT-SORT / ByteTrack fallback)
-→ Face observations become the ONLY identity nodes
-→ Face-first Global Identity Graph
-→ Person/partial/body Tracks attach after identity exists
-→ strict >=3 Face-Shot auto publish gate
+→ Anchor-first / Confirm-then-Absorb Identity
+→ confirmed Identity Gallery absorbs later Face Evidence first
+→ only clearly novel, cross-shot-supported Face may create next Identity
+→ Body/Partial attaches after identity exists or remains UNRESOLVED
 → RESOLVED / UNRESOLVED Candidate
 
-Hard product rule: Track count must never determine Final Character count.
-Only stable Face Identity clusters can create Final Characters; partial/body-only Evidence can attach or remain UNRESOLVED.
+Hard product rule: first confirm a person, then compare all later evidence against confirmed people before creating another person.
+Track count can never determine Final Character count.
 """
 from __future__ import annotations
 
@@ -18,9 +18,8 @@ import logging
 from typing import Any
 
 from engine.app import character_visual_v5 as v5
-from engine.app.character_identity_v7 import resolve_global_identities
+from engine.app.character_identity_v8 import resolve_global_identities
 from engine.app.character_observation_v63 import detect_observations
-from engine.app.character_resolution_gate_v7 import enforce_resolution_gate
 from engine.app.character_tracking_v6 import build_tracks, tracker_runtime_status
 from engine.app.content_models_v2 import RequiredCharacterModelError
 
@@ -35,11 +34,10 @@ def analyze_characters(
         observations = detect_observations(shots, progress=progress)
         tracks = build_tracks(observations)
         candidates = resolve_global_identities(tracks)
-        enforce_resolution_gate(candidates)
         resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
         unresolved = [item for item in candidates if item.identity_status != "RESOLVED"]
         logger.warning(
-            "[CharacterV7] observations=%s tracks=%s resolved_face_identities=%s unresolved_evidence=%s",
+            "[CharacterV8] observations=%s tracks=%s confirmed_identities=%s unresolved_evidence=%s",
             len(observations),
             len(tracks),
             len(resolved),
@@ -48,8 +46,10 @@ def analyze_characters(
         for index, candidate in enumerate(resolved, start=1):
             metadata = dict(getattr(candidate, "v6_metadata", {}) or {})
             logger.warning(
-                "[CharacterV7] identity=%s face_shots=%s face_anchors=%s tracks=%s shots=%s",
+                "[CharacterV8] identity=%s seed_face=%.4f seed_quality=%.4f face_shots=%s face_anchors=%s tracks=%s shots=%s",
                 index,
+                float(metadata.get("seed_face_score") or 0.0),
+                float(metadata.get("seed_quality") or 0.0),
                 metadata.get("face_shot_count"),
                 metadata.get("face_anchor_count"),
                 len(candidate.tracks),
@@ -58,14 +58,14 @@ def analyze_characters(
         return candidates
     except (ImportError, ModuleNotFoundError) as exc:
         raise RequiredCharacterModelError(
-            "人物识别 V7 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
+            "人物识别 V8 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
             "YOLOX/ReID CUDA 不可用可以 CPU fallback，但 trackers/supervision 运行时缺失不能发布人物结果。"
         ) from exc
 
 
 def runtime_status() -> dict[str, object]:
     return {
-        "profile": "character-v7-face-first-global-identity",
+        "profile": "character-v8-anchor-first-confirm-then-absorb",
         "observation": {
             "sample_fps": 12.0,
             "normal_person_threshold": 0.32,
@@ -74,13 +74,13 @@ def runtime_status() -> dict[str, object]:
         },
         "tracking": tracker_runtime_status(),
         "identity": {
-            "resolver": "Face-first Global Identity Graph",
-            "identity_node": "high-quality Face observation, never Person Track",
-            "final_character_count_source": "stable Face Identity clusters only",
-            "resolution_gate": ">=3 distinct Face shots for automatic Final",
-            "two_shot_policy": "UNRESOLVED Evidence only; manual promotion allowed",
-            "body_partial_policy": "attach after identity exists or remain UNRESOLVED",
-            "final_gate": "RESOLVED only",
+            "resolver": "Anchor-first Confirm-then-Absorb",
+            "identity_creation": "highest-quality Face seed + cross-shot confirmation",
+            "comparison_order": "every remaining Face compares against all confirmed identities before any new identity may be created",
+            "ambiguity_policy": "similar but uncertain -> UNRESOLVED, never duplicate Final Character",
+            "novelty_policy": "new identity requires cross-shot support and clear novelty against all confirmed identities",
+            "body_partial_policy": "attach after identity exists or remain UNRESOLVED; never create identity",
+            "final_gate": "confirmed identities only",
             "face_provider": "YuNet + SFace (replaceable provider)",
         },
     }
