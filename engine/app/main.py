@@ -25,6 +25,7 @@ from engine.app.content_analysis_v2 import (
 )
 from engine.app.content_models_v2 import ContentModelError, prepare_models
 from engine.app.media_v2 import MediaPipelineError, detect_episode_shots, preprocess_episode
+from engine.app.shot_cache_routes_v51 import router as shot_cache_router
 from engine.app.shot_edit_routes_v2 import router as shot_edit_router
 from engine.app.studio_v2 import (
     create_project,
@@ -61,6 +62,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(task_router)
+app.include_router(shot_cache_router)
 app.include_router(shot_edit_router)
 app.include_router(asset_router)
 app.include_router(asset_batch_router)
