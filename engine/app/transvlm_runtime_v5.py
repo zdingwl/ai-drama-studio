@@ -4,6 +4,7 @@
 - 不把 TransVLM 的 Python 3.12 / torch 2.9.1 / cuDNN 9.16+ 依赖塞进主工程 .venv；
 - 默认从 ``.runtime/TransVLM/inference`` 调官方 ``infer_video.py``；
 - 使用官方 HuggingFace backend，读取 transition segments；
+- Windows 下显式注入 TorchCodec 所需的 FFmpeg shared-build ``bin``；
 - 与官方 parser 语义保持一致：允许 ``start_time == end_time`` 的零长度 hard cut，
   ``end_time < start_time`` 时交换两端而不是丢弃；
 - 运行失败时把 stderr/stdout 尾部转换为稳定的 MediaPipelineError；
@@ -14,6 +15,7 @@
 - AI_DRAMA_TRANSVLM_PYTHON
 - AI_DRAMA_TRANSVLM_CKPT
 - AI_DRAMA_TRANSVLM_DEVICE
+- AI_DRAMA_TRANSVLM_FFMPEG_BIN
 """
 from __future__ import annotations
 
@@ -36,11 +38,19 @@ class TransVLMRuntimeConfig:
     checkpoint_dir: Path
     infer_script: Path
     device: str
+    ffmpeg_shared_bin: Path | None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
-        for key in ("inference_root", "python_executable", "checkpoint_dir", "infer_script"):
-            payload[key] = str(payload[key])
+        for key in (
+            "inference_root",
+            "python_executable",
+            "checkpoint_dir",
+            "infer_script",
+            "ffmpeg_shared_bin",
+        ):
+            value = payload[key]
+            payload[key] = str(value) if value is not None else None
         return payload
 
 
@@ -56,6 +66,30 @@ class TransVLMTransition:
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _configured_shared_ffmpeg_bin(inference_root: Path) -> Path | None:
+    override = os.environ.get("AI_DRAMA_TRANSVLM_FFMPEG_BIN")
+    if override:
+        return Path(override).expanduser()
+
+    marker = inference_root.parent / "ffmpeg_shared_bin.txt"
+    if not marker.is_file():
+        return None
+    try:
+        value = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return Path(value).expanduser() if value else None
+
+
+def _is_windows_shared_ffmpeg_bin(path: Path | None) -> bool:
+    if path is None or not path.is_dir():
+        return False
+    if not (path / "ffmpeg.exe").is_file():
+        return False
+    required = ("avcodec-*.dll", "avformat-*.dll", "avutil-*.dll")
+    return all(any(path.glob(pattern)) for pattern in required)
 
 
 def runtime_config() -> TransVLMRuntimeConfig:
@@ -81,6 +115,7 @@ def runtime_config() -> TransVLMRuntimeConfig:
         checkpoint_dir=checkpoint_dir,
         infer_script=inference_root / "infer_video.py",
         device=os.environ.get("AI_DRAMA_TRANSVLM_DEVICE", "cuda:0"),
+        ffmpeg_shared_bin=_configured_shared_ffmpeg_bin(inference_root),
     )
 
 
@@ -97,6 +132,8 @@ def runtime_status() -> dict[str, Any]:
         missing.append("TransVLM checkpoint")
     elif not (config.checkpoint_dir / "config.json").is_file():
         missing.append("checkpoint config.json")
+    if os.name == "nt" and not _is_windows_shared_ffmpeg_bin(config.ffmpeg_shared_bin):
+        missing.append("FFmpeg shared runtime for TorchCodec")
 
     return {
         "ready": not missing,
@@ -106,6 +143,28 @@ def runtime_status() -> dict[str, Any]:
         "missing": missing,
         "config": config.to_dict(),
     }
+
+
+def _transvlm_subprocess_env(config: TransVLMRuntimeConfig) -> dict[str, str]:
+    env = os.environ.copy()
+    # 模型与 NeuFlow 权重必须在 setup 阶段准备；正式业务 Run 禁止静默联网改变运行状态。
+    env.setdefault("HF_HUB_OFFLINE", "1")
+    env.setdefault("TRANSFORMERS_OFFLINE", "1")
+
+    if os.name == "nt":
+        shared = config.ffmpeg_shared_bin
+        if not _is_windows_shared_ffmpeg_bin(shared):
+            raise v2.MediaPipelineError(
+                "TransVLM Windows Runtime 缺少 TorchCodec 所需的 FFmpeg shared DLL。"
+                "请重新运行 scripts/setup_transvlm_runtime.ps1"
+            )
+        torch_lib = config.inference_root / ".venv" / "Lib" / "site-packages" / "torch" / "lib"
+        prefixes = [str(shared)]
+        if torch_lib.is_dir():
+            prefixes.append(str(torch_lib))
+        existing = env.get("PATH", "")
+        env["PATH"] = os.pathsep.join(prefixes + ([existing] if existing else []))
+    return env
 
 
 def _error_tail(stdout: str | None, stderr: str | None, limit: int = 5000) -> str:
@@ -197,10 +256,7 @@ def detect_transition_segments(video_path: Path, work_dir: Path) -> list[TransVL
         "--device", config.device,
         "--temp-dir", str(temp_dir),
     ]
-    env = os.environ.copy()
-    # 模型与 NeuFlow 权重必须在 setup 阶段准备；正式业务 Run 禁止静默联网改变运行状态。
-    env.setdefault("HF_HUB_OFFLINE", "1")
-    env.setdefault("TRANSFORMERS_OFFLINE", "1")
+    env = _transvlm_subprocess_env(config)
 
     try:
         completed = subprocess.run(
