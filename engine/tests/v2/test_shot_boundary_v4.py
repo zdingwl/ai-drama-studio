@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
+import subprocess
 
 import pytest
 
@@ -110,8 +112,8 @@ def test_reference_renderer_trims_by_owned_frame_count_not_float_end(monkeypatch
     # 第一 owned frame=80ms；seek 安全落在上一帧 40ms 与目标帧 80ms 中间。
     assert command[command.index("-ss") + 1] == "0.060000"
     filter_complex = command[command.index("-filter_complex") + 1]
-    # FFmpeg trim 的 end_frame 使用 1-based 结束计数；保留 3 帧需要 end_frame=4。
-    assert "trim=start_frame=0:end_frame=4" in filter_complex
+    # trim.end_frame 是排他的 zero-based frame index；0..2 正好是三帧。
+    assert "trim=start_frame=0:end_frame=3" in filter_complex
     assert "trim=start=0:end=" not in filter_complex
     assert "setpts=PTS-STARTPTS" in filter_complex
     assert "-t" not in command
@@ -134,6 +136,48 @@ def test_reference_renderer_fails_closed_when_encoded_frame_count_is_wrong(monke
             120_000,
             frame_pts=source_pts,
         )
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="real FFmpeg integration check requires ffmpeg + ffprobe",
+)
+def test_reference_renderer_real_ffmpeg_emits_exact_owned_frame_count(tmp_path: Path) -> None:
+    """真实 FFmpeg 必须把三帧 ownership 编码成三帧，而不是 N+1 帧。"""
+
+    source = tmp_path / "source.mp4"
+    output = tmp_path / "shot.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=160x96:rate=25",
+            "-frames:v",
+            "8",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    source_pts = tuple(index * 40_000 for index in range(8))
+
+    reference_render_v4.render_reference_exact(
+        source,
+        output,
+        80_000,
+        120_000,
+        frame_pts=source_pts,
+    )
+
+    assert len(reference_render_v4.v2._frame_pts_us(output)) == 3
 
 
 def test_low_confidence_boundary_is_marked_for_review() -> None:
