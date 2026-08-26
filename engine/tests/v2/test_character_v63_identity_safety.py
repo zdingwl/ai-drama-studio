@@ -4,6 +4,7 @@ import numpy as np
 
 from engine.app import character_identity_v63 as identity
 from engine.app import character_observation_v63 as observation
+from engine.app import character_resolution_gate_v63 as resolution_gate
 from engine.app import character_visual_v5 as v5
 
 
@@ -85,6 +86,14 @@ def track(
     return result
 
 
+def candidate(*tracks: v5.TrackDraft) -> v5.CandidateDraft:
+    value = v5.CandidateDraft(id="CAND", identity_status="RESOLVED")
+    for item in tracks:
+        v5._append_track(value, item)
+    value.identity_status = "RESOLVED"
+    return value
+
+
 def test_partial_person_cannot_own_a_face() -> None:
     score = observation._face_owner_score(
         (0, 100, 300, 900),
@@ -158,12 +167,46 @@ def test_simultaneous_duplicate_detection_of_same_person_can_merge() -> None:
     assert edge.reason == "same-shot-duplicate"
 
 
+def test_weak_two_shot_face_cluster_is_demoted_from_final() -> None:
+    # Face 只有边缘相似，且 ReID 不够支持；即使上游误标 RESOLVED，也不能发布 Final。
+    left = track(
+        shot_id="SHOT_20", shot_ordinal=20, bbox=(100, 100, 180, 620),
+        face=vec(1.0, 0.0, 0.0), reid=vec(1.0, 0.0, 0.0),
+    )
+    right = track(
+        shot_id="SHOT_21", shot_ordinal=21, bbox=(100, 100, 180, 620),
+        face=vec(0.40, 0.9165, 0.0), reid=vec(0.30, 0.9539, 0.0),
+    )
+    value = candidate(left, right)
+
+    resolution_gate.enforce_resolution_gate([value])
+
+    assert value.identity_status == "UNRESOLVED"
+    assert value.v6_metadata["resolution_gate_reason"] == "insufficient robust cross-shot face identity support"
+
+
+def test_strong_two_shot_face_cluster_stays_resolved() -> None:
+    left = track(
+        shot_id="SHOT_22", shot_ordinal=22, bbox=(100, 100, 180, 620),
+        face=vec(1.0, 0.0, 0.0), reid=vec(1.0, 0.0, 0.0),
+    )
+    right = track(
+        shot_id="SHOT_23", shot_ordinal=23, bbox=(100, 100, 180, 620),
+        face=vec(0.95, 0.10, 0.0), reid=vec(0.98, 0.05, 0.0),
+    )
+    value = candidate(left, right)
+
+    resolution_gate.enforce_resolution_gate([value])
+
+    assert value.identity_status == "RESOLVED"
+    assert value.v6_metadata["resolution_gate_reason"] == "passed"
+
+
 def test_three_people_with_extra_same_shot_fragments_still_resolve_to_three() -> None:
     faces = [vec(1, 0, 0), vec(0, 1, 0), vec(0, 0, 1)]
     reids = [vec(1, 0.02, 0), vec(0.02, 1, 0), vec(0, 0.02, 1)]
     tracks: list[v5.TrackDraft] = []
 
-    # 每个人至少两个不同 Shot 的正常 Face anchor。
     for person_index in range(3):
         first_shot = person_index * 3 + 1
         tracks.append(track(
@@ -177,13 +220,13 @@ def test_three_people_with_extra_same_shot_fragments_still_resolve_to_three() ->
             face=faces[person_index], reid=reids[person_index],
         ))
 
-    # 第一个人额外在同一个 Shot 被切成一个非重叠 fragment；不能因此生成第 4 个 Final Character。
     tracks.append(track(
         shot_id="SHOT_1", shot_ordinal=1, bbox=(82, 102, 160, 620),
         face=faces[0], reid=reids[0], start_offset_us=500_000,
     ))
 
     candidates = identity.resolve_global_identities(tracks)
+    resolution_gate.enforce_resolution_gate(candidates)
     resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
 
     assert len(resolved) == 3
