@@ -7,7 +7,7 @@ Person + Partial-Person Observation (12fps)
 → explicit single-person crop bbox + same-sample cannot-link metadata
 → Mature MOT (BoT-SORT / ByteTrack fallback)
 → CLEAN-only gallery representatives
-→ existing V8 Anchor-first identity resolver (temporary until V9 identity phases land)
+→ existing V8 Anchor-first identity decisions through a V9 clean-gallery adapter
 
 Hard product rule for this phase: whole frames must never become person gallery images.
 Multi-person frames are split before tracking/identity and dirty crops never seed a gallery.
@@ -18,7 +18,7 @@ import logging
 from typing import Any
 
 from engine.app import character_visual_v5 as v5
-from engine.app.character_identity_v8 import resolve_global_identities
+from engine.app.character_identity_v9a import resolve_global_identities
 from engine.app.character_observation_v9 import detect_observations
 from engine.app.character_tracking_v9 import build_tracks, tracker_runtime_status
 from engine.app.content_models_v2 import RequiredCharacterModelError
@@ -74,9 +74,10 @@ def runtime_status() -> dict[str, object]:
             "formal_representatives": "CLEAN Person Instance crops only",
             "occluded_contaminated_partial": "Evidence only; forbidden as gallery seed/cover",
             "whole_frame_gallery_image": False,
+            "post_identity_rebuild": True,
         },
         "identity": {
-            "resolver": "V8 Anchor-first Confirm-then-Absorb (temporary during V9 Phase A)",
+            "resolver": "V8 Anchor-first decisions via V9A clean-gallery adapter",
             "v9_person_gallery_identity": "NOT_YET_ENABLED",
         },
     }
