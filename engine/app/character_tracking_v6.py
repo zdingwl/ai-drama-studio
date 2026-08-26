@@ -1,11 +1,11 @@
-"""Character V6.1 Shot 内成熟 Multi-Object Tracking。
+"""Character V6.2 Shot 内成熟 Multi-Object Tracking。
 
 职责：
 - 接收 YOLOX / Face / ReID 的逐帧 Person Observation；
 - 默认使用 trackers 2.6 的 BoT-SORT，失败时整条 Shot 从头重跑 ByteTrack；
-- 正常 Person 与 V6.1 partial-person proposals 一起进入 MOT，让低分局部人体可以被已有轨迹续上；
+- 正常 Person 与 partial-person proposals 一起进入 MOT，让低分局部人体可以被已有轨迹续上；
 - MOT 未确认的低分 partial-person 不直接落成单帧人物，而是先做窄范围时序恢复；
-- 只有连续多帧得到空间/ReID 支持的 partial-only Track 才保留为 UNRESOLVED Evidence；
+- partial provenance 不因检测到 Face 而消失；partial-only Track 只能作为辅助 Evidence，不能成为身份锚点；
 - tracker 只回答 Shot 内连续轨迹，绝不直接创建 Character_ID；
 - MOT 后仍执行 Face hard-conflict 拆轨，防止 ID switch 污染身份。
 """
@@ -23,7 +23,6 @@ Observation = v5.Observation
 TrackDraft = v5.TrackDraft
 
 TRACK_FRAME_RATE = 12.0
-# V6.1：0.10~0.32 只允许作为 partial-person 低分候选进入 tracker；Final Identity 门槛不变。
 TRACK_ACTIVATION_THRESHOLD = 0.10
 TRACK_HIGH_CONF_THRESHOLD = 0.32
 TRACK_LOST_BUFFER = 18
@@ -55,10 +54,9 @@ def _to_xywh(box: Any) -> tuple[int, int, int, int]:
 
 
 def _is_partial(observation: Observation) -> bool:
-    return (
-        not bool(observation.face_visible)
-        and "partial" in str(observation.detection_source or "").lower()
-    )
+    """partial 是检测来源属性；即使当前帧同时检测到 Face，也仍然是 partial Evidence。"""
+
+    return "partial" in str(observation.detection_source or "").lower()
 
 
 def _make_bytetrack() -> tuple[Any, str]:
@@ -76,8 +74,6 @@ def _make_bytetrack() -> tuple[Any, str]:
 
 
 def _make_tracker() -> tuple[Any, str]:
-    """优先 BoT-SORT；初始化失败时仅降级为同库 ByteTrack，不回到自制 greedy。"""
-
     try:
         from trackers import BoTSORTTracker
 
@@ -132,8 +128,6 @@ def _frame_detections(observations: list[Observation]) -> Any:
 
 
 def _assign_tracker_rows(observations: list[Observation], tracked: Any) -> dict[int, Observation]:
-    """把 tracker 输出 bbox 映射回已有 Observation；不能依赖输出顺序。"""
-
     result: dict[int, Observation] = {}
     tracker_ids = getattr(tracked, "tracker_id", None)
     boxes = getattr(tracked, "xyxy", None)
@@ -180,11 +174,6 @@ def _partial_pair_supported(left: Observation, right: Observation) -> bool:
 def _coalesce_partial_fallbacks(
     tracks_by_id: dict[int, list[Observation]],
 ) -> dict[int, list[Observation]]:
-    """把 tracker 未确认的 partial 单帧碎片按时间连续性恢复成候选 Track。
-
-    正常/Face observation 不参与这一步；这里只处理负 ID fallback，避免改变 Mature MOT 已确认结果。
-    """
-
     result: dict[int, list[Observation]] = defaultdict(list)
     partials: list[Observation] = []
     for track_id, observations in tracks_by_id.items():
@@ -220,8 +209,6 @@ def _coalesce_partial_fallbacks(
 
 
 def _partial_track_is_supported(observations: list[Observation]) -> bool:
-    """孤立低分 partial proposal 不能成为人物 Evidence；连续时序支持才保留。"""
-
     ordered = sorted(observations, key=lambda item: item.source_time_us)
     if not ordered or not all(_is_partial(item) for item in ordered):
         return True
@@ -243,7 +230,6 @@ def _partial_track_is_supported(observations: list[Observation]) -> bool:
             and pair_support / pair_total >= PARTIAL_TRACK_PAIR_SUPPORT_RATIO
         )
 
-    # 极短 Shot 可能只有两个命中点；只有非常强的同体证据才保留。
     left, right = ordered
     reid = v5.cosine(left.reid_embedding, right.reid_embedding)
     iou = v5.bbox_iou(left.bbox, right.bbox)
@@ -275,8 +261,6 @@ def _track_shot(
     tracker: Any,
     tracker_name: str,
 ) -> dict[int, list[Observation]]:
-    """用一个 tracker 完整跑完单 Shot；失败时由调用方整条重跑 fallback。"""
-
     by_time: dict[int, list[Observation]] = defaultdict(list)
     for observation in shot_observations:
         by_time[observation.source_time_us].append(observation)
@@ -309,8 +293,6 @@ def _track_shot(
         for tracker_id, observation in assigned.items():
             tracks_by_id[tracker_id].append(observation)
 
-        # 强 Person / Face 未被 tracker 接住时仍保留 Evidence。
-        # 低分 partial 先作为 fallback，Shot 结束后还要经过时序恢复与连续性 Gate。
         for observation in frame_observations:
             if id(observation) in assigned_objects:
                 continue
@@ -321,12 +303,6 @@ def _track_shot(
 
 
 def build_tracks(observations: list[Observation]) -> list[TrackDraft]:
-    """Person Observations -> Mature MOT Tracks。
-
-    每个 Shot 重置 tracker；跨 Shot 身份由 Global Resolver 处理。
-    partial-only Track 只有通过连续多帧空间/ReID 确认才保留；孤立低分框直接丢弃。
-    """
-
     by_shot: dict[str, list[Observation]] = defaultdict(list)
     for observation in observations:
         by_shot[observation.shot_id].append(observation)
@@ -349,7 +325,6 @@ def build_tracks(observations: list[Observation]) -> list[TrackDraft]:
             if not track_observations or not _partial_track_is_supported(track_observations):
                 continue
             base = _build_track(track_observations)
-            # 成熟 MOT 仍可能在复杂交叉处发生 ID switch；Face hard conflict 是最后一道 cannot-link。
             result.extend(_split_track_on_face_conflict(base))
 
     return sorted(
