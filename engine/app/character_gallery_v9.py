@@ -10,7 +10,11 @@ from __future__ import annotations
 import json
 
 from engine.app import character_visual_v5 as v5
-from engine.app.character_person_features_v9 import FEATURE_VERSION, feature_dimensions
+from engine.app.character_person_features_v9 import (
+    FEATURE_VERSION,
+    feature_channel_scores,
+    feature_dimensions,
+)
 from engine.app.character_person_instance_v9 import classify_person_instance, gallery_crop_is_valid
 from engine.app.studio_v2 import workspace_root
 
@@ -18,6 +22,15 @@ Observation = v5.Observation
 TrackDraft = v5.TrackDraft
 TrackRepresentative = v5.TrackRepresentative
 CandidateDraft = v5.CandidateDraft
+
+DIVERSITY_THRESHOLDS = {
+    "person_reid": 0.965,
+    "clothing_upper": 0.94,
+    "clothing_lower": 0.94,
+    "body_hist": 0.95,
+    "body_structure": 0.93,
+    "face": 0.955,
+}
 
 
 def _observation_is_clean(observation: Observation) -> bool:
@@ -34,8 +47,30 @@ def _quality(observation: Observation) -> float:
     return v5._representative_quality(observation)
 
 
+def representatives_diverse(left: TrackRepresentative, right: TrackRepresentative) -> bool:
+    """Keep cross-shot and genuinely different whole-person views in the gallery."""
+
+    a = left.observation
+    b = right.observation
+    if a.shot_id != b.shot_id:
+        # Phase C needs independent Shot support; do not let one long Shot own Gallery evidence.
+        return True
+
+    left_bundle = getattr(a, "person_feature_bundle", None)
+    right_bundle = getattr(b, "person_feature_bundle", None)
+    if left_bundle is None or right_bundle is None:
+        return v5._representative_diverse(left, right)
+
+    scores = feature_channel_scores(left_bundle, right_bundle)
+    for channel, threshold in DIVERSITY_THRESHOLDS.items():
+        score = scores.get(channel)
+        if score is not None and score < threshold:
+            return True
+    return abs(int(a.source_time_us) - int(b.source_time_us)) >= 700_000
+
+
 def select_track_representatives(track: TrackDraft) -> list[TrackRepresentative]:
-    """Prefer CLEAN whole-person quality, not face prominence, for gallery representatives."""
+    """Prefer CLEAN whole-person quality and multi-channel visual diversity."""
 
     scored = [
         TrackRepresentative(
@@ -49,7 +84,7 @@ def select_track_representatives(track: TrackDraft) -> list[TrackRepresentative]
     scored.sort(key=lambda item: (1 if item.clean else 0, item.quality_score), reverse=True)
     selected: list[TrackRepresentative] = []
     for item in scored:
-        if selected and not any(v5._representative_diverse(item, existing) for existing in selected):
+        if selected and not any(representatives_diverse(item, existing) for existing in selected):
             continue
         selected.append(item)
         if len(selected) >= v5.TRACK_GALLERY_LIMIT:
