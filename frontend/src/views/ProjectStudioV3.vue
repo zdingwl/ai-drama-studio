@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AssetStageV4 from '../components/AssetStageV4.vue'
 import EpisodeManagerV3 from '../components/EpisodeManagerV3.vue'
+import ShotCacheManagerV51 from '../components/ShotCacheManagerV51.vue'
 import ShotWorkbenchV4 from '../components/ShotWorkbenchV4.vue'
 import { api } from '../api/client'
 import type { BackgroundTask, Project } from '../types/studio'
@@ -90,7 +91,10 @@ onUnmounted(() => {
 
     <main :class="['studio-main', { 'shot-stage-main': activeStage === 2, 'asset-stage-main': activeStage === 3 }]">
       <EpisodeManagerV3 v-if="activeStage === 1" :project="project" @refresh="refreshProject" />
-      <ShotWorkbenchV4 :key="shotRefreshToken" v-else-if="activeStage === 2" :project-id="project.id" :episodes="project.episodes" @refresh-project="refreshProject" />
+      <template v-else-if="activeStage === 2">
+        <ShotCacheManagerV51 :project-id="project.id" :episodes="project.episodes" />
+        <ShotWorkbenchV4 :key="shotRefreshToken" :project-id="project.id" :episodes="project.episodes" @refresh-project="refreshProject" />
+      </template>
       <AssetStageV4 v-else-if="activeStage === 3" :project-id="project.id" :episodes="project.episodes" />
 
       <section v-else class="workspace-panel planned-panel">
