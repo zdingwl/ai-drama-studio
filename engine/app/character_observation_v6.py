@@ -1,12 +1,12 @@
-"""Character V6.1 Person Observation。
+"""Character V6.2 Person Observation。
 
 职责：
 - 复用已校验的 YOLOX Person / YoutuReID / YuNet / SFace 模型；
 - Shot 内约 12fps 采样，为成熟 MOT 提供连续轨迹；
 - 正常 Person 继续使用正式阈值；贴边、截断、无头近景允许以低分 partial-person proposal 进入 MOT；
 - 全帧没有正常 Person 时，对左右边缘做放大重检，补救只剩肩背/躯干/手臂的近景；
-- partial-person 这里只回答“这里可能有人”，后续必须经过时序 Track / ReID / Global Identity Gate，
-  不能因为提高召回直接创建 Final Character；
+- partial-person 即使碰巧检测到 Face，也必须保留 partial 来源，只能作为挂回已有身份的辅助 Evidence，
+  不能伪装成普通 Face Track 去创建新的 Final Character；
 - 大特写 Person Detector 失败时仍保留高置信 Face fallback。
 
 这里只负责“这个时刻画面里有谁的视觉观测”，不创建 Character_ID。
@@ -171,8 +171,8 @@ def _detect_persons_with_edge_retry(
 ) -> list[tuple[tuple[int, int, int, int], float, str]]:
     """先全帧；没有正常 Person 时再放大左右边缘。
 
-    edge retry 命中的无脸框无论分数多高都标记为 partial，因为裁切放大本身不能证明完整 Person 身份；
-    它仍必须经过 V6.1 temporal confirmation。
+    edge retry 命中的框无论分数多高都标记为 partial，因为裁切放大本身不能证明完整 Person 身份；
+    它仍必须经过 V6.2 temporal / identity confirmation。
     """
 
     height, width = frame.shape[:2]
@@ -185,7 +185,7 @@ def _detect_persons_with_edge_retry(
         (
             box,
             score,
-            "v6.1-yolox" if score >= STRONG_PERSON_SCORE else "v6.1-yolox-partial",
+            "v6.2-yolox" if score >= STRONG_PERSON_SCORE else "v6.2-yolox-partial",
         )
         for box, score in full
     ]
@@ -209,11 +209,19 @@ def _detect_persons_with_edge_retry(
             mapped = _offset_box(box, x_offset, 0, width, height)
             if mapped is None:
                 continue
-            # 映射回整帧后再次过几何门槛；强分 tile 也只能算 partial evidence。
             if not _partial_person_box_plausible(mapped, width, height):
                 continue
-            values.append((mapped, score, "v6.1-yolox-edge-partial"))
+            values.append((mapped, score, "v6.2-yolox-edge-partial"))
     return _dedupe_person_proposals(values)
+
+
+def _source_with_face(proposal_source: str) -> str:
+    """Face 不能抹掉 partial provenance；这是 V6.2 防止身份膨胀的关键合同。"""
+
+    source = str(proposal_source or "")
+    if "partial" in source.lower():
+        return f"{source}+face"
+    return "v6.2-yolox+face"
 
 
 def detect_observations(
@@ -244,7 +252,7 @@ def detect_observations(
             progress(
                 shot_index,
                 total,
-                f"人物 V6.1 · 12fps Person + Partial Evidence · {runtime_label}：Shot {shot_index} / {total}",
+                f"人物 V6.2 · 12fps Person + Partial Evidence · {runtime_label}：Shot {shot_index} / {total}",
             )
         duration_us = max(1, int(shot["duration_us"]))
         local_times = list(sample_times_us(duration_us))
@@ -300,7 +308,7 @@ def detect_observations(
                     reid_embedding=reid.infer(frame, person_box),
                     body_hist=v5.legacy._body_histogram(frame, person_box),
                     face_visible=face_row is not None,
-                    detection_source="v6.1-yolox+face" if face_row is not None else proposal_source,
+                    detection_source=_source_with_face(proposal_source) if face_row is not None else proposal_source,
                     frame_width=width,
                     frame_height=height,
                     face_score=face_score,
@@ -330,7 +338,7 @@ def detect_observations(
                     reid_embedding=reid.infer(frame, person_box),
                     body_hist=v5.legacy._body_histogram(frame, person_box),
                     face_visible=True,
-                    detection_source="v6.1-face-fallback",
+                    detection_source="v6.2-face-fallback",
                     frame_width=width,
                     frame_height=height,
                     face_score=face_score,
