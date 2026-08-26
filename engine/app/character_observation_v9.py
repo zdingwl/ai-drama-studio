@@ -1,14 +1,18 @@
-"""Character V9 Phase A observation adapter.
+"""Character V9 Phase A/B observation adapter.
 
-The detector remains the currently validated 12fps YOLOX/partial pipeline. This
-adapter adds the V9 Person Instance contract before MOT/identity:
-- one explicit instance id per detected person in a sampled frame;
+Phase A:
+- one explicit Person Instance per detected person in a sampled frame;
 - explicit person/crop bbox;
 - CLEAN/OCCLUDED/CONTAMINATED/PARTIAL classification;
 - gallery eligibility;
 - same-sample spatial cannot-link ids.
 
-No identity decision is made here.
+Phase B:
+- extract multi-channel identity evidence from each isolated Person Instance;
+- preserve ReID, clothing, body structure and optional face as separate channels;
+- never encode the whole frame as a person identity feature.
+
+No Character identity decision is made here.
 """
 from __future__ import annotations
 
@@ -17,6 +21,10 @@ from typing import Any
 
 from engine.app import character_observation_v63 as legacy
 from engine.app import character_visual_v5 as v5
+from engine.app.character_person_features_v9 import (
+    attach_person_features as attach_feature_bundle,
+    extract_person_features,
+)
 from engine.app.character_person_instance_v9 import classify_person_instance
 
 CharacterProgress = v5.CharacterProgress
@@ -80,6 +88,30 @@ def annotate_person_instances(observations: list[Observation]) -> list[Observati
     return observations
 
 
+def attach_multichannel_features(observations: list[Observation]) -> list[Observation]:
+    """Read each sampled frame once per Reference Clip and attach isolated-person features."""
+
+    by_reference: dict[str, list[Observation]] = defaultdict(list)
+    for observation in observations:
+        by_reference[str(observation.reference_path)].append(observation)
+
+    for reference_path, group in by_reference.items():
+        local_times = sorted({int(item.local_time_us) for item in group})
+        frame_map = {
+            int(local_us): frame
+            for local_us, frame in v5._read_frames(reference_path, local_times)
+        }
+        for observation in group:
+            frame = frame_map.get(int(observation.local_time_us))
+            if frame is None:
+                observation.person_feature_status = "FRAME_MISSING"  # type: ignore[attr-defined]
+                continue
+            bundle = extract_person_features(frame, observation)
+            attach_feature_bundle(observation, bundle)
+            observation.person_feature_status = "READY"  # type: ignore[attr-defined]
+    return observations
+
+
 def detect_observations(
     shots: list[dict[str, Any]],
     progress: CharacterProgress | None = None,
@@ -90,8 +122,9 @@ def detect_observations(
         progress(
             current,
             total,
-            message.replace("人物 V6.3", "人物 V9A · Person Instance Safety"),
+            message.replace("人物 V6.3", "人物 V9B · Person Instance + Multi-channel Features"),
         )
 
     observations = legacy.detect_observations(shots, progress=report if progress is not None else None)
-    return annotate_person_instances(observations)
+    annotate_person_instances(observations)
+    return attach_multichannel_features(observations)
