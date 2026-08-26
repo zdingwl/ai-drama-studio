@@ -2,11 +2,12 @@
 
 职责：
 - 复用 content_analysis_v2 的正式 Run / Scene 数据模型；
-- 人物当前正式链路为 Character V9 Phase A：12fps Person + Partial → Person Instance Split → Crop Safety → Mature MOT；
+- 人物当前正式链路为 Character V9 Phase B：12fps Person + Partial → Person Instance Split → Crop Safety → Multi-channel Person Features → Mature MOT；
 - 一帧多人先拆成独立 Person Instance，禁止整帧作为人物身份图；
 - Person Instance 明确分类 CLEAN / OCCLUDED / CONTAMINATED / PARTIAL；
-- 正式 Gallery 只允许 CLEAN Person Instance crop；其它类型只保留 Evidence；
-- 身份解析阶段暂时继续复用 V8 Anchor-first，待 V9 Phase B/C 切换 Person Gallery Identity；
+- 每个单人人物图分别保留 ReID / clothing / body / optional Face 通道；
+- 正式 Gallery 只允许 CLEAN Person Instance crop，并保存独立 feature sidecar；其它类型只保留 Evidence；
+- 身份解析阶段暂时继续复用 V8 Anchor-first，待 V9 Phase C 切换 Person Gallery Confirm-then-Absorb；
 - 新 Run 完整成功后才切 Current，失败保留旧结果。
 """
 from __future__ import annotations
@@ -32,8 +33,8 @@ AssetEvidenceProgress = Callable[
     None,
 ]
 
-FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v9a-person-instance-safety-v8-identity"
-FORMAL_CHARACTER_COMPONENT_PROFILE = "V9A_PERSON_INSTANCE_SAFETY_V8_IDENTITY"
+FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v9b-person-multichannel-gallery-v8-identity"
+FORMAL_CHARACTER_COMPONENT_PROFILE = "V9B_PERSON_MULTICHANNEL_GALLERY_V8_IDENTITY"
 
 
 def _report(
@@ -104,7 +105,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            f"已读取 {total_shots} 个 Current Shots，正在加载人物 V9A Person Instance Safety / MOT",
+            f"已读取 {total_shots} 个 Current Shots，正在加载人物 V9B Person Instance / Multi-channel Features / MOT",
         )
 
         candidates: list[CandidateDraft] = []
@@ -119,7 +120,7 @@ def run_content_analysis_with_progress(
                 progress,
                 5.0 + ratio * 77.0,
                 "characters",
-                "人物 V9A · Person Instance Split / Crop Safety / MOT",
+                "人物 V9B · Person Instance / ReID / Clothing / Body / Face(optional)",
                 current_item,
                 current,
                 total,
@@ -141,7 +142,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            f"V9A Person Instance Safety 完成；临时 V8 Identity：{resolved_count} 个已确认人物 · {unresolved_count} 个待解析 Evidence",
+            f"V9B 人物图多通道特征完成；临时 V8 Identity：{resolved_count} 个已确认人物 · {unresolved_count} 个待解析 Evidence",
         )
 
         _report(
@@ -152,7 +153,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            "人物 V9A 完成，正在计算 Scene Segment",
+            "人物 V9B 完成，正在计算 Scene Segment",
         )
         scenes: list[SceneDraft] = _cluster_scenes(run_id, project_id, shots)
         component_status["scenes"] = "READY" if scenes else "NO_SCENE"
@@ -180,7 +181,7 @@ def run_content_analysis_with_progress(
             speaker_segments=speaker_segments,
             component_status=component_status,
         )
-        # Legacy persistence writes its historical profile; restore the formal V9A contract.
+        # Legacy persistence writes its historical profile; restore the formal V9B contract.
         _mark_formal_profile(run_id)
 
         _report(
@@ -191,7 +192,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            f"人物 V9A 完成：{resolved_count} Final-ready · {unresolved_count} 待解析 Evidence",
+            f"人物 V9B 完成：{resolved_count} Final-ready · {unresolved_count} 待解析 Evidence",
         )
         return get_analysis_run(run_id) or {"id": run_id, "status": "READY"}
     except Exception as exc:
