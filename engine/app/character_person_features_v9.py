@@ -1,7 +1,7 @@
 """Character V9 Phase B multi-channel Person Image features.
 
 Identity evidence is extracted from an isolated Person Instance crop, never from a
-whole frame.  The channels intentionally stay separate so Phase C can reason about
+whole frame. The channels intentionally stay separate so Phase C can reason about
 why two person images match instead of hiding every signal inside one opaque vector.
 
 Channels:
@@ -12,7 +12,7 @@ Channels:
 - face: optional SFace embedding, a strong supporting channel but never the sole
   definition of a person.
 
-No demographic attribute (including inferred gender) is generated here.  Identity
+No demographic attribute (including inferred gender) is generated here. Identity
 uses observable visual appearance only.
 """
 from __future__ import annotations
@@ -66,6 +66,13 @@ def _normalize(value: Any | None) -> Any | None:
         return None
     norm = float(np.linalg.norm(array))
     return array / norm if norm > 1e-9 else None
+
+
+def _normalized_or_zero(value: Any) -> Any:
+    normalized = _normalize(value)
+    if normalized is not None:
+        return normalized
+    return np.zeros(np.asarray(value).reshape(-1).shape[0], dtype=np.float32)
 
 
 def _safe_region(frame: Any, box: tuple[int, int, int, int]) -> Any | None:
@@ -122,7 +129,12 @@ def _appearance_descriptor(region: Any | None) -> Any | None:
     for index in range(12):
         texture[index] = float(magnitude[bins == index].sum())
 
-    return _normalize(np.concatenate([_normalize(hs) or hs, _normalize(ab) or ab, _normalize(texture) or texture]))
+    descriptor = np.concatenate([
+        _normalized_or_zero(hs),
+        _normalized_or_zero(ab),
+        _normalized_or_zero(texture),
+    ])
+    return _normalize(descriptor)
 
 
 def _body_structure_descriptor(region: Any | None) -> Any | None:
@@ -204,7 +216,7 @@ def attach_person_features(observation: Any, bundle: PersonFeatureBundle) -> Any
 
 
 def feature_channel_scores(left: PersonFeatureBundle, right: PersonFeatureBundle) -> dict[str, float | None]:
-    """Return interpretable per-channel similarity.  There is intentionally no total score here."""
+    """Return interpretable per-channel similarity. There is intentionally no total score here."""
 
     return {
         "person_reid": v5.cosine(left.person_reid, right.person_reid),
