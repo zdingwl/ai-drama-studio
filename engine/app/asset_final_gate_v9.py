@@ -1,10 +1,10 @@
-"""Character V9 Phase D -> Final Asset Gate.
+"""Character V9D -> Final Asset Gate.
 
 Formal rules:
-- V9 Character cardinality comes only from V9C confirmed Person Galleries;
-- a V9C RESOLVED gallery can materialize even when none of its Track samples has a visible face;
+- V9 Character cardinality comes only from confirmed Person Galleries;
+- a RESOLVED Person Gallery can materialize even when none of its Track samples has a visible face;
 - UNRESOLVED evidence never materializes and remains immutable AI Evidence;
-- V9C evidence fails closed unless resolver/provenance and >=3 confirmed Gallery shots are present;
+- V9 evidence fails closed unless resolver/provenance and >=3 confirmed Gallery shots are present;
 - historical pre-V9 runs keep their historical face-visible safety gate for compatibility.
 
 Scene / Prop materialization keeps Asset Workspace V3 semantics unchanged.
@@ -27,7 +27,10 @@ from engine.app.content_analysis_v2 import (
     ShotSceneEvidence,
 )
 
-V9_RESOLVER = "person-gallery-anchor-first-v9c"
+V9_RESOLVERS = {
+    "person-gallery-anchor-first-v9c",       # historical V9C runs
+    "person-gallery-progressive-v9.1",      # formal V9.1
+}
 V9_FINAL_POLICY = "Character V9D: confirmed Person Gallery only; Face optional"
 
 
@@ -49,13 +52,7 @@ def _candidate_is_final_eligible(
     run_profile: str | None,
     tracks: list[CharacterTrack],
 ) -> bool:
-    """Fail-closed Final Character admission.
-
-    V9 does not require face visibility. It requires the stronger thing we actually
-    want: a confirmed, multi-shot Person Gallery produced by the V9C resolver.
-    Historical runs keep the previous face-visible guard instead of being silently
-    reinterpreted under V9 rules.
-    """
+    """Fail-closed Final Character admission."""
 
     evidence = _json(candidate.evidence_json)
     if str(evidence.get("identity_status") or "").upper() != "RESOLVED":
@@ -65,7 +62,7 @@ def _candidate_is_final_eligible(
 
     candidate_profile = str(evidence.get("profile") or run_profile or "")
     if _is_v9_profile(candidate_profile) or _is_v9_profile(run_profile):
-        if str(evidence.get("resolver") or "") != V9_RESOLVER:
+        if str(evidence.get("resolver") or "") not in V9_RESOLVERS:
             return False
         try:
             confirmed_shots = int(evidence.get("confirmed_gallery_shots") or 0)
@@ -114,6 +111,7 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             "confirmed_gallery_images": evidence.get("confirmed_gallery_images"),
             "confirmed_gallery_shots": evidence.get("confirmed_gallery_shots"),
             "face_images": evidence.get("face_images"),
+            "gallery_builder": evidence.get("gallery_builder"),
         }
         session.add(
             legacy.Character(
