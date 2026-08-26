@@ -32,6 +32,8 @@ $RuntimeRoot = Join-Path $RepoRoot '.runtime\TransVLM'
 $InferenceRoot = Join-Path $RuntimeRoot 'inference'
 $PythonExe = Join-Path $InferenceRoot '.venv\Scripts\python.exe'
 $CheckpointDir = Join-Path $InferenceRoot 'pretrained\TransVLM-v1'
+$CudnnStageScript = Join-Path $RepoRoot 'scripts\stage_transvlm_cudnn_windows.py'
+$IsWindowsPlatform = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 
 Write-Host "[TransVLM] Runtime: $RuntimeRoot"
 
@@ -82,14 +84,33 @@ try {
     }
 
     if ($Cuda -eq 'cu130') {
-        uv pip install --python $PythonExe nvidia-cudnn-cu13==9.16.0.29
+        $CudnnPackage = 'nvidia-cudnn-cu13'
     } else {
-        uv pip install --python $PythonExe nvidia-cudnn-cu12==9.16.0.29
+        $CudnnPackage = 'nvidia-cudnn-cu12'
     }
+
+    Write-Host "[TransVLM] Installing $CudnnPackage==9.16.0.29."
+    uv pip install --python $PythonExe "$CudnnPackage==9.16.0.29"
     if ($LASTEXITCODE -ne 0) {
         throw 'Failed to install cuDNN 9.16 for TransVLM.'
     }
 
+    # PyTorch Windows wheels bundle their own cuDNN DLLs in torch\lib. Installing a newer
+    # NVIDIA cuDNN wheel alone does not guarantee that import torch will load it. Because
+    # TransVLM lives in an isolated runtime, stage the pinned 9.16 DLLs into that runtime's
+    # torch\lib and verify the actual CUDA Conv3d path before downloading multi-GB weights.
+    if ($IsWindowsPlatform) {
+        if (-not (Test-Path $CudnnStageScript)) {
+            throw "Missing Windows cuDNN staging helper: $CudnnStageScript"
+        }
+        Write-Host '[TransVLM] Staging cuDNN 9.16 DLLs into the isolated PyTorch Windows runtime.'
+        & $PythonExe $CudnnStageScript --package $CudnnPackage
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to stage/verify cuDNN 9.16 in the TransVLM Windows runtime.'
+        }
+    }
+
+    # Always verify in a fresh Python process as a release gate.
     $cudnnText = (& $PythonExe -c "import torch; print(torch.backends.cudnn.version() or 0)").Trim()
     Write-Host "[TransVLM] cuDNN = $cudnnText"
     if ([int]$cudnnText -lt 91600) {
