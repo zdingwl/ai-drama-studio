@@ -1,10 +1,11 @@
-"""02 拉片 V5.1：在 V5 精度链路上增加安全的 Episode 级缓存。
+"""02 拉片 V5.1：V5 精度链路 + 安全 Episode 多级缓存。
 
-V5.1 不改变任何 Shot Detection / Source PTS / Reference Clip 算法，只在 TransVLM 前增加：
-- source + runtime + config manifest 校验；
-- 命中时复用已成功生成的 transition segments；
-- 不命中或显式 recompute 时执行 V5 TransVLM，再原子写入缓存；
-- cache 与 shots/runs 完全隔离，Reference Clip / Current Revision 永远不是缓存。
+V5.1 不改变 Shot Detection、Source PTS 落帧或 Reference Clip 算法。缓存依赖链为：
+
+    official model RGB -> whole-video NeuFlow -> raw TransVLM JSONL -> transition segments
+
+第一次仍按官方执行顺序完整运行，只在官方单视频流程成功后捕获它实际使用的 RGB/Flow。
+后续可按缓存层级跳过昂贵阶段；任何 source/runtime/profile 变化都会由 strict manifest 自动失效。
 """
 from __future__ import annotations
 
@@ -20,6 +21,8 @@ from engine.app.shot_cache_v51 import (
     VALID_RECOMPUTE_SCOPES,
     build_manifest,
     cache_paths,
+    cached_transvlm_output,
+    clear_cache,
     load_transition_segments,
     prepare_cache,
     runtime_signature,
@@ -27,32 +30,86 @@ from engine.app.shot_cache_v51 import (
 )
 from engine.app.shot_revision_v2 import commit_auto_shot_revision
 from engine.app.studio_v2 import episode_dir, get_episode_record, new_id
-from engine.app.transvlm_runtime_v5 import TransVLMTransition, detect_transition_segments, runtime_config
-
-
-# 当前 wrapper 没有覆盖这些 CLI 参数，因此它们就是官方 Runtime 当前生产基线。
-# Runtime 代码/prompt/flow pipeline 本身同时进入 runtime_signature；官方默认一旦变化，旧缓存自动失效。
-TRANSVLM_CACHE_PROFILE: dict[str, Any] = {
-    "model": "TransVLM-Qwen3-VL-4B-Instruct",
-    "backend": "hf",
-    "fps": 25.0,
-    "window_size": 10.0,
-    "stride": 9.0,
-    "timestamp_format": "1f",
-    "flow_codec": "libx264",
-    "max_pixels_override": None,
-}
+from engine.app.transvlm_runtime_v51 import (
+    TRANSVLM_RUNTIME_PROFILE,
+    TransVLMTransition,
+    cache_signature_files,
+    detect_transition_segments,
+    parse_transition_output,
+    runtime_config,
+)
 
 
 def _expected_cache_manifest(episode: Any, source: Path) -> dict[str, Any]:
     config = runtime_config()
-    signature = runtime_signature(config.inference_root, config.checkpoint_dir)
+    signature = runtime_signature(
+        config.inference_root,
+        config.checkpoint_dir,
+        extra_files=cache_signature_files(),
+    )
     return build_manifest(
         source_path=source,
         source_sha256=episode.source_sha256,
         runtime_signature_value=signature,
-        transvlm_profile=TRANSVLM_CACHE_PROFILE,
+        transvlm_profile=TRANSVLM_RUNTIME_PROFILE,
     )
+
+
+def _probe_cached_video(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        info = v2.probe_media(path)
+    except Exception:
+        return None
+    if not info.get("width") or not info.get("height") or int(info.get("duration_us") or 0) <= 0:
+        return None
+    return info
+
+
+def _validate_cached_model_inputs(paths) -> tuple[bool, bool]:
+    """Cheap structural gate for cached RGB/flow without re-decoding the whole episode.
+
+    Artifacts are written atomically only after official inference succeeds, so ffprobe-level checks
+    are enough for normal reuse.  A malformed/orphaned file invalidates itself and every downstream
+    layer before the next expensive model run.
+    """
+
+    rgb_info = _probe_cached_video(paths.model_rgb)
+    if rgb_info is None:
+        if paths.model_rgb.exists() or paths.model_flow.exists():
+            clear_cache(paths, "preprocess")
+        return False, False
+
+    target_fps = float(TRANSVLM_RUNTIME_PROFILE["fps"])
+    rgb_fps = float(rgb_info.get("fps") or 0.0)
+    if abs(rgb_fps - target_fps) > 1e-3:
+        clear_cache(paths, "preprocess")
+        return False, False
+
+    flow_info = _probe_cached_video(paths.model_flow)
+    if flow_info is None:
+        if paths.model_flow.exists():
+            clear_cache(paths, "flow")
+        return True, False
+
+    flow_fps = float(flow_info.get("fps") or 0.0)
+    same_shape = (
+        int(rgb_info["width"]) == int(flow_info["width"])
+        and int(rgb_info["height"]) == int(flow_info["height"])
+    )
+    duration_delta = abs(int(rgb_info["duration_us"]) - int(flow_info["duration_us"]))
+    if not same_shape or abs(flow_fps - target_fps) > 1e-3 or duration_delta > 120_000:
+        clear_cache(paths, "flow")
+        return True, False
+    return True, True
+
+
+def _transition_dicts(segments: list[TransVLMTransition]) -> list[dict[str, int]]:
+    return [
+        {"start_us": int(item.start_us), "end_us": int(item.end_us)}
+        for item in segments
+    ]
 
 
 def detect_episode_shots(
@@ -61,15 +118,14 @@ def detect_episode_shots(
     *,
     recompute_scope: str = "auto",
 ) -> list[dict[str, Any]]:
-    """V5.1 正式入口。
+    """V5.1 formal entry with dependency-aware recomputation.
 
-    ``recompute_scope``：
-    - auto: 使用所有有效缓存；
-    - transitions: 只丢弃最终 transition cache；
-    - transvlm: 丢弃 TransVLM/window 及其下游；
-    - flow: 丢弃 Flow 及其全部下游；
-    - preprocess: 丢弃 Stage 02 模型 RGB 预处理及全部下游（不会删除 F03 Proxy/Audio）；
-    - all: 只清空 ``cache/shot_v51``，绝不删除 source / shots / revisions。
+    ``recompute_scope``:
+    - auto: reuse the deepest valid cache;
+    - transitions: rebuild transition cache from raw TransVLM output when available;
+    - transvlm: rerun Qwen windows, reusing RGB + Flow;
+    - flow: recompute NeuFlow + Qwen, reusing model RGB;
+    - preprocess/all: start from Source again.
     """
 
     if recompute_scope not in VALID_RECOMPUTE_SCOPES:
@@ -110,26 +166,63 @@ def detect_episode_shots(
         v2._report(progress, 8, "frame_pts", "正在读取原片 Source PTS")
         source_pts = v2._frame_pts_us(source)
 
+        segments: list[TransVLMTransition] | None = None
+        cache_used = "none"
+
+        # Deepest cache first: merged transition segments.
         cached = load_transition_segments(shot_cache, expected_manifest)
         if cached is not None:
             segments = [
                 TransVLMTransition(start_us=int(item["start_us"]), end_us=int(item["end_us"]))
                 for item in cached
             ]
+            cache_used = "transitions"
             v2._report(
                 progress,
                 v5.TRANSVLM_PROGRESS_END,
                 "cache_hit",
-                f"已复用本集有效 TransVLM Transition 缓存 · {len(segments)} 个转场区间",
+                f"已复用本集 Transition 缓存 · {len(segments)} 个转场区间",
             )
-        else:
+
+        # If only transitions were cleared, raw per-window model output can be parsed again without
+        # loading Qwen or NeuFlow at all.
+        if segments is None:
+            raw_output = cached_transvlm_output(shot_cache, expected_manifest)
+            if raw_output is not None:
+                try:
+                    segments = parse_transition_output(raw_output)
+                except v2.MediaPipelineError:
+                    clear_cache(shot_cache, "transvlm")
+                    segments = None
+                else:
+                    cache_used = "transvlm"
+                    store_transition_segments(shot_cache, expected_manifest, _transition_dicts(segments))
+                    v2._report(
+                        progress,
+                        v5.TRANSVLM_PROGRESS_END,
+                        "cache_hit",
+                        f"已从缓存的 TransVLM Window 输出重建 {len(segments)} 个转场区间",
+                    )
+
+        if segments is None:
+            rgb_ok, flow_ok = _validate_cached_model_inputs(shot_cache)
+
             if cache_prepare["invalidated"]:
-                cache_message = "缓存依赖发生变化，已自动失效；正在重新执行 TransVLM"
+                cache_message = "缓存依赖发生变化，已自动失效；正在按官方链路重新计算"
             elif recompute_scope != "auto":
-                cache_message = f"已按 {recompute_scope} 强制失效缓存；正在重新执行 TransVLM"
+                cache_message = f"已按 {recompute_scope} 强制失效缓存；正在从对应层重新计算"
+            elif flow_ok:
+                cache_message = "Transition/TransVLM 缓存缺失；复用 RGB + Flow，仅重新执行 Qwen"
+            elif rgb_ok:
+                cache_message = "Flow 缓存缺失；复用模型 RGB，重新执行 NeuFlow + Qwen"
             else:
-                cache_message = "未找到可用 Transition 缓存；正在执行 TransVLM"
+                cache_message = "未找到可用模型缓存；从原片执行完整 TransVLM"
             v2._report(progress, v5.TRANSVLM_PROGRESS_START, "cache_miss", cache_message)
+
+            model_rgb = shot_cache.model_rgb if rgb_ok else None
+            model_flow = shot_cache.model_flow if flow_ok else None
+            cache_rgb = None if rgb_ok else shot_cache.model_rgb
+            cache_flow = None if flow_ok else shot_cache.model_flow
 
             def transvlm_report(
                 runtime_percent: float,
@@ -147,16 +240,22 @@ def detect_episode_shots(
                     total,
                 )
 
-            segments = detect_transition_segments(source, transvlm_work, progress=transvlm_report)
-            # 只有官方 Runtime 成功返回并完成 parser 后才写缓存；失败 Run 不污染下一次。
-            store_transition_segments(
-                shot_cache,
-                expected_manifest,
-                [
-                    {"start_us": int(item.start_us), "end_us": int(item.end_us)}
-                    for item in segments
-                ],
+            segments = detect_transition_segments(
+                source,
+                transvlm_work,
+                progress=transvlm_report,
+                model_rgb_path=model_rgb,
+                model_flow_path=model_flow,
+                cache_rgb_path=cache_rgb,
+                cache_flow_path=cache_flow,
+                output_cache_path=shot_cache.transvlm_output,
             )
+            cache_used = "rgb+flow" if flow_ok else "rgb" if rgb_ok else "source"
+
+            # Validate captured media.  If a cache copy somehow failed structurally, discard that
+            # layer for future runs but keep the current successful inference result.
+            _validate_cached_model_inputs(shot_cache)
+            store_transition_segments(shot_cache, expected_manifest, _transition_dicts(segments))
 
         v2._report(progress, 62, "boundaries", f"TransVLM 返回 {len(segments)} 个转场区间，正在映射 Source 帧")
         visual_scores, source_pts = v5._source_visual_scores(source, source_pts)
@@ -255,7 +354,7 @@ def detect_episode_shots(
         )
         note = (
             f"自动拉片 V5.1 {run_id} · TransVLM-Qwen3-VL-4B + Source PTS frame ownership"
-            f" · cache={recompute_scope}"
+            f" · recompute={recompute_scope} · cache_used={cache_used}"
         )
         result = commit_auto_shot_revision(episode_id, payloads, note=note)
         review_count = sum(1 for item in payloads if item["status"] == "REVIEW")
@@ -269,8 +368,8 @@ def detect_episode_shots(
         )
         return result
     except Exception:
-        # 失败只清本次 shots/runs；Episode cache 是独立层。
-        # Transition cache 只有在 TransVLM 成功返回后才会写，因此可安全保留用于修复下游 renderer 后重试。
+        # Failed shot production removes only this run.  Episode cache is an independent layer and
+        # only publishes upstream artifacts after official inference succeeds.
         if run_root.exists():
             shutil.rmtree(run_root, ignore_errors=True)
         raise
