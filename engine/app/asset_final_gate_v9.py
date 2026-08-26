@@ -51,7 +51,7 @@ def _candidate_is_final_eligible(
 ) -> bool:
     """Fail-closed Final Character admission.
 
-    V9 does not require face visibility.  It requires the stronger thing we actually
+    V9 does not require face visibility. It requires the stronger thing we actually
     want: a confirmed, multi-shot Person Gallery produced by the V9C resolver.
     Historical runs keep the previous face-visible guard instead of being silently
     reinterpreted under V9 rules.
@@ -125,7 +125,6 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             )
         )
 
-        # A Character may have multiple Track fragments in one Shot. Final presence is once per Shot.
         bound_shot_ids: set[str] = set()
         for track in members:
             if track.shot_id in bound_shot_ids:
@@ -144,7 +143,6 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
                 )
             )
 
-    # Scene keeps V3 semantics.
     scene_links = list(
         session.scalars(select(ShotSceneEvidence).where(ShotSceneEvidence.run_id == run_id)).all()
     )
@@ -193,7 +191,6 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
                 )
             )
 
-    # Prop keeps V3 semantics.
     prop_links = list(
         session.scalars(select(ShotPropEvidence).where(ShotPropEvidence.run_id == run_id)).all()
     )
@@ -220,7 +217,6 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
                 project_id=project_id,
                 name=candidate.auto_label,
                 is_key_prop=True,
-                status="AUTO",
                 metadata_json=json.dumps(metadata, ensure_ascii=False),
             )
         )
@@ -232,7 +228,7 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
                     shot_id=link.shot_id,
                     prop_id=asset_id,
                     source="AUTO",
-                    confidence=link.confidence,
+                    confidence=candidate.confidence,
                     source_run_id=run_id,
                     source_candidate_id=candidate.id,
                 )
