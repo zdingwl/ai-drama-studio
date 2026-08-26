@@ -4,8 +4,9 @@
 - 复用已校验的 YOLOX Person / YoutuReID / YuNet / SFace 模型；
 - Shot 内约 12fps 采样，为成熟 MOT 提供连续轨迹；
 - 正常 Person 继续使用正式阈值；贴边、截断、无头近景允许以低分 partial-person proposal 进入 MOT；
+- 全帧没有正常 Person 时，对左右边缘做放大重检，补救只剩肩背/躯干/手臂的近景；
 - partial-person 这里只回答“这里可能有人”，后续必须经过时序 Track / ReID / Global Identity Gate，
-  不能因为降低检测阈值直接创建 Final Character；
+  不能因为提高召回直接创建 Final Character；
 - 大特写 Person Detector 失败时仍保留高置信 Face fallback。
 
 这里只负责“这个时刻画面里有谁的视觉观测”，不创建 Character_ID。
@@ -34,6 +35,10 @@ PARTIAL_SUBSTANTIAL_AREA_RATIO = 0.060
 PARTIAL_MIN_WIDTH_RATIO = 0.045
 PARTIAL_MIN_HEIGHT_RATIO = 0.140
 PARTIAL_EDGE_MARGIN_RATIO = 0.035
+
+# 只有全帧没有正常 Person 时才补两次边缘放大推理，避免所有帧固定 3x 成本。
+EDGE_RETRY_WIDTH_RATIO = 0.68
+EDGE_RETRY_DEDUP_IOU = 0.55
 
 
 def sample_times_us(duration_us: int) -> tuple[int, ...]:
@@ -132,6 +137,85 @@ def _detect_person_proposals(
     return result
 
 
+def _offset_box(
+    box: tuple[int, int, int, int],
+    x_offset: int,
+    y_offset: int,
+    frame_width: int,
+    frame_height: int,
+) -> tuple[int, int, int, int] | None:
+    x, y, w, h = box
+    return v5.legacy._clamp_box(
+        (x + int(x_offset), y + int(y_offset), w, h),
+        frame_width,
+        frame_height,
+    )
+
+
+def _dedupe_person_proposals(
+    values: list[tuple[tuple[int, int, int, int], float, str]],
+) -> list[tuple[tuple[int, int, int, int], float, str]]:
+    """全帧与 edge retry 可能重复命中同一人；保留高分框，避免一人同帧变两个 Observation。"""
+
+    selected: list[tuple[tuple[int, int, int, int], float, str]] = []
+    for item in sorted(values, key=lambda value: value[1], reverse=True):
+        if any(v5.bbox_iou(item[0], existing[0]) >= EDGE_RETRY_DEDUP_IOU for existing in selected):
+            continue
+        selected.append(item)
+    return selected
+
+
+def _detect_persons_with_edge_retry(
+    detector: _YoloXOrtPersonDetector,
+    frame: Any,
+) -> list[tuple[tuple[int, int, int, int], float, str]]:
+    """先全帧；没有正常 Person 时再放大左右边缘。
+
+    edge retry 命中的无脸框无论分数多高都标记为 partial，因为裁切放大本身不能证明完整 Person 身份；
+    它仍必须经过 V6.1 temporal confirmation。
+    """
+
+    height, width = frame.shape[:2]
+    full = _detect_person_proposals(
+        detector,
+        frame,
+        score_threshold=PARTIAL_PERSON_SCORE,
+    )
+    values: list[tuple[tuple[int, int, int, int], float, str]] = [
+        (
+            box,
+            score,
+            "v6.1-yolox" if score >= STRONG_PERSON_SCORE else "v6.1-yolox-partial",
+        )
+        for box, score in full
+    ]
+    if any(score >= STRONG_PERSON_SCORE for _box, score in full):
+        return _dedupe_person_proposals(values)
+
+    crop_width = max(32, min(width, int(round(width * EDGE_RETRY_WIDTH_RATIO))))
+    if crop_width >= width:
+        return _dedupe_person_proposals(values)
+
+    tiles = (
+        (0, frame[:, :crop_width]),
+        (width - crop_width, frame[:, width - crop_width:]),
+    )
+    for x_offset, crop in tiles:
+        for box, score in _detect_person_proposals(
+            detector,
+            crop,
+            score_threshold=PARTIAL_PERSON_SCORE,
+        ):
+            mapped = _offset_box(box, x_offset, 0, width, height)
+            if mapped is None:
+                continue
+            # 映射回整帧后再次过几何门槛；强分 tile 也只能算 partial evidence。
+            if not _partial_person_box_plausible(mapped, width, height):
+                continue
+            values.append((mapped, score, "v6.1-yolox-edge-partial"))
+    return _dedupe_person_proposals(values)
+
+
 def detect_observations(
     shots: list[dict[str, Any]],
     progress: CharacterProgress | None = None,
@@ -166,12 +250,8 @@ def detect_observations(
         local_times = list(sample_times_us(duration_us))
         for local_us, frame in v5._read_frames(shot["reference_path"], local_times):
             height, width = frame.shape[:2]
-            persons = _detect_person_proposals(
-                person_detector,
-                frame,
-                score_threshold=PARTIAL_PERSON_SCORE,
-            )
-            person_boxes = [item[0] for item in persons]
+            person_entries = _detect_persons_with_edge_retry(person_detector, frame)
+            person_boxes = [item[0] for item in person_entries]
 
             face_detector.setInputSize((width, height))
             _, face_rows = face_detector.detect(frame)
@@ -185,7 +265,11 @@ def detect_observations(
                     faces.append((row, box, float(row[-1])))
 
             used_faces: set[int] = set()
-            for person_box, person_score in sorted(persons, key=lambda item: item[1], reverse=True):
+            for person_box, person_score, proposal_source in sorted(
+                person_entries,
+                key=lambda item: item[1],
+                reverse=True,
+            ):
                 other_boxes = [box for box in person_boxes if box != person_box]
                 matching: list[tuple[int, Any, tuple[int, int, int, int], float]] = []
                 for face_index, (row, face_box, face_score) in enumerate(faces):
@@ -201,7 +285,6 @@ def detect_observations(
                     face_index, face_row, face_box, face_score = max(matching, key=lambda item: item[3])
                     used_faces.add(face_index)
 
-                is_partial = person_score < STRONG_PERSON_SCORE and face_row is None
                 observations.append(Observation(
                     shot_id=shot["id"],
                     episode_id=shot["episode_id"],
@@ -217,13 +300,7 @@ def detect_observations(
                     reid_embedding=reid.infer(frame, person_box),
                     body_hist=v5.legacy._body_histogram(frame, person_box),
                     face_visible=face_row is not None,
-                    detection_source=(
-                        "v6.1-yolox+face"
-                        if face_row is not None
-                        else "v6.1-yolox-partial"
-                        if is_partial
-                        else "v6.1-yolox"
-                    ),
+                    detection_source="v6.1-yolox+face" if face_row is not None else proposal_source,
                     frame_width=width,
                     frame_height=height,
                     face_score=face_score,
