@@ -1,30 +1,22 @@
-# Character V9 实现状态
+# Character V9 / V9.1 实现状态
 
 目标方案：`docs/ASSET_CHARACTER_RECOGNITION_V9_PLAN.md`
 
-## 当前正式状态：V9 Phase D 完整闭环
+## 当前正式状态：V9.1 + V9D Final Gate
 
 Character Runtime profile：
 
 ```text
-character-v9c-person-gallery-anchor-first
+character-v9.1-person-gallery-progressive-anchor
 ```
 
 正式 Asset Run profile：
 
 ```text
-f05-assets-v9d-confirmed-person-gallery-final-gate
+f05-assets-v9.1-confirmed-person-gallery-final-gate
 ```
 
-含义：
-
-- V9A Person Instance 安全层已启用；
-- V9B 单人人物图多通道特征已启用；
-- V9C Person Gallery Anchor-first / Confirm-then-Absorb 身份解析已启用；
-- V9D Final Gate 已启用；
-- UNRESOLVED 已在 UI 与 Final Character 分层。
-
-正式人物主链：
+当前正式主链：
 
 ```text
 Frame / Shot
@@ -33,9 +25,13 @@ Frame / Shot
 → CLEAN / OCCLUDED / CONTAMINATED / PARTIAL
 → 单人人物图多通道特征
 → Mature MOT
-→ CLEAN Person Gallery
+→ CLEAN Person Images
+→ seed 只启动人物图库
+→ 找跨 Shot strong partner
+→ Progressive Proto Gallery
+→ 多视角逐步扩展
 → Confirm Gallery A
-→ 剩余人物图全部先比较 A
+→ 剩余人物图全部先和 A 的整个 Gallery 比较
 → Confirm Gallery B
 → 剩余全部比较 A + B
 → Confirm Gallery C ...
@@ -43,109 +39,20 @@ Frame / Shot
 → Final Character / UNRESOLVED Evidence 分层
 ```
 
-## Phase A 已完成：Person Instance 安全层
-
-```text
-12fps Person / Partial Detection
-→ 同帧多人拆成独立 Person Instance
-→ instance_id
-→ person_bbox
-→ person_crop_bbox
-→ CLEAN / OCCLUDED / CONTAMINATED / PARTIAL
-→ same-sample spatial cannot-link Evidence
-→ Mature MOT
-→ CLEAN-only Track Representative
-→ CLEAN Person Instance crop 持久化
-```
+## A. Person Instance 安全层
 
 硬合同：
 
-1. 整帧不能作为正式人物 Gallery 图；
-2. 同一帧多人必须先拆 Person Instance；
+1. 整帧不能作为正式人物身份图；
+2. 同一帧多人必须先拆成独立 Person Instance；
 3. OCCLUDED / CONTAMINATED / PARTIAL 只能作为 Evidence；
-4. synthetic face fallback 不允许作为 CLEAN Person Gallery seed；
-5. Gallery 保存前重新执行 Person Instance safety 校验；
-6. 同一采样时刻空间不同的人物写入 cannot-link；
-7. Track 数量不能决定 Character 数量。
+4. synthetic face fallback 不允许作为 CLEAN Gallery seed；
+5. same-sample 不同人物写入 cannot-link；
+6. Track 数量不能决定 Character 数量。
 
-## Phase B 已完成：人物图多通道特征
+## B. 单人人物图多通道特征
 
-每个 Person Instance 的身份特征只从该人物区域提取，整帧背景不能参与人物身份特征。
-
-正式通道：
-
-```text
-Person Instance
-├─ person_reid
-├─ clothing_upper
-├─ clothing_lower
-├─ body_hist
-├─ body_structure
-└─ face                 # 可选支持证据
-```
-
-硬合同：
-
-1. 不生成一个不可解释的“人物总 embedding”；
-2. 各通道独立保存；
-3. Face 缺失时，CLEAN Person Image 仍然可以提供人物身份依据；
-4. Face 不能单独定义人物身份；
-5. 不自动生成人口属性作为视觉身份通道；只使用可观察外观；
-6. Gallery 代表图质量以 whole-person 为主；
-7. 每张正式 Gallery JPG 同时保存 `features_XX.npz`；
-8. `gallery.json` 保存 feature version、通道、向量维度和 Person Instance 来源；
-9. 改变人物框外背景，不得改变 Person Instance 特征。
-
-Feature version：
-
-```text
-v9b-person-multichannel-1
-```
-
-## Phase C 已完成：Person Gallery Anchor-first / Confirm-then-Absorb
-
-正式身份入口：
-
-```text
-engine/app/character_identity_v9c.py
-```
-
-核心状态机：
-
-```text
-从 CLEAN Person Images 中选择高质量 seed
-→ 找跨 Shot、多通道一致的稳定组
-→ Confirmed Gallery A
-
-所有剩余 Person Images
-→ 必须先与 A 比较
-
-MATCH
-→ 吸收到 A
-
-AMBIGUOUS
-→ UNRESOLVED
-→ 禁止创建 A2
-
-DIFFERENT
-→ 才能进入下一人物 seed pool
-
-确认 Gallery B
-→ 剩余人物图全部依次比较 A + B
-→ 再确认 Gallery C ...
-```
-
-新人物自动确认门槛：
-
-```text
->= 3 个独立 Shot
-+ >= 3 张 CLEAN Person Images
-+ ReID / clothing / body / optional face 多通道一致
-+ 与全部已确认 Gallery 明确不同
-+ 无 same-sample cannot-link 冲突
-```
-
-身份通道保持可解释：
+每个 Person Instance 单独保留：
 
 ```text
 person_reid
@@ -154,53 +61,107 @@ clothing_lower
 body_hist
 body_structure
 face(optional)
-same-sample cannot-link
-multi-shot gallery support
 ```
 
-禁止：
+不生成不可解释的“人物总 embedding”。Face 是可选强支持证据，不是人物本身，也不是 Final Gate。
+
+## C. V9.1 Progressive Person Gallery
+
+正式入口：
 
 ```text
-一张脸
-或一个 Track
-或一个总 embedding
-→ 新建人物
+engine/app/character_identity_v91.py
 ```
 
-### Face
-
-Face 是可选支持证据，不是人物定义。
+V9C 曾经还有两个单图假设：
 
 ```text
-Face 相似 + 人物图整体不支持
-→ 不能直接 MATCH
+问题 1：
+seed 图
+→ 要求其它支持图都直接 MATCH seed
+
+问题 2：
+人物确认以后
+→ 后续图片必须同时直接 MATCH 固定多张 Gallery 图
 ```
 
-高质量 Face 明显冲突可以作为强负证据。
+这会造成：同一个人从正面 → 侧面 → 低头时，虽然相邻视角之间很稳定，但因为远端视角不像第一张 seed，人物图库建不起来，或者后续 Shot 无法挂回已确认人物。
 
-### Partial / OCCLUDED / CONTAMINATED
-
-不能参与新人物 seed。
-
-只允许：
+V9.1 改为：
 
 ```text
-严格回挂到已确认 Person Gallery
+高质量 seed
+→ 找一个跨 Shot strong partner
+→ 得到 Proto Gallery
+→ 第三张只需要得到 Proto Gallery 的多视角支持
+→ Gallery 扩大
+→ 第四张继续和扩大的 Gallery 比
+→ >=3 个独立 CLEAN Shot 后才允许 Confirm
+```
+
+seed 只负责启动，不再定义人物身份。
+
+### 已确认人物的后续吸收
+
+```text
+新 Person Image X
+→ 和人物 A 的整个 Gallery 比较
+
+多个视角支持 A
+→ MATCH / 吸收
+
+同时对 A、B 都很像
+→ AMBIGUOUS / UNRESOLVED
+
+明确不属于任何已确认 Gallery
+→ 才进入新人发现流程
+```
+
+这样一个已确认人物的正面、侧面、低头、坐姿等图可以由 Gallery 内不同视角分别支持，不要求它们都像某一张固定人物图。
+
+### 新人物 Novelty
+
+V9C 曾经存在：
+
+```text
+新人物组里只要任意一张图
+对已有 A/B = AMBIGUOUS
+→ 整组禁止成为新人
+```
+
+V9.1 改为 Gallery-level novelty：
+
+```text
+一张 AMBIGUOUS
++ 多个独立 Shot 明确 DIFFERENT
++ 新组内部多视角稳定
+→ 可以确认新人物
+```
+
+但下面情况仍然禁止创建 A2/B2：
+
+```text
+>=2 个 Shot MATCH 已有人物
 或
-UNRESOLVED
+对已有 Gallery 存在特别强的单次 MATCH
+或
+1 个 MATCH + 其它 AMBIGUOUS 支持
 ```
 
-### Track
-
-Track 只负责存在性和时序组织：
+### 新人物自动确认门槛
 
 ```text
-1 个真人
-→ 可以产生很多 Track
-→ Confirmed Person Gallery 仍只能是 1
+>= 3 个独立 Shot
++ >= 3 张 CLEAN Person Images
++ Progressive multi-view consistency
++ 与全部已确认 Gallery 做完比较
++ Gallery-level 明确 novelty
++ no hard identity conflict
 ```
 
-## Phase D 已完成：Final Gate
+Partial / OCCLUDED / CONTAMINATED 永远不能 seed 新人物。
+
+## D. Final Gate
 
 正式入口：
 
@@ -208,63 +169,31 @@ Track 只负责存在性和时序组织：
 engine/app/asset_final_gate_v9.py
 ```
 
-正式路由：
-
-```text
-engine/app/asset_routes_v3.py
-→ import asset_final_gate_v9.apply_analysis_to_assets
-```
-
-V9 Final Character 的唯一自动发布来源：
+正式发布条件：
 
 ```text
 identity_status == RESOLVED
-AND resolver == person-gallery-anchor-first-v9c
+AND resolver in {
+  person-gallery-anchor-first-v9c,      # 历史 V9C Run
+  person-gallery-progressive-v9.1       # 当前正式 V9.1
+}
 AND confirmed_gallery_shots >= 3
 AND confirmed_gallery_images >= 3
 → Final Character
 ```
 
-### Face 不再是 Final Gate
-
-V9D 明确允许：
+Face 不是 Final Gate。
 
 ```text
 Confirmed Person Gallery
 + 3+ CLEAN 独立 Shot
-+ 多通道人物图一致
 + face_images == 0
-→ Final Character
+→ 仍可成为 Final Character
 ```
 
-因此不会再出现“人物图库已经稳定，但因为没有露脸而被 Final Gate 丢掉”的问题。
+UNRESOLVED 永远不物化 Final Character。
 
-### UNRESOLVED
-
-```text
-identity_status == UNRESOLVED
-→ 永远不物化 Final Character
-→ AI Evidence 保留
-→ 不计入人物资产数量
-```
-
-即使 UNRESOLVED Track 有高质量 Face，也不能绕过 Final Gate。
-
-### Fail closed
-
-对 V9 Run，如果 Candidate 写成 RESOLVED，但缺少：
-
-```text
-resolver
-confirmed_gallery_shots
-confirmed_gallery_images
-```
-
-则不允许物化 Final Character。
-
-历史 pre-V9 Run 为了兼容旧数据，继续使用其历史 face-visible 安全门，不会被 V9D 静默重新解释。
-
-## Phase D 已完成：UI 分层
+## UI
 
 正式页面：
 
@@ -272,74 +201,57 @@ confirmed_gallery_images
 frontend/src/components/AssetStageV4.vue
 ```
 
-UI 分成：
+V9D 早期曾把每条未归属 Track 都铺成“待解析人物”卡片，真实视频上可能出现 100+ 个碎片，容易误解成系统识别出了 100 多个人。
+
+现在改为：
 
 ```text
-Person Gallery / Final Character
-→ 只统计 resolved_character_candidates
-
-待解析人物 Evidence
-→ 独立区域
-→ 展示 Evidence cover / Shot / Track
-→ 不进入 Final Character 数量
+Person Gallery：N 个 Final Character
+待归属 Evidence：M 条
 ```
 
-重要 UI 合同：
+未归属 Evidence 是内部 Track / Person Image 碎片：
 
-```text
-face_visible != identity_status
-```
-
-UI 不再通过“有没有脸”猜测 Candidate 是否已确认，只读取正式 Evidence 分层结果。
-
-资产后台任务完成后，`studio-task-finished` 会自动刷新待解析 Evidence 区域。
+- 不计入人物数量；
+- 不在主页面逐卡展开；
+- 不再命名成“待解析人物001/002/...”给用户造成错觉；
+- 继续保留在 AI Evidence 中用于后续 Gallery 吸收与诊断。
 
 ## 回归测试
 
-Person Instance：
+核心测试：
 
 ```text
 engine/tests/v2/test_character_person_instance_v9.py
-```
-
-人物图特征：
-
-```text
 engine/tests/v2/test_character_person_features_v9.py
-```
-
-Person Gallery Identity：
-
-```text
 engine/tests/v2/test_character_identity_v9c.py
+engine/tests/v2/test_character_identity_v91.py
 engine/tests/v2/test_character_v9c_runtime_wiring.py
-```
-
-Final Gate：
-
-```text
 engine/tests/v2/test_asset_final_gate_v9.py
+engine/tests/v2/test_asset_final_gate_v91.py
+engine/tests/v2/test_asset_final_gate_v9_wiring.py
 ```
 
-V9D Final Gate 测试锁定：
+V9.1 新增锁定：
 
-1. `face_images=0` 的 Confirmed Person Gallery 仍可成为 Final Character；
-2. 有脸的 UNRESOLVED 也不能成为 Final Character；
-3. V9 RESOLVED 但缺 Person Gallery provenance 必须 fail closed；
-4. 只有 2 个独立 Gallery Shot 不能绕过 Final Gate。
+1. 同一人物正面 → 半侧面 → 侧面 → 低头可以通过 Progressive Gallery 形成 1 个身份；
+2. 后续人物图可以通过整个 Gallery 的多视角支持挂回已确认人物；
+3. 一个新人物组只有一张图对 A 模糊相似，但其它多 Shot 明确不同，不得因此隐藏整个第三人物；
+4. Partial-only 仍不能创建人物；
+5. 3 个真人 + 大量碎片最终仍只能产生 3 个 Confirmed Gallery。
 
 ## 完整验收目标
 
 对于真实 3 人视频：
 
 ```text
-Person Track            可以很多
-Partial Evidence        可以很多
-UNRESOLVED              可以存在
+Person Track             可以很多
+Partial Evidence         可以很多
+待归属 Evidence          可以存在
 Confirmed Person Gallery = 3
-Final Character          = 3
+Final Character           = 3
 ```
 
-如果结果不是 3，下一步排障只看 V9C Gallery 的 MATCH / AMBIGUOUS / DIFFERENT 证据，不再通过增加 Track、降低人脸阈值或事后按人数硬合并解决。
+同时每个 Final Character 的 Shot 覆盖应随着 Progressive Gallery 吸收增加，而不是只保留最初 3~4 个 seed Shot。
 
-> 当前远程执行环境没有可用的本地仓库测试执行能力，GitHub 当前也没有 CI status。因此“代码/测试已提交”不等于“测试已通过”；必须以本机 pytest / frontend typecheck 为准。
+> 当前远程执行环境仍无法解析 `github.com`，GitHub 当前也没有 CI status。因此“测试已提交”不等于“测试已通过”；以本机 pytest / frontend typecheck 为准。
