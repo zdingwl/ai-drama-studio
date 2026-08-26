@@ -106,9 +106,9 @@ function Find-SharedFfmpegBin {
     if ($env:ProgramFiles) {
         $packageRoots.Add((Join-Path $env:ProgramFiles 'WinGet\Packages'))
     }
-    ${env:ProgramFiles(x86)}Value = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
-    if (${env:ProgramFiles(x86)}Value) {
-        $packageRoots.Add((Join-Path ${env:ProgramFiles(x86)}Value 'WinGet\Packages'))
+    $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+    if ($programFilesX86) {
+        $packageRoots.Add((Join-Path $programFilesX86 'WinGet\Packages'))
     }
 
     foreach ($root in $packageRoots) {
