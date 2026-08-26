@@ -115,6 +115,26 @@ def test_progressive_gallery_bridges_realistic_view_changes() -> None:
     assert metadata["confirmed_gallery_shots"] >= 3
 
 
+def test_confirmed_gallery_absorbs_a_later_view_through_multiview_support() -> None:
+    observations = [
+        make_observation(shot=1, vector=angle_vector(0)),
+        make_observation(shot=2, vector=angle_vector(25)),
+        make_observation(shot=3, vector=angle_vector(50)),
+        make_observation(shot=4, vector=angle_vector(75)),
+    ]
+    evidence = [
+        identity.PersonEvidence(index, index, observation, observation.person_feature_bundle, 0.92)
+        for index, observation in enumerate(observations)
+    ]
+    gallery = identity.ConfirmedGallery(ordinal=0, evidence_indices={0, 1, 2}, seed_index=0)
+
+    # Shot 4 is far from the first anchor but strongly matches the newer Gallery view.
+    decision = identity._progressive_gallery_decision(evidence[3], gallery, evidence)
+
+    assert decision.status == "MATCH"
+    assert "progressive-multiview-gallery-support" in decision.reasons
+
+
 def test_one_ambiguous_image_does_not_hide_a_clearly_novel_third_person() -> None:
     tracks: list[v5.TrackDraft] = []
 
@@ -128,7 +148,7 @@ def test_one_ambiguous_image_does_not_hide_a_clearly_novel_third_person() -> Non
 
     # Person C: first view is moderately similar to A (about 0.65 cosine -> AMBIGUOUS),
     # but later views are clearly different from A while remaining strongly connected
-    # to adjacent C views.  Gallery-level novelty should confirm C instead of hiding it.
+    # to adjacent C views. Gallery-level novelty should confirm C instead of hiding it.
     tracks.extend([
         make_track(make_observation(shot=9, vector=angle_vector(49.5))),
         make_track(make_observation(shot=10, vector=angle_vector(72.5))),
