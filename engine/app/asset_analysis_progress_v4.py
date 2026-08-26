@@ -2,10 +2,9 @@
 
 职责：
 - 复用 content_analysis_v2 的正式 Run / Scene 数据模型；
-- 人物正式链路为 Character V6.3：12fps Person + Partial → Safe Face Ownership → Mature MOT → Spatiotemporal Global Identity；
-- partial 只能补人和挂回已有身份，不能抢 Face、不能创建 Face identity anchor；
-- 同 Shot 不再天然 cannot-link，只有真正同时且空间不同的人才永久分开；
-- Global Identity 后继续做保守的 RESOLVED fragment consolidation；
+- 人物正式链路为 Character V7：12fps Person + Partial → Safe Face Ownership → Mature MOT → Face-first Global Identity；
+- Face observation 是唯一身份节点；Person Track 数量不再决定 Final Character 数量；
+- partial/body-only 只能在稳定 Face Identity 建立以后挂回，否则只保留 UNRESOLVED Evidence；
 - RESOLVED / UNRESOLVED 在持久化时明确分层，只有 RESOLVED 后续可形成 Final Character；
 - 新 Run 完整成功后才切 Current，失败保留旧结果。
 """
@@ -31,7 +30,7 @@ AssetEvidenceProgress = Callable[
     None,
 ]
 
-FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v6.3-safe-face-spatiotemporal-identity"
+FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v7-face-first-global-identity"
 
 
 def _report(
@@ -56,7 +55,7 @@ def _report(
         )
 
 
-def _mark_v6_profile(run_id: str) -> None:
+def _mark_formal_profile(run_id: str) -> None:
     with get_session() as session:
         run = session.get(ContentAnalysisRun, run_id)
         if run is None:
@@ -74,10 +73,10 @@ def run_content_analysis_with_progress(
 
     _project, _episodes, shots = _load_context(project_id)
     run_id = _create_run(project_id)
-    _mark_v6_profile(run_id)
+    _mark_formal_profile(run_id)
     component_status: dict[str, str] = {
         "characters": "PENDING",
-        "characters_profile": "V6_3_SAFE_FACE_SPATIOTEMPORAL_IDENTITY",
+        "characters_profile": "V7_FACE_FIRST_GLOBAL_IDENTITY",
         "scenes": "PENDING",
         "props": "NOT_CONFIGURED",
     }
@@ -92,7 +91,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            f"已读取 {total_shots} 个 Current Shots，正在加载人物 V6.3 Safe Face Ownership / MOT / Identity",
+            f"已读取 {total_shots} 个 Current Shots，正在加载人物 V7 Safe Face / MOT / Face-first Identity",
         )
 
         candidates: list[CandidateDraft] = []
@@ -107,7 +106,7 @@ def run_content_analysis_with_progress(
                 progress,
                 5.0 + ratio * 77.0,
                 "characters",
-                "人物 V6.3 · Safe Face / Partial / MOT / Spatiotemporal Identity",
+                "人物 V7 · Safe Face / MOT / Face-first Global Identity",
                 current_item,
                 current,
                 total,
@@ -129,7 +128,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            f"Global Identity V6.3：{resolved_count} 个可发布人物 · {unresolved_count} 个待解析 Evidence",
+            f"Face-first Identity V7：{resolved_count} 个可发布人物 · {unresolved_count} 个待解析 Evidence",
         )
 
         _report(
@@ -140,7 +139,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            "人物 V6.3 完成，正在计算 Scene Segment",
+            "人物 V7 完成，正在计算 Scene Segment",
         )
         scenes: list[SceneDraft] = _cluster_scenes(run_id, project_id, shots)
         component_status["scenes"] = "READY" if scenes else "NO_SCENE"
@@ -168,8 +167,8 @@ def run_content_analysis_with_progress(
             speaker_segments=speaker_segments,
             component_status=component_status,
         )
-        # 旧 persistence 模块为兼容历史仍写 V6 profile；正式入口在成功持久化后重新标记当前 V6.3。
-        _mark_v6_profile(run_id)
+        # persistence 模块仍兼容历史调用；正式入口最终覆盖为 V7 profile。
+        _mark_formal_profile(run_id)
 
         _report(
             progress,
@@ -179,7 +178,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            f"人物 V6.3 完成：{resolved_count} Final-ready · {unresolved_count} 待解析 Evidence",
+            f"人物 V7 完成：{resolved_count} Final-ready · {unresolved_count} 待解析 Evidence",
         )
         return get_analysis_run(run_id) or {"id": run_id, "status": "READY"}
     except Exception as exc:
