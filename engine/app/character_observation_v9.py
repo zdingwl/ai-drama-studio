@@ -59,6 +59,10 @@ def annotate_person_instances(observations: list[Observation]) -> list[Observati
                 # Synthetic face fallback is not a detector-backed clean body crop.
                 force_partial="face-fallback" in source.lower(),
             )
+            # From this point on every downstream stage must see the same final set of
+            # people for contamination checks. Do not keep the narrower V6.3 list.
+            observation.other_person_boxes = list(others)
+            observation.interference_ratio = safety.contamination_ratio
             observation.instance_id = ids[id(observation)]  # type: ignore[attr-defined]
             observation.person_bbox = safety.person_bbox  # type: ignore[attr-defined]
             observation.person_crop_bbox = safety.crop_bbox  # type: ignore[attr-defined]
