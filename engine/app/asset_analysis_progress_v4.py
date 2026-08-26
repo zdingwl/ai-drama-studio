@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Callable
 
 from engine.app.character_visual_v2 import CandidateDraft, analyze_characters
@@ -32,6 +33,7 @@ AssetEvidenceProgress = Callable[
 ]
 
 FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v9a-person-instance-safety-v8-identity"
+FORMAL_CHARACTER_COMPONENT_PROFILE = "V9A_PERSON_INSTANCE_SAFETY_V8_IDENTITY"
 
 
 def _report(
@@ -57,11 +59,21 @@ def _report(
 
 
 def _mark_formal_profile(run_id: str) -> None:
+    """Keep both Run and component profile truthful after legacy persistence."""
+
     with get_session() as session:
         run = session.get(ContentAnalysisRun, run_id)
         if run is None:
             return
         run.profile_version = FORMAL_ASSET_PROFILE_VERSION
+        try:
+            status = json.loads(run.component_status_json or "{}")
+        except (json.JSONDecodeError, TypeError):
+            status = {}
+        if not isinstance(status, dict):
+            status = {}
+        status["characters_profile"] = FORMAL_CHARACTER_COMPONENT_PROFILE
+        run.component_status_json = json.dumps(status, ensure_ascii=False)
         session.commit()
 
 
@@ -77,7 +89,7 @@ def run_content_analysis_with_progress(
     _mark_formal_profile(run_id)
     component_status: dict[str, str] = {
         "characters": "PENDING",
-        "characters_profile": "V9A_PERSON_INSTANCE_SAFETY_V8_IDENTITY",
+        "characters_profile": FORMAL_CHARACTER_COMPONENT_PROFILE,
         "scenes": "PENDING",
         "props": "NOT_CONFIGURED",
     }
@@ -168,7 +180,7 @@ def run_content_analysis_with_progress(
             speaker_segments=speaker_segments,
             component_status=component_status,
         )
-        # persistence 模块保留历史兼容；正式入口最终覆盖为 V9A profile。
+        # Legacy persistence writes its historical profile; restore the formal V9A contract.
         _mark_formal_profile(run_id)
 
         _report(
