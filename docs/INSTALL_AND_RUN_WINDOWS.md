@@ -2,7 +2,7 @@
 
 > 适用项目：`zdingwl/ai-drama-studio`
 >
-> 当前拉片基线：Reference Video V2 / Shot V5 / TransVLM-first。
+> 当前正式拉片基线：Shot V5 / TransVLM-first / Source PTS frame ownership。
 >
 > **本手册从“刚装好的 Windows，只有浏览器和系统自带 Windows PowerShell”开始。**
 >
@@ -37,7 +37,7 @@ npm 安装前端依赖
 ↓
 setup_transvlm_runtime.ps1
 ↓
-CUDA / cuDNN / TorchCodec 检查
+check_transvlm_runtime.ps1
 ↓
 启动后端
 ↓
@@ -46,7 +46,7 @@ CUDA / cuDNN / TorchCodec 检查
 单集真实视频拉片验收
 ```
 
-如果某一步提示“命令不存在”，先解决该步骤，不要继续往下执行。
+如果某一步提示“命令不存在”，先解决当前步骤，不要继续往下执行。
 
 ---
 
@@ -85,7 +85,7 @@ Windows 11 64-bit
 推荐：64 GB
 ```
 
-TransVLM 官方 whole-video NeuFlow 会一次性处理完整视频，长视频可能占用大量 RAM。
+TransVLM 官方 whole-video NeuFlow 会处理整段视频，长视频可能占用大量 RAM。
 
 ## 1.4 磁盘
 
@@ -101,15 +101,13 @@ TransVLM 官方 whole-video NeuFlow 会一次性处理完整视频，长视频�
 
 # 2. 安装 NVIDIA 驱动
 
-新装 Windows 先安装显卡驱动。
-
 浏览器打开 NVIDIA 官方驱动下载页面：
 
 ```text
 https://www.nvidia.com/Download/index.aspx
 ```
 
-安装与你显卡对应的正式驱动，安装完成后建议重启。
+安装与你显卡对应的正式驱动，完成后建议重启 Windows。
 
 重新打开 PowerShell：
 
@@ -127,7 +125,7 @@ nvidia-smi
 
 # 3. 让 Windows 具备 winget
 
-先执行：
+执行：
 
 ```powershell
 winget --version
@@ -144,20 +142,9 @@ Microsoft Store
 → 安装或更新
 ```
 
-然后：
+然后关闭所有 PowerShell，再重新打开。
 
-```text
-关闭所有 PowerShell
-重新打开 PowerShell
-```
-
-再次执行：
-
-```powershell
-winget --version
-```
-
-## 3.1 msstore 源报证书错误怎么办
+## 3.1 msstore 源证书错误
 
 某些机器会出现：
 
@@ -168,7 +155,7 @@ winget --version
 
 这不代表整个 winget 坏了。
 
-如果输出同时显示包可以从 `winget` 源找到，安装时显式指定：
+安装项目依赖时显式指定社区源：
 
 ```powershell
 --source winget
@@ -180,13 +167,11 @@ winget --version
 winget install --id astral-sh.uv -e --source winget
 ```
 
-项目基础工具安装都建议显式使用 `--source winget`，这样不会被坏掉的 `msstore` 源阻塞。
+不需要为了安装本项目先修复 `msstore` 源。
 
 ---
 
 # 4. 安装基础工具
-
-以下命令在 PowerShell 中逐个执行。
 
 ## 4.1 Git
 
@@ -200,15 +185,13 @@ winget install --id Git.Git -e --source winget
 winget install --id OpenJS.NodeJS.LTS -e --source winget
 ```
 
-前端使用 Vite 8，Node.js 需要满足：
+前端使用 Vite 8，需要：
 
 ```text
 Node 20.19+
 或
 Node 22.12+
 ```
-
-推荐使用当前 Node.js LTS。
 
 ## 4.3 uv
 
@@ -225,11 +208,11 @@ TransVLM Python 3.12 Runtime
 Python 包安装
 ```
 
-所以裸机不需要先自己安装 Python。
+裸机不需要先自己安装 Python。
 
 ## 4.4 FFmpeg
 
-推荐直接安装 Shared 版：
+推荐安装 Shared 版：
 
 ```powershell
 winget install --id Gyan.FFmpeg.Shared -e --source winget
@@ -242,25 +225,23 @@ winget install --id Gyan.FFmpeg.Shared -e --source winget
 找不到可用的升级
 ```
 
-不代表 FFmpeg 不能使用。
+不代表安装失败。
 
 当前 `setup_transvlm_runtime.ps1` 会：
 
 ```text
 优先扫描本机已有兼容 Shared FFmpeg
 ↓
-找到就直接复用
+找到就复用
 ↓
-找不到时自动准备项目自己的 pinned Shared FFmpeg Runtime
+找不到则准备项目自己的 pinned Shared FFmpeg Runtime
 ↓
 实际导入 TorchCodec VideoDecoder 验证
 ```
 
-因此不要为了 WinGet 的“无法升级”提示反复卸载/重装 FFmpeg。
+不要为了 WinGet 的“无法升级”提示反复卸载 FFmpeg。
 
 ## 4.5 Microsoft Visual C++ Runtime
-
-PyTorch / TorchCodec 等 Windows DLL 依赖 Microsoft Visual C++ Runtime。
 
 浏览器打开：
 
@@ -268,11 +249,11 @@ PyTorch / TorchCodec 等 Windows DLL 依赖 Microsoft Visual C++ Runtime。
 https://aka.ms/vs/17/release/vc_redist.x64.exe
 ```
 
-下载并安装 Microsoft Visual C++ 2015-2022 x64 Redistributable。
+安装 Microsoft Visual C++ 2015-2022 x64 Redistributable。
 
 ---
 
-# 5. 基础工具安装完成后必须重新打开 PowerShell
+# 5. 安装基础工具后必须重新打开 PowerShell
 
 安装 Git / Node / uv / FFmpeg 后：
 
@@ -282,7 +263,7 @@ https://aka.ms/vs/17/release/vc_redist.x64.exe
 重新打开一个新的 PowerShell
 ```
 
-然后逐个验证：
+然后验证：
 
 ```powershell
 git --version
@@ -306,39 +287,39 @@ where.exe ffprobe
 where.exe nvidia-smi
 ```
 
-如果某个命令完全找不到，先解决该软件安装/PATH，不要继续。
+如果某个命令完全找不到，先解决安装/PATH，不要继续。
 
 ---
 
 # 6. 不使用 winget 的手工安装方式
 
-如果 winget 完全不可用，可以用浏览器安装。
+如果 winget 完全不可用，可以浏览器安装。
 
-## Git
+Git：
 
 ```text
 https://git-scm.com/download/win
 ```
 
-## Node.js LTS
+Node.js LTS：
 
 ```text
 https://nodejs.org/en/download
 ```
 
-## uv
+uv：
 
 ```text
 https://docs.astral.sh/uv/getting-started/installation/
 ```
 
-也可以使用 uv 官方 PowerShell 安装命令：
+uv 官方 PowerShell 安装命令：
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-## FFmpeg Shared
+FFmpeg Shared：
 
 ```text
 https://www.gyan.dev/ffmpeg/builds/
@@ -361,8 +342,6 @@ avformat-*.dll
 avutil-*.dll
 ```
 
-安装后都要关闭 PowerShell，再重新打开。
-
 ---
 
 # 7. 获取 AI Drama Studio
@@ -372,8 +351,6 @@ avutil-*.dll
 ```text
 D:\ai-drama-studio
 ```
-
-如果没有 D 盘，可以改成 C 盘或其他 SSD。
 
 第一次克隆：
 
@@ -390,21 +367,14 @@ git status
 git log -5 --oneline
 ```
 
-如果暂时没有 Git，也可以浏览器打开仓库 → `Code` → `Download ZIP`，但长期更新仍建议使用 Git。
+如果暂时没有 Git，也可以浏览器打开仓库 → `Code` → `Download ZIP`，但长期更新仍推荐使用 Git。
 
 ---
 
 # 8. 用 uv 安装 Python 3.12
 
-进入项目：
-
 ```powershell
 cd D:\ai-drama-studio
-```
-
-安装：
-
-```powershell
 uv python install 3.12
 ```
 
@@ -427,12 +397,6 @@ cd D:\ai-drama-studio
 uv venv .venv --python 3.12
 ```
 
-创建成功后应该存在：
-
-```text
-D:\ai-drama-studio\.venv\
-```
-
 激活：
 
 ```powershell
@@ -448,11 +412,9 @@ python --version
 
 应该是 Python 3.12.x。
 
-## 9.1 重要：uv venv 默认不保证带 pip
+## 9.1 uv venv 默认不保证带 pip
 
-`uv venv` 创建的是正常 Python 虚拟环境，但默认**不要求环境内部存在传统 `pip` 模块**。
-
-因此下面这个报错并不表示 `.venv` 损坏：
+下面这个报错不表示 `.venv` 损坏：
 
 ```text
 D:\ai-drama-studio\.venv\Scripts\python.exe: No module named pip
@@ -466,18 +428,10 @@ uv pip
 
 不要把 `python -m pip` 是否存在当成环境是否正常的判断标准。
 
-## 9.2 如果 PowerShell 禁止执行 Activate.ps1
-
-当前窗口临时放开：
+## 9.2 如果 PowerShell 禁止 Activate.ps1
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-```
-
-然后重新激活：
-
-```powershell
-.\.venv\Scripts\Activate.ps1
 ```
 
 该设置只影响当前 PowerShell 窗口。
@@ -486,31 +440,23 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 项目正常运行不需要这一步。
 
-如果第三方工具明确要求 `.venv` 内存在 pip，可以执行：
+如果第三方工具明确要求 `.venv` 内存在 pip：
 
 ```powershell
 uv pip install --python .\.venv\Scripts\python.exe pip
 ```
 
-然后：
-
-```powershell
-.\.venv\Scripts\python.exe -m pip --version
-```
-
-另一种方式是重新创建带 seed 包的环境：
+或者重新创建带 seed 包的环境：
 
 ```powershell
 uv venv .venv --python 3.12 --seed
 ```
 
-但对 AI Drama Studio 默认安装流程没有必要。
-
 ---
 
 # 10. 安装主工程后端依赖
 
-**不要执行：**
+不要执行：
 
 ```powershell
 python -m pip install --upgrade pip
@@ -524,9 +470,7 @@ cd D:\ai-drama-studio
 uv pip install --python .\.venv\Scripts\python.exe -r .\engine\requirements.txt
 ```
 
-即使 `.venv` 没有 `pip` 模块，这条命令也可以正常安装依赖。
-
-安装完成后验证：
+安装后验证：
 
 ```powershell
 .\.venv\Scripts\python.exe -c "import fastapi, sqlalchemy, cv2; print('backend imports OK')"
@@ -543,8 +487,6 @@ backend imports OK
 ---
 
 # 11. 安装前端依赖
-
-打开新的 PowerShell：
 
 ```powershell
 cd D:\ai-drama-studio\frontend
@@ -563,31 +505,20 @@ npm run typecheck
 npm run build
 ```
 
-如果 `npm` 无法识别，重新检查：
-
-```powershell
-node --version
-npm --version
-where.exe node
-where.exe npm
-```
-
 ---
 
 # 12. 安装 TransVLM Runtime
 
 这是当前正式拉片最重要的一步。
 
-先确认：
+先检查：
 
 ```powershell
 cd D:\ai-drama-studio
 Get-Command git,uv,ffmpeg,nvidia-smi
 ```
 
-四个命令必须全部找到。
-
-执行：
+执行自动安装：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_transvlm_runtime.ps1
@@ -596,7 +527,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_transvlm_runtime.ps1
 脚本会自动完成：
 
 ```text
-1. 检查 git / uv / ffmpeg / nvidia-smi
+1. 检查 git / uv / nvidia-smi
 2. 克隆或更新 HeyGen 官方 TransVLM
 3. 根据 NVIDIA Driver 选择 CUDA group
 4. 用 uv 准备 Python 3.12
@@ -606,10 +537,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_transvlm_runtime.ps1
 8. Windows 下将正确 cuDNN DLL stage 到隔离 torch runtime
 9. 检查本机兼容 Shared FFmpeg
 10. 找不到时准备项目本地 pinned Shared FFmpeg Runtime
-11. 验证 TorchCodec VideoDecoder
-12. 下载 TransVLM Qwen3-VL 4B checkpoint
-13. 下载 NeuFlow v2 权重
-14. 执行 infer_video.py --help 自检
+11. 注入 Shared FFmpeg + torch\lib 到 PATH
+12. 实际导入 TorchCodec VideoDecoder
+13. 下载 TransVLM Qwen3-VL 4B checkpoint
+14. 下载 NeuFlow v2 权重
+15. 执行 infer_video.py --help 自检
 ```
 
 第一次执行会下载多 GB 文件，耗时较长。
@@ -620,44 +552,66 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_transvlm_runtime.ps1
 [TransVLM] READY
 ```
 
-并包含类似：
-
-```text
-Python: ...\.runtime\TransVLM\inference\.venv\Scripts\python.exe
-Checkpoint: ...\pretrained\TransVLM-v1
-Backend: hf
-CUDA group: cu128 / cu130
-Shared FFmpeg: ...
-```
-
 ---
 
-# 13. TransVLM 安装后检查
+# 13. TransVLM 安装后正确的自检方式
 
-## 13.1 CUDA / cuDNN
+## 13.1 不要直接裸跑 TorchCodec
 
-```powershell
-D:\ai-drama-studio\.runtime\TransVLM\inference\.venv\Scripts\python.exe -c "import torch; print('cuda=',torch.cuda.is_available()); print('gpu=',torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU'); print('torch=',torch.__version__); print('torch cuda=',torch.version.cuda); print('cudnn=',torch.backends.cudnn.version())"
-```
-
-至少应该满足：
-
-```text
-cuda= True
-gpu= NVIDIA ...
-cudnn= 91600 或更高
-```
-
-## 13.2 TorchCodec
+下面这种命令**不作为项目标准自检方式**：
 
 ```powershell
 D:\ai-drama-studio\.runtime\TransVLM\inference\.venv\Scripts\python.exe -c "from torchcodec.decoders import VideoDecoder; print('torchcodec=OK')"
 ```
 
-应输出：
+原因是 Windows DLL 搜索依赖当前进程 `PATH`。
+
+正式后台启动 TransVLM 时会自动把：
 
 ```text
-torchcodec=OK
+Shared FFmpeg\bin
++
+TransVLM\.venv\Lib\site-packages\torch\lib
+```
+
+放到子进程 `PATH` 前面。
+
+裸跑 `python.exe` 没有这一步，因此即使 Runtime 安装正确，也可能报：
+
+```text
+RuntimeError: Could not load libtorchcodec
+```
+
+## 13.2 使用项目提供的 Runtime 自检脚本
+
+统一执行：
+
+```powershell
+cd D:\ai-drama-studio
+powershell -ExecutionPolicy Bypass -File .\scripts\check_transvlm_runtime.ps1
+```
+
+这个脚本会使用和正式后台相同的 DLL 搜索路径，并检查：
+
+```text
+Shared FFmpeg bin 是否存在
+ffmpeg.exe / ffprobe.exe
+avcodec / avformat / avutil DLL
+PyTorch CUDA
+GPU
+cuDNN
+TorchCodec VideoDecoder
+infer_video.py
+```
+
+成功时应看到：
+
+```text
+[TransVLM] RUNTIME CHECK PASSED
+  CUDA/cuDNN: OK
+  TorchCodec: OK
+  FFmpeg shared DLLs: OK
+  infer_video.py: OK
 ```
 
 ## 13.3 项目 Runtime 状态
@@ -672,14 +626,13 @@ cd D:\ai-drama-studio
 ```json
 {
   "ready": true,
-  "profile": "TransVLM-Qwen3-VL-4B-Instruct",
   "backend": "hf",
   "device": "cuda:0",
   "missing": []
 }
 ```
 
-`ready=false` 时先解决 `missing`，不要开始正式拉片。
+注意：`runtime_status()` 主要检查路径和配置；真正 CUDA / TorchCodec 动态库验证以 `check_transvlm_runtime.ps1` 为准。
 
 ---
 
@@ -694,23 +647,10 @@ Set-ExecutionPolicy -Scope Process Bypass
 uvicorn engine.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-也可以完全不激活环境，直接：
-
-```powershell
-cd D:\ai-drama-studio
-.\.venv\Scripts\python.exe -m uvicorn engine.app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
 健康检查：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/health
-```
-
-如果端口被占用：
-
-```powershell
-netstat -ano | findstr :8000
 ```
 
 ---
@@ -730,34 +670,28 @@ npm run dev
 http://127.0.0.1:5173
 ```
 
-Vite 会把 `/api` 代理到：
-
-```text
-http://127.0.0.1:8000
-```
-
 ---
 
 # 16. 第一次业务验收
 
-第一次只测一集，不要同时测很多集，也不要用资产提取判断 Shot V5。
+第一次只导入 1 集短视频。
 
-顺序：
+正确顺序：
 
 ```text
 1. 新建项目
-2. 导入 1 个真实短视频
+2. 导入 1 个视频
 3. 点击单集拉片
 4. 等待 TransVLM 完成
-5. 检查 Shot 数量
+5. 看 Shot 数量
 6. 检查明显 Hard Cut 是否漏切
-7. 检查是否出现大量错误碎片 Shot
-8. 检查相邻 Shot OUT / NEXT IN
-9. 确认边界正确
+7. 检查是否产生大量碎片 Shot
+8. 检查相邻 Shot 的 OUT / NEXT IN
+9. 确认拉片结果可用
 10. 再批量处理其他剧集
 ```
 
-正式链路：
+当前正式链路：
 
 ```text
 Source Video
@@ -781,27 +715,25 @@ Frame-exact Reference Clips
 
 ---
 
-# 17. TransVLM 运行时资源占用
+# 17. TransVLM 运行时为什么很重
 
-运行期间以下情况可能是正常的：
+运行期间出现下面现象通常是正常的：
 
 ```text
-RAM 很高
+内存占用很高
 磁盘持续读写
-显存接近满
-GPU-Util 经常 90%~100%
-GPU 偶尔短暂掉到低利用率后重新升高
+GPU 显存接近满
+GPU 利用率经常 90%~100%
+某些阶段 GPU 利用率突然降低后又升高
 ```
 
-不要只看 Windows 任务管理器默认的 3D GPU 图。
-
-建议：
+查看 GPU：
 
 ```powershell
 nvidia-smi -l 1
 ```
 
-如果能看到 TransVLM Python 进程、显存持续占用、GPU-Util 持续变化，通常说明仍在运行。
+如果能看到 TransVLM Python 进程，并且 GPU-Util / 显存持续有活动，通常说明模型仍在工作。
 
 查看 Python CPU / RAM：
 
@@ -815,10 +747,10 @@ Select-Object Id,CPU,@{Name='RAM_GB';Expression={[math]::Round($_.WorkingSet64 /
 
 # 18. 拉片进度说明
 
-当前 Shot V5 会显示 TransVLM 子阶段：
+当前 V5 会尽量显示：
 
 ```text
-准备 25fps 输入
+准备 25fps 模型输入
 ↓
 缩放模型输入
 ↓
@@ -835,21 +767,23 @@ Source PTS 落帧
 Reference Clip
 ```
 
-whole-video NeuFlow 官方实现本身没有非常细的 batch 进度，因此这一阶段可能持续较久。
+whole-video NeuFlow 官方实现本身没有细粒度逐 batch 进度，因此这一阶段可能持续较久。
 
-只要 GPU / CPU / RAM / Disk 仍然有明显活动，就不要仅因为百分比短时间不动而强制结束。
+只要 GPU / CPU / RAM / Disk 仍有活动，就不要仅因为百分比短时间不动强制结束任务。
 
 ---
 
 # 19. 日常启动
 
-电脑重启以后一般只需要启动前后端，不需要重新安装依赖。
+电脑重启后不需要重新安装模型。
 
 后端：
 
 ```powershell
 cd D:\ai-drama-studio
-.\.venv\Scripts\python.exe -m uvicorn engine.app.main:app --reload --host 127.0.0.1 --port 8000
+Set-ExecutionPolicy -Scope Process Bypass
+.\.venv\Scripts\Activate.ps1
+uvicorn engine.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 前端：
@@ -865,16 +799,6 @@ npm run dev
 http://127.0.0.1:5173
 ```
 
-不需要每天重复运行：
-
-```text
-npm install
-uv pip install
-setup_transvlm_runtime.ps1
-```
-
-只有依赖或 Runtime 要求发生变化时才重装。
-
 ---
 
 # 20. 更新项目
@@ -886,172 +810,56 @@ cd D:\ai-drama-studio
 git pull
 ```
 
-如果 `engine\requirements.txt` 更新：
+如果后端依赖变化：
 
 ```powershell
-cd D:\ai-drama-studio
 uv pip install --python .\.venv\Scripts\python.exe -r .\engine\requirements.txt
 ```
 
-如果前端依赖更新：
+如果前端依赖变化：
 
 ```powershell
 cd D:\ai-drama-studio\frontend
 npm install
 ```
 
-如果 TransVLM Runtime / setup 脚本更新：
+如果 TransVLM Runtime 要求变化：
 
 ```powershell
 cd D:\ai-drama-studio
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_transvlm_runtime.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check_transvlm_runtime.ps1
 ```
 
 ---
 
-# 21. 拉片测试
+# 21. 常见问题：No module named pip
 
-不要求激活 `.venv`，直接使用主环境 Python：
-
-```powershell
-cd D:\ai-drama-studio
-.\.venv\Scripts\python.exe -m pytest engine/tests/v2/test_transvlm_shot_v5.py -q
-.\.venv\Scripts\python.exe -m pytest engine/tests/v2/test_shot_v4_runtime_wiring.py -q
-.\.venv\Scripts\python.exe -m pytest engine/tests/v2/test_shot_boundary_v4.py -q
-```
-
-当前 V2 全量：
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest engine/tests/v2 -q
-```
-
----
-
-# 22. 本地数据目录
-
-默认：
-
-```text
-D:\ai-drama-studio\data_v2\
-```
-
-主要包含：
-
-```text
-data_v2\
-├─ studio_v2.sqlite3
-├─ models\
-└─ workspace\
-```
-
-如果要放到其他 SSD：
-
-```powershell
-$env:AI_DRAMA_STUDIO_HOME="E:\ai-drama-studio-data"
-```
-
-然后在同一个 PowerShell 窗口启动后端。
-
----
-
-# 23. 常见问题：命令无法识别
-
-典型错误：
-
-```text
-无法将“xxx”项识别为 cmdlet、函数、脚本文件或可运行程序的名称
-```
-
-按顺序检查：
-
-```text
-1. 软件是否真的安装完成
-2. 安装完成后是否关闭并重新打开 PowerShell
-3. where.exe xxx 是否能找到程序
-4. Windows PATH 是否包含正确安装目录
-```
-
-例如：
-
-```powershell
-where.exe git
-where.exe node
-where.exe uv
-where.exe ffmpeg
-```
-
----
-
-# 24. 常见问题：uv 不存在
-
-优先：
-
-```powershell
-winget install --id astral-sh.uv -e --source winget
-```
-
-如果 `msstore` 报证书错误，不要去掉 `--source winget`。
-
-没有 winget：
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-然后关闭 PowerShell、重新打开，再验证：
-
-```powershell
-uv --version
-```
-
-## 24.1 常见问题：No module named pip
-
-如果执行：
-
-```powershell
-python -m pip ...
-```
-
-出现：
+报错：
 
 ```text
 No module named pip
 ```
 
-说明这个 `uv venv` 没有 seed 传统 pip，不代表环境坏了。
-
-直接改用：
+处理：
 
 ```powershell
 uv pip install --python .\.venv\Scripts\python.exe -r .\engine\requirements.txt
 ```
 
-项目默认安装流程不要求 `.venv` 内存在 pip。
+不需要删除 `.venv`。
 
 ---
 
-# 25. 常见问题：cuDNN 显示 91002
+# 22. 常见问题：cuDNN = 91002
 
-典型错误：
+如果安装时报：
 
 ```text
 TransVLM requires cuDNN >= 9.16; detected 91002
 ```
 
-说明 PyTorch Windows wheel 实际加载了 cuDNN 9.10.2。
-
-当前 setup 脚本会在隔离 TransVLM Runtime 中：
-
-```text
-安装 cuDNN 9.16
-↓
-stage 9.16 DLL 到 torch\lib
-↓
-重新验证 torch.backends.cudnn.version()
-↓
-执行 CUDA Conv3d 自检
-```
+当前安装脚本会在隔离 TransVLM Runtime 中把正确 9.16 DLL stage 到 `torch\lib`。
 
 处理：
 
@@ -1065,86 +873,42 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_transvlm_runtime.ps1
 
 ---
 
-# 26. 常见问题：Could not load libtorchcodec
+# 23. 常见问题：Could not load libtorchcodec
 
-典型错误：
+先区分两种情况。
 
-```text
-RuntimeError: Could not load libtorchcodec
+## 情况 A：你是直接裸跑 TransVLM python.exe
+
+例如：
+
+```powershell
+...\TransVLM\inference\.venv\Scripts\python.exe -c "from torchcodec.decoders import VideoDecoder"
 ```
 
-Windows 下 TorchCodec 需要 Shared FFmpeg DLL，例如：
+这条命令没有自动注入 Shared FFmpeg DLL 路径，因此可能失败。
 
-```text
-avcodec-*.dll
-avformat-*.dll
-avutil-*.dll
+正确验证：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check_transvlm_runtime.ps1
 ```
 
-当前 setup 会自动：
+## 情况 B：setup 或正式拉片也失败
 
-```text
-扫描本机 Shared FFmpeg
-↓
-找不到时准备项目本地 pinned Shared FFmpeg
-↓
-记录 .runtime\TransVLM\ffmpeg_shared_bin.txt
-↓
-实际 import VideoDecoder 验证
-```
-
-处理：
+重新执行：
 
 ```powershell
 cd D:\ai-drama-studio
 git pull
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_transvlm_runtime.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check_transvlm_runtime.ps1
 ```
 
-安装完成后彻底重启后端。
+如果仍失败，把 `check_transvlm_runtime.ps1` 的完整输出保存下来继续排查。
 
 ---
 
-# 27. 常见问题：WinGet 说 FFmpeg 已安装但无法升级
-
-如果看到：
-
-```text
-找到已安装的现有包。正在尝试升级已安装的包...
-找不到可用的升级。
-```
-
-不要把它理解为 FFmpeg 安装失败。
-
-当前项目不再依赖 WinGet 的升级返回码决定 TransVLM 是否可运行。
-
-重新拉取最新脚本：
-
-```powershell
-cd D:\ai-drama-studio
-git pull
-powershell -ExecutionPolicy Bypass -File .\scripts\setup_transvlm_runtime.ps1
-```
-
-setup 会自己找到或准备兼容 Shared FFmpeg。
-
----
-
-# 28. 常见问题：拉片很慢 / RAM 和磁盘很高
-
-这是 TransVLM whole-video NeuFlow 的典型特征。
-
-用下面命令判断是否真在计算：
-
-```powershell
-nvidia-smi -l 1
-```
-
-如果 TransVLM `python.exe` 持续占显存，GPU-Util 经常上升，通常说明任务仍在正常工作。
-
----
-
-# 29. 常见问题：端口被占用
+# 24. 常见问题：端口被占用
 
 后端：
 
@@ -1160,60 +924,29 @@ netstat -ano | findstr :5173
 
 ---
 
-# 30. 常见问题：PowerShell 禁止 .ps1
+# 25. 一台全新电脑的最短安装清单
 
-当前窗口临时放开：
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-```
-
-或者直接：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup_transvlm_runtime.ps1
-```
-
-不需要永久修改系统执行策略。
-
----
-
-# 31. 全新电脑最短安装清单
-
-## A. GUI
+## A. 浏览器 / GUI
 
 ```text
-1. 安装 NVIDIA 正式驱动
+1. 安装 NVIDIA 驱动
 2. 安装/更新 Microsoft App Installer
-3. 安装 Microsoft Visual C++ 2015-2022 x64 Redistributable
+3. 安装 Microsoft Visual C++ 2015-2022 x64 Runtime
 4. 重启电脑
 ```
 
-## B. 新开 PowerShell
+## B. PowerShell
 
 ```powershell
-winget --version
-nvidia-smi
-
 winget install --id Git.Git -e --source winget
 winget install --id OpenJS.NodeJS.LTS -e --source winget
 winget install --id astral-sh.uv -e --source winget
 winget install --id Gyan.FFmpeg.Shared -e --source winget
 ```
 
-## C. 关闭 PowerShell，再开新的 PowerShell
+关闭 PowerShell，再重新打开。
 
-```powershell
-git --version
-node --version
-npm --version
-uv --version
-ffmpeg -version
-ffprobe -version
-nvidia-smi
-```
-
-## D. 克隆项目
+## C. 克隆项目
 
 ```powershell
 cd D:\
@@ -1221,7 +954,7 @@ git clone https://github.com/zdingwl/ai-drama-studio.git
 cd D:\ai-drama-studio
 ```
 
-## E. Python / 后端
+## D. Python / 后端
 
 ```powershell
 uv python install 3.12
@@ -1230,39 +963,40 @@ uv pip install --python .\.venv\Scripts\python.exe -r .\engine\requirements.txt
 .\.venv\Scripts\python.exe -c "import fastapi, sqlalchemy, cv2; print('backend imports OK')"
 ```
 
-## F. 前端
+## E. 前端
 
 ```powershell
 cd D:\ai-drama-studio\frontend
 npm install
-npm run typecheck
 ```
 
-## G. TransVLM
+## F. TransVLM
 
 ```powershell
 cd D:\ai-drama-studio
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_transvlm_runtime.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check_transvlm_runtime.ps1
 ```
 
-必须最终看到：
+必须看到：
 
 ```text
 [TransVLM] READY
+[TransVLM] RUNTIME CHECK PASSED
 ```
 
-## H. 启动后端
+## G. 启动
 
-PowerShell A：
+后端：
 
 ```powershell
 cd D:\ai-drama-studio
-.\.venv\Scripts\python.exe -m uvicorn engine.app.main:app --reload --host 127.0.0.1 --port 8000
+Set-ExecutionPolicy -Scope Process Bypass
+.\.venv\Scripts\Activate.ps1
+uvicorn engine.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-## I. 启动前端
-
-PowerShell B：
+前端：
 
 ```powershell
 cd D:\ai-drama-studio\frontend
@@ -1277,51 +1011,46 @@ http://127.0.0.1:5173
 
 ---
 
-# 32. 安装完成验收清单
+# 26. 安装完成验收清单
 
 ```text
-[ ] Windows 10 / 11 64-bit
-[ ] NVIDIA Driver 正常
 [ ] nvidia-smi 正常
 [ ] winget 正常
 [ ] Git 正常
-[ ] Node.js 正常
-[ ] npm 正常
+[ ] Node.js / npm 正常
 [ ] uv 正常
-[ ] ffmpeg 正常
-[ ] ffprobe 正常
-[ ] 项目已经克隆
+[ ] ffmpeg / ffprobe 正常
+[ ] 项目已克隆
 [ ] uv Python 3.12 正常
 [ ] 主 .venv 正常
 [ ] backend imports OK
 [ ] npm install 完成
-[ ] TransVLM setup 输出 READY
+[ ] setup_transvlm_runtime.ps1 输出 READY
+[ ] check_transvlm_runtime.ps1 输出 RUNTIME CHECK PASSED
 [ ] CUDA = True
 [ ] cuDNN >= 91600
-[ ] torchcodec=OK
+[ ] TorchCodec = OK
 [ ] runtime_status ready=true
 [ ] FastAPI :8000 正常
 [ ] Vite :5173 正常
 [ ] 浏览器可以打开项目
-[ ] 单集真实视频可以完成 TransVLM 拉片
+[ ] 单集真实视频可以进入 TransVLM 拉片
 ```
 
-任何一项不满足，先修对应环境，不要跳着继续。
+任何一项不满足，都先修对应环境，不要跳着继续。
 
 ---
 
-# 33. 当前运行架构
-
-主工程和 TransVLM 保持隔离：
+# 27. 当前运行架构
 
 ```text
 AI Drama Studio
 │
 ├─ .venv
-│  ├─ Python 3.12
 │  ├─ FastAPI
 │  ├─ SQLAlchemy / SQLite
-│  └─ Shot / Revision / API
+│  ├─ FFmpeg 调度
+│  └─ Shot / Revision API
 │
 ├─ frontend\
 │  └─ Vue 3 + TypeScript + Vite
@@ -1335,15 +1064,15 @@ AI Drama Studio
    └─ TransVLM-Qwen3-VL-4B-Instruct
 ```
 
-不要为了“统一环境”把 TransVLM 的 torch / cuDNN 直接装进主 `.venv`。
+不要为了“统一环境”把 TransVLM 的 torch / cuDNN 直接塞进主 `.venv`。
 
-当前正式拉片链路：
+当前正式拉片：
 
 ```text
 Source Video
-→ TransVLM Transition Segments
+→ TransVLM transition segments
 → Source PTS frame resolution
-→ Shot Boundaries
+→ Shot boundaries
 → frame-exact Reference Clip
 → Current Shot Revision
 ```
