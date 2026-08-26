@@ -5,9 +5,10 @@
 - 一帧多人先拆成独立 Person Instance，禁止整帧做人身份图；
 - 每个 Instance 标记 CLEAN / OCCLUDED / CONTAMINATED / PARTIAL；
 - 同一采样时刻空间不同的 Person Instance 写入 cannot-link Evidence；
-- Track Gallery 只允许 CLEAN Person Instance crop 作为正式代表图；
+- Track / Candidate Gallery 只允许 CLEAN Person Instance crop 作为正式代表图；
 - OCCLUDED / CONTAMINATED / PARTIAL 只保留 Evidence，不进入正式 Gallery；
-- 身份解析暂时继续复用 V8 Anchor-first，后续 V9 Phase B/C 再替换成 Person Gallery identity；
+- 身份判断暂时继续复用 V8 Anchor-first，但通过 V9A adapter 重建 CLEAN Gallery；
+- 后续 V9 Phase B/C 再替换成完整 Person Gallery identity；
 - YOLOX / YoutuReID 继续 GPU 优先、CPU fallback。
 
 保留本文件只为了让 content_analysis_v2 / 历史测试 import 路径稳定。
@@ -32,7 +33,7 @@ from engine.app.character_gallery_v9 import (  # noqa: F401
 )
 from engine.app.character_observation_v9 import detect_observations, sample_times_us  # noqa: F401
 from engine.app.character_tracking_v9 import build_tracks, tracker_runtime_status  # noqa: F401
-from engine.app.character_identity_v8 import resolve_global_identities as cluster_candidates  # noqa: F401
+from engine.app.character_identity_v9a import resolve_global_identities as cluster_candidates  # noqa: F401
 from engine.app.character_runtime_v6 import analyze_characters, runtime_status  # noqa: F401
 
 
