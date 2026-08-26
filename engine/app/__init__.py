@@ -1,10 +1,11 @@
 """AI Drama Studio engine.app 包级运行时接线。
 
-02 拉片当前正式基线：V5.1 TransVLM-first + safe Episode cache。
+02 拉片当前正式基线：V5.1 TransVLM-first + dependency-aware Episode cache。
 - main.py / task_routes_v2.py 继续从 media_v2 导入稳定兼容入口；
 - 包初始化时把正式 Shot Detection 切到 media_v51.detect_episode_shots；
-- V5.1 只增加缓存 manifest / 自动失效 / transition 复用，不改变 V5 Shot 算法；
-- V4.1 frame-exact Reference Renderer 继续作为正式媒体渲染层；
+- 第一次仍按官方 TransVLM 顺序运行，并安全捕获其真实 model RGB / whole-video Flow；
+- 后续可按 RGB -> Flow -> raw TransVLM output -> Transition 层级复用或强制失效；
+- V5.1 不改变 V5 的 Source PTS Cut 落帧和 frame-exact Reference Renderer；
 - Source / Proxy 逐帧 PTS 统一以第一帧为 0，避免原片非零 start_time 造成系统性边界偏移；
 - media_v4 / media_v5 保留历史与基础算法实现，不再作为正式 API 入口。
 """
