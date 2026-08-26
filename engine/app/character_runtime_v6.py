@@ -1,31 +1,28 @@
-"""Character V6.3 正式运行入口。
+"""Character V7 formal runtime entry.
 
 Person + Partial-Person Observation (12fps)
 → Geometry-safe Face Ownership
 → Mature MOT (BoT-SORT / ByteTrack fallback)
-→ Partial Track temporal confirmation
-→ Clean Track Gallery
-→ Spatiotemporal Global Identity Graph
-→ Conservative resolved-fragment consolidation
-→ Robust cross-shot Resolution Gate
-→ Identity pair diagnostics
+→ Face observations become the ONLY identity nodes
+→ Face-first Global Identity Graph
+→ Person/partial/body Tracks attach after identity exists
 → RESOLVED / UNRESOLVED Candidate
 
-重要边界：partial/body-only 必须能够表达“这里有人”，但不能独立创建 Final Character；
-Face 必须先安全归属到具体 Person；同 Shot 只有真正同时且空间不同的人才 cannot-link；
-至少两个 Face Shot 只是必要条件，还必须存在强跨 Shot Face 或 Face+ReID 联合支持才允许 Final。
+Hard product rule: Track count must never determine Final Character count.
+Only stable Face Identity clusters can create Final Characters; partial/body-only Evidence can attach or remain UNRESOLVED.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from engine.app import character_visual_v5 as v5
-from engine.app.character_identity_diagnostics_v63 import annotate_and_log
-from engine.app.character_identity_v63 import resolve_global_identities
+from engine.app.character_identity_v7 import resolve_global_identities
 from engine.app.character_observation_v63 import detect_observations
-from engine.app.character_resolution_gate_v63 import enforce_resolution_gate
 from engine.app.character_tracking_v6 import build_tracks, tracker_runtime_status
 from engine.app.content_models_v2 import RequiredCharacterModelError
+
+logger = logging.getLogger(__name__)
 
 
 def analyze_characters(
@@ -36,36 +33,51 @@ def analyze_characters(
         observations = detect_observations(shots, progress=progress)
         tracks = build_tracks(observations)
         candidates = resolve_global_identities(tracks)
-        enforce_resolution_gate(candidates)
-        annotate_and_log(candidates)
+        resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
+        unresolved = [item for item in candidates if item.identity_status != "RESOLVED"]
+        logger.warning(
+            "[CharacterV7] observations=%s tracks=%s resolved_face_identities=%s unresolved_evidence=%s",
+            len(observations),
+            len(tracks),
+            len(resolved),
+            len(unresolved),
+        )
+        for index, candidate in enumerate(resolved, start=1):
+            metadata = dict(getattr(candidate, "v6_metadata", {}) or {})
+            logger.warning(
+                "[CharacterV7] identity=%s face_shots=%s face_anchors=%s tracks=%s shots=%s",
+                index,
+                metadata.get("face_shot_count"),
+                metadata.get("face_anchor_count"),
+                len(candidate.tracks),
+                len({track.shot_id for track in candidate.tracks}),
+            )
         return candidates
     except (ImportError, ModuleNotFoundError) as exc:
         raise RequiredCharacterModelError(
-            "人物识别 V6.3 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
+            "人物识别 V7 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
             "YOLOX/ReID CUDA 不可用可以 CPU fallback，但 trackers/supervision 运行时缺失不能发布人物结果。"
         ) from exc
 
 
 def runtime_status() -> dict[str, object]:
     return {
-        "profile": "character-v6.3-safe-face-spatiotemporal-identity",
+        "profile": "character-v7-face-first-global-identity",
         "observation": {
             "sample_fps": 12.0,
             "normal_person_threshold": 0.32,
             "partial_person_proposal_threshold": 0.10,
             "face_ownership": "global one-to-one geometry gate; partial cannot own face",
-            "partial_policy": "temporal confirmation; can attach but never create identity anchor",
         },
         "tracking": tracker_runtime_status(),
         "identity": {
-            "resolver": "Spatiotemporal Global Identity Graph + fragment consolidation",
-            "same_shot_policy": "cannot-link only when temporally simultaneous and spatially distinct",
-            "duplicate_track_policy": "strong Face/ReID + high bbox IoU may merge simultaneous duplicate tracks",
-            "resolution_gate": "robust cross-shot Face or Face+clean-ReID support required",
-            "diagnostics": "resolved pair Face/ReID/shared-shot/conflict saved in candidate evidence and backend log",
-            "partial_face_anchor": False,
+            "resolver": "Face-first Global Identity Graph",
+            "identity_node": "high-quality Face observation, never Person Track",
+            "final_character_count_source": "stable Face Identity clusters only",
+            "default_resolution_gate": ">=3 distinct Face shots",
+            "two_shot_exception": "only very strong Face/ReID evidence",
+            "body_partial_policy": "attach after identity exists or remain UNRESOLVED",
             "final_gate": "RESOLVED only",
-            "unresolved_policy": "Evidence only; never auto materialize Final Character",
             "face_provider": "YuNet + SFace (replaceable provider)",
         },
     }
