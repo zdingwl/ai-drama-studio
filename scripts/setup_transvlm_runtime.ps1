@@ -11,6 +11,9 @@ function Test-Command([string]$Name) {
 }
 
 function Get-FfmpegMajor([string]$BinDir) {
+    if (-not $BinDir) {
+        return $null
+    }
     $exe = Join-Path $BinDir 'ffmpeg.exe'
     if (-not (Test-Path $exe)) {
         return $null
@@ -31,8 +34,11 @@ function Test-SharedFfmpegBin([string]$BinDir) {
         return $false
     }
     $major = Get-FfmpegMajor $BinDir
-    # TorchCodec 0.8/0.9 wheels used by TransVLM ship core loaders for FFmpeg 4..8.
+    # The TorchCodec wheel used by TransVLM ships loaders for FFmpeg 4..8.
     if ($null -eq $major -or $major -lt 4 -or $major -gt 8) {
+        return $false
+    }
+    if (-not (Test-Path (Join-Path $BinDir 'ffprobe.exe'))) {
         return $false
     }
     foreach ($pattern in @('avcodec-*.dll', 'avformat-*.dll', 'avutil-*.dll')) {
@@ -44,16 +50,47 @@ function Test-SharedFfmpegBin([string]$BinDir) {
     return $true
 }
 
+function Add-SharedFfmpegCandidate([System.Collections.Generic.List[string]]$Candidates, [string]$PathValue) {
+    if (-not $PathValue) {
+        return
+    }
+    try {
+        $full = [System.IO.Path]::GetFullPath($PathValue)
+        if (-not $Candidates.Contains($full)) {
+            $Candidates.Add($full)
+        }
+    } catch {
+        return
+    }
+}
+
 function Find-SharedFfmpegBin {
     $candidates = New-Object System.Collections.Generic.List[string]
 
     if ($env:AI_DRAMA_TRANSVLM_FFMPEG_BIN) {
-        $candidates.Add($env:AI_DRAMA_TRANSVLM_FFMPEG_BIN)
+        Add-SharedFfmpegCandidate $candidates $env:AI_DRAMA_TRANSVLM_FFMPEG_BIN
     }
 
+    # WinGet portable packages normally expose an alias from Microsoft\WinGet\Links.
+    # Resolve the alias target as well as checking the alias directory itself.
     $ffmpegCommand = Get-Command ffmpeg -ErrorAction SilentlyContinue
     if ($ffmpegCommand -and $ffmpegCommand.Source) {
-        $candidates.Add((Split-Path $ffmpegCommand.Source -Parent))
+        Add-SharedFfmpegCandidate $candidates (Split-Path $ffmpegCommand.Source -Parent)
+        try {
+            $linkItem = Get-Item -LiteralPath $ffmpegCommand.Source -Force -ErrorAction Stop
+            foreach ($target in @($linkItem.Target)) {
+                if (-not $target) {
+                    continue
+                }
+                $targetPath = [string]$target
+                if (-not [System.IO.Path]::IsPathRooted($targetPath)) {
+                    $targetPath = Join-Path (Split-Path $ffmpegCommand.Source -Parent) $targetPath
+                }
+                Add-SharedFfmpegCandidate $candidates (Split-Path $targetPath -Parent)
+            }
+        } catch {
+            # It may be a regular executable rather than a symbolic link.
+        }
     }
 
     foreach ($candidate in $candidates) {
@@ -62,33 +99,34 @@ function Find-SharedFfmpegBin {
         }
     }
 
-    $packageRoots = @()
+    $packageRoots = New-Object System.Collections.Generic.List[string]
     if ($env:LOCALAPPDATA) {
-        $packageRoots += (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages')
+        $packageRoots.Add((Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'))
     }
     if ($env:ProgramFiles) {
-        $packageRoots += (Join-Path $env:ProgramFiles 'WinGet\Packages')
+        $packageRoots.Add((Join-Path $env:ProgramFiles 'WinGet\Packages'))
+    }
+    ${env:ProgramFiles(x86)}Value = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+    if (${env:ProgramFiles(x86)}Value) {
+        $packageRoots.Add((Join-Path ${env:ProgramFiles(x86)}Value 'WinGet\Packages'))
     }
 
     foreach ($root in $packageRoots) {
         if (-not (Test-Path $root)) {
             continue
         }
-        $packageDirs = Get-ChildItem -Path $root -Directory -Filter 'Gyan.FFmpeg.Shared*' -ErrorAction SilentlyContinue
-        foreach ($packageDir in $packageDirs) {
-            $executables = Get-ChildItem -Path $packageDir.FullName -Recurse -File -Filter 'ffmpeg.exe' -ErrorAction SilentlyContinue
-            foreach ($exe in $executables) {
-                $binDir = $exe.Directory.FullName
-                if (Test-SharedFfmpegBin $binDir) {
-                    return $binDir
-                }
+        $executables = Get-ChildItem -Path $root -Recurse -File -Filter 'ffmpeg.exe' -ErrorAction SilentlyContinue
+        foreach ($exe in $executables) {
+            $binDir = $exe.Directory.FullName
+            if (Test-SharedFfmpegBin $binDir) {
+                return $binDir
             }
         }
     }
     return $null
 }
 
-$requiredCommands = @('git', 'uv', 'ffmpeg', 'nvidia-smi')
+$requiredCommands = @('git', 'uv', 'nvidia-smi')
 $missingCommands = @($requiredCommands | Where-Object { -not (Test-Command $_) })
 if ($missingCommands.Count -gt 0) {
     Write-Host ''
@@ -100,7 +138,6 @@ if ($missingCommands.Count -gt 0) {
         Write-Host ''
         Write-Host 'Install uv with:' -ForegroundColor Yellow
         Write-Host '  winget install --id astral-sh.uv -e --source winget' -ForegroundColor Yellow
-        Write-Host 'If the msstore source has a certificate error, using --source winget bypasses it.' -ForegroundColor Yellow
         Write-Host 'Then close and reopen PowerShell before running this script again.' -ForegroundColor Yellow
     }
     throw "Missing required command(s): $($missingCommands -join ', ')"
@@ -112,6 +149,8 @@ $InferenceRoot = Join-Path $RuntimeRoot 'inference'
 $PythonExe = Join-Path $InferenceRoot '.venv\Scripts\python.exe'
 $CheckpointDir = Join-Path $InferenceRoot 'pretrained\TransVLM-v1'
 $CudnnStageScript = Join-Path $RepoRoot 'scripts\stage_transvlm_cudnn_windows.py'
+$FfmpegProvisionScript = Join-Path $RepoRoot 'scripts\provision_transvlm_ffmpeg_windows.ps1'
+$FfmpegLocalRoot = Join-Path $RepoRoot '.runtime\ffmpeg-shared'
 $FfmpegPathFile = Join-Path $RuntimeRoot 'ffmpeg_shared_bin.txt'
 $IsWindowsPlatform = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 
@@ -175,10 +214,6 @@ try {
         throw 'Failed to install cuDNN 9.16 for TransVLM.'
     }
 
-    # PyTorch Windows wheels bundle their own cuDNN DLLs in torch\lib. Installing a newer
-    # NVIDIA cuDNN wheel alone does not guarantee that import torch will load it. Because
-    # TransVLM lives in an isolated runtime, stage the pinned 9.16 DLLs into that runtime's
-    # torch\lib and verify the actual CUDA Conv3d path before downloading multi-GB weights.
     if ($IsWindowsPlatform) {
         if (-not (Test-Path $CudnnStageScript)) {
             throw "Missing Windows cuDNN staging helper: $CudnnStageScript"
@@ -190,7 +225,6 @@ try {
         }
     }
 
-    # Always verify in a fresh Python process as a release gate.
     $cudnnText = (& $PythonExe -c "import torch; print(torch.backends.cudnn.version() or 0)").Trim()
     Write-Host "[TransVLM] cuDNN = $cudnnText"
     if ([int]$cudnnText -lt 91600) {
@@ -200,20 +234,24 @@ try {
     if ($IsWindowsPlatform) {
         Write-Host '[TransVLM] Checking for an FFmpeg shared build required by TorchCodec.'
         $SharedFfmpegBin = Find-SharedFfmpegBin
+
         if (-not $SharedFfmpegBin) {
-            if (Test-Command 'winget') {
-                Write-Host '[TransVLM] Shared FFmpeg not found; installing Gyan.FFmpeg.Shared 8.1.1 from the winget community source.'
-                winget install --id Gyan.FFmpeg.Shared -e --version 8.1.1 --source winget --accept-package-agreements --accept-source-agreements --silent
-                if ($LASTEXITCODE -ne 0) {
-                    throw 'WinGet failed to install Gyan.FFmpeg.Shared 8.1.1.'
-                }
-                $SharedFfmpegBin = Find-SharedFfmpegBin
+            if (-not (Test-Path $FfmpegProvisionScript)) {
+                throw "Missing FFmpeg provisioning helper: $FfmpegProvisionScript"
+            }
+            Write-Host '[TransVLM] No compatible installed shared FFmpeg was found.'
+            Write-Host '[TransVLM] Provisioning a project-local FFmpeg shared runtime (8.1.2).'
+            $SharedFfmpegBin = (& $FfmpegProvisionScript -OutputRoot $FfmpegLocalRoot | Select-Object -Last 1)
+            if ($SharedFfmpegBin) {
+                $SharedFfmpegBin = ([string]$SharedFfmpegBin).Trim()
             }
         }
-        if (-not $SharedFfmpegBin) {
-            throw 'TorchCodec requires FFmpeg shared DLLs on Windows. Install Gyan.FFmpeg.Shared 8.1.1 from --source winget or set AI_DRAMA_TRANSVLM_FFMPEG_BIN to a compatible shared-build bin directory.'
+
+        if (-not (Test-SharedFfmpegBin $SharedFfmpegBin)) {
+            throw 'TorchCodec requires a compatible FFmpeg shared runtime (major 4..8) with avcodec/avformat/avutil DLLs.'
         }
 
+        $SharedFfmpegBin = (Resolve-Path $SharedFfmpegBin).Path
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText($FfmpegPathFile, $SharedFfmpegBin, $utf8NoBom)
         $TorchLib = Join-Path $InferenceRoot '.venv\Lib\site-packages\torch\lib'
