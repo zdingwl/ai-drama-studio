@@ -5,6 +5,8 @@
 - 默认从 ``.runtime/TransVLM/inference`` 调官方 ``infer_video.py``；
 - 使用官方 HuggingFace backend，读取 transition segments；
 - Windows 下显式注入 TorchCodec 所需的 FFmpeg shared-build ``bin``；
+- 实时读取官方 infer_video 日志，把 resample / resize / NeuFlow / window inference
+  回传给业务 Task，避免整段推理期间 UI 长时间停在同一个百分比；
 - 与官方 parser 语义保持一致：允许 ``start_time == end_time`` 的零长度 hard cut，
   ``end_time < start_time`` 时交换两端而不是丢弃；
 - 运行失败时把 stderr/stdout 尾部转换为稳定的 MediaPipelineError；
@@ -19,16 +21,24 @@
 """
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
+import queue
+import re
 import subprocess
-from typing import Any
+import threading
+import time
+from typing import Any, Callable
 
 from engine.app import media_v2 as v2
 
 TRANSVLM_TIMEOUT_SECONDS = 4 * 60 * 60
+RuntimeProgress = Callable[[float, str, str, int | None, int | None], None]
+_WINDOW_LOG_RE = re.compile(r"\[window\s+(\d+)/(\d+)\]")
+_WINDOWS_PLAN_RE = re.compile(r"->\s*(\d+)\s+window\(s\)")
 
 
 @dataclass(frozen=True)
@@ -172,6 +182,130 @@ def _error_tail(stdout: str | None, stderr: str | None, limit: int = 5000) -> st
     return text[-limit:] if text else ""
 
 
+def _progress_from_log_line(line: str) -> tuple[float, str, str, int | None, int | None] | None:
+    """把官方 infer_video.py 的稳定日志转换为 Runtime 内部真实阶段进度。
+
+    这里不伪造 NeuFlow 的逐 batch 百分比：官方 whole-video flow 在该阶段没有逐 batch
+    进度日志，所以只明确告诉 UI 当前正在做整集光流。进入 ``[windows]`` 后说明光流已完成，
+    再使用官方 ``[window x/N]`` 日志提供可验证的连续 Qwen3-VL 推理进度。
+    """
+
+    text = line.strip()
+    if not text:
+        return None
+    if "[resample]" in text:
+        return 5.0, "transvlm", "TransVLM 正在准备 25fps 模型输入", None, None
+    if "[resize]" in text:
+        return 10.0, "transvlm", "TransVLM 正在缩放模型输入视频", None, None
+    if "[flow] computing whole-video NeuFlow" in text:
+        return (
+            15.0,
+            "transvlm",
+            "NeuFlow 正在计算整集光流；该阶段会大量占用内存/磁盘，期间百分比可能暂时不连续更新",
+            None,
+            None,
+        )
+    if "[windows]" in text:
+        match = _WINDOWS_PLAN_RE.search(text)
+        total = int(match.group(1)) if match else None
+        message = f"NeuFlow 已完成，准备 {total} 个 Qwen3-VL 推理窗口" if total else "NeuFlow 已完成，正在准备 Qwen3-VL 推理窗口"
+        return 55.0, "transvlm", message, 0 if total else None, total
+
+    match = _WINDOW_LOG_RE.search(text)
+    if match:
+        current = int(match.group(1))
+        total = max(1, int(match.group(2)))
+        ratio = max(0.0, min(1.0, current / total))
+        percent = 55.0 + ratio * 43.0
+        return percent, "transvlm", f"Qwen3-VL 正在分析 Shot Transition 窗口 {current} / {total}", current, total
+
+    if "Done in " in text and "failed" in text:
+        return 99.0, "transvlm", "TransVLM 模型推理完成，正在读取并合并转场结果", None, None
+    return None
+
+
+def _run_streaming_process(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    log_path: Path,
+    on_line: Callable[[str], None] | None = None,
+) -> tuple[int, str]:
+    """实时消费 TransVLM stdout/stderr，避免 capture_output 让业务层整段失去进度。
+
+    stderr 合并到 stdout，因为官方 logging 默认写 stderr；JSONL 结果本身写到独立文件，不依赖 stdout。
+    使用 reader thread + Queue，既能逐行消费，又能在官方进程完全无输出时仍执行 4 小时超时检查。
+    """
+
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+    except FileNotFoundError:
+        raise
+    except OSError:
+        raise
+
+    output_queue: queue.Queue[str | None] = queue.Queue()
+
+    def reader() -> None:
+        assert process.stdout is not None
+        try:
+            for raw_line in process.stdout:
+                output_queue.put(raw_line)
+        finally:
+            output_queue.put(None)
+
+    thread = threading.Thread(target=reader, name="transvlm-log-reader", daemon=True)
+    thread.start()
+    deadline = time.monotonic() + TRANSVLM_TIMEOUT_SECONDS
+    tail_lines: deque[str] = deque(maxlen=240)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+                tail = "\n".join(tail_lines)
+                raise subprocess.TimeoutExpired(command, TRANSVLM_TIMEOUT_SECONDS, output=tail)
+
+            try:
+                item = output_queue.get(timeout=min(1.0, remaining))
+            except queue.Empty:
+                if process.poll() is not None and not thread.is_alive():
+                    break
+                continue
+
+            if item is None:
+                break
+
+            line = item.rstrip("\r\n")
+            log_file.write(item)
+            log_file.flush()
+            if line:
+                tail_lines.append(line)
+                if on_line is not None:
+                    on_line(line)
+
+    return_code = process.wait(timeout=max(1.0, deadline - time.monotonic()))
+    return return_code, "\n".join(tail_lines)
+
+
 def _parse_output(path: Path) -> list[TransVLMTransition]:
     """读取官方 infer_video JSONL，并保留官方 SegmentPrediction 的时间语义。
 
@@ -228,7 +362,11 @@ def _parse_output(path: Path) -> list[TransVLMTransition]:
     return deduped
 
 
-def detect_transition_segments(video_path: Path, work_dir: Path) -> list[TransVLMTransition]:
+def detect_transition_segments(
+    video_path: Path,
+    work_dir: Path,
+    progress: RuntimeProgress | None = None,
+) -> list[TransVLMTransition]:
     """调用官方 TransVLM whole-video inference，并返回 Source timeline transition spans。"""
 
     status = runtime_status()
@@ -242,6 +380,7 @@ def detect_transition_segments(video_path: Path, work_dir: Path) -> list[TransVL
     config = runtime_config()
     work_dir.mkdir(parents=True, exist_ok=True)
     output_jsonl = work_dir / "transvlm.jsonl"
+    runtime_log = work_dir / "transvlm-runtime.log"
     temp_dir = work_dir / "tmp"
     output_jsonl.unlink(missing_ok=True)
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -258,31 +397,43 @@ def detect_transition_segments(video_path: Path, work_dir: Path) -> list[TransVL
     ]
     env = _transvlm_subprocess_env(config)
 
+    if progress is not None:
+        progress(1.0, "transvlm", f"正在启动 TransVLM · {config.device}", None, None)
+
+    def on_line(line: str) -> None:
+        if progress is None:
+            return
+        event = _progress_from_log_line(line)
+        if event is not None:
+            progress(*event)
+
     try:
-        completed = subprocess.run(
+        return_code, output_tail = _run_streaming_process(
             command,
-            cwd=str(config.inference_root),
+            cwd=config.inference_root,
             env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=TRANSVLM_TIMEOUT_SECONDS,
-            check=False,
+            log_path=runtime_log,
+            on_line=on_line,
         )
     except FileNotFoundError as exc:
         raise v2.MediaPipelineError("TransVLM Python Runtime 不存在") from exc
     except subprocess.TimeoutExpired as exc:
-        detail = _error_tail(exc.stdout, exc.stderr)
+        detail = _error_tail(exc.stdout if isinstance(exc.stdout, str) else None, None)
         raise v2.MediaPipelineError(
             "TransVLM 推理超时" + (f"：{detail}" if detail else "")
         ) from exc
     except OSError as exc:
         raise v2.MediaPipelineError(f"TransVLM Runtime 启动失败：{exc}") from exc
 
-    if completed.returncode != 0:
-        detail = _error_tail(completed.stdout, completed.stderr)
+    if return_code != 0:
+        detail = _error_tail(output_tail, None)
         raise v2.MediaPipelineError(
-            "TransVLM 推理失败" + (f"：{detail}" if detail else f"，exit={completed.returncode}")
+            "TransVLM 推理失败" + (f"：{detail}" if detail else f"，exit={return_code}")
         )
-    return _parse_output(output_jsonl)
+
+    if progress is not None:
+        progress(99.0, "transvlm", "TransVLM 推理完成，正在解析转场区间", None, None)
+    segments = _parse_output(output_jsonl)
+    if progress is not None:
+        progress(100.0, "transvlm", f"TransVLM 返回 {len(segments)} 个转场区间", len(segments), len(segments))
+    return segments
