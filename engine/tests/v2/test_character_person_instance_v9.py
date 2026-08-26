@@ -107,10 +107,9 @@ def test_same_sample_multiple_people_get_separate_ids_and_cannot_links() -> None
 def test_gallery_representative_clean_flag_comes_from_v9_instance_safety() -> None:
     clean = obs(bbox=(100, 100, 180, 650), at_us=1_000_000)
     dirty = obs(bbox=(200, 100, 300, 700), at_us=1_600_000)
-    dirty.other_person_boxes = [(320, 120, 300, 700)]
+    overlapping_person = obs(bbox=(320, 120, 300, 700), at_us=1_600_000)
 
-    observation_v9.annotate_person_instances([clean])
-    observation_v9.annotate_person_instances([dirty])
+    observation_v9.annotate_person_instances([clean, dirty, overlapping_person])
 
     track = v5.TrackDraft(
         shot_id="SHOT_1",
