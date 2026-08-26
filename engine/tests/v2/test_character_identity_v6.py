@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import numpy as np
 
 from engine.app import character_identity_v6 as v6
@@ -20,6 +21,7 @@ def observation(
     face: np.ndarray | None,
     reid: np.ndarray | None,
     face_score: float = 0.95,
+    detection_source: str = "test",
 ) -> v5.Observation:
     return v5.Observation(
         shot_id=shot_id,
@@ -36,7 +38,7 @@ def observation(
         reid_embedding=reid,
         body_hist=None,
         face_visible=face is not None,
-        detection_source="test",
+        detection_source=detection_source,
         frame_width=720,
         frame_height=1280,
         face_score=face_score if face is not None else 0.0,
@@ -56,6 +58,7 @@ def track(
     samples: int = 3,
     face_score: float = 0.95,
     start_offset_us: int = 0,
+    detection_source: str = "test",
 ) -> v5.TrackDraft:
     observations = [
         observation(
@@ -65,6 +68,7 @@ def track(
             face=face,
             reid=reid,
             face_score=face_score,
+            detection_source=detection_source,
         )
         for index in range(samples)
     ]
@@ -109,8 +113,6 @@ def test_many_track_fragments_of_three_people_resolve_to_three_characters() -> N
 
 
 def test_simultaneous_people_cannot_merge_through_transitive_graph_path() -> None:
-    """A 与 B 同框是永久 cannot-link，即使它们都与第三条模糊 Track 相似也不能被图传递合并。"""
-
     a = track(
         shot_id="SHOT_1", shot_ordinal=1,
         face=vec(1.0, 0.0, 0.0), reid=vec(1.0, 0.0, 0.0),
@@ -149,8 +151,6 @@ def test_isolated_face_fragment_stays_unresolved() -> None:
 
 
 def test_even_clear_single_shot_face_stays_unresolved_until_second_shot_confirms_identity() -> None:
-    """防止高清侧脸/特写碎片直接制造人物020。"""
-
     value = track(
         shot_id="SHOT_1",
         shot_ordinal=1,
@@ -219,3 +219,70 @@ def test_adjacent_body_only_track_can_attach_but_cannot_promote_single_face_shot
     assert len(candidates) == 1
     assert candidates[0].identity_status == "UNRESOLVED"
     assert len(candidates[0].tracks) == 2
+
+
+def test_partial_tracks_with_face_evidence_cannot_create_resolved_identity() -> None:
+    """V6.1 回归：partial 一旦碰到 Face 曾被伪装成正常 Face Track，导致额外 Final Character。"""
+
+    values = [
+        track(
+            shot_id="SHOT_1",
+            shot_ordinal=1,
+            face=vec(1, 0, 0),
+            reid=vec(1, 0, 0),
+            detection_source="v6.2-yolox-edge-partial+face",
+        ),
+        track(
+            shot_id="SHOT_2",
+            shot_ordinal=2,
+            face=vec(0.99, 0.02, 0),
+            reid=vec(0.99, 0.02, 0),
+            detection_source="v6.2-yolox-partial+face",
+        ),
+    ]
+
+    candidates = v6.resolve_global_identities(values)
+
+    assert candidates
+    assert all(item.identity_status == "UNRESOLVED" for item in candidates)
+
+
+def test_second_pass_merges_two_resolved_fragments_of_same_person() -> None:
+    """首轮 Face/ReID 阈值没连上的两个稳定碎片，cluster centroid 一致时必须合回一个人。"""
+
+    cross_face = 0.42
+    cross_reid = 0.70
+    face_b = vec(cross_face, math.sqrt(1.0 - cross_face ** 2), 0.0)
+    reid_b = vec(cross_reid, math.sqrt(1.0 - cross_reid ** 2), 0.0)
+
+    values = [
+        track(shot_id="SHOT_1", shot_ordinal=1, face=vec(1, 0, 0), reid=vec(1, 0, 0)),
+        track(shot_id="SHOT_2", shot_ordinal=2, face=vec(1, 0.01, 0), reid=vec(1, 0.01, 0)),
+        track(shot_id="SHOT_5", shot_ordinal=5, face=face_b, reid=reid_b),
+        track(shot_id="SHOT_6", shot_ordinal=6, face=face_b, reid=reid_b),
+    ]
+
+    candidates = v6.resolve_global_identities(values)
+    resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
+
+    assert len(resolved) == 1
+    assert len(resolved[0].tracks) == 4
+
+
+def test_second_pass_does_not_merge_face_fragments_that_share_a_shot() -> None:
+    cross_face = 0.42
+    cross_reid = 0.70
+    face_b = vec(cross_face, math.sqrt(1.0 - cross_face ** 2), 0.0)
+    reid_b = vec(cross_reid, math.sqrt(1.0 - cross_reid ** 2), 0.0)
+
+    values = [
+        track(shot_id="SHOT_1", shot_ordinal=1, face=vec(1, 0, 0), reid=vec(1, 0, 0)),
+        track(shot_id="SHOT_2", shot_ordinal=2, face=vec(1, 0.01, 0), reid=vec(1, 0.01, 0), start_offset_us=0),
+        track(shot_id="SHOT_2", shot_ordinal=2, face=face_b, reid=reid_b, start_offset_us=500_000),
+        track(shot_id="SHOT_3", shot_ordinal=3, face=face_b, reid=reid_b),
+    ]
+
+    candidates = v6.resolve_global_identities(values)
+    resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
+
+    assert len(resolved) == 2
