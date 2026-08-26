@@ -30,6 +30,11 @@ HARD_LIKE_MAX_US = 180_000
 HARD_SEARCH_PAD_FRAMES = 2
 WIDE_TRANSITION_REVIEW_US = 1_500_000
 
+# media_v5 内部进度中，12% 进入 TransVLM，60% 表示官方 whole-video inference 已完成。
+# 外层 task_routes 还会把这一段映射到完整 Workflow 的 34%~70%。
+TRANSVLM_PROGRESS_START = 12.0
+TRANSVLM_PROGRESS_END = 60.0
+
 
 @dataclass(frozen=True)
 class ResolvedTransition:
@@ -135,6 +140,11 @@ def _render_middle_thumbnail(reference: Path, output: Path, duration_us: int) ->
     v2._render_thumbnail(reference, output, duration_us)
 
 
+def _map_transvlm_progress(percent: float) -> float:
+    ratio = max(0.0, min(100.0, float(percent))) / 100.0
+    return TRANSVLM_PROGRESS_START + ratio * (TRANSVLM_PROGRESS_END - TRANSVLM_PROGRESS_START)
+
+
 def detect_episode_shots(episode_id: str, progress: v2.ProgressReporter | None = None) -> list[dict[str, Any]]:
     """02 拉片 V5 正式入口：TransVLM → Source frame ownership → Current Revision。"""
 
@@ -164,8 +174,25 @@ def detect_episode_shots(episode_id: str, progress: v2.ProgressReporter | None =
         v2._report(progress, 8, "frame_pts", "正在读取原片 Source PTS")
         source_pts = v2._frame_pts_us(source)
 
-        v2._report(progress, 12, "transvlm", "TransVLM 正在检测完整 Shot Transition 区间")
-        segments = detect_transition_segments(source, transvlm_work)
+        v2._report(progress, TRANSVLM_PROGRESS_START, "transvlm", "TransVLM 正在启动完整 Shot Transition 检测")
+
+        def transvlm_report(
+            runtime_percent: float,
+            stage_key: str,
+            message: str,
+            current: int | None,
+            total: int | None,
+        ) -> None:
+            v2._report(
+                progress,
+                _map_transvlm_progress(runtime_percent),
+                stage_key,
+                message,
+                current,
+                total,
+            )
+
+        segments = detect_transition_segments(source, transvlm_work, progress=transvlm_report)
 
         v2._report(progress, 62, "boundaries", f"TransVLM 返回 {len(segments)} 个转场区间，正在映射 Source 帧")
         visual_scores, source_pts = _source_visual_scores(source, source_pts)
