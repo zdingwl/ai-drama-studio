@@ -2,7 +2,8 @@
 
 职责：
 - 复用 content_analysis_v2 的正式 Run / Scene 数据模型；
-- 人物正式链路升级为 Character V6：12fps Person → Mature MOT → Global Identity Graph；
+- 人物正式链路为 Character V6.1：12fps Person + Partial Person → Mature MOT → Global Identity Graph；
+- 贴边/截断/无头人体先作为 partial Evidence，经时序确认后才能形成 Track；
 - RESOLVED / UNRESOLVED 在持久化时明确分层，只有 RESOLVED 后续可形成 Final Character；
 - 把逐 Shot progress callback 转换成统一后台 Task 进度；
 - 新 Run 完整成功后才切 Current，失败保留旧结果。
@@ -29,7 +30,7 @@ AssetEvidenceProgress = Callable[
     None,
 ]
 
-FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v6-global-identity"
+FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v6.1-partial-person-global-identity"
 
 
 def _report(
@@ -75,7 +76,7 @@ def run_content_analysis_with_progress(
     _mark_v6_profile(run_id)
     component_status: dict[str, str] = {
         "characters": "PENDING",
-        "characters_profile": "V6_GLOBAL_IDENTITY",
+        "characters_profile": "V6_1_PARTIAL_PERSON_GLOBAL_IDENTITY",
         "scenes": "PENDING",
         "props": "NOT_CONFIGURED",
     }
@@ -90,7 +91,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            f"已读取 {total_shots} 个 Current Shots，正在加载人物 V6 GPU-first 模型与 Mature MOT",
+            f"已读取 {total_shots} 个 Current Shots，正在加载人物 V6.1 Person/Partial-Person 与 Mature MOT",
         )
 
         candidates: list[CandidateDraft] = []
@@ -105,7 +106,7 @@ def run_content_analysis_with_progress(
                 progress,
                 5.0 + ratio * 77.0,
                 "characters",
-                "人物 V6 · Person / MOT / Global Identity",
+                "人物 V6.1 · Person / Partial / MOT / Global Identity",
                 current_item,
                 current,
                 total,
@@ -138,7 +139,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            "人物 V6 完成，正在计算 Scene Segment",
+            "人物 V6.1 完成，正在计算 Scene Segment",
         )
         scenes: list[SceneDraft] = _cluster_scenes(run_id, project_id, shots)
         component_status["scenes"] = "READY" if scenes else "NO_SCENE"
@@ -175,7 +176,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            f"人物 V6 完成：{resolved_count} Final-ready · {unresolved_count} 待解析 Evidence",
+            f"人物 V6.1 完成：{resolved_count} Final-ready · {unresolved_count} 待解析 Evidence",
         )
         return get_analysis_run(run_id) or {"id": run_id, "status": "READY"}
     except Exception as exc:
