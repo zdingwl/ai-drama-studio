@@ -1,14 +1,13 @@
 """人物视觉兼容入口。
 
-正式实现已经升级到 Character V8：
+正式实现当前处于 Character V9 Phase A：
 - Shot 内约 12fps Person / Partial-Person Observation；
-- Face→Person 使用几何安全的一对一归属，partial 不抢 Face；
-- trackers 2.6 成熟 MOT（BoT-SORT 优先，ByteTrack fallback）；
-- Person Track 只表达 Shot presence，不决定人物数量；
-- 身份采用 Anchor-first / Confirm-then-Absorb：先确认高质量人物，再让后续 Face 先与已确认人物比较；
-- 只有高质量、跨 Shot 支持、且明确不同于所有已确认人物的 Face 才能创建新身份；
-- partial/body-only 只能挂回已存在身份或保留 UNRESOLVED Evidence；
-- RESOLVED Candidate 才允许物化 Final Character；UNRESOLVED 永远只保留 Evidence；
+- 一帧多人先拆成独立 Person Instance，禁止整帧做人身份图；
+- 每个 Instance 标记 CLEAN / OCCLUDED / CONTAMINATED / PARTIAL；
+- 同一采样时刻空间不同的 Person Instance 写入 cannot-link Evidence；
+- Track Gallery 只允许 CLEAN Person Instance crop 作为正式代表图；
+- OCCLUDED / CONTAMINATED / PARTIAL 只保留 Evidence，不进入正式 Gallery；
+- 身份解析暂时继续复用 V8 Anchor-first，后续 V9 Phase B/C 再替换成 Person Gallery identity；
 - YOLOX / YoutuReID 继续 GPU 优先、CPU fallback。
 
 保留本文件只为了让 content_analysis_v2 / 历史测试 import 路径稳定。
@@ -25,12 +24,14 @@ from engine.app.character_visual_v5 import (  # noqa: F401
     candidate_confidence,
     cosine,
     mean_vector,
+)
+from engine.app.character_gallery_v9 import (  # noqa: F401
     save_candidate_cover,
     save_candidate_gallery,
     select_track_representatives,
 )
-from engine.app.character_observation_v63 import detect_observations, sample_times_us  # noqa: F401
-from engine.app.character_tracking_v6 import build_tracks, tracker_runtime_status  # noqa: F401
+from engine.app.character_observation_v9 import detect_observations, sample_times_us  # noqa: F401
+from engine.app.character_tracking_v9 import build_tracks, tracker_runtime_status  # noqa: F401
 from engine.app.character_identity_v8 import resolve_global_identities as cluster_candidates  # noqa: F401
 from engine.app.character_runtime_v6 import analyze_characters, runtime_status  # noqa: F401
 
