@@ -7,11 +7,13 @@ Person + Partial-Person Observation (12fps)
 → Clean Track Gallery
 → Spatiotemporal Global Identity Graph
 → Conservative resolved-fragment consolidation
+→ Robust cross-shot Resolution Gate
 → Identity pair diagnostics
 → RESOLVED / UNRESOLVED Candidate
 
 重要边界：partial/body-only 必须能够表达“这里有人”，但不能独立创建 Final Character；
-Face 必须先安全归属到具体 Person；同 Shot 只有真正同时且空间不同的人才 cannot-link。
+Face 必须先安全归属到具体 Person；同 Shot 只有真正同时且空间不同的人才 cannot-link；
+至少两个 Face Shot 只是必要条件，还必须存在强跨 Shot Face 或 Face+ReID 联合支持才允许 Final。
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ from engine.app import character_visual_v5 as v5
 from engine.app.character_identity_diagnostics_v63 import annotate_and_log
 from engine.app.character_identity_v63 import resolve_global_identities
 from engine.app.character_observation_v63 import detect_observations
+from engine.app.character_resolution_gate_v63 import enforce_resolution_gate
 from engine.app.character_tracking_v6 import build_tracks, tracker_runtime_status
 from engine.app.content_models_v2 import RequiredCharacterModelError
 
@@ -33,6 +36,7 @@ def analyze_characters(
         observations = detect_observations(shots, progress=progress)
         tracks = build_tracks(observations)
         candidates = resolve_global_identities(tracks)
+        enforce_resolution_gate(candidates)
         annotate_and_log(candidates)
         return candidates
     except (ImportError, ModuleNotFoundError) as exc:
@@ -57,6 +61,7 @@ def runtime_status() -> dict[str, object]:
             "resolver": "Spatiotemporal Global Identity Graph + fragment consolidation",
             "same_shot_policy": "cannot-link only when temporally simultaneous and spatially distinct",
             "duplicate_track_policy": "strong Face/ReID + high bbox IoU may merge simultaneous duplicate tracks",
+            "resolution_gate": "robust cross-shot Face or Face+clean-ReID support required",
             "diagnostics": "resolved pair Face/ReID/shared-shot/conflict saved in candidate evidence and backend log",
             "partial_face_anchor": False,
             "final_gate": "RESOLVED only",
