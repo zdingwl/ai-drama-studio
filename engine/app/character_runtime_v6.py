@@ -6,6 +6,7 @@ Person + Partial-Person Observation (12fps)
 → Face observations become the ONLY identity nodes
 → Face-first Global Identity Graph
 → Person/partial/body Tracks attach after identity exists
+→ strict >=3 Face-Shot auto publish gate
 → RESOLVED / UNRESOLVED Candidate
 
 Hard product rule: Track count must never determine Final Character count.
@@ -19,6 +20,7 @@ from typing import Any
 from engine.app import character_visual_v5 as v5
 from engine.app.character_identity_v7 import resolve_global_identities
 from engine.app.character_observation_v63 import detect_observations
+from engine.app.character_resolution_gate_v7 import enforce_resolution_gate
 from engine.app.character_tracking_v6 import build_tracks, tracker_runtime_status
 from engine.app.content_models_v2 import RequiredCharacterModelError
 
@@ -33,6 +35,7 @@ def analyze_characters(
         observations = detect_observations(shots, progress=progress)
         tracks = build_tracks(observations)
         candidates = resolve_global_identities(tracks)
+        enforce_resolution_gate(candidates)
         resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
         unresolved = [item for item in candidates if item.identity_status != "RESOLVED"]
         logger.warning(
@@ -74,8 +77,8 @@ def runtime_status() -> dict[str, object]:
             "resolver": "Face-first Global Identity Graph",
             "identity_node": "high-quality Face observation, never Person Track",
             "final_character_count_source": "stable Face Identity clusters only",
-            "default_resolution_gate": ">=3 distinct Face shots",
-            "two_shot_exception": "only very strong Face/ReID evidence",
+            "resolution_gate": ">=3 distinct Face shots for automatic Final",
+            "two_shot_policy": "UNRESOLVED Evidence only; manual promotion allowed",
             "body_partial_policy": "attach after identity exists or remain UNRESOLVED",
             "final_gate": "RESOLVED only",
             "face_provider": "YuNet + SFace (replaceable provider)",
