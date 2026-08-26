@@ -1,10 +1,11 @@
-"""Character V6.1 正式运行入口。
+"""Character V6.2 正式运行入口。
 
 Person + Partial-Person Observation (12fps)
 → Mature MOT (BoT-SORT / ByteTrack fallback)
 → Partial Track temporal confirmation
 → Clean Track Gallery
 → Global Identity Graph
+→ Conservative resolved-fragment consolidation
 → RESOLVED / UNRESOLVED Candidate
 
 重要边界：partial/body-only 必须能够表达“这里有人”，但不能独立创建 Final Character；
@@ -31,23 +32,24 @@ def analyze_characters(
         return resolve_global_identities(tracks)
     except (ImportError, ModuleNotFoundError) as exc:
         raise RequiredCharacterModelError(
-            "人物识别 V6.1 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
+            "人物识别 V6.2 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
             "YOLOX/ReID CUDA 不可用可以 CPU fallback，但 trackers/supervision 运行时缺失不能发布人物结果。"
         ) from exc
 
 
 def runtime_status() -> dict[str, object]:
     return {
-        "profile": "character-v6.1-partial-person-global-identity",
+        "profile": "character-v6.2-partial-safe-global-identity-dedupe",
         "observation": {
             "sample_fps": 12.0,
             "normal_person_threshold": 0.32,
             "partial_person_proposal_threshold": 0.10,
-            "partial_policy": "temporal confirmation before Evidence; never direct Final Character",
+            "partial_policy": "temporal confirmation; can attach but never create identity anchor",
         },
         "tracking": tracker_runtime_status(),
         "identity": {
-            "resolver": "Global Identity Graph",
+            "resolver": "Global Identity Graph + conservative fragment consolidation",
+            "partial_face_anchor": False,
             "final_gate": "RESOLVED only",
             "unresolved_policy": "Evidence only; never auto materialize Final Character",
             "face_provider": "YuNet + SFace (replaceable provider)",
