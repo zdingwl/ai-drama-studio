@@ -27,6 +27,22 @@ from engine.app.content_models_v2 import RequiredCharacterModelError
 
 logger = logging.getLogger(__name__)
 
+FORMAL_IDENTITY_EVIDENCE = "Character V9C Person Gallery Anchor-first; multi-channel Person Image identity"
+FORMAL_IDENTITY_PROFILE = "f05-assets-v9c-person-gallery-anchor-first"
+
+
+def _bridge_persistence_metadata(candidates: list[v5.CandidateDraft]) -> None:
+    """Feed truthful V9C metadata through the historical persistence field without changing its transaction model."""
+
+    for candidate in candidates:
+        metadata = dict(getattr(candidate, "v9_metadata", {}) or {})
+        candidate.v6_metadata = {  # type: ignore[attr-defined]
+            "identity": FORMAL_IDENTITY_EVIDENCE,
+            "profile": FORMAL_IDENTITY_PROFILE,
+            "identity_policy": "Person Gallery Confirm-then-Absorb; Face optional; Track never defines identity cardinality",
+            **metadata,
+        }
+
 
 def analyze_characters(
     shots: list[dict[str, Any]],
@@ -36,6 +52,7 @@ def analyze_characters(
         observations = detect_observations(shots, progress=progress)
         tracks = build_tracks(observations)
         candidates = resolve_global_identities(tracks)
+        _bridge_persistence_metadata(candidates)
         resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
         unresolved = [item for item in candidates if item.identity_status != "RESOLVED"]
         classes: dict[str, int] = {}
