@@ -9,6 +9,7 @@ $InferenceRoot = Join-Path $RuntimeRoot 'inference'
 $PythonExe = Join-Path $InferenceRoot '.venv\Scripts\python.exe'
 $FfmpegPathFile = Join-Path $RuntimeRoot 'ffmpeg_shared_bin.txt'
 $TorchLib = Join-Path $InferenceRoot '.venv\Lib\site-packages\torch\lib'
+$CacheDriver = Join-Path $RepoRoot 'scripts\run_transvlm_cached.py'
 
 function Require-Path([string]$PathValue, [string]$Label) {
     if (-not (Test-Path -LiteralPath $PathValue)) {
@@ -22,6 +23,7 @@ Write-Host "  Runtime: $RuntimeRoot"
 Require-Path $PythonExe 'TransVLM Python'
 Require-Path $FfmpegPathFile 'FFmpeg shared marker'
 Require-Path $TorchLib 'PyTorch DLL directory'
+Require-Path $CacheDriver 'V5.1 cache driver'
 
 $SharedFfmpegBin = (Get-Content -LiteralPath $FfmpegPathFile -Raw -Encoding UTF8).Trim()
 if (-not $SharedFfmpegBin) {
@@ -39,7 +41,7 @@ foreach ($pattern in @('avcodec-*.dll', 'avformat-*.dll', 'avutil-*.dll')) {
     }
 }
 
-# Match the environment used by engine/app/transvlm_runtime_v5.py.
+# Match the environment used by engine/app/transvlm_runtime_v5.py / v51.py.
 $OriginalPath = $env:PATH
 $env:PATH = "$SharedFfmpegBin;$TorchLib;$OriginalPath"
 
@@ -68,12 +70,19 @@ try {
         throw 'infer_video.py self-check failed.'
     }
 
+    Write-Host '[TransVLM] Checking V5.1 parity-safe cache driver import path.'
+    & $PythonExe $CacheDriver --ai-inference-root $InferenceRoot --help | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'V5.1 cache driver self-check failed.'
+    }
+
     Write-Host ''
     Write-Host '[TransVLM] RUNTIME CHECK PASSED' -ForegroundColor Green
     Write-Host '  CUDA/cuDNN: OK'
     Write-Host '  TorchCodec: OK'
     Write-Host '  FFmpeg shared DLLs: OK'
     Write-Host '  infer_video.py: OK'
+    Write-Host '  V5.1 cache driver: OK'
 } finally {
     $env:PATH = $OriginalPath
 }
