@@ -99,7 +99,8 @@ if ($missingCommands.Count -gt 0) {
     if ($missingCommands -contains 'uv') {
         Write-Host ''
         Write-Host 'Install uv with:' -ForegroundColor Yellow
-        Write-Host '  winget install --id=astral-sh.uv -e' -ForegroundColor Yellow
+        Write-Host '  winget install --id astral-sh.uv -e --source winget' -ForegroundColor Yellow
+        Write-Host 'If the msstore source has a certificate error, using --source winget bypasses it.' -ForegroundColor Yellow
         Write-Host 'Then close and reopen PowerShell before running this script again.' -ForegroundColor Yellow
     }
     throw "Missing required command(s): $($missingCommands -join ', ')"
@@ -201,7 +202,7 @@ try {
         $SharedFfmpegBin = Find-SharedFfmpegBin
         if (-not $SharedFfmpegBin) {
             if (Test-Command 'winget') {
-                Write-Host '[TransVLM] Shared FFmpeg not found; installing Gyan.FFmpeg.Shared 8.1.1 for the current user.'
+                Write-Host '[TransVLM] Shared FFmpeg not found; installing Gyan.FFmpeg.Shared 8.1.1 from the winget community source.'
                 winget install --id Gyan.FFmpeg.Shared -e --version 8.1.1 --source winget --accept-package-agreements --accept-source-agreements --silent
                 if ($LASTEXITCODE -ne 0) {
                     throw 'WinGet failed to install Gyan.FFmpeg.Shared 8.1.1.'
@@ -210,7 +211,7 @@ try {
             }
         }
         if (-not $SharedFfmpegBin) {
-            throw 'TorchCodec requires FFmpeg shared DLLs on Windows. Install Gyan.FFmpeg.Shared 8.1.1 or set AI_DRAMA_TRANSVLM_FFMPEG_BIN to a compatible shared-build bin directory.'
+            throw 'TorchCodec requires FFmpeg shared DLLs on Windows. Install Gyan.FFmpeg.Shared 8.1.1 from --source winget or set AI_DRAMA_TRANSVLM_FFMPEG_BIN to a compatible shared-build bin directory.'
         }
 
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
