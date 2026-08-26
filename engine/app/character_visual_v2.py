@@ -1,13 +1,13 @@
 """人物视觉兼容入口。
 
-正式实现已经升级到 Character V6.3：
+正式实现已经升级到 Character V7：
 - Shot 内约 12fps Person / Partial-Person Observation；
 - Face→Person 使用几何安全的一对一归属，partial 不抢 Face；
 - trackers 2.6 成熟 MOT（BoT-SORT 优先，ByteTrack fallback）；
-- Track 只表达 Shot 内连续人物，不再直接产生身份；
-- 整项目 Track 全部完成后运行 Spatiotemporal Global Identity Graph；
-- 同 Shot 只有真正同时且空间不同的人才 cannot-link；同人重复 Track 可以去重；
-- Face 是身份主证据，CLEAN Body ReID / 时序只做支持；
+- Person Track 只表达 Shot presence，不再作为身份节点；
+- 全片高质量 Face observation 直接建立 Face-first Global Identity；
+- Final Character 数量只来自稳定 Face Identity cluster；
+- partial/body-only 只能挂回已存在身份或保留 UNRESOLVED Evidence；
 - RESOLVED Candidate 才允许物化 Final Character；UNRESOLVED 永远只保留 Evidence；
 - YOLOX / YoutuReID 继续 GPU 优先、CPU fallback。
 
@@ -31,7 +31,7 @@ from engine.app.character_visual_v5 import (  # noqa: F401
 )
 from engine.app.character_observation_v63 import detect_observations, sample_times_us  # noqa: F401
 from engine.app.character_tracking_v6 import build_tracks, tracker_runtime_status  # noqa: F401
-from engine.app.character_identity_v63 import resolve_global_identities as cluster_candidates  # noqa: F401
+from engine.app.character_identity_v7 import resolve_global_identities as cluster_candidates  # noqa: F401
 from engine.app.character_runtime_v6 import analyze_characters, runtime_status  # noqa: F401
 
 
