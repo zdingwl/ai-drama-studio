@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../api/client'
-import type { ContentAnalysisRun, Episode, F05ModelStatus, Shot } from '../types/studio'
+import type { BackgroundTask, ContentAnalysisRun, Episode, F05ModelStatus, Shot } from '../types/studio'
 import AssetReviewMatrixV4 from './AssetReviewMatrixV4.vue'
 
 const props = defineProps<{
@@ -160,8 +160,20 @@ async function prepareModels(): Promise<void> {
   }
 }
 
+function onTaskFinished(event: Event): void {
+  const task = (event as CustomEvent<BackgroundTask>).detail
+  if (!task || task.project_id !== props.projectId) return
+  if (task.task_type !== 'ASSET_EXTRACTION_V3') return
+  void refreshPersonCompleteness()
+}
+
 onMounted(async () => {
+  window.addEventListener('studio-task-finished', onTaskFinished)
   await Promise.all([refreshModelStatus(), refreshPersonCompleteness()])
+})
+
+onUnmounted(() => {
+  window.removeEventListener('studio-task-finished', onTaskFinished)
 })
 </script>
 
