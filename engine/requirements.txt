@@ -31,5 +31,9 @@ onnxruntime-gpu[cuda,cudnn]==1.21.1
 # 默认质量模型为 large-v3，首次使用需要准备对应模型缓存。旧 F05 helper 继续兼容旧 AI_DRAMA_WHISPER_* 配置。
 faster-whisper==1.2.1
 
+# Breakdown P2.3 本地 OCR Provider：RapidOCR + PP-OCRv6 small，底层复用上面的 ONNX Runtime。
+# 默认 CPU 稳定优先；AI_DRAMA_P2_OCR_DEVICE 可切 auto/cuda。small/medium 与采样策略在 P2.6 真实素材 benchmark 再锁最终质量档。
+rapidocr==3.9.2
+
 # Speaker Diarization 当前是可选能力：只有设置 AI_DRAMA_DIARIZATION_MODEL_PATH 且本机
 # 已安装兼容的 pyannote.audio 时才启用。默认 requirements 不强制安装 gated 模型依赖。
