@@ -1,24 +1,40 @@
-# AI Drama Studio — Agent Entry Rules (Reference Video V2 / Character V6)
+# AI Drama Studio — Agent Entry Rules (Reference Video V2 / Character V10.1)
 
-本仓库已经于 2026-08-24 按用户明确决策重建为 **Reference Video 驱动的短剧本地化重制工作台**。
-2026-08-25 人物资产链已升级为 **Character V6**；旧 Character V1-V5.1 只能作为历史算法参考，不能覆盖 V6 身份语义。
+本仓库当前正式产品架构为 **Reference Video V2**。人物资产正式运行基线已经升级到 **Character V10.1**。
 
-## 1. 当前唯一产品基线
+> **重要：不要从文件名猜当前算法版本。** 例如 `character_runtime_v6.py` 仍是兼容文件名，但文件内容和正式 wiring 已经是 Character V10.1。
 
-读取顺序：
+## 1. 新对话必须按这个顺序恢复上下文
 
 ```text
 1. AGENTS.md
 2. SKILL.md
 3. docs/PROJECT_STATE.md
-4. docs/REFERENCE_VIDEO_V2_ARCHITECTURE.md
-5. 当前 Feature / Workflow 文档
-6. 当前 V2/V6 代码、测试、Session
+4. docs/CURRENT_IMPLEMENTATION_MANIFEST.md
+5. docs/ASSET_CHARACTER_RECOGNITION_V10_1.md
+6. 当前相关代码与测试
+7. 最新 docs/sessions/*.md handoff
 ```
 
-旧的 35 Feature、F01-F06 Frozen Snapshot、Workflow Versioning Refactor、旧 Source Video / Shot Candidate / Final Shot 设计，以及 Character V1-V5.1 的“检测碎片≈人物资产”做法都属于 **Legacy History**。
+不要先读取旧 F01-F06 Frozen Snapshot 或旧 Character V1-V9 文档，再拿历史 Contract 覆盖当前代码。
 
-## 2. V2 核心原则
+如果任何文档和当前可执行 wiring 不一致，**先停止功能开发并同步文档**。
+
+## 2. 当前唯一产品基线
+
+```text
+Architecture: Reference Video V2
+Default branch: main
+FastAPI app version: 2.4.1
+Formal Character runtime: V10.1
+Runtime profile: character-v10.1-capture-first-model-classification
+Asset profile: f05-assets-v10.1-person-evidence-model-classification
+Resolver: person-evidence-model-classifier-v10.1
+```
+
+旧 35 Feature、旧 Frozen Snapshot、旧 Workflow Versioning、Character V1-V9 只作为历史实现参考，不是当前正式业务 Contract。
+
+## 3. V2 核心产品原则
 
 ```text
 Project
@@ -29,14 +45,14 @@ Project
 → 人物 / 场景 / 道具 / Dialogue / Track / Mask 绑定 Shot
 → 替换资产 + Voice + 本地化 Dialogue
 → 按 Shot 选择重制策略
-→ Reference Video 驱动视频生成
-→ 弹性 Production Timeline
+→ Reference Video 驱动生成
+→ Production Timeline
 → QC / Export
 ```
 
-原镜头本身承担动作、构图、机位、人物空间关系、镜头运动和大部分节奏信息，因此 V2 不追求把这些信息全部转换成高成本文字描述。
+Reference Clip 已天然包含动作、构图、机位、空间关系、镜头运动和大量节奏信息，因此不要为了“拉片更详细”无意义地把所有视觉信息重新文字化。
 
-## 3. 正式用户工作区
+## 4. 正式用户工作区
 
 ```text
 01 剧集管理
@@ -47,132 +63,145 @@ Project
 06 生成 / 导出
 ```
 
-技术子流程是后台能力，不为 FFprobe、Embedding、MOT、ASR 等内部模型单独制造生产页面。
+FFprobe、Embedding、MOT、Person Evidence、ASR、模型内部日志等技术子步骤默认在后台执行。
 
-## 4. Character V6 当前事实
+## 5. Character V10.1 正式人物链
 
-人物链路必须严格分成三层：
-
-```text
-Observation / Track Evidence
-→ Global Identity
-→ Final Character
-```
-
-**Track 不是 Character，检测碎片也不是 Final Asset。**
-
-当前正式链：
+正式链路：
 
 ```text
-YOLOX Person Observation（约 12fps，长 Shot 有采样上限）
-+ YuNet Face Detection
-+ SFace Face Embedding Provider
-+ YoutuReID Body ReID
+Shot / Reference Clip
 ↓
-BoT-SORT Mature MOT（默认，Camera Motion Compensation）
-  └ Runtime / init failure → 整 Shot 从头 ByteTrack fallback
+YOLOX Person Detection（约 12fps；长 Shot 有采样上限）
 ↓
-CLEAN Track Gallery / Face hard-conflict split
+每个检测人物拆成独立 Person Instance crop
 ↓
-Project-level Global Identity Graph
+Person Evidence capture-first
+  + YoutuReID Person embedding（主身份模型信号）
+  + clothing_upper / clothing_lower
+  + body_hist / body_structure
+  + YuNet / SFace Face（可选支持）
+↓
+Mature MOT 做 Shot 内时序组织
+↓
+Project-level Person Evidence model classification
 ↓
 RESOLVED / UNRESOLVED
 ↓
-Final Gate: RESOLVED only
+V10.1 Track-level known-identity recovery
+↓
+Final Gate
+↓
+Character + ShotCharacterBinding
 ```
 
-Tracking 只解决同一 Shot 内的连续轨迹；跨 Shot “是不是同一个人”只能由 Global Identity Graph 决定。
-
-### Face Provider 授权边界
-
-当前 Face provider 继续使用 YuNet + SFace，并与 Global Resolver 解耦。
-
-不要静默下载或打包仅限非商业研究用途的预训练 ArcFace / InsightFace 模型。只有在项目明确选定可商用或已有授权的 ArcFace 权重后才替换 provider；替换 provider 不得改变 Track / Identity / Final Asset 业务结构。
-
-### V6 Resolve 门槛
-
-当前自动发布策略比早期 V6 草案更保守：
+### 三层语义不可混淆
 
 ```text
-同一身份至少有 2 条 Face Track
-且 Face Evidence 覆盖至少 2 个不同 Shot
-→ RESOLVED
-
-单 Shot 高清脸 / 孤立侧脸 / 一次误检
-→ UNRESOLVED
-
-纯 body-only
-→ 不允许自行创建 Character
-
-body-only
-→ 只允许在相邻 Shot + 极强 CLEAN ReID 时挂回已有 Face cluster
+Observation / Person Evidence / Track = 视觉证据
+Identity Class = 跨 Shot 身份
+Final Character = 项目级可编辑人物资产
 ```
 
-这是为了防止单个演员的侧脸、特写、遮挡碎片再次制造“人物020”式虚假人物。
+**Track 数、Face 数、Crop 数都不能直接当人物数量。**
 
-### Global Identity 不变量
+## 6. V10.1 Identity Contract
 
-- 同 Shot 时间重叠的两条人物 Track 是永久 cannot-link。
-- 明确 Face 冲突必须阻断图传递合并。
-- Body ReID 只能支持 Face Identity，不能独立创造人物。
-- UNRESOLVED 保留真实 bbox / face_visible / sample Evidence，但不增加 Final Character 数量。
-- 缺失、损坏或未来未知的 identity_status 必须 fail closed；**只有明确 `RESOLVED` 才能进入 Final Character。**
-
-## 5. Evidence 与 Final Asset
-
-AI Evidence 与 Final Asset 必须分离。
-
-当前人物允许在资产工作流中把 **RESOLVED Identity 自动物化为 AUTO Final Character**，这是 Character V6 的正式 Final Gate，不代表可以修改 Evidence。
+当前正式创建新人物的最低结构门槛：
 
 ```text
-CharacterCandidate / CharacterTrack
+>= 3 independent Shots
+>= 3 model-usable Person Images
+stable cross-Shot Person-ReID class
+unique winner
+no cannot-link violation
+no high-quality Face hard conflict
+```
+
+重要规则：
+
+- Face 是可选支持，不再是创建人物的必需条件。
+- CLEAN 不是唯一可用人物图。
+- CLEAN / OCCLUDED 可按正常门槛参与身份形成。
+- 强 `CONTAMINATED` / 大面积 `PARTIAL` 可以提出新人，但需要更严格跨 Shot ReID 确认。
+- 弱、小、低质量 Partial 只能保存/分类/挂回，不能创建新人。
+- 同一采样时刻的不同 Person Instance 是硬 cannot-link。
+- 高质量 Face 明确冲突必须阻断合并。
+
+## 7. Shot-level Binding Recovery 是正式链的一部分
+
+V10.1 在 Global Identity 确认后增加：
+
+```text
+recover_unresolved_tracks(candidates)
+```
+
+用途：解决“人物资产识别正确，但某个 Shot 仍显示待解析人物/未绑定”的问题。
+
+规则：
+
+```text
+UNRESOLVED Track
+→ 对已有 RESOLVED identity gallery 做整段多帧比对
+→ >= 3 usable observations
+→ >= 2 supporting observations
+→ unique winner + margin
+→ cannot-link / Face conflict fail closed
+→ 整个 Track 并入已有身份
+```
+
+它：
+
+- **不能创建新 Character**；
+- 只能挂到已经确认的 `RESOLVED` identity；
+- winner 不唯一时保持 `UNRESOLVED`；
+- recovery 后 `CharacterTrack` / `ShotCharacterBinding` 使用新的 Track 归属。
+
+正式模块：
+
+```text
+engine/app/character_shot_binding_v101.py
+```
+
+## 8. Final Character Gate
+
+V10/V10.1 正式 Final Gate 是显式 allow-list / fail-closed：
+
+```text
+identity_status == RESOLVED
++ formal resolver
++ confirmed_gallery_shots >= 3
++ confirmed_gallery_images >= 3
++ final_asset_eligible is not false
+```
+
+对于 V10/V10.1：
+
+- Face visible **不是** Final Gate 必需条件；
+- `UNRESOLVED` 永远不物化；
+- 缺失/损坏 status 或 resolver 永远 fail closed。
+
+正式入口：
+
+```text
+engine/app/asset_final_gate_v10.py
+```
+
+## 9. Evidence 与 Final Asset 分离
+
+```text
+ContentAnalysisRun / CharacterCandidate / CharacterTrack / Person Evidence
 = immutable AI Evidence
 
 Character / ShotCharacterBinding
 = editable Final Asset / Binding
 ```
 
-UNRESOLVED Candidate 即使内部真实 `face_visible=true`，也只能保留 Evidence，不能通过旧 materializer 的“看见脸就创建人物”逻辑进入 Final Asset。
+旧 Run 不会因为代码更新自动重新绑定。人物算法变化后要验证效果，必须重新执行资产提取产生新 Run。
 
-Final Gate 禁止：
-- 临时篡改 Evidence 字段来绕旧逻辑；
-- monkeypatch 全局 materializer；
-- deny-list 式“只排除 UNRESOLVED”。
+MANUAL / RESTORE Asset Revision 默认受保护，新 AI Run 不得静默覆盖人工版本。
 
-必须采用显式 allow-list：`identity_status == RESOLVED`。
-
-## 6. Run / Revision / 事务原则
-
-新 Run 必须完整成功后才能切 Current。
-
-人物 Evidence 持久化顺序：
-
-```text
-Track / Global Identity
-→ RESOLVED / UNRESOLVED 标记
-→ Candidate / Track / Scene Evidence
-→ counts
-→ Current Run 切换
-→ commit
-```
-
-任何一步失败，旧 Current 不动。
-
-Final Asset 使用独立 Asset Revision；MANUAL / RESTORE 默认受保护，新 AI Run 不得静默覆盖人工版本。
-
-## 7. 数据原则
-
-- 项目允许多个 Episode。
-- `Episode.sort_order` 是所有批量任务的唯一顺序依据。
-- 批量预处理、批量拉片和后续 GPU 重任务默认 **顺序执行，concurrency = 1**。
-- 所有正式媒体时间使用 integer microseconds。
-- Shot 是核心生产单元。
-- Reference Clip 是正式资产，不是临时缓存。
-- Character / Scene / Prop 是项目级实体，Shot 引用实体 ID。
-- Dialogue 必须区分 `dialogue / narration / inner_monologue`；未确认时可保留 `unknown`。
-- 新语言时长不要求等于原语言时长；最终使用 Production Timeline。
-
-## 8. V2 / V6 主代码边界
+## 10. 当前正式代码边界
 
 ```text
 engine/app/main.py
@@ -181,68 +210,93 @@ engine/app/media_v2.py
 engine/app/content_models_v2.py
 engine/app/content_analysis_v2.py
 
-engine/app/character_observation_v6.py
-engine/app/character_tracking_v6.py
-engine/app/character_identity_v6.py
+engine/app/character_visual_v2.py
 engine/app/character_runtime_v6.py
-engine/app/asset_final_gate_v6.py
+engine/app/character_observation_v10.py
+engine/app/character_person_evidence_v10.py
+engine/app/character_person_features_v9.py
+engine/app/character_tracking_v10.py
+engine/app/character_identity_v10.py
+engine/app/character_identity_v101.py
+engine/app/character_shot_binding_v101.py
+engine/app/character_gallery_v10.py
+engine/app/character_evidence_store_v10.py
+engine/app/asset_final_gate_v10.py
 engine/app/asset_workspace_v3.py
 engine/app/asset_routes_v3.py
-
-frontend/src/views/ProjectList.vue
-frontend/src/views/ProjectStudio.vue
-frontend/src/api/client.ts
-frontend/src/types/studio.ts
 ```
 
-`character_visual_v5.py` 等旧人物模块目前仍可能被 V6 复用数据类 / 低层工具函数；这不代表 V5 的身份决策逻辑仍是正式入口。
+兼容文件名中的 V5/V6/V9 不等于正式算法版本。判断当前版本必须看 `character_visual_v2.py` facade、`character_runtime_v6.py` runtime profile 和 `PROJECT_STATE`。
 
-## 9. 测试基线
+## 11. Model / License boundary
 
-默认 pytest 只运行：
+固定人物模型集：
 
 ```text
-engine/tests/v2
+YOLOX
+YoutuReID
+YuNet
+SFace
 ```
 
-Character V6 必须至少锁住：
+YoutuReID 是主身份模型。Face 只作为可选支持与冲突证据。
+
+不要静默下载或打包仅限非商业研究用途的 InsightFace/ArcFace 预训练权重。未来替换 Face provider 时，必须先确定可商用/已有授权权重，并保持 Track → Identity → Final Asset Contract 不变。
+
+## 12. Run / Revision / 时间原则
+
+- 新 Run 完整成功后才能切 Current。
+- `Episode.sort_order` 是批量顺序唯一依据。
+- GPU/重任务默认顺序执行，`concurrency = 1`。
+- 正式媒体时间使用 integer microseconds。
+- Reference Clip 是正式 Shot 资产，不是临时缓存。
+- Character / Scene / Prop 是项目级实体，Shot 绑定实体 ID。
+
+## 13. 当前测试现实
+
+不要声称“整个 CI 已通过”。当前全量 GitHub Actions 仍有 legacy/environment 失败，包括：
 
 ```text
-同一演员多个 Shot 碎片 → Global Graph 合回一个身份
-三个不同演员 → 保持三个身份
-同框两人 → 不能经第三 Track 传递合并
-单 Shot 高清脸 → UNRESOLVED
-两 Shot Face 确认 → RESOLVED
-纯背影 / body-only → 不能创建 Character
-UNRESOLVED → Evidence 保留，Final Character 不增加
-缺失 identity_status → Final Gate fail closed
-MOT 输出按 IoU 映射回 Observation
-稀疏采样 → tracker 收到真实 timestamp
-BoT-SORT 中途失败 → 当前 Shot 从头 ByteTrack 重跑
+CI 缺 cv2/full media runtime
+CI 缺 trackers runtime
+旧 V6 断言与 V10.1 语义不一致
+FFmpeg 相关轻量 CI 环境差异
+旧 workspace 测试预期
+frontend vue-tsc / TypeScript compatibility
 ```
 
-除此之外必须在用户 Windows 本机用真实短剧素材验收 Tracking、跨 Shot Identity、Final Character 数量和 GPU Runtime。
+新的 V10.1 Shot binding recovery 已加入专门回归：
 
-## 10. Git 工作方式
+```text
+稳定多帧 → 已确认身份
+ambiguous winner → 不绑定
+cannot-link conflict → 不绑定
+```
 
-用户已明确要求：**不要为日常开发新建分支，直接在默认分支 `main` 开发。**
+最终 Release Gate 仍是用户 Windows 本机真实短剧素材。
+
+## 14. Git 工作方式
+
+用户要求日常开发直接提交默认分支：
 
 ```text
 Default Branch: main
-Current Development Branch: main
+Development Branch: main
 ```
 
-规则：
-- 后续代码、文档、测试直接提交到 `main`；
-- 不主动创建 feature/rebuild 分支；
-- 不主动创建 PR；
-- 已存在的历史分支只作为历史记录；
-- 只有用户以后明确要求时，才改变这一 Git 工作方式。
+不要主动新建 feature 分支或 PR，除非用户以后明确要求。
 
-## 11. 最重要的判断标准
+## 15. 文档与代码同步硬规则
 
-任何新功能都先问：
+任何人物代码修改结束前，至少检查并同步：
 
-> 这个数据是否是未来重制 Shot 时 Reference Video 无法可靠提供、但系统必须知道的信息？
+```text
+AGENTS.md（正式基线变化时）
+SKILL.md（正式规则/基线变化时）
+docs/PROJECT_STATE.md
+docs/CURRENT_IMPLEMENTATION_MANIFEST.md
+docs/ASSET_CHARACTER_RECOGNITION_V10_1.md 或其 successor
+最新 docs/sessions/*.md
+```
 
-如果 Reference Video 已经天然包含，而且结构化后没有明显编辑 / 绑定 / 生成价值，就不要为了“拉片看起来详细”而增加高成本字段。
+若代码和文档不一致，本次开发视为没有收口。
