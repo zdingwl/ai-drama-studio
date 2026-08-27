@@ -15,7 +15,7 @@ UNRESOLVED Track observations
 -> move only that Track into the confirmed identity
 
 It never creates a new Character and never changes the >=3-shot identity confirmation
-gate.  Its only purpose is to recover "known Character is visibly present in this Shot"
+gate. Its only purpose is to recover "known Character is visibly present in this Shot"
 without treating one weak crop as a new identity.
 """
 from __future__ import annotations
@@ -41,6 +41,11 @@ STRONG_TRACK_MEDIAN = 0.84
 MIN_SUPPORTING_OBSERVATIONS = 2
 WINNER_MARGIN = max(0.07, AMBIGUITY_MARGIN)
 RISKY_CLASSES = {"CONTAMINATED", "PARTIAL"}
+RECOVERY_SOURCE = "V10_1_TRACK_KNOWN_IDENTITY_RECOVERY"
+RECOVERY_POLICY = (
+    "confirmed identity only; >=3 repeated Person-ReID observations; "
+    "gallery-shot aggregation; unique winner; cannot-link/face-conflict fail closed"
+)
 
 
 def _instance_id(observation: Any) -> str:
@@ -122,7 +127,7 @@ def _observation_support(observation: Any, gallery: list[Any]) -> tuple[float | 
         return None, 0, False
     ordered = sorted(by_shot.values(), key=lambda row: row[0], reverse=True)
     # Two independent gallery Shots are more reliable than many near-duplicate images
-    # from one Shot.  If only one gallery Shot is available, keep its best score.
+    # from one Shot. If only one gallery Shot is available, keep its best score.
     support = median([row[0] for row in ordered[:2]]) if len(ordered) >= 2 else ordered[0][0]
     appearance = max(row[1] for row in ordered[:2])
     return float(support), int(appearance), False
@@ -206,6 +211,24 @@ def _refresh_candidate(candidate: Any) -> None:
     candidate.v10_metadata = metadata  # type: ignore[attr-defined]
 
 
+def _mark_track_recovered(track: Any, target: Any, score: float) -> None:
+    """Attach persistence-safe provenance to the Track before it moves identity class.
+
+    Candidate-level metadata is useful for summary UI, but Final Shot binding needs to know
+    which *specific* Track was recovered and with what shot-presence score. TrackDraft is a
+    normal dataclass (no slots), so this transient metadata is carried into persistence.
+    """
+
+    track.identity_recovery = {  # type: ignore[attr-defined]
+        "source": RECOVERY_SOURCE,
+        "target_candidate_id": str(getattr(target, "id", "")),
+        "shot_id": str(getattr(track, "shot_id", "")),
+        "score": round(float(score), 6),
+        "observation_count": len(list(getattr(track, "observations", []) or [])),
+        "policy": RECOVERY_POLICY,
+    }
+
+
 def recover_unresolved_tracks(candidates: list[Any]) -> list[Any]:
     """Attach repeatedly-consistent unresolved Tracks to existing confirmed identities.
 
@@ -238,6 +261,7 @@ def recover_unresolved_tracks(candidates: list[Any]) -> list[Any]:
             if target is None or score is None:
                 remaining_tracks.append(track)
                 continue
+            _mark_track_recovered(track, target, score)
             target.tracks.append(track)
             recovered_by_id.setdefault(str(target.id), []).append((str(track.shot_id), float(score)))
 
@@ -260,10 +284,8 @@ def recover_unresolved_tracks(candidates: list[Any]) -> list[Any]:
             shot_id: round(score, 6)
             for shot_id, score in recovered
         }
-        metadata["track_recovery_policy"] = (
-            "confirmed identity only; >=3 repeated Person-ReID observations; "
-            "gallery-shot aggregation; unique winner; cannot-link/face-conflict fail closed"
-        )
+        metadata["track_recovery_source"] = RECOVERY_SOURCE
+        metadata["track_recovery_policy"] = RECOVERY_POLICY
         candidate.v10_metadata = metadata  # type: ignore[attr-defined]
 
     output.sort(key=lambda item: (
@@ -274,4 +296,4 @@ def recover_unresolved_tracks(candidates: list[Any]) -> list[Any]:
     return output
 
 
-__all__ = ["recover_unresolved_tracks"]
+__all__ = ["RECOVERY_SOURCE", "recover_unresolved_tracks"]
