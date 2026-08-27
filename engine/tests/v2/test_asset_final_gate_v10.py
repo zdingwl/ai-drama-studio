@@ -39,18 +39,37 @@ def test_confirmed_v10_model_identity_passes_without_face_tracks() -> None:
     ) is True
 
 
+def test_confirmed_v101_risky_seed_identity_passes_same_fail_closed_gate() -> None:
+    value = candidate({
+        "identity_status": "RESOLVED",
+        "final_asset_eligible": True,
+        "profile": "f05-assets-v10.1-person-evidence-model-classification",
+        "resolver": "person-evidence-model-classifier-v10.1",
+        "confirmed_gallery_images": 3,
+        "confirmed_gallery_shots": 3,
+        "risky_seed_confirmation": True,
+        "face_images": 0,
+    })
+
+    assert _candidate_is_final_eligible(
+        value,
+        run_profile="f05-assets-v10.1-person-evidence-model-classification",
+        tracks=[],
+    ) is True
+
+
 def test_v10_unresolved_never_passes_final_gate() -> None:
     value = candidate({
         "identity_status": "UNRESOLVED",
         "final_asset_eligible": False,
-        "profile": "f05-assets-v10-person-evidence-model-classification",
-        "resolver": "person-evidence-model-classifier-v10",
+        "profile": "f05-assets-v10.1-person-evidence-model-classification",
+        "resolver": "person-evidence-model-classifier-v10.1",
         "confirmed_gallery_images": 10,
         "confirmed_gallery_shots": 8,
     })
 
     assert _candidate_is_final_eligible(
         value,
-        run_profile="f05-assets-v10-person-evidence-model-classification",
+        run_profile="f05-assets-v10.1-person-evidence-model-classification",
         tracks=[],
     ) is False
