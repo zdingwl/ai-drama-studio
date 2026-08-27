@@ -164,14 +164,17 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
             if assignment is not None:
                 confidence = assignment.get("confidence")
                 mode = str(assignment.get("mode") or "SHOT_ASSIGNMENT")
-                source = str(assignment.get("source") or candidate_evidence.get("shot_assignment_source") or "V10_1_SHOT_CHARACTER_ASSIGNMENT")
+                source = str(
+                    assignment.get("source")
+                    or candidate_evidence.get("shot_assignment_source")
+                    or "V10_1_SHOT_CHARACTER_ASSIGNMENT"
+                )
                 confidence_source = f"{source}:{mode}"
                 recovered = mode != "DIRECT_IDENTITY"
             else:
                 confidence, confidence_source = _shot_presence_confidence(candidate, shot_tracks)
                 recoveries = [value for value in (_track_recovery(track) for track in shot_tracks) if value]
                 recovered = bool(recoveries) and len(recoveries) == len(shot_tracks)
-                mode = "TRACK_FALLBACK"
 
             bucket = evidence_by_shot.setdefault(shot_id, _empty_bucket())
             item = {
@@ -185,7 +188,6 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
                 "recovered_track": recovered,
                 "confidence_source": confidence_source if identity_status == "RESOLVED" else "UNRESOLVED_DIAGNOSTIC",
                 "recovery_source": confidence_source if recovered else None,
-                "assignment_mode": mode if identity_status == "RESOLVED" else None,
             }
             if identity_status == "RESOLVED":
                 # For an explicit-assignment Run, a RESOLVED Track not present in the
