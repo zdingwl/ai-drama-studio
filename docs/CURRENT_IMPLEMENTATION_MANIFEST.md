@@ -1,7 +1,7 @@
 # AI Drama Studio — Current Implementation Manifest
 
-> Purpose: compact code-aligned manifest for new conversations.  
-> Last synchronized: **2026-08-27 15:52 +08:00**
+> Purpose: compact **code-aligned CURRENT manifest** for new conversations.  
+> Last synchronized: **2026-08-27 16:22 +08:00**
 
 ## Repository baseline
 
@@ -11,6 +11,87 @@ Branch: main
 Architecture: Reference Video V2
 FastAPI app version: 2.4.1
 ```
+
+## Current vs Target — do not merge them
+
+This file is executable CURRENT truth only.
+
+The user has accepted a future Breakdown-first workflow, but it is documented separately at:
+
+```text
+docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
+```
+
+That Target Plan currently means:
+
+```text
+Shot + Reference Clip
+→ ASR/OCR/Video Understanding
+→ anonymous structured Breakdown Draft
+→ Draft-guided Character/Scene/Prop Evidence
+→ Global Asset Resolution / Final Bindings
+→ fill-back
+→ Final Breakdown
+```
+
+**The existence of that plan does not mean those modules are implemented.** Current code/wiring below remains authoritative until each target Phase actually lands with tests and acceptance.
+
+## Current Shot / media wiring
+
+FastAPI current routes use:
+
+```text
+main.py
+→ media_v2.preprocess_episode
+→ media_v2.detect_episode_shots
+→ studio_v2.Shot
+→ shot_revision_v2
+→ Reference Clip / thumbnail / keyframes
+```
+
+Current `media_v2.detect_episode_shots()` performs:
+
+```text
+FFprobe authoritative timing
++ TransNetV2 Shot boundary detection
++ Source-domain Shot boundaries
++ per-Shot Reference Clip rendering
++ thumbnail rendering
++ safe current Shot revision switch
+```
+
+Current `Shot` has:
+
+```text
+id
+episode_id
+ordinal
+start_us / end_us / duration_us
+reference_clip_path
+thumbnail_path
+keyframes_json
+short_description
+shot_type
+camera_motion
+status
+```
+
+Current gap vs accepted Target:
+
+```text
+anonymous LocalSubject          NOT IMPLEMENTED
+ShotSemanticDraft               NOT IMPLEMENTED
+structured TimelineEvent        NOT IMPLEMENTED
+SceneSegmentDraft               NOT IMPLEMENTED
+unified ASR/OCR semantic facts  NOT IMPLEMENTED
+Draft-guided asset resolution   NOT IMPLEMENTED
+DraftResolution / fill-back     NOT IMPLEMENTED
+Final script-style renderer     NOT IMPLEMENTED
+```
+
+Historical `shot_detection.py` / `shot_workbench.py` still exist with older F04/F05 naming, but current Reference Video V2 FastAPI wiring uses `media_v2` for preprocess/Shot analysis. Do not reconstruct current architecture from historical feature names alone.
+
+Also, current `transvlm_runtime_v51.py` uses `TransVLM-Qwen3-VL-4B-Instruct` for transition-segment detection/caching. It is **not** a currently implemented semantic breakdown engine.
 
 ## Formal Character baseline
 
@@ -25,6 +106,8 @@ Primary identity model: YoutuReID Person Re-identification
 Face role: optional identity support / known-identity Shot presence / high-quality conflict
 Final identity gate: confirmed formal RESOLVED identity only
 ```
+
+The accepted Breakdown-first plan does **not** change the current Character runtime/gates.
 
 ## Executable Character wiring
 
@@ -71,7 +154,17 @@ Character / ShotCharacterBinding
 = editable Final asset / binding
 ```
 
-Track ownership is no longer the Final Shot-binding source.
+Target-only concepts are separate and currently not executable entities:
+
+```text
+LocalSubject
+ShotSemanticDraft
+TimelineEvent
+SceneSegmentDraft
+DraftResolution
+```
+
+Track ownership is no longer the Final Shot-binding source. Target Draft prose is also not allowed to become a Final binding source by itself.
 
 ## New identity confirmation
 
@@ -87,6 +180,8 @@ no high-quality Face hard conflict
 ```
 
 Shot assignment runs only after identities are RESOLVED and can never create a new Character.
+
+The future anonymous Breakdown Draft cannot bypass this contract.
 
 ## Explicit Shot Character Assignment
 
@@ -176,6 +271,37 @@ An explicit empty assignment list does **not** fall back to Candidate Track memb
 
 Historical persisted Runs without `shot_assignment_version` keep the old Track-derived fallback so old projects remain readable.
 
+## Current Scene / Prop analysis reality
+
+`content_analysis_v2.py` currently provides established Evidence data boundaries:
+
+```text
+SceneCandidate
+ShotSceneEvidence
+PropCandidate
+ShotPropEvidence
+```
+
+Current Scene candidate generation is still lightweight: it uses Shot thumbnail environment descriptors and Episode-contiguous grouping. It must not be described as the accepted Target final Scene identity resolver.
+
+Current Prop behavior deliberately fails closed: if no reliable configured object/VLM model is available, Prop extraction may return `NOT_CONFIGURED` rather than fabricate assets.
+
+Accepted future Scene/Prop upgrades are TARGET only and live in `BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md`.
+
+## Current Dialogue / ASR reality
+
+`studio_v2.Dialogue` exists as a core entity and `content_analysis_v2` retains some historical/compatibility ASR/Speaker helper structures, but the current formal asset extraction responsibility does not constitute the accepted future unified:
+
+```text
+ASR + word timing
+Speaker diarization
+OCR
+active speaker / LocalSubject mapping
+anonymous Breakdown timeline
+```
+
+Those remain planned Target phases.
+
 ## Asset Workspace contract
 
 ```text
@@ -190,7 +316,7 @@ For explicit-assignment Runs, `asset_workspace_character_v101` follows the assig
 
 Gallery/Evidence comparison UI is diagnostic only and is not a binding source.
 
-## Fixed model package
+## Fixed current Character model package
 
 ```text
 YOLOX person detection
@@ -199,10 +325,16 @@ YuNet face detection
 SFace face embedding/support
 ```
 
+Any ASR/OCR/VLM/open-vocabulary model mentioned in the Target Plan is only a candidate until a later implementation phase explicitly selects, licenses, wires and tests it.
+
 ## Current key modules
 
 ```text
 engine/app/main.py
+engine/app/studio_v2.py
+engine/app/media_v2.py
+engine/app/shot_revision_v2.py
+engine/app/shot_edit_routes_v2.py
 engine/app/content_analysis_v2.py
 engine/app/content_models_v2.py
 engine/app/character_visual_v2.py
@@ -224,7 +356,7 @@ engine/app/asset_workspace_character_v101.py
 engine/app/asset_routes_v3.py
 ```
 
-Historical compatibility files not in the formal runtime path:
+Historical compatibility files not in the formal Character runtime path:
 
 ```text
 engine/app/character_shot_binding_v101.py
@@ -236,6 +368,12 @@ Do not infer active algorithm generation from compatibility filenames.
 ## Current validation state
 
 ```text
+01 Project/Episode import/order: implemented
+02 Preprocess: implemented
+02 Shot detection + Reference Clip: implemented
+02 anonymous structured Breakdown Draft: NOT IMPLEMENTED / TARGET
+02 SceneSegment/TimelineEvent: NOT IMPLEMENTED / TARGET
+
 Global Character identity classification: implemented
 Independent Shot × known-Character assignment: implemented
 Direct identity Shot presence: implemented
@@ -247,11 +385,40 @@ No Track ownership mutation in formal binding path: implemented
 Final Gate explicit assignment consumption: implemented
 Workspace explicit assignment consumption: implemented
 Historical old-Run fallback: preserved
-Windows real-video SHOT 0001–0009 acceptance: pending
+Windows real-video SHOT 0001–0009 Character acceptance: pending
+
+Draft-guided Character integration: NOT IMPLEMENTED / TARGET
+Target semantic Scene resolver: NOT IMPLEMENTED / TARGET
+Targeted Prop detector/tracker pipeline: NOT IMPLEMENTED / TARGET
+Draft → Final Asset fill-back: NOT IMPLEMENTED / TARGET
+Final standard/international Breakdown renderer: NOT IMPLEMENTED / TARGET
 Whole repository CI: not green
 ```
 
-Latest backend CI after the new binding tests:
+## Accepted Target phase pointer
+
+Do not implement ad hoc from conversation history. Use the frozen phase order in:
+
+```text
+docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
+```
+
+Current accepted order:
+
+```text
+P0 docs/contract
+P1 Draft data contract ADD-only
+P2 ASR/OCR/VLM anonymous Draft sidecar
+P3 02 拉片 structured Draft UI
+P4 Draft-guided Scene / Prop evidence
+P5 Draft ↔ Character safe integration after current V10.1 baseline acceptance
+P6 Final fill-back + renderers
+P7 downstream remake integration
+```
+
+## CI reality
+
+Latest known backend CI after the explicit assignment work:
 
 ```text
 28 failed, 187 passed, 1 skipped
@@ -260,6 +427,8 @@ Latest backend CI after the new binding tests:
 Backend compile and FastAPI import pass. The explicit Shot assignment tests, explicit Final Gate tests and explicit workspace assignment test are not among failures. Existing failures remain legacy/runtime/environment categories (`cv2`, `trackers`, FFmpeg and obsolete historical assertions).
 
 Frontend CI still has the existing `vue-tsc` / TypeScript package compatibility failure.
+
+The current documentation-only Breakdown-first planning work changes no test/runtime result.
 
 ## Required new-conversation checks
 
@@ -274,7 +443,19 @@ asset_workspace_character_v101 follows explicit assignments for RESOLVED presenc
 old Runs without shot_assignment_version still use historical fallback
 ```
 
-## Next Windows acceptance
+Before implementing any Breakdown-first Phase verify:
+
+```text
+read docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
+identify one explicit Phase only
+check current Shot/media/content-analysis wiring
+preserve integer microseconds + shot_id + Reference Clip
+use ADD-only compatibility first
+keep semantic Draft separate from Final Asset/Binding
+update CURRENT docs only after code/tests/acceptance exist
+```
+
+## Next Windows Character acceptance
 
 A fresh Analysis Run is required.
 
