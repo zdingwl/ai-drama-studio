@@ -1,12 +1,13 @@
 """03 资产 Evidence 的可观测执行入口。
 
-正式人物链路当前为 Character V10：
+正式人物链路当前为 Character V10.1：
 - 一帧多人先拆成独立 Person Instance，禁止整帧做人身份输入；
 - 正面 / 侧身 / 背影 / 多人同框拆出的单人 crop 先完整采集为 Person Evidence；
 - CLEAN 不再是唯一身份输入；Evidence eligibility 与 new-identity seed eligibility 分开；
 - Person ReID 模型作为跨视角分类主信号，服装 / Body / optional Face 分通道支持；
 - 先采集人物内容并落盘，再由模型分类到 A / B / C；
-- OCCLUDED / CONTAMINATED / PARTIAL 可以保存和分类，低可靠 Evidence 不能独立创建新人；
+- 强 CONTAMINATED / 大面积 PARTIAL 可以提出新人，但必须经过更严格的跨 Shot ReID 确认；
+- 弱 Partial 只能保存 / 分类 / 挂回已有角色，不能独立创建新人；
 - Final Gate 只发布已确认的人物类别；新 Run 完整成功后才切 Current。
 """
 from __future__ import annotations
@@ -32,8 +33,8 @@ AssetEvidenceProgress = Callable[
     None,
 ]
 
-FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v10-person-evidence-model-classification"
-FORMAL_CHARACTER_COMPONENT_PROFILE = "V10_PERSON_EVIDENCE_MODEL_CLASSIFICATION"
+FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v10.1-person-evidence-model-classification"
+FORMAL_CHARACTER_COMPONENT_PROFILE = "V10_1_PERSON_EVIDENCE_MODEL_CLASSIFICATION"
 
 
 def _report(
@@ -100,7 +101,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            f"已读取 {total_shots} 个 Current Shots，正在启动 V10 Person Evidence 采集与模型分类",
+            f"已读取 {total_shots} 个 Current Shots，正在启动 V10.1 Person Evidence 采集与模型分类",
         )
 
         candidates: list[CandidateDraft] = []
@@ -115,7 +116,7 @@ def run_content_analysis_with_progress(
                 progress,
                 5.0 + ratio * 77.0,
                 "characters",
-                "人物 V10 · Person Evidence / Model Classification",
+                "人物 V10.1 · Person Evidence / Model Classification",
                 current_item,
                 current,
                 total,
@@ -137,7 +138,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            f"V10：{resolved_count} 个已确认人物类别 · {unresolved_count} 个待归属 Evidence",
+            f"V10.1：{resolved_count} 个已确认人物类别 · {unresolved_count} 个待归属 Evidence",
         )
 
         _report(
@@ -148,7 +149,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            "人物 V10 完成，正在计算 Scene Segment",
+            "人物 V10.1 完成，正在计算 Scene Segment",
         )
         scenes: list[SceneDraft] = _cluster_scenes(run_id, project_id, shots)
         component_status["scenes"] = "READY" if scenes else "NO_SCENE"
@@ -186,7 +187,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            f"人物 V10：{resolved_count} 个 Final-ready 人物类别 · {unresolved_count} 个待归属 Evidence",
+            f"人物 V10.1：{resolved_count} 个 Final-ready 人物类别 · {unresolved_count} 个待归属 Evidence",
         )
         return get_analysis_run(run_id) or {"id": run_id, "status": "READY"}
     except Exception as exc:
