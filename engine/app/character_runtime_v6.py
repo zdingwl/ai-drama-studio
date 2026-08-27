@@ -1,4 +1,4 @@
-"""Character V10 formal runtime entry.
+"""Character V10.1 formal runtime entry.
 
 Person / Partial-Person Observation (12fps)
 → split every detected person into an explicit Person Instance
@@ -7,6 +7,8 @@ Person / Partial-Person Observation (12fps)
 → persist pre-classification Person Evidence when a Run id is available
 → Mature MOT + evidence-only singleton fallback
 → classify captured Person Evidence with YoutuReID person model against full identity galleries
+→ allow strong contaminated / substantial partial views to form a new identity only
+  after strict cross-shot model confirmation
 → write A/B/C identity assignments back to the captured evidence manifest
 → persist multi-view classified Person Gallery
 → Final Character is identity class cardinality, never Track/Face count.
@@ -18,7 +20,7 @@ from typing import Any
 
 from engine.app import character_visual_v5 as v5
 from engine.app.character_evidence_store_v10 import save_person_evidence, update_person_evidence_classification
-from engine.app.character_identity_v10 import CLASSIFIER_MODEL, RESOLVER_VERSION, resolve_global_identities
+from engine.app.character_identity_v101 import CLASSIFIER_MODEL, RESOLVER_VERSION, resolve_global_identities
 from engine.app.character_observation_v10 import detect_observations
 from engine.app.character_person_features_v9 import FEATURE_VERSION
 from engine.app.character_tracking_v10 import build_tracks, tracker_runtime_status
@@ -26,8 +28,8 @@ from engine.app.content_models_v2 import RequiredCharacterModelError
 
 logger = logging.getLogger(__name__)
 
-FORMAL_IDENTITY_EVIDENCE = "Character V10 capture-first Person Evidence + model classification"
-FORMAL_IDENTITY_PROFILE = "f05-assets-v10-person-evidence-model-classification"
+FORMAL_IDENTITY_EVIDENCE = "Character V10.1 capture-first Person Evidence + strict cross-shot model classification"
+FORMAL_IDENTITY_PROFILE = "f05-assets-v10.1-person-evidence-model-classification"
 
 
 def _bridge_persistence_metadata(candidates: list[v5.CandidateDraft]) -> None:
@@ -38,7 +40,8 @@ def _bridge_persistence_metadata(candidates: list[v5.CandidateDraft]) -> None:
             "profile": FORMAL_IDENTITY_PROFILE,
             "identity_policy": (
                 "capture every model-usable Person Instance first; classify with Person ReID model; "
-                "front/side/back and multi-person-frame crops are valid evidence; Face optional"
+                "front/side/back and multi-person-frame crops are valid evidence; Face optional; "
+                "strong contaminated/substantial partial views require stricter multi-shot confirmation"
             ),
             **metadata,
         }
@@ -65,6 +68,7 @@ def analyze_characters(
         unresolved = [item for item in candidates if item.identity_status != "RESOLVED"]
 
         classes: dict[str, int] = {}
+        seedable_classes: dict[str, int] = {}
         captured = 0
         seedable = 0
         for item in observations:
@@ -74,39 +78,42 @@ def analyze_characters(
                 captured += 1
             if bool(getattr(item, "person_seed_eligible", False)):
                 seedable += 1
+                seedable_classes[key] = seedable_classes.get(key, 0) + 1
 
         logger.warning(
-            "[CharacterV10] observations=%s captured_person_evidence=%s persisted_person_evidence=%s classified_persisted=%s "
-            "seedable=%s tracks=%s confirmed_identities=%s unresolved_fragments=%s instance_classes=%s",
+            "[CharacterV10.1] observations=%s captured_person_evidence=%s persisted_person_evidence=%s classified_persisted=%s "
+            "seedable=%s seedable_classes=%s tracks=%s confirmed_identities=%s unresolved_fragments=%s instance_classes=%s",
             len(observations), captured,
             (evidence_store or {}).get("evidence_count") if evidence_store else None,
             (classification_store or {}).get("classified_count") if classification_store else None,
-            seedable, len(tracks), len(resolved), len(unresolved), classes,
+            seedable, seedable_classes, len(tracks), len(resolved), len(unresolved), classes,
         )
         for index, candidate in enumerate(resolved, start=1):
             metadata = dict(getattr(candidate, "v10_metadata", {}) or {})
             logger.warning(
-                "[CharacterV10] identity=%s classified_gallery_images=%s confirmed_seed_images=%s "
-                "confirmed_seed_shots=%s classified_shots=%s classes=%s tracks=%s",
+                "[CharacterV10.1] identity=%s classified_gallery_images=%s confirmed_seed_images=%s "
+                "confirmed_seed_shots=%s classified_shots=%s classes=%s seed_classes=%s risky_seed=%s tracks=%s",
                 index,
                 metadata.get("captured_classified_images"),
                 metadata.get("confirmed_gallery_images"),
                 metadata.get("confirmed_gallery_shots"),
                 metadata.get("classified_shots"),
                 metadata.get("instance_classes"),
+                metadata.get("seed_instance_classes"),
+                metadata.get("risky_seed_confirmation"),
                 len(candidate.tracks),
             )
         return candidates
     except (ImportError, ModuleNotFoundError) as exc:
         raise RequiredCharacterModelError(
-            "人物识别 V10 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
+            "人物识别 V10.1 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
             "YOLOX / YoutuReID 可 CPU fallback，但 Mature MOT 运行时缺失不能发布人物结果。"
         ) from exc
 
 
 def runtime_status() -> dict[str, object]:
     return {
-        "profile": "character-v10-capture-first-model-classification",
+        "profile": "character-v10.1-capture-first-model-classification",
         "observation": {
             "sample_fps": 12.0,
             "person_instance": "one detected person -> one explicit person crop, including multi-person frames",
@@ -151,6 +158,7 @@ def runtime_status() -> dict[str, object]:
             "clothing_body_role": "supporting channels",
             "face_role": "optional support; never required",
             "track_role": "temporal organization only; never identity cardinality",
-            "partial_policy": "save/classify/attach with stronger support; cannot seed new identity",
+            "risky_seed_policy": "strong contaminated/substantial partial person images may seed only after stricter >=3-shot Person-ReID confirmation",
+            "weak_partial_policy": "save/classify/attach only; cannot seed new identity",
         },
     }
