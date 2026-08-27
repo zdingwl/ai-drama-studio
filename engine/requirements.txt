@@ -19,14 +19,13 @@ tqdm==4.67.1
 ffmpeg-python==0.2.0
 future==1.0.0
 
-# 03 人物 V6：YOLOX Person + 成熟 MOT + Global Identity Resolver。
-# trackers 2.6.0 提供 ByteTrack / BoT-SORT；supervision 负责标准 Detections 数据结构。
-# 当前 Face provider 继续使用已校验的 YuNet/SFace；V6 已把 Face provider 与 Global Identity 解耦，
-# 后续可以替换成有明确商用授权的 ArcFace 权重，而不改变 Track / Final Asset 数据结构。
+# 03 人物 V10.1：YOLOX Person + Mature MOT + YoutuReID Person Classification。
 trackers==2.6.0
 supervision==0.30.0
 opencv-python==4.11.0.86
-onnxruntime-gpu==1.20.2
+# ORT 1.21.x 使用 CUDA 12.8 + cuDNN 9，并提供 preload_dlls()；[cuda,cudnn]
+# 同时安装 NVIDIA Python runtime DLL，Windows 不再依赖系统 CUDA Toolkit 才能做人脸/人物 GPU 推理。
+onnxruntime-gpu[cuda,cudnn]==1.21.1
 
 # F05 源对白 ASR。默认模型由 AI_DRAMA_WHISPER_MODEL 控制，首次使用需要准备对应模型缓存。
 faster-whisper==1.2.1
