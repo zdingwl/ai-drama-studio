@@ -9,6 +9,9 @@
 
 V10 兼容：如果 Observation 带 Person Evidence 元数据，Track 代表帧按人物图质量 / 可靠度优先，
 不再按 face_visible 优先。这样侧身、背影、多角色同框拆出的单人图不会被正脸帧天然压制。
+
+V10.1 兼容：已通过 known-identity recovery 挂回确认人物的 Track 会把 recovery source / score /
+policy 一起写入 CharacterTrack.evidence_json，供 Final Shot Binding 使用 Shot 级存在置信度。
 """
 from __future__ import annotations
 
@@ -31,6 +34,7 @@ from engine.app.content_analysis_v2 import (
 from engine.app.studio_v2 import Shot, get_session, new_id, utcnow
 
 PROFILE_VERSION = "f05-assets-v6-global-identity"
+FORMAL_PROFILE_PREFIXES = ("f05-assets-v9", "f05-assets-v10")
 
 
 def _representative_rank(item: Any) -> tuple[float, ...]:
@@ -61,6 +65,13 @@ def _representative_rank(item: Any) -> tuple[float, ...]:
     )
 
 
+def _persistence_profile(run: ContentAnalysisRun) -> str:
+    """Preserve a formal V9/V10 profile instead of temporarily downgrading it to V6."""
+
+    value = str(run.profile_version or "")
+    return value if value.startswith(FORMAL_PROFILE_PREFIXES) else PROFILE_VERSION
+
+
 def persist_results_v6(
     *,
     run_id: str,
@@ -82,6 +93,7 @@ def persist_results_v6(
         run = session.get(ContentAnalysisRun, run_id)
         if run is None or run.project_id != project_id:
             raise ContentAnalysisError("Asset Run 记录丢失")
+        run_profile = _persistence_profile(run)
 
         for candidate in candidates:
             identity_status = str(getattr(candidate, "identity_status", "UNRESOLVED"))
@@ -106,7 +118,7 @@ def persist_results_v6(
                 "identity": "Global Identity Graph; Face primary; CLEAN ReID temporal support",
                 "face_track_count": face_track_count,
                 "body_only_extension_track_count": len(candidate.tracks) - face_track_count,
-                "profile": PROFILE_VERSION,
+                "profile": run_profile,
                 **v6_metadata,
             }
             session.add(CharacterCandidate(
@@ -135,6 +147,7 @@ def persist_results_v6(
                     for item in track.observations if item.body_hist is not None
                 ]
                 valid_body_scores = [value for value in body_scores if value is not None]
+                identity_recovery = dict(getattr(track, "identity_recovery", {}) or {})
                 session.add(CharacterTrack(
                     id=new_id("CHAR_TRACK"),
                     run_id=run_id,
@@ -151,6 +164,7 @@ def persist_results_v6(
                     evidence_json=json.dumps({
                         "identity_status": identity_status,
                         "final_asset_eligible": identity_status == "RESOLVED",
+                        "identity_recovery": identity_recovery or None,
                         "representative_policy": (
                             "V10 person-image-quality-first" if hasattr(representative, "person_evidence_eligible")
                             else "historical-face-first"
@@ -184,7 +198,7 @@ def persist_results_v6(
                 cover_path=scene.cover_path,
                 evidence_json=json.dumps({
                     "method": "episode-contiguous HSV scene candidate segmentation",
-                    "profile": PROFILE_VERSION,
+                    "profile": run_profile,
                 }, ensure_ascii=False),
             ))
             scene_confidence = sum(scene.scores) / len(scene.scores) if scene.scores else 1.0
@@ -271,13 +285,13 @@ def persist_results_v6(
             warnings = True
 
         component_status = dict(component_status)
-        component_status["characters_profile"] = "V6_GLOBAL_IDENTITY"
+        component_status.setdefault("characters_profile", "V6_GLOBAL_IDENTITY")
         component_status["resolved_characters"] = str(resolved_ordinal)
         component_status["unresolved_character_evidence"] = str(unresolved_ordinal)
 
         run.status = "READY_WITH_WARNINGS" if warnings else "READY"
         run.is_current = True
-        run.profile_version = PROFILE_VERSION
+        run.profile_version = run_profile
         run.component_status_json = json.dumps(component_status, ensure_ascii=False)
         run.counts_json = json.dumps({
             "character_candidates": len(candidates),
