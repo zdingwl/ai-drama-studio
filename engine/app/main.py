@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from engine.app.asset_batch_routes_v4 import router as asset_batch_router
 from engine.app.asset_routes_v3 import router as asset_router
+from engine.app.character_gallery_routes_v10 import router as character_gallery_router
 from engine.app.content_analysis_v2 import (
     ContentAnalysisError,
     content_model_status,
@@ -66,6 +67,7 @@ app.include_router(shot_cache_router)
 app.include_router(shot_edit_router)
 app.include_router(asset_router)
 app.include_router(asset_batch_router)
+app.include_router(character_gallery_router)
 
 
 class ProjectCreate(BaseModel):
@@ -241,7 +243,7 @@ def api_shot_thumbnail(shot_id: str) -> FileResponse:
 
 @app.get("/api/models/f05/status")
 def api_f05_model_status() -> dict[str, object]:
-    """查看 YuNet/SFace 是否已经在本机准备完成。"""
+    """查看人物视觉模型是否已经在本机准备完成。"""
     return content_model_status()
 
 
