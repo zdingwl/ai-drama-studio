@@ -1,25 +1,39 @@
-# Character V10.1 — Capture-first Identity + Shot Binding Recovery
+# Character V10.1 — Capture-first Identity + Two-pass Shot Presence Recovery
 
 > **Status:** IMPLEMENTED / NEEDS WINDOWS REAL-VIDEO REGRESSION  
 > **Formal runtime profile:** `character-v10.1-capture-first-model-classification`  
 > **Formal asset profile:** `f05-assets-v10.1-person-evidence-model-classification`  
-> **Formal resolver:** `person-evidence-model-classifier-v10.1`
+> **Formal resolver:** `person-evidence-model-classifier-v10.1`  
+> **Last synchronized:** 2026-08-27 13:38 +08:00
 
 ## 1. Why V10.1 exists
 
-V10 solved the structural error of treating detection fragments as Character assets by moving to capture-first Person Evidence and model classification.
+V10 solved the structural error of treating detections/Tracks as Character assets by moving to capture-first Person Evidence and project-level model classification.
 
-V10.1 adds two corrections:
+V10.1 now contains three corrections:
 
-1. **Risky-view identity creation:** strong `CONTAMINATED` / substantial `PARTIAL` Person crops are allowed to propose a new identity under stricter cross-Shot confirmation instead of being permanently excluded by image-condition labels.
-2. **Shot-level known-identity recovery:** when the global resolver already knows a Character, an individually ambiguous Track can still be attached to that known identity when repeated observations across the Track produce one unique, stable winner.
+1. **Risky-view identity creation** — strong `CONTAMINATED` / substantial `PARTIAL` Person crops may propose a new identity only under strict cross-Shot confirmation.
+2. **Pass-1 known-identity Track recovery** — one unresolved Track with repeated observations may attach to an already-confirmed identity.
+3. **Pass-2 fragmented Shot-presence recovery** — several short unresolved Track fragments inside the same Shot may be aggregated to recover presence of an already-confirmed Character.
 
-The second correction specifically targets the user-visible failure:
+The third correction was added after real-video regression showed this exact pattern:
 
 ```text
-Character asset page identifies person correctly
-but a Shot still shows “待解析人物” / wrong Character binding
+Global Character classes are correct
+but Shot rows still miss visible known people
 ```
+
+Observed regression rows included:
+
+```text
+SHOT 0002  young woman visible → unbound
+SHOT 0004  old + young visible → only old woman bound
+SHOT 0006  old woman close-up → unbound
+SHOT 0007  young woman partial/body view → unbound
+SHOT 0009  two-person view → second known person may be missing
+```
+
+This is a Shot-presence recall problem, not evidence that the global identity classes should be loosened.
 
 ## 2. Formal pipeline
 
@@ -28,7 +42,7 @@ Shot / Reference Clip
 ↓
 YOLOX detects every person
 ↓
-one detected person → one explicit isolated Person Instance crop
+one detected person → one isolated Person Instance crop
 ↓
 extract separated Person features
   YoutuReID person embedding
@@ -45,26 +59,28 @@ resolve_global_identities(tracks)
 RESOLVED identity classes + UNRESOLVED evidence
 ↓
 recover_unresolved_tracks(candidates)
-  └ recovered Track receives identity_recovery provenance
+  Pass 1: repeated evidence inside one unresolved Track
+↓
+recover_fragmented_shot_presence(candidates)
+  Pass 2: aggregate remaining short fragments inside one Shot
 ↓
 write final A/B/C identity assignment back to Person Evidence manifest
 ↓
-persist classified gallery / CharacterCandidate / CharacterTrack
-  └ persist identity_recovery JSON on the exact Track
+persist classified Gallery / CharacterCandidate / CharacterTrack
+  └ exact identity_recovery provenance stays on recovered Tracks
 ↓
 V10/V10.1 Final Gate
 ↓
 Character + ShotCharacterBinding
-  └ recovered-only Shot uses Track recovery score as Shot-presence confidence
 ↓
 Asset Workspace V10.1 adapter
   ├ RESOLVED → evidence_by_shot.characters
   └ UNRESOLVED → evidence_by_shot.character_diagnostics
 ```
 
-## 3. Capture-first rule
+## 3. Capture-first and identity contract
 
-Image condition is evidence metadata, not identity cardinality.
+Image condition is evidence metadata, not Character cardinality.
 
 Supported Person Evidence classes:
 
@@ -75,19 +91,7 @@ CONTAMINATED
 PARTIAL
 ```
 
-Rules:
-
-- `CLEAN` / `OCCLUDED`: normal seed candidates when quality is sufficient.
-- strong `CONTAMINATED`: may seed a new identity under stricter confirmation.
-- substantial detector-backed `PARTIAL`: may seed under stricter confirmation when visible area/quality is sufficient.
-- weak/tiny/low-score `PARTIAL`: save/classify/attach only; never creates a new Character.
-- multi-person frames must be split into isolated Person Instance crops; whole-frame identity input is forbidden.
-
-## 4. Identity model contract
-
-YoutuReID is the primary identity model signal because it is designed for front/side/back person matching.
-
-Supporting channels remain separate:
+YoutuReID is the primary identity model signal. Supporting channels remain separate:
 
 ```text
 person_reid       primary
@@ -95,56 +99,50 @@ clothing_upper    support
 clothing_lower    support
 body_hist         support
 body_structure    support
-face              optional support / hard conflict
+face              optional support / high-quality hard conflict
 ```
 
-There is no demographic inference and no opaque “total person embedding” that hides the reason for a match.
+Multi-person frames must be split into isolated Person Instances. Whole-frame identity input is forbidden.
 
-High-quality Face disagreement is a hard negative. Face agreement is useful support but Face is **not required** to define a person.
-
-## 5. New-identity confirmation
-
-A formal V10/V10.1 identity must have at least:
+A formal new V10/V10.1 identity requires at least:
 
 ```text
 >= 3 independent Shots
 >= 3 model-usable Person Images
 stable cross-Shot Person-ReID support
-unique class
+unique identity class
 same-sample cannot-link preserved
 no high-quality Face hard conflict
 ```
 
-Risky seed groups use stricter Person-ReID confirmation than normal groups.
+Risky seed groups use stricter Person-ReID confirmation. Weak/tiny partial fragments remain evidence/attach-only and cannot create a Character.
 
-This means one strong crop or one Track is never enough to create a Final Character.
+Face is not required to define a person.
 
-## 6. Shot-level known-identity Track recovery
+## 4. Pass 1 — known-identity Track recovery
 
-### 6.1 Problem
+Formal module:
 
-Single Person Evidence classification is intentionally conservative. A short Shot may contain several observations that are each only “ambiguous” but are all consistently closest to the same already-confirmed identity.
+```text
+engine/app/character_shot_binding_v101.py
+```
 
-Without a Track-level second pass, the global person list can be correct while that Shot remains unbound.
-
-### 6.2 Formal recovery rule
-
-For each `UNRESOLVED` Track:
+For each unresolved Track:
 
 ```text
 compare every usable observation
-against every already-RESOLVED identity gallery
+against every already-RESOLVED identity Gallery
 ↓
-aggregate best support by independent gallery Shot
+aggregate support across independent Gallery Shots
 ↓
 require repeated Track evidence
 ↓
 require one unique winner
 ↓
-attach Track to that existing identity
+attach whole Track to that existing identity
 ```
 
-Current guardrails in `character_shot_binding_v101.py`:
+Current guardrails:
 
 ```text
 MIN_TRACK_OBSERVATIONS = 3
@@ -155,29 +153,143 @@ STRONG_TRACK_MEDIAN = 0.84
 WINNER_MARGIN >= 0.07
 ```
 
-Important behavior:
+Hard rules:
 
-- fewer than 3 usable observations → no recovery;
-- same-sample cannot-link → hard reject;
-- high-quality Face conflict → hard reject;
-- no unique winner → no recovery;
-- repeated weaker ReID support must also have enough independent clothing/body support;
+- fewer than 3 usable observations → no Pass-1 recovery;
+- same-sample cannot-link → reject;
+- high-quality Face conflict → reject;
+- ambiguous winner → unresolved;
+- repeated weaker ReID requires appearance support;
 - repeated very strong ReID may stand alone;
-- recovery attaches the **whole Track**, not just one crop.
+- recovery never creates a new identity.
 
-### 6.3 Non-negotiable invariant
+Pass-1 source:
 
-Track recovery **never creates a new identity**.
+```text
+V10_1_TRACK_KNOWN_IDENTITY_RECOVERY
+```
 
-It can only answer:
+## 5. Why Pass 2 is necessary
 
-> “This unresolved Track belongs to one Character that was already independently confirmed.”
+MOT and conservative per-observation classification can split one visually-present person into several short Track fragments.
 
-If there is no confirmed identity, the pass does nothing.
+Example:
 
-## 7. Recovery provenance and persistence
+```text
+SHOT 0007
+fragment A = 1 useful observation
+fragment B = 1 useful observation
+fragment C = 1 useful observation
+```
 
-Before a Track is moved into a confirmed Candidate, V10.1 attaches transient Track-level provenance:
+Each fragment individually fails Pass 1 because it has fewer than 3 observations, even if all three independently point to the same known Character.
+
+Lowering `MIN_TRACK_OBSERVATIONS` globally would increase false binding. The correct unit for this failure is therefore:
+
+```text
+known Character presence inside one Shot
+```
+
+rather than a weaker new-identity rule.
+
+## 6. Pass 2 — fragmented Shot-presence recovery
+
+Formal module:
+
+```text
+engine/app/character_shot_presence_v101.py
+```
+
+Formal source:
+
+```text
+V10_1_SHOT_FRAGMENT_AGGREGATION
+```
+
+Flow:
+
+```text
+remaining unresolved short Track fragments
+↓
+compare each usable observation with every confirmed identity Gallery
+↓
+Person-ReID primary
++ clothing/body support
++ optional high-quality Face positive support
+↓
+require a unique known-Character winner for each fragment
+↓
+group mutually-compatible fragments by (Shot, Character)
+↓
+aggregate support across independent Shot timestamps
+↓
+recover only if the Shot-level group is strong enough
+↓
+attach those fragments to the already-RESOLVED Character
+```
+
+Current thresholds:
+
+```text
+REID_STRONG = 0.84
+REID_SUPPORTED = 0.74
+RISKY_REID_SUPPORTED = 0.80
+RISKY_APPEARANCE_CHANNELS = 2
+FACE_STRONG = 0.52
+FACE_POSITIVE_MIN_SCORE = 0.76
+WINNER_MARGIN = 0.075
+
+body-only recovery:
+MIN_SHOT_SUPPORT_OBSERVATIONS = 3
+MIN_SHOT_SUPPORT_TIMESTAMPS = 3
+MIN_SHOT_MEDIAN = 0.76
+```
+
+### 6.1 Body/side/back path
+
+A body-only/side/back recovery still needs repeated evidence across the Shot:
+
+```text
+>= 3 supporting observations
+>= 3 distinct source timestamps
+Shot aggregate median >= 0.76
+unique Character winner
+```
+
+This keeps one weak fragment from being promoted just to fill a missing binding.
+
+### 6.2 Strong Face positive path
+
+V10.1 Face remains optional, but close-up Shots can have weak body ReID while SFace is very strong.
+
+Pass 2 therefore allows a strong Face match to confirm **presence of an already-known Character** when:
+
+```text
+observation Face quality >= 0.76
+Gallery Face quality >= 0.76
+Face similarity >= 0.52
+support exists from >=2 independent Gallery Shots
+unique Character winner
+no hard Face conflict / cannot-link conflict
+```
+
+This does not create a new Character and does not make Face mandatory for side/back/body recovery.
+
+## 7. Cannot-link and hard conflicts
+
+Same-sample cannot-link remains a hard constraint in both passes.
+
+If two fragments represent two different persons visible at the same sampling time, they cannot be counted as repeated evidence for one Character.
+
+High-quality Face disagreement is also fail-closed. A positive ReID/clothing score cannot override a strong contradictory Face pair.
+
+These constraints are especially important for two-person Shots such as SHOT 0004 / 0009.
+
+## 8. Recovery provenance and persistence
+
+Every recovered Track carries exact provenance before persistence.
+
+Pass 1:
 
 ```text
 track.identity_recovery = {
@@ -190,75 +302,56 @@ track.identity_recovery = {
 }
 ```
 
-Then:
+Pass 2 adds:
 
 ```text
-candidate.tracks += recovered_track
-→ candidate embeddings/gallery refreshed
-→ v10_metadata.track_recovery_* updated
-→ unresolved candidate keeps only remaining tracks
-→ character_persistence_v6 persists the exact Track recovery metadata
+track.identity_recovery = {
+  source: "V10_1_SHOT_FRAGMENT_AGGREGATION",
+  target_candidate_id,
+  shot_id,
+  score,
+  observation_count,
+  support_count,
+  strong_face_support,
+  policy
+}
 ```
 
-Persisted Track Evidence:
+Persisted location:
 
 ```text
 CharacterTrack.evidence_json.identity_recovery
 ```
 
-Candidate summary metadata includes:
+Candidate summary metadata retains `track_recovery_*`; the second pass also records `shot_fragment_recovery_count` and its policy.
+
+`character_persistence_v6.py` is a compatibility filename; it preserves the formal V10.1 profile and exact Track recovery JSON.
+
+## 9. Identity confidence vs Shot-presence confidence
+
+`CharacterCandidate.confidence` is project-level identity confidence.
+
+Recovery score answers a different question:
+
+> how confidently is this already-known Character present in this Shot?
+
+Final rule:
 
 ```text
-track_recovery_count
-track_recovery_shot_ids
-track_recovery_scores
-track_recovery_source
-track_recovery_policy
-```
-
-`character_persistence_v6.py` is a compatibility filename but now preserves an already-formal V9/V10/V10.1 asset profile rather than temporarily downgrading a V10.1 Run to the historical V6 profile.
-
-Recovery must occur **before** Candidate/Track persistence and before Final materialization.
-
-## 8. Identity confidence vs Shot-presence confidence
-
-The project now treats these as different semantics.
-
-`CharacterCandidate.confidence` describes the confirmed identity class at project level.
-
-A V10.1 Track recovery score describes:
-
-> how strongly this already-known Character is present in this particular Shot.
-
-Final binding rule:
-
-```text
-Shot has at least one normal/direct identity-assigned Track
+Shot has a normal/direct identity-assigned Track
 → ShotCharacterBinding.confidence = CharacterCandidate.confidence fallback
 
-Shot contains only V10.1 recovered Track fragment(s)
+Shot contains only recovered Track fragment(s)
 → ShotCharacterBinding.confidence = max(valid recovery scores for that Shot)
 ```
 
-If multiple Track fragments of the same Character appear in one Shot, Final materialization still creates only one `ShotCharacterBinding`.
+If several Track fragments of the same Character occur in one Shot, Final materialization still creates one `ShotCharacterBinding`.
 
-No DB schema migration was needed. The existing binding `confidence` column is used for Shot-presence confidence, while Track recovery provenance stays inside immutable Track Evidence JSON.
+No DB schema migration is required.
 
-Implementation lives in the shared materializer:
+## 10. Final Gate
 
-```text
-engine/app/asset_final_gate_v9.py
-```
-
-The formal V10/V10.1 entry remains:
-
-```text
-engine/app/asset_final_gate_v10.py
-```
-
-## 9. Final Gate
-
-Formal V10/V10.1 Final Character materialization is fail-closed:
+Formal V10/V10.1 Final Character materialization remains unchanged and fail-closed:
 
 ```text
 identity_status == RESOLVED
@@ -268,104 +361,126 @@ identity_status == RESOLVED
 + final_asset_eligible is not false
 ```
 
-V10.1 adds `person-evidence-model-classifier-v10.1` to the formal resolver allow-list through:
+Neither recovery pass can upgrade an unconfirmed identity through this Gate.
+
+Face visibility is not required.
+
+Formal entry:
 
 ```text
 engine/app/asset_final_gate_v10.py
 ```
 
-Face visibility is not required for formal V10/V10.1 candidates.
+Shared V10/V10.1 materializer:
 
-## 10. Asset Workspace evidence semantics
+```text
+engine/app/asset_final_gate_v9.py
+```
 
-The older `asset_workspace_v3._evidence_by_shot()` implementation filters Character Evidence by `track.face_visible`. That is historical behavior and does not match V10.1.
+## 11. Asset Workspace evidence semantics
 
-Formal API responses are therefore decorated by:
+Formal API responses are decorated by:
 
 ```text
 engine/app/asset_workspace_character_v101.py
 ```
 
-Current contract:
+Contract:
 
 ```text
 evidence_by_shot[shot_id].characters
 = RESOLVED Character evidence only
 
-face_visible == false is allowed
-front / side / back / body-visible / recovered Track are all valid once identity is confirmed
-
 evidence_by_shot[shot_id].character_diagnostics
 = UNRESOLVED Track/person diagnostics only
 ```
 
-UNRESOLVED diagnostics have:
+A recovered front/side/back/body Track remains visible with `face_visible=false`.
+
+The adapter reads the **actual source from each Track recovery record**. Therefore Pass-2 evidence reports:
 
 ```text
-final_asset_id = null
-confidence = null
-confidence_source = UNRESOLVED_DIAGNOSTIC
+V10_1_SHOT_FRAGMENT_AGGREGATION
 ```
 
-They remain available for debugging/future diagnostic UI but no longer appear in the main Shot Character evidence list consumed by the current review table.
+rather than being mislabeled as Pass 1.
 
-This prevents a pending fragment from replacing a correctly confirmed Character in the Shot UI.
+UNRESOLVED diagnostics have no Final asset id and no Final-binding confidence.
 
-## 11. Formal code map
+## 12. Character Gallery Shot labels
+
+While reviewing the same real-video screenshots, a separate UI defect was identified: Gallery cards were deriving a fake Shot number from the trailing digits of the UUID-based `shot_id`.
+
+That is invalid because `studio_v2.new_id()` produces UUID ids.
+
+Current behavior:
+
+```text
+character_gallery_routes_v10.py
+→ resolve immutable shot_id against v2_shots
+→ return shot_ordinal / episode_id / episode_order
+
+CharacterPersonGalleryV10.vue
+→ render SHOT #### from shot_ordinal
+```
+
+This is display-only and does not affect identity/binding logic.
+
+## 13. Formal code map
 
 ```text
 engine/app/character_visual_v2.py
-  compatibility facade that currently points to V10.1
+  compatibility facade → current V10.1 runtime
 
 engine/app/character_runtime_v6.py
-  formal V10.1 runtime entry; filename retained for import compatibility
+  formal V10.1 runtime; executes both recovery passes
 
 engine/app/character_observation_v10.py
   Person Instance detection / crop capture
 
 engine/app/character_person_evidence_v10.py
-  evidence/seed eligibility policy
+  evidence/seed eligibility
 
 engine/app/character_person_features_v9.py
   separated Person feature channels
 
 engine/app/character_tracking_v10.py
-  temporal Track building
-
-engine/app/character_identity_v10.py
-  V10 classifier base/helpers
+  temporal MOT organization
 
 engine/app/character_identity_v101.py
-  formal V10.1 identity resolver
+  formal global identity classifier
 
 engine/app/character_shot_binding_v101.py
-  post-confirmation known-identity Track recovery + Track provenance
+  Pass-1 known-identity Track recovery
+
+engine/app/character_shot_presence_v101.py
+  Pass-2 fragmented same-Shot known-presence aggregation
 
 engine/app/character_persistence_v6.py
-  persistence bridge; stores identity_recovery and preserves formal V10/V10.1 profile
+  persistence bridge / identity_recovery storage
 
 engine/app/character_gallery_v10.py
-  classified gallery selection/persistence
+  classified Person Gallery persistence
 
-engine/app/character_evidence_store_v10.py
-  capture-first evidence store and classification writeback
+engine/app/character_gallery_routes_v10.py
+  Gallery API + real Shot ordinal resolution
 
 engine/app/asset_final_gate_v10.py
-  formal Final Character gate entry
+  formal Final Character Gate entry
 
 engine/app/asset_final_gate_v9.py
-  shared V10/V10.1 materializer + Shot-presence confidence aggregation
+  shared materializer + Shot-presence confidence
 
 engine/app/asset_workspace_character_v101.py
-  face-optional resolved Shot evidence + unresolved diagnostics split
+  resolved Shot evidence / unresolved diagnostics adapter
 
-engine/app/asset_routes_v3.py
-  decorates every returned Asset Workspace payload with V10.1 Character evidence semantics
+frontend/src/components/CharacterPersonGalleryV10.vue
+  classified Person Gallery UI with real Shot ordinals
 ```
 
-## 12. Required regression cases
+## 14. Required regression cases
 
-The following cases must remain locked:
+The following must remain locked:
 
 ```text
 1. multi-person frame → independent Person Instances
@@ -374,42 +489,52 @@ The following cases must remain locked:
 4. strong risky views across >=3 Shots → may form one identity
 5. Face absent → confirmed identity can still pass formal gate
 6. high-quality Face conflict → never merge
-7. unresolved Track with repeated unique support → attach to confirmed identity
-8. successful recovery persists source/target/Shot/score provenance on Track
-9. ambiguous winner → stays unresolved
-10. cannot-link conflict during recovery → stays unresolved
+7. unresolved Track with repeated unique support → Pass-1 attach to confirmed identity
+8. Pass-1 recovery persists source/target/Shot/score
+9. Pass-1 ambiguous winner → unresolved
+10. Pass-1 cannot-link conflict → unresolved
 11. recovery never creates a new Character
-12. recovered-only Shot binding uses Track recovery confidence
-13. normal/direct Shot binding keeps identity-confidence fallback
-14. mixed direct + recovered Track fragments prefer direct assignment
-15. face_visible=false recovered Track remains visible in RESOLVED Shot evidence
-16. UNRESOLVED Track is exposed only as character_diagnostics
-17. Final Gate still requires formal resolver + >=3 Shots/images
+12. three singleton fragments in one Shot → Pass-2 may recover one known Character
+13. one strong high-quality Face fragment → may confirm presence of existing Character
+14. one weak body fragment → stays unresolved
+15. same-sample cannot-link fragments → cannot be counted as duplicate support
+16. recovered-only Shot binding → uses recovery confidence
+17. normal/direct Shot → uses identity-confidence fallback
+18. mixed direct + recovered fragments → direct assignment wins confidence semantics
+19. face_visible=false recovered Track → visible as RESOLVED Shot evidence
+20. UNRESOLVED Track → character_diagnostics only
+21. workspace reports actual Pass-1/Pass-2 recovery source
+22. Gallery displays real v2_shots.ordinal, never UUID suffix
+23. Final Gate still requires formal resolver + >=3 Shots/images
 ```
 
-## 13. Current validation status
+## 15. Validation status
 
-Implementation and focused regression tests exist, but the entire repository CI is not currently green because of legacy/environment failures unrelated to this single feature. Recent runs continue to show backend compile and FastAPI import succeeding before the full-pytest failure. Known repository-level categories include missing full `cv2`/`trackers`/media runtime, legacy semantic assertions, FFmpeg assumptions, and frontend TypeScript/vue-tsc compatibility.
+Implementation exists, but the whole repository CI is not green because of existing legacy/environment failures.
 
-Do not mark Character V10.1 `STABLE/FROZEN` until real Windows short-drama material verifies both:
+After adding Pass 2, the backend full-test summary reached:
 
 ```text
-Final Character count
-and
-ShotCharacterBinding accuracy
+28 failed, 176 passed, 1 skipped
 ```
 
-## 14. Local acceptance procedure
+The new fragment-presence focused test file was not among the failures. Backend compile and FastAPI import passed. Existing failures still include missing/full runtime assumptions (`cv2`, trackers, FFmpeg/media) and legacy assertions. Frontend build remains blocked by the existing `vue-tsc` / TypeScript compatibility issue.
 
-After pulling the latest code:
+Do not mark Character V10.1 `STABLE/FROZEN` until real Windows footage verifies both Final Character count and ShotCharacterBinding accuracy.
+
+## 16. Local acceptance procedure
+
+After pulling latest `main`:
 
 ```text
-1. verify F05 models/runtime
-2. rerun asset extraction (old Run will not auto-rebind or gain identity_recovery metadata)
-3. compare Character list to real cast in the sample
-4. inspect previously incorrect Shot bindings
-5. verify the Shot AI Character line contains only RESOLVED Character evidence
-6. if a known person is still missing, inspect CharacterTrack.evidence_json.identity_recovery + candidate track_recovery_* metadata
-7. distinguish identity-classification failure from Shot-presence recovery failure before changing thresholds
-8. tune only if the failure is reproducible on real media
+1. restart backend/frontend as needed
+2. rerun asset extraction — old Run will not auto-rebind
+3. verify Final Character count stays correct
+4. recheck SHOT 0002 / 0004 / 0006 / 0007 / 0009
+5. inspect CharacterTrack.evidence_json.identity_recovery for recovered Shots
+6. expect new fragment cases to use source V10_1_SHOT_FRAGMENT_AGGREGATION
+7. if 0002/0006 still miss, inspect Face detection, face_score and SFace evidence before threshold changes
+8. if 0004/0009 miss the second person, verify YOLOX captured a separate Person Instance
+9. if 0007 misses, inspect support_count / timestamps / winner margin before tuning
+10. only tune thresholds after the failure is reproducible and its stage is known
 ```
