@@ -1,15 +1,16 @@
 """03 资产本地人物视觉模型准备。
 
-Character V6 当前固定模型：
-- YuNet：Face Detection；
-- SFace：当前 Face Identity provider（已与 Global Resolver 解耦，可替换）；
-- YOLOX：Person Detection，先回答“画面里有几个人”；
-- YoutuReID：Body ReID，只做辅助证据。
+Character V10 固定模型：
+- YOLOX：Person Detection，先回答画面中有哪些 Person Instance；
+- YoutuReID：Person Re-identification，V10 人物跨正面 / 侧身 / 背影分类主模型；
+- YuNet：可选 Face Detection 支持；
+- SFace：可选 Face identity 支持 / 冲突证据。
 
-V6 额外运行时：
+V10 额外运行时：
 - trackers 2.6：BoT-SORT 优先，ByteTrack fallback；
-- Global Identity Graph：整项目 Track 完成后统一解析人物身份；
-- 只有 RESOLVED Candidate 能进入 Final Character。
+- Capture-first Person Evidence Store；
+- Person Evidence Model Classifier；
+- 只有 RESOLVED 人物类别进入 Final Character。
 
 模型不提交 Git；显式执行 prepare 后写入 ``data_v2/models/f05``，正式分析只读本地权重。
 YOLOX / YoutuReID 默认 ONNX Runtime CUDA 优先，CUDA 不可用自动回退 CPU。
@@ -35,7 +36,7 @@ class ContentModelError(RuntimeError):
 
 
 class RequiredCharacterModelError(RuntimeError):
-    """正式人物 V6 Run 缺少必需模型/运行时时使用。"""
+    """正式人物 Run 缺少必需模型/运行时时使用。"""
 
 
 @dataclass(frozen=True)
@@ -118,10 +119,10 @@ def _verify(path: Path, spec: ModelSpec) -> None:
 
 
 def model_status() -> dict[str, object]:
-    """返回 V6 模型准备状态 + GPU + Mature MOT 状态，不主动联网。"""
+    """返回 V10 模型准备状态 + GPU + Mature MOT 状态，不主动联网。"""
 
-    from engine.app.inference_runtime_v41 import runtime_status
-    from engine.app.character_tracking_v6 import tracker_runtime_status
+    from engine.app.inference_runtime_v41 import runtime_status as inference_runtime_status
+    from engine.app.character_tracking_v10 import tracker_runtime_status
 
     root = model_dir()
     models: list[dict[str, object]] = []
@@ -149,18 +150,24 @@ def model_status() -> dict[str, object]:
         all_ready = False
     return {
         "ready": all_ready,
-        "profile": "character-v6-global-identity",
+        "profile": "character-v10-capture-first-model-classification",
         "models": models,
-        "runtime": runtime_status(),
+        "runtime": inference_runtime_status(),
         "tracking_runtime": tracking,
         "face_runtime": {
             "device": "CPU",
             "provider": "OpenCV",
-            "detail": "YuNet + SFace provider (replaceable)",
+            "detail": "YuNet + SFace optional support; Face is not required for identity",
         },
-        "identity_policy": "12fps Person → Mature MOT → Global Identity Graph → RESOLVED/UNRESOLVED",
-        "final_policy": "Only RESOLVED Identity can become Final Character",
-        "gallery_policy": "正式人物图库只保存目标人物干净单人图",
+        "identity_policy": (
+            "split Person Instance → capture/save Person Evidence → YoutuReID model classify → "
+            "write A/B/C assignments back → RESOLVED only Final"
+        ),
+        "final_policy": "Only confirmed V10 person identity classes can become Final Character",
+        "gallery_policy": (
+            "classified Person Gallery may contain front / side / back / occluded / "
+            "multi-person-frame isolated crops; CLEAN is not required"
+        ),
     }
 
 
@@ -173,7 +180,7 @@ def require_models() -> dict[str, Path]:
             _verify(path, spec)
         except ContentModelError as exc:
             raise RequiredCharacterModelError(
-                f"人物识别 V6 模型未准备完整：{exc}。请先执行人物模型准备，再重新提取资产。"
+                f"人物识别 V10 模型未准备完整：{exc}。请先执行人物模型准备，再重新提取资产。"
             ) from exc
         result[spec.logical_id] = path
     return result
@@ -214,7 +221,7 @@ def prepare_models() -> dict[str, object]:
 
 
 def main() -> None:
-    print("正在准备资产人物 V6 模型（YOLOX / YoutuReID / YuNet / SFace）…")
+    print("正在准备资产人物 V10 模型（YOLOX / YoutuReID / YuNet / SFace）…")
     status = prepare_models()
     for item in status["models"]:  # type: ignore[index]
         print(f"OK  {item['filename']}\n    {item['path']}")
@@ -222,8 +229,8 @@ def main() -> None:
     tracking = status.get("tracking_runtime") or {}
     print(f"Person/ReID：{runtime.get('device')} · {runtime.get('provider')} · {runtime.get('detail')}")
     print(f"MOT：{tracking.get('tracker')} · {tracking.get('package')}")
-    print("人物身份策略：12fps Person → Mature MOT → Global Identity Graph → RESOLVED only Final")
-    print("资产人物 V6 模型准备完成。")
+    print("人物身份策略：Person Instance → 先保存 Person Evidence → YoutuReID 模型分类 → RESOLVED only Final")
+    print("资产人物 V10 模型准备完成。")
 
 
 if __name__ == "__main__":
