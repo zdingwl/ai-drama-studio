@@ -207,6 +207,13 @@ SessionLocal = sessionmaker(bind=ENGINE, autoflush=False, expire_on_commit=False
 
 
 def init_database() -> None:
+    """初始化正式 V2 schema；仅创建缺失表，不删除或重写历史表/字段。"""
+
+    # P1.1 的 Breakdown Draft 与 ShotRevision 共用 studio_v2.Base。
+    # 延迟 import 既避免模块加载期的循环依赖，也保证直接调用 init_database()
+    # 时不会因为 main.py 的 import 顺序不同而漏建 Breakdown / ShotRevision 表。
+    from engine.app import breakdown_models_v1 as _breakdown_models_v1  # noqa: F401
+
     Base.metadata.create_all(ENGINE)
 
 
