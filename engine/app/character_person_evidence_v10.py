@@ -4,11 +4,12 @@ V10 follows capture-first, classify-second:
 - every detector-backed Person Instance is preserved as person evidence when it has
   enough visible body information for model comparison;
 - CLEAN is not a prerequisite for evidence storage or identity classification;
-- seed eligibility is a separate, stricter property used only when creating a new
-  identity class;
+- seed eligibility is a separate property used only to propose a new identity class;
 - side/back views and people split from a multi-person frame are first-class evidence;
-- partial/occluded/contaminated views may attach to an existing identity with stronger
-  model support, but low-information fragments do not create a new Character.
+- contaminated / frame-edge partial views may seed only when the detector and visible
+  person content are strong enough; final identity confirmation still requires stable
+  cross-shot Person-ReID evidence;
+- tiny or weak partial fragments remain attach-only and cannot manufacture Characters.
 """
 from __future__ import annotations
 
@@ -25,6 +26,11 @@ CLASS_RELIABILITY = {
 
 MIN_EVIDENCE_QUALITY = 0.28
 MIN_SEED_QUALITY = 0.58
+MIN_CONTAMINATED_SEED_QUALITY = 0.64
+MIN_PARTIAL_SEED_QUALITY = 0.68
+MIN_PARTIAL_SEED_AREA_RATIO = 0.060
+MIN_CONTAMINATED_SEED_AREA_RATIO = 0.035
+MIN_PARTIAL_SEED_DETECTION_SCORE = 0.32
 MIN_PARTIAL_AREA_RATIO = 0.012
 MIN_OTHER_AREA_RATIO = 0.008
 
@@ -41,6 +47,7 @@ def observation_policy(observation: Any) -> PersonEvidencePolicy:
     instance_class = str(getattr(observation, "instance_class", "UNKNOWN") or "UNKNOWN")
     reliability = float(CLASS_RELIABILITY.get(instance_class, 0.40))
     quality = float(getattr(observation, "person_feature_quality", 0.0) or 0.0)
+    detection_score = float(getattr(observation, "detection_score", 0.0) or 0.0)
     frame_area = max(1, int(getattr(observation, "frame_width", 1)) * int(getattr(observation, "frame_height", 1)))
     bbox = tuple(int(value) for value in getattr(observation, "person_bbox", getattr(observation, "bbox", (0, 0, 0, 0))))
     area_ratio = max(0, bbox[2]) * max(0, bbox[3]) / float(frame_area)
@@ -62,15 +69,35 @@ def observation_policy(observation: Any) -> PersonEvidencePolicy:
         return PersonEvidencePolicy(False, False, reliability, "person-image quality is too low")
 
     evidence_eligible = True
-    # A new identity may be seeded from isolated or moderately occluded whole-person
-    # views.  Contaminated/partial images are still saved and classified, but they
-    # cannot independently create a new Character.
-    seed_eligible = bool(
-        instance_class in {"CLEAN", "OCCLUDED"}
-        and quality >= MIN_SEED_QUALITY
-    )
+
+    # Image-condition labels do not decide identity cardinality by themselves.
+    # A strong, substantial side/back/overlapped crop can propose a new identity;
+    # the identity resolver must still prove it across independent Shots.
+    if instance_class in {"CLEAN", "OCCLUDED"}:
+        seed_eligible = quality >= MIN_SEED_QUALITY
+        seed_reason = "clean-or-occluded seed candidate"
+    elif instance_class == "CONTAMINATED":
+        seed_eligible = bool(
+            quality >= MIN_CONTAMINATED_SEED_QUALITY
+            and area_ratio >= MIN_CONTAMINATED_SEED_AREA_RATIO
+            and detection_score >= MIN_PARTIAL_SEED_DETECTION_SCORE
+        )
+        seed_reason = "strong contaminated person-image seed candidate"
+    elif instance_class == "PARTIAL":
+        seed_eligible = bool(
+            quality >= MIN_PARTIAL_SEED_QUALITY
+            and area_ratio >= MIN_PARTIAL_SEED_AREA_RATIO
+            and detection_score >= MIN_PARTIAL_SEED_DETECTION_SCORE
+        )
+        seed_reason = "strong substantial partial person-image seed candidate"
+    else:
+        seed_eligible = False
+        seed_reason = "unknown image condition"
+
     reason = "capture-first person evidence"
-    if not seed_eligible:
+    if seed_eligible:
+        reason += f"; {seed_reason}; requires cross-shot model confirmation"
+    else:
         reason += "; classify/attach only"
     return PersonEvidencePolicy(evidence_eligible, seed_eligible, reliability, reason)
 
