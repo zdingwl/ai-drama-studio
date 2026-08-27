@@ -80,11 +80,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install fastapi==0.128.2 pydantic==2.13.4 SQLAlchemy==2.0.50 python-multipart==0.0.29 httpx==0.28.1 numpy==2.1.3 pytest==9.0.2
 
-      - name: Compile Breakdown P2 sidecar
+      - name: Compile Breakdown P2 providers
         run: python -m compileall -q engine/app
 
-      - name: Run Breakdown P2 Windows sidecar acceptance
-        run: python -m pytest -q engine/tests/v2/test_breakdown_p2_sidecar_v1.py engine/tests/v2/test_breakdown_lifecycle_v1.py engine/tests/v2/test_breakdown_stale_integration_v1.py
+      - name: Run Breakdown P2 Windows provider acceptance
+        run: python -m pytest -q engine/tests/v2/test_breakdown_p2_sidecar_v1.py engine/tests/v2/test_breakdown_p2_asr_v1.py engine/tests/v2/test_breakdown_lifecycle_v1.py engine/tests/v2/test_breakdown_stale_integration_v1.py
 
   frontend-v2:
     runs-on: ubuntu-latest
