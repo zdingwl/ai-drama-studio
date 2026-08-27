@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.5.0
-description: AI Drama Studio Reference Video 驱动的本地短剧本地化重制工作台开发规则；人物资产正式基线 Character V10.1 + explicit Shot Character Assignment。
+version: 3.6.0
+description: AI Drama Studio Reference Video 驱动的本地短剧本地化重制工作台开发规则；当前人物基线 Character V10.1 explicit Shot Assignment；已接受 Breakdown-first Target Plan，尚未实施。
 ---
 
 # AI Drama Studio — Reference Video V2 / Character V10.1
@@ -15,16 +15,27 @@ AGENTS.md
 → SKILL.md
 → docs/PROJECT_STATE.md
 → docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-→ docs/ASSET_CHARACTER_RECOGNITION_V10_1.md
+→ docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
+→ docs/ASSET_CHARACTER_RECOGNITION_V10_1.md（涉及人物时）
 → 当前代码/测试
 → 最新 session handoff
 ```
 
-如果旧 Feature/Frozen 文档和当前 wiring 冲突，以当前正式架构文档 + 当前可执行代码为准，并先修正文档。
+必须区分：
+
+```text
+PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + code/tests
+= CURRENT executable truth
+
+BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN
+= accepted TARGET plan, NOT IMPLEMENTED unless CURRENT docs/code say so
+```
+
+旧 Feature/Frozen 文档和当前 wiring 冲突时，以当前正式架构文档 + 当前可执行代码为准，并先修正 CURRENT 文档。Target Plan 与 CURRENT 不同是正常待实施差距，不得把规划直接写成“已实现”。
 
 ## 1. 产品目标
 
-把多集原短剧拆成可控制的 Shot，并把每个原 Shot 保存为 Reference Video。后续通过人物、场景、关键道具、目标语言 Dialogue、Voice 和替换资产控制重制，而不是把原镜头完全翻译成文字后从零猜测动作与摄影。
+把多集原短剧拆成可控制的 Shot，并把每个原 Shot 保存为 Reference Video。后续通过人物、场景、关键道具、目标语言 Dialogue、Voice 和替换资产控制重制，而不是丢失 Reference Video 后从零猜测动作与摄影。
 
 正式用户工作区：
 
@@ -37,7 +48,45 @@ AGENTS.md
 → 06 生成 / 导出
 ```
 
+### 已接受的 Breakdown-first Target
+
+“拉片”目标定义不再等同于 Shot Detection。目标流程是：
+
+```text
+原视频
+→ Preprocess
+→ Shot Detection
+→ Shot + Reference Clip
+→ ASR / OCR / Video Understanding
+→ 第一版匿名结构化拉片 Draft
+→ 根据 Draft 定向提取 Character / Scene / Prop Evidence
+→ Global Asset Resolution + Final Shot Binding
+→ 把真实资产身份回填 Draft
+→ Final Breakdown
+→ remake
+```
+
+一句话：
+
+```text
+先看懂，再识别，再回填
+```
+
+第一遍 Draft 使用 `人物A / subject_A` 等匿名 `LocalSubject`。Draft 是 soft semantic prior，不是 Final Character/Scene/Prop 真值。
+
+完整改造地图与 Phase 顺序以：
+
+```text
+docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
+```
+
+为唯一 Target Plan。
+
+当前代码尚未因为该计划改变 runtime baseline。
+
 ## 2. 核心实体
+
+当前正式实体：
 
 ```text
 Project
@@ -53,6 +102,20 @@ Generation
 ```
 
 Shot 是核心生产单元，Reference Clip 是 Shot 一级正式资产。AI Evidence 与 Final Asset / Binding / Revision 必须分离。
+
+Target Plan 另外定义的规划概念：
+
+```text
+LocalSubject
+ShotSemanticDraft
+TimelineEvent
+SceneSegmentDraft
+DraftResolution
+```
+
+这些是**目标数据概念，不代表当前数据库已有对应表**。实施前必须冻结 schema / migration contract，优先 ADD-only。
+
+`SceneSegmentDraft` 是剧情场景段，不等于项目级 `Scene` Asset。
 
 ## 3. Character V10.1 正式人物链
 
@@ -95,7 +158,11 @@ shot assignment: v10.1-shot-character-assignment-1
 source: V10_1_SHOT_CHARACTER_ASSIGNMENT
 ```
 
-## 4. 四层语义不可混淆
+Breakdown-first P1-P4 不改变这条人物链。后续 Draft 与 Character 联动必须先保持现有硬 Gate 与 explicit assignment 权威。
+
+## 4. 语义层不可混淆
+
+当前正式四层：
 
 ```text
 Observation / Person Evidence / CharacterTrack = 视觉证据
@@ -104,7 +171,16 @@ Shot Character Assignment = 已知人物在某 Shot 的存在判定
 Character / ShotCharacterBinding = Final 人物资产 / 分镜绑定
 ```
 
-Track 数、Face 数、Crop 数不能当人物数量。**Candidate Track membership 也不能当当前 V10.1 Final Shot Binding。**
+Target 语义 Draft：
+
+```text
+LocalSubject / ShotSemanticDraft / SceneSegmentDraft
+= 拉片理解层
+```
+
+它与 Character 身份层是不同语义。
+
+Track 数、Face 数、Crop 数不能当人物数量。Candidate Track membership 不能当当前 V10.1 Final Shot Binding。`subject_A` 也不能因为 VLM 写得像“男主”就直接变成 Character。
 
 ## 5. Capture-first / Identity 规则
 
@@ -133,7 +209,8 @@ no high-quality Face hard conflict
 - 强 `CONTAMINATED` / substantial `PARTIAL` 可以提出新人，但需要更严格跨 Shot ReID 确认；
 - 弱、小、低质量 Partial 只能 save/classify，不能创建新人物；
 - Face 不是 RESOLVED 必需条件；
-- 高质量 Face 明确冲突是 hard negative。
+- 高质量 Face 明确冲突是 hard negative；
+- Semantic Draft 不能绕过这些规则。
 
 ## 6. Explicit Shot Character Assignment
 
@@ -170,6 +247,8 @@ Assignment 只回答：
 ```
 
 不能创建新 Character，也不能为了绑定去修改 `candidate.tracks`。
+
+Target Draft 的人物文案第一阶段不能直接写 assignment；最多在后续专门 Phase 中作为辅助 search/context evidence，并且必须单独测试。
 
 ## 7. Shot Assignment 证据规则
 
@@ -244,6 +323,8 @@ winner_margin
 
 `CharacterCandidate.confidence` 是项目级身份置信度；`shot_presence_assignments[].confidence` 是已知人物在当前 Shot 的 presence 置信度。两者不可混用。
 
+未来 DraftResolution 也必须有独立 provenance/confidence，不能覆盖这两个概念。
+
 ## 9. Final Character Gate / Final Binding
 
 身份 Final Gate：
@@ -293,7 +374,48 @@ MANUAL / RESTORE Revision 默认保护，新 AI Run 不静默覆盖人工版本�
 
 Gallery / Evidence comparison 只是诊断 UI，不是 Final binding source。
 
-## 11. Tracking / 时间原则
+Breakdown-first 同样必须：Draft/Evidence 与 Final 可编辑结果分离；新 Draft Run 不得静默改掉人工确认结果。
+
+## 11. 当前 Shot / 拉片边界与 Target 差距
+
+当前 FastAPI 正式入口通过 `media_v2`：
+
+```text
+preprocess_episode
+→ detect_episode_shots
+→ TransNetV2 boundary
+→ Shot + Reference Clip + thumbnail
+```
+
+当前 `Shot` 已有：
+
+```text
+start_us / end_us / duration_us
+reference_clip_path
+thumbnail_path
+keyframes_json
+short_description
+shot_type
+camera_motion
+```
+
+但当前没有正式完整的：
+
+```text
+ASR/OCR facts
+anonymous LocalSubject
+structured TimelineEvent
+SceneSegmentDraft
+context-directed asset resolution
+Draft → Final Asset fill-back
+标准/国际格式 Final Breakdown renderer
+```
+
+所以“当前 02 拉片 IMPLEMENTED”应理解为 Shot/Reference Clip/镜头工作能力已实现，**不是 Breakdown-first 最终产品形态已经实现**。
+
+历史 `shot_detection.py` / `shot_workbench.py` 的 F04/F05 命名不能覆盖当前 V2 wiring；其中 `shot_workbench.py` 自己也明确不负责人、ASR、Scene、Qwen3-VL。
+
+## 12. Tracking / 时间原则
 
 Tracking 只做时序组织，不决定跨 Shot 身份，也不直接决定 Final Shot binding。
 
@@ -305,9 +427,11 @@ timestamp = local_time_us / 1_000_000
 
 Mature MOT 运行时缺失不能静默发布人物结果。
 
-正式媒体时间统一 integer microseconds。
+正式媒体时间统一 integer microseconds。未来 ASR/OCR/TimelineEvent/Draft 也必须最终映射到同一正式时间基准。
 
-## 12. 模型与授权边界
+## 13. 模型与授权边界
+
+当前固定人物模型：
 
 ```text
 YOLOX Person Detection
@@ -320,7 +444,22 @@ YoutuReID 是人物身份主模型。Face 是可选支持/known presence/conflic
 
 不要静默下载或打包仅限非商业研究用途的 InsightFace/ArcFace 权重。未来 Face provider 只能使用明确可商用或已有授权权重，并保持 Evidence → Identity → Shot Assignment → Final Asset Contract。
 
-## 13. Run / 批量原则
+Target Plan 中的新增模型都只是候选方向。正式选型前必须验证：
+
+```text
+真实短剧效果
+本地/Windows runtime
+显存与速度
+模型/权重来源
+商业许可
+Provider 可替换性
+```
+
+特别注意：当前 `transvlm_runtime_v51.py` 使用 `TransVLM-Qwen3-VL-4B-Instruct` 做**转场区间检测**，它不等于“语义拉片已经实现”。未来内容理解必须作为独立 VLM Provider / Analysis Run 设计。
+
+## 14. Run / 批量原则
+
+当前人物：
 
 ```text
 Person Evidence
@@ -338,9 +477,27 @@ Person Evidence
 - `Episode.sort_order` 是批量顺序唯一依据；
 - GPU/模型重任务默认 `concurrency = 1`；
 - Reference Clip 是正式资产，不是缓存；
-- 新语言时长最终由 Production Timeline 重建，不要求等于原语言。
+- 新语言时长最终由 Production Timeline 重建，不要求等于原语言；
+- Target Breakdown Draft 必须有独立 Run/Revision/provenance，不能只覆盖一段 text。
 
-## 14. 当前主代码
+## 15. Breakdown-first 实施顺序
+
+完整 Phase 定义见 Target Plan，顺序固定为：
+
+```text
+P0 文档/Contract（当前）
+P1 Draft 数据 Contract，ADD-only，不影响旧流程
+P2 ASR/OCR/VLM anonymous Draft read-only sidecar
+P3 02 拉片 UI 展示/编辑结构化 Draft
+P4 Draft 驱动 Scene / Prop 定向验证
+P5 Draft 与 Character 安全联动（V10.1 baseline 验收后）
+P6 Final fill-back + 标准/国际格式 renderer
+P7 接 04/05/06 下游重制
+```
+
+禁止跳过 P1/P2，直接让一段 VLM prose 控制 Final Asset。
+
+## 16. 当前主代码
 
 ```text
 engine/app/studio_v2.py
@@ -373,7 +530,7 @@ engine/app/character_shot_binding_v101.py
 engine/app/character_shot_presence_v101.py
 ```
 
-## 15. 测试与真实验收
+## 17. 测试与真实验收
 
 默认测试目录：
 
@@ -398,7 +555,9 @@ V10.1 当前必须重点锁住：
 
 当前整仓 CI **不是全绿**。真实短剧必须在用户 Windows 本机验证最终人物数和 Shot 绑定。
 
-## 16. 重制策略
+Breakdown-first 每个新 Phase 必须增加 focused tests，并继续跑原有回归。没有真实素材验收，不得修改 CURRENT 状态声称稳定。
+
+## 18. 重制策略
 
 ```text
 REUSE_REFERENCE
@@ -411,9 +570,9 @@ PARTIAL_EDIT
 FULL_VIDEO_REGEN
 ```
 
-不是所有 Shot 都调用最昂贵的视频生成模型。
+不是所有 Shot 都调用最昂贵的视频生成模型。Final Breakdown 是为重制提供结构化上下文，不取代 Reference Clip。
 
-## 17. Git 工作方式
+## 19. Git 工作方式
 
 ```text
 Default Branch: main
@@ -422,20 +581,32 @@ Development Branch: main
 
 日常开发直接提交 `main`，不主动新建 feature branch/PR，除非用户明确改变要求。
 
-## 18. 文档同步硬规则
+## 20. 文档同步硬规则
 
-人物身份/绑定/Final Gate 发生变化时，本次工作结束前必须同步：
+任何正式产品流程、人物身份/绑定、Final Gate、Breakdown Draft、Scene/Prop resolver 或下游 Contract 变化时，本次工作结束前必须检查并同步：
 
 ```text
 AGENTS.md
 SKILL.md
 docs/PROJECT_STATE.md
 docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-docs/ASSET_CHARACTER_RECOGNITION_V10_1.md 或 successor
+docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
+docs/ASSET_CHARACTER_RECOGNITION_V10_1.md 或 successor（涉及人物时）
 最新 docs/sessions/*.md
 ```
 
-代码改了而这些入口文档仍描述旧版本，视为开发没有完成。
+状态纪律：
+
+```text
+只完成规划
+→ Target Plan = ACCEPTED / PLANNED
+→ CURRENT 文档仍写实际旧 runtime
+
+代码 + tests + acceptance 完成
+→ 才把对应 CURRENT 项改成 IMPLEMENTED
+```
+
+代码改了而 CURRENT 文档仍描述旧版本，视为开发没有完成；反过来，只改 CURRENT 文档把 TARGET 伪装成实现也属于错误。
 
 ## Legacy
 
