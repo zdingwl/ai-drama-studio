@@ -1,16 +1,13 @@
 """03 资产 Evidence 的可观测执行入口。
 
-职责：
-- 复用 content_analysis_v2 的正式 Run / Scene 数据模型；
-- 人物正式身份链路为 Character V9.1：Person Instance Split → Crop Safety → Multi-channel Person Features → Mature MOT → Progressive Person Gallery Identity；
-- V9D Final Gate 只允许 Confirmed Person Gallery 物化 Final Character，Face 不是发布必需条件；
-- 一帧多人先拆成独立 Person Instance，禁止整帧作为人物身份图；
-- seed 只启动人物图库，不再要求所有视角直接匹配单张 seed；
-- Proto Gallery 会按跨 Shot 多视角逐步扩展，然后再确认人物；
-- 所有剩余人物图仍先与已确认 A/B/C Gallery 比较；
-- 单张 AMBIGUOUS 不再直接否决一个整体明确不同的多 Shot 新人物 Gallery；
-- partial / occluded / contaminated 只能挂回已确认 Gallery 或保留 Evidence，不能增加人物数量；
-- 新 Run 完整成功后才切 Current，失败保留旧结果。
+正式人物链路当前为 Character V10：
+- 一帧多人先拆成独立 Person Instance，禁止整帧做人身份输入；
+- 正面 / 侧身 / 背影 / 多人同框拆出的单人 crop 先完整采集为 Person Evidence；
+- CLEAN 不再是唯一身份输入；Evidence eligibility 与 new-identity seed eligibility 分开；
+- Person ReID 模型作为跨视角分类主信号，服装 / Body / optional Face 分通道支持；
+- 先采集人物内容，再由模型分类到 A / B / C；
+- OCCLUDED / CONTAMINATED / PARTIAL 可以保存和分类，低可靠 Evidence 不能独立创建新人；
+- Final Gate 只发布已确认的人物类别；新 Run 完整成功后才切 Current。
 """
 from __future__ import annotations
 
@@ -35,8 +32,8 @@ AssetEvidenceProgress = Callable[
     None,
 ]
 
-FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v9.1-confirmed-person-gallery-final-gate"
-FORMAL_CHARACTER_COMPONENT_PROFILE = "V9_1_PROGRESSIVE_PERSON_GALLERY_FINAL_GATE"
+FORMAL_ASSET_PROFILE_VERSION = "f05-assets-v10-person-evidence-model-classification"
+FORMAL_CHARACTER_COMPONENT_PROFILE = "V10_PERSON_EVIDENCE_MODEL_CLASSIFICATION"
 
 
 def _report(
@@ -62,8 +59,6 @@ def _report(
 
 
 def _mark_formal_profile(run_id: str) -> None:
-    """Keep both Run and component profile truthful after legacy persistence."""
-
     with get_session() as session:
         run = session.get(ContentAnalysisRun, run_id)
         if run is None:
@@ -85,8 +80,6 @@ def run_content_analysis_with_progress(
     *,
     progress: AssetEvidenceProgress | None = None,
 ) -> dict[str, object]:
-    """执行基础资产 Evidence，并持续报告真实可计算进度。"""
-
     _project, _episodes, shots = _load_context(project_id)
     run_id = _create_run(project_id)
     _mark_formal_profile(run_id)
@@ -107,7 +100,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            f"已读取 {total_shots} 个 Current Shots，正在加载人物 V9.1 Progressive Person Gallery / V9D Final Gate",
+            f"已读取 {total_shots} 个 Current Shots，正在启动 V10 Person Evidence 采集与模型分类",
         )
 
         candidates: list[CandidateDraft] = []
@@ -122,7 +115,7 @@ def run_content_analysis_with_progress(
                 progress,
                 5.0 + ratio * 77.0,
                 "characters",
-                "人物 V9.1 · Progressive Person Gallery",
+                "人物 V10 · Person Evidence / Model Classification",
                 current_item,
                 current,
                 total,
@@ -140,11 +133,11 @@ def run_content_analysis_with_progress(
             progress,
             84.0,
             "identity_resolve",
-            "人物 Gallery 身份确认完成",
+            "人物模型分类完成",
             None,
             total_shots,
             total_shots,
-            f"V9.1 Person Gallery：{resolved_count} 个已确认人物 · {unresolved_count} 个待归属 Evidence；V9D 仅发布已确认 Gallery",
+            f"V10：{resolved_count} 个已确认人物类别 · {unresolved_count} 个待归属 Evidence",
         )
 
         _report(
@@ -155,7 +148,7 @@ def run_content_analysis_with_progress(
             None,
             0,
             total_shots,
-            "人物 V9.1 完成，正在计算 Scene Segment",
+            "人物 V10 完成，正在计算 Scene Segment",
         )
         scenes: list[SceneDraft] = _cluster_scenes(run_id, project_id, shots)
         component_status["scenes"] = "READY" if scenes else "NO_SCENE"
@@ -171,7 +164,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            f"正在保存 {resolved_count} 个 Confirmed Person Gallery、{unresolved_count} 个 Unresolved Evidence、{len(scenes)} 个 Scene Segment",
+            f"正在保存 {resolved_count} 个人物分类、{unresolved_count} 个待归属 Evidence、{len(scenes)} 个 Scene Segment",
         )
         persist_results_v6(
             run_id=run_id,
@@ -183,7 +176,6 @@ def run_content_analysis_with_progress(
             speaker_segments=speaker_segments,
             component_status=component_status,
         )
-        # Legacy persistence writes its historical profile; restore the formal V9.1 asset contract.
         _mark_formal_profile(run_id)
 
         _report(
@@ -194,7 +186,7 @@ def run_content_analysis_with_progress(
             None,
             total_shots,
             total_shots,
-            f"人物 V9.1：{resolved_count} 个 Final-ready Confirmed Gallery · {unresolved_count} 个待归属 Evidence",
+            f"人物 V10：{resolved_count} 个 Final-ready 人物类别 · {unresolved_count} 个待归属 Evidence",
         )
         return get_analysis_run(run_id) or {"id": run_id, "status": "READY"}
     except Exception as exc:
