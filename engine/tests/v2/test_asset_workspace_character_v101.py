@@ -163,6 +163,61 @@ def test_face_optional_recovered_track_is_visible_as_resolved_shot_evidence(monk
     }]
 
 
+def test_explicit_assignment_can_bind_character_without_candidate_track_in_that_shot(monkeypatch, tmp_path: Path) -> None:
+    project_id = _seed(monkeypatch, tmp_path)
+    with studio_v2.get_session() as session:
+        candidate = session.get(CharacterCandidate, "RESOLVED_A")
+        assert candidate is not None
+        evidence = json.loads(candidate.evidence_json)
+        evidence.update({
+            "shot_assignment_version": "v10.1-shot-character-assignment-1",
+            "shot_assignment_source": "V10_1_SHOT_CHARACTER_ASSIGNMENT",
+            "shot_presence_assignments": [
+                {
+                    "shot_id": "SHOT_1",
+                    "confidence": 0.94,
+                    "mode": "DIRECT_IDENTITY",
+                    "source": "V10_1_SHOT_CHARACTER_ASSIGNMENT",
+                },
+                {
+                    "shot_id": "SHOT_3",
+                    "confidence": 0.89,
+                    "mode": "FACE_STRONG",
+                    "source": "V10_1_SHOT_CHARACTER_ASSIGNMENT",
+                },
+            ],
+        })
+        candidate.evidence_json = json.dumps(evidence)
+        session.commit()
+
+    workspace = {
+        "project_id": project_id,
+        "analysis": {"id": "RUN_V101"},
+        "characters": [{"id": "CHAR_A", "source_candidate_ids": ["RESOLVED_A"]}],
+        "evidence_by_shot": {},
+    }
+
+    result = decorate_asset_workspace_character_evidence(workspace)
+
+    # SHOT_2 has a historical RESOLVED_A Track but is intentionally absent from the
+    # explicit assignment map, so it must not silently reappear as Character presence.
+    assert result["evidence_by_shot"]["SHOT_2"]["characters"] == []
+    shot3 = result["evidence_by_shot"]["SHOT_3"]
+    assert shot3["characters"] == [{
+        "candidate_id": "RESOLVED_A",
+        "label": "人物 001",
+        "confidence": 0.89,
+        "cover_url": None,
+        "final_asset_id": "CHAR_A",
+        "identity_status": "RESOLVED",
+        "face_required": False,
+        "recovered_track": True,
+        "confidence_source": "V10_1_SHOT_CHARACTER_ASSIGNMENT:FACE_STRONG",
+        "recovery_source": "V10_1_SHOT_CHARACTER_ASSIGNMENT:FACE_STRONG",
+    }]
+    assert shot3["character_diagnostics"][0]["candidate_id"] == "UNRESOLVED_B"
+
+
 def test_unresolved_track_stays_diagnostic_and_cannot_look_like_final_binding(monkeypatch, tmp_path: Path) -> None:
     project_id = _seed(monkeypatch, tmp_path)
     workspace = {
