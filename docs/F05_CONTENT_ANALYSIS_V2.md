@@ -1,249 +1,224 @@
-# F05 — 智能内容识别（Reference Video V2）
+# F05 — 资产内容分析（Reference Video V2 / Character V10.1）
 
-## 1. 目标
+> **Current status:** IMPLEMENTED for Character / Scene evidence path; Character V10.1 latest Shot Binding change still needs real Windows-video regression.
+>
+> This document supersedes the old Character V1 / HOG / 3-frame / ASR-in-F05 description.
 
-F05 不负责把原片重新描述成一份“大而全拉片报告”。
+## 1. F05 current responsibility
 
-它围绕 F04 的 Reference Clip，提取后续重制时必须被程序和人工明确控制的 AI Evidence：
+F05/03 资产 does not try to convert the whole original video into a giant textual shot report.
 
-```text
-Character Candidate / Track
-Scene Candidate
-Key Prop Candidate
-Source Dialogue
-Speaker Segment
-Speaker → Character Candidate
-Short Structured Description
-```
-
-原动作、人物走位、摄影机运动、构图和大部分空间关系继续由 Reference Video 本身提供。
-
-## 2. Run 范围
-
-F05 采用 Project 级 Run：
+It extracts AI Evidence that must be explicitly controlled or bound for later remake production:
 
 ```text
-Project
-→ Episode 01
-→ Episode 02
-→ Episode 03
-→ ...
+Character Candidate / Track / Person Evidence
+Scene Candidate / Shot Scene Evidence
+Key Prop Candidate / Shot Prop Evidence
 ```
 
-分析顺序读取 `Episode.sort_order`。
+Source Dialogue / Speaker processing belongs to the later content-script workflow. Historical Speaker/Dialogue tables/helpers may still exist for compatibility, but the current asset run does not treat them as the main F05 output.
 
-这样人物候选可以跨集聚类，不会每一集重新生成一套男主/女主 ID。
+Reference Video itself keeps action, framing, movement, camera motion, and most spatial relationships.
 
-每次重新分析创建新的：
+## 2. Run scope
+
+Asset analysis is Project-level and reads all current Shots in `Episode.sort_order` order.
+
+Every analysis creates a new:
 
 ```text
 v2_content_analysis_runs
 ```
 
-历史 Run 保留；完整成功后才切换 `is_current=true`。
+A new run becomes current only after the full analysis succeeds. Old runs are retained.
 
-## 3. AI Evidence 与 Final 数据分离
+Code changes do **not** mutate an old Run in place. To validate new Character identity or Shot Binding behavior, rerun asset extraction.
 
-F05 写：
+## 3. Character V10.1 formal pipeline
+
+```text
+Current Shot / Reference Clip
+↓
+YOLOX Person Detection (~12fps bounded sampling)
+↓
+one detected person → one isolated Person Instance crop
+↓
+Capture every model-usable Person Evidence crop
+↓
+separated feature channels
+  YoutuReID = primary Person identity model
+  clothing_upper / clothing_lower = support
+  body_hist / body_structure = support
+  YuNet/SFace Face = optional support / conflict
+↓
+Mature MOT organizes temporal Tracks
+↓
+Project-level model classification
+↓
+RESOLVED identity classes + UNRESOLVED evidence
+↓
+V10.1 known-identity Track recovery
+↓
+persist CharacterCandidate / CharacterTrack
+↓
+Final Gate
+↓
+Character + ShotCharacterBinding
+```
+
+Formal identifiers:
+
+```text
+runtime profile: character-v10.1-capture-first-model-classification
+asset profile: f05-assets-v10.1-person-evidence-model-classification
+resolver: person-evidence-model-classifier-v10.1
+```
+
+## 4. Person Evidence first, identity second
+
+F05 must not discard a real person simply because Face is not visible or the crop condition is imperfect.
+
+Model-usable classes include:
+
+```text
+CLEAN
+OCCLUDED
+CONTAMINATED
+PARTIAL
+```
+
+Rules:
+
+- Every eligible Person Instance is captured before classification.
+- Whole-frame identity images are forbidden when multiple people are visible.
+- Face is optional.
+- YoutuReID is the primary cross-view identity signal.
+- Strong contaminated/substantial partial crops may help form a new identity only under stricter cross-Shot confirmation.
+- Weak/tiny partial crops remain evidence/attach-only.
+
+## 5. Formal identity confirmation
+
+A new formal V10/V10.1 identity requires at least:
+
+```text
+>= 3 independent Shots
+>= 3 model-usable Person Images
+stable cross-Shot Person-ReID support
+unique class
+same-sample cannot-link preserved
+no high-quality Face hard conflict
+```
+
+This deliberately prevents one strong crop, one Face, or one Track from becoming a Final Character by itself.
+
+## 6. Shot-level known-identity recovery
+
+The global resolver is conservative. Therefore a Shot can still contain an unresolved Track even when the person has already been confirmed elsewhere.
+
+V10.1 adds a second pass:
+
+```text
+UNRESOLVED Track
+→ compare repeated observations to RESOLVED identity galleries
+→ >=3 usable observations
+→ >=2 supporting observations
+→ unique winner with margin
+→ fail closed on cannot-link / Face conflict
+→ attach whole Track to existing identity
+```
+
+This pass only recovers an existing Character's presence in a Shot. It cannot create a new identity.
+
+Formal module:
+
+```text
+engine/app/character_shot_binding_v101.py
+```
+
+## 7. Character persistence and Final Gate
+
+F05 writes AI Evidence:
 
 ```text
 v2_character_candidates
 v2_character_tracks
+Person Evidence files/manifests under analysis/<run_id>/person_evidence
+```
+
+Formal V10/V10.1 Final Character gate requires:
+
+```text
+identity_status == RESOLVED
+formal resolver allow-list
+confirmed_gallery_shots >= 3
+confirmed_gallery_images >= 3
+final_asset_eligible is not false
+```
+
+Face visibility is not required for formal V10/V10.1 candidates.
+
+`UNRESOLVED`, unknown resolver, broken/missing status, or insufficient confirmation stays Evidence only.
+
+## 8. Final Shot Binding
+
+`ShotCharacterBinding` is created from persisted Character Tracks that belong to a Final-eligible Character identity.
+
+The important order is:
+
+```text
+Global Identity
+→ Track recovery
+→ persist corrected Candidate/Track membership
+→ Final Character materialization
+→ ShotCharacterBinding
+```
+
+If recovery happened after persistence, the asset page could be correct while the Shot page stayed wrong. V10.1 intentionally performs recovery before persistence/materialization.
+
+## 9. Scene
+
+Scene extraction remains a lighter evidence path than Character identity.
+
+Current implementation groups visually similar **contiguous** Shots within an Episode and tolerates a single visual outlier when the next Shot returns to the same scene context.
+
+Scene Candidate is still AI Evidence, not a guaranteed semantic Scene name.
+
+Formal tables:
+
+```text
 v2_scene_candidates
 v2_shot_scene_evidence
-v2_prop_candidates
-v2_shot_prop_evidence
-v2_speaker_segments
-v2_analysis_dialogues
 ```
 
-F06 以后写人工确认后的：
+## 10. Key Prop
 
-```text
-v2_characters
-v2_scenes
-v2_props
-v2_dialogues
-```
-
-禁止人工修改覆盖 F05 原始自动证据。
-
-## 4. Character V1
-
-当前本地视觉链：
-
-```text
-Reference Clip
-↓
-3 个时间采样点
-↓
-YuNet Face Detection
-+ OpenCV HOG Person Detection
-↓
-SFace Identity Embedding
-+ Body / Clothing HSV Histogram
-↓
-Shot-local Track
-↓
-Cross-shot Conservative Clustering
-↓
-Character Candidate
-```
-
-### 为什么不是“只做人脸识别”
-
-- 有脸：SFace 是主要身份依据，身体/服装作为辅助；
-- 人脸属于某个 Person Box 时，Track 使用人体区域作为位置和 body evidence；
-- 没露脸但 HOG 能检测到身体时，仍产生 `face_visible=false` 的 body-only Track；
-- body-only Track 不跨远距离镜头激进合并，只允许相邻 Shot 且身体特征极高相似度时自动连接；
-- F06 后续允许人工合并、拆分、改绑。
-
-这不是最终 Body ReID 模型。以后可以把 HOG/Histogram 替换为专门 ReID embedding，而不改变 F05 数据 Contract。
-
-## 5. Scene V1
-
-当前使用 Shot Thumbnail 的 HSV histogram 做保守聚类。
-
-输出：
-
-```text
-Scene Candidate
-↕
-Shot Scene Evidence
-```
-
-Scene Candidate 只是自动候选，不等于最终“办公室 / 医院 / 家”等人工语义名称。
-
-## 6. ASR V1
-
-依赖：
-
-```text
-faster-whisper==1.2.1
-```
-
-默认：
-
-```text
-AI_DRAMA_WHISPER_MODEL=small
-AI_DRAMA_WHISPER_DEVICE=auto
-```
-
-可以通过环境变量覆盖：
-
-```text
-AI_DRAMA_WHISPER_MODEL
-AI_DRAMA_WHISPER_DEVICE
-AI_DRAMA_WHISPER_COMPUTE_TYPE
-```
-
-ASR 对每个 Episode 的 F03 `audio.wav` 运行一次，然后根据时间重叠绑定到 Shot。
-
-保存 Source Timeline 和 Shot-local Time 两套时间：
-
-```text
-source_start_us
-source_end_us
-shot_start_us
-shot_end_us
-```
-
-F05 自动文本字段是：
-
-```text
-ai_text
-```
-
-F06 人工确认后再产生 Final Source Dialogue。
-
-## 7. Speaker
-
-Speaker Diarization 当前不是强制默认依赖。
-
-原因：正式 pyannote Community 模型需要单独准备模型文件/许可条件，不能在用户不知情时静默联网下载。
-
-如果配置：
-
-```text
-AI_DRAMA_DIARIZATION_MODEL_PATH=<本地 pyannote pipeline 路径>
-```
-
-且 Python 环境已经安装兼容的 `pyannote.audio`，F05 会输出：
-
-```text
-Speaker Segment
-speaker_label
-```
-
-未配置时：
-
-```text
-speaker = NOT_CONFIGURED
-```
-
-不是任务失败。
-
-## 8. Speaker → Character
-
-只有 Speaker 和 Character Evidence 同时存在时才自动映射。
-
-规则保守：
-
-1. 统计同一 Speaker 在多个 Shot 中与哪些 Character Candidate 共现；
-2. 至少有两段支持，且第一候选明显高于其它候选时才自动绑定；
-3. 单 Shot 只有一个可见人物时允许低置信候选绑定；
-4. 多人物且证据不足时保持未绑定，交给 F06。
-
-不允许为了“结果完整”强制绑定错误人物。
-
-## 9. Key Prop
-
-当前已经建立正式 AI Evidence 表：
+Formal evidence tables exist:
 
 ```text
 v2_prop_candidates
 v2_shot_prop_evidence
 ```
 
-但 V1 没有默认对象模型，因此：
+If a reliable key-prop model/path is not configured, the system must not fabricate props for completeness.
+
+Generic object detection alone is not enough to decide that an object is a story-critical prop.
+
+## 11. Historical Speaker / Dialogue compatibility
+
+`content_analysis_v2.py` still contains historical `SpeakerSegment`, `AnalysisDialogue`, ASR and mapping helpers for compatibility/future migration.
+
+Do not interpret their presence as the current F05 product contract.
+
+Current product workspace boundary is:
 
 ```text
-props = NOT_CONFIGURED
+03 Assets: Character / Scene / Key Prop
+04 Content Script: ASR / Speaker / Dialogue / structured source script
 ```
 
-这是有意设计。
+## 12. Current APIs
 
-普通桌椅、垃圾桶、水杯等环境物体不能因为通用 Object Detection 检测到了就自动升级为“剧情关键道具”。后续 Prop 模块应结合：
-
-```text
-Object Detection
-+ 人物交互
-+ 多 Shot 重复出现
-+ Dialogue / Plot Context
-```
-
-再判断是否进入核心 Prop Library。
-
-## 10. Short Description
-
-当前只写结构化摘要，例如：
-
-```text
-2 个人物候选；已归入场景候选；1 段源对白
-```
-
-不重复生成：
-
-```text
-人物站左边
-人物走两步
-镜头缓慢推进
-...
-```
-
-这些信息由 Reference Clip 直接保留。
-
-## 11. API
+Compatibility/current asset endpoints include:
 
 ```text
 GET  /api/models/f05/status
@@ -257,34 +232,53 @@ GET /api/content-analysis/characters/{candidate_id}/cover
 GET /api/content-analysis/scenes/{candidate_id}/cover
 ```
 
-## 12. 当前验收重点
+The production UI may use task-based asset routes rather than the synchronous compatibility endpoint.
 
-Windows 真实短剧素材必须检查：
-
-- 背影是否能形成 body-only Track；
-- 同一个人物跨镜头是否过拆/误合；
-- 两个同时出现的人物是否被错误合并；
-- Scene 聚类是否过度合并；
-- Whisper 中文时间和文本准确度；
-- Dialogue → Shot 时间绑定；
-- Project 多集顺序分析；
-- 重新分析后旧 current 是否正确切换；
-- 缺少人物模型时 Scene/ASR 是否仍可完成；
-- Speaker 未配置时是否明确显示而非失败。
-
-## 13. 下一阶段 F06
-
-F06 不再重新跑识别算法。
-
-它读取 F05 AI Evidence，提供：
+## 13. Fixed Character model package
 
 ```text
-人物命名 / 合并 / 拆分 / Shot 改绑
-Scene 命名 / 合并 / Shot 改绑
-Prop 增删 / 合并 / 命名
-Dialogue 文本修正
-Dialogue Type 修正
-Speaker → Character 修正
+YOLOX
+YoutuReID
+YuNet
+SFace
 ```
 
-最后形成可供 F07/F08 使用的 Final 实体。
+V10.1 reuses the V10 model package. `content_models_v2.model_status()` may still expose `character-v10-capture-first-model-classification` as the model-package profile while the formal runtime resolver is V10.1.
+
+## 14. Current acceptance focus
+
+On the user's Windows real-video environment, verify:
+
+```text
+1. all real people produce Person Evidence when visually usable
+2. same-frame people stay separate
+3. Final Character count does not inflate with Track/crop count
+4. side/back/occluded views attach to the correct existing identity
+5. risky views only create identities with strict >=3-Shot support
+6. ambiguous evidence stays unresolved
+7. Character list and ShotCharacterBinding agree
+8. previously wrong Shots now bind to the confirmed Character
+9. rerun failure does not destroy the old current Run
+10. old Run does not magically change after a code update
+```
+
+## 15. Current code map
+
+```text
+engine/app/content_analysis_v2.py
+engine/app/character_visual_v2.py
+engine/app/character_runtime_v6.py
+engine/app/character_observation_v10.py
+engine/app/character_tracking_v10.py
+engine/app/character_identity_v101.py
+engine/app/character_shot_binding_v101.py
+engine/app/character_evidence_store_v10.py
+engine/app/asset_final_gate_v10.py
+engine/app/asset_workspace_v3.py
+```
+
+For detailed Character V10.1 rules, read:
+
+```text
+docs/ASSET_CHARACTER_RECOGNITION_V10_1.md
+```
