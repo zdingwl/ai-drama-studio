@@ -108,10 +108,23 @@ export interface CharacterGalleryImage {
   feature_channels: string[]
 }
 
+export interface CharacterGalleryEvidenceShot {
+  shot_id: string
+  shot_ordinal: number | null
+  episode_id: string | null
+  episode_order: number | null
+  track_count: number
+  sample_count: number
+  recovered_track_count: number
+  recovery_sources: string[]
+}
+
 export interface CharacterGalleryPayload {
   candidate_id: string
   identity_status: string | null
   policy: string | null
+  evidence_shot_count: number
+  evidence_shots: CharacterGalleryEvidenceShot[]
   image_count: number
   images: CharacterGalleryImage[]
 }
