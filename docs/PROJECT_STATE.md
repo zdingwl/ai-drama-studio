@@ -1,6 +1,6 @@
 # AI Drama Studio — Project State
 
-> **Last synchronized:** 2026-08-27 15:52 +08:00  
+> **Last synchronized:** 2026-08-27 16:22 +08:00  
 > **Repository:** `zdingwl/ai-drama-studio`  
 > **Branch:** `main`  
 > **Architecture:** Reference Video V2  
@@ -18,10 +18,23 @@ AGENTS.md
 → SKILL.md
 → docs/PROJECT_STATE.md
 → docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-→ docs/ASSET_CHARACTER_RECOGNITION_V10_1.md
+→ docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md   # TARGET, not executable truth
+→ docs/ASSET_CHARACTER_RECOGNITION_V10_1.md    # when Character is involved
 → current code/tests
 → latest session handoff
 ```
+
+Source-of-truth split:
+
+```text
+this file + CURRENT_IMPLEMENTATION_MANIFEST + code/tests
+= CURRENT
+
+BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN
+= accepted TARGET
+```
+
+A Target-vs-Current gap is expected until that Phase is actually implemented. Never mark a planned module as implemented just to make the documents look identical.
 
 Before changing Character identity or Shot binding, inspect at least:
 
@@ -37,7 +50,49 @@ engine/app/asset_workspace_character_v101.py
 
 Historical `character_shot_binding_v101.py` and `character_shot_presence_v101.py` remain in the repository for compatibility/tests, but they are no longer called by the formal V10.1 runtime.
 
-## 2. Product workspaces
+## 2. Accepted target product plan — NOT YET IMPLEMENTED
+
+The user has accepted a Breakdown-first target workflow:
+
+```text
+Original Video
+→ Preprocess
+→ Shot Detection
+→ Shot + Reference Clip
+→ ASR / OCR / Video Understanding
+→ anonymous structured Breakdown Draft
+→ Draft-guided Character / Scene / Prop evidence extraction
+→ Global Asset Resolution + Final Shot Bindings
+→ identity/asset fill-back
+→ Final Breakdown
+→ remake
+```
+
+Core target principle:
+
+```text
+先看懂，再识别，再回填
+```
+
+Target details, current-to-target mapping, protection rules and implementation phases are frozen in:
+
+```text
+docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
+```
+
+Important current-state clarification:
+
+- Current `media_v2.detect_episode_shots()` already performs TransNetV2 Shot boundary detection and creates Reference Clips.
+- Current `Shot` stores timing, Reference Clip, thumbnail, keyframes and lightweight description/camera fields.
+- Current `02 拉片` does **not** yet implement the accepted anonymous structured Breakdown Draft / SceneSegment / ASR+OCR+VLM semantic timeline.
+- Current `transvlm_runtime_v51.py` uses a Qwen3-VL-based TransVLM route for transition detection/caching; it must not be described as an already-implemented semantic breakdown engine.
+- Current F05 asset extraction does not formally run ASR/Speaker/Dialogue.
+- Current Scene candidate logic remains lightweight and is not the target final semantic Scene resolver.
+- Current Prop data boundary exists, but reliable targeted Prop extraction may still be `NOT_CONFIGURED` depending on model setup.
+
+**No business code, database schema or runtime baseline was changed when this target plan was accepted.**
+
+## 3. Product workspaces
 
 ```text
 01 剧集管理
@@ -50,7 +105,9 @@ Historical `character_shot_binding_v101.py` and `character_shot_presence_v101.py
 
 Shot + frame-owned Reference Clip remains the core production unit. Heavy media/model work remains sequential by default.
 
-## 3. Formal Character V10.1 baseline
+Target product meaning of `02 拉片` will eventually be broader than the current Shot timeline: Shot segmentation is only the first technical step; the target final result is a structured, timed audiovisual breakdown. Until implemented, current UI/code status remains what this file says below.
+
+## 4. Formal Character V10.1 baseline
 
 ```text
 Runtime profile: character-v10.1-capture-first-model-classification
@@ -71,7 +128,9 @@ SFace Face embedding/support
 
 YoutuReID remains the primary **new-identity** model signal. Face remains optional identity support, a known-identity Shot-presence signal, and a high-quality conflict signal.
 
-## 4. Formal Character pipeline
+Breakdown-first planning does not replace these models or change their current identity gates.
+
+## 5. Formal Character pipeline
 
 ```text
 Reference Clip / Shot
@@ -103,7 +162,7 @@ Character + ShotCharacterBinding
 Asset Workspace V10.1 adapter
 ```
 
-The architecture now deliberately separates four layers:
+The architecture deliberately separates:
 
 ```text
 Observation / Person Evidence / CharacterTrack
@@ -119,9 +178,16 @@ Character + ShotCharacterBinding
 = editable Final asset / Final binding
 ```
 
-**Final Shot binding is no longer inferred from `candidate.tracks`.**
+Target Breakdown adds another separate layer:
 
-## 5. New Character creation stays fail-closed
+```text
+LocalSubject / ShotSemanticDraft / SceneSegmentDraft
+= anonymous semantic understanding, not Final identity
+```
+
+**Final Shot binding is no longer inferred from `candidate.tracks`, and future Draft prose is not allowed to become a Final binding source by itself.**
+
+## 6. New Character creation stays fail-closed
 
 A formal new Character still requires at least:
 
@@ -138,7 +204,9 @@ Strong contaminated/substantial partial crops may seed only under stricter confi
 
 The Shot assignment engine runs only after RESOLVED identities exist and **cannot create identities**.
 
-## 6. Explicit Shot Character Assignment
+The target anonymous Draft cannot bypass this gate.
+
+## 7. Explicit Shot Character Assignment
 
 Formal module:
 
@@ -165,9 +233,9 @@ Purpose:
 shot_presence_assignments
 ```
 
-The engine does **not** move an unresolved Track into a Character just to obtain a binding. Track ownership stays identity evidence; Shot presence becomes a first-class decision.
+The engine does **not** move an unresolved Track into a Character just to obtain a binding. Track ownership stays identity evidence; Shot presence is a first-class decision.
 
-### 6.1 Direct identity presence
+### 7.1 Direct identity presence
 
 If Global Identity already assigned original observations to a RESOLVED Character, that Shot receives:
 
@@ -175,7 +243,7 @@ If Global Identity already assigned original observations to a RESOLVED Characte
 mode = DIRECT_IDENTITY
 ```
 
-### 6.2 Known-Face presence
+### 7.2 Known-Face presence
 
 Current rules:
 
@@ -191,7 +259,7 @@ MIN_FACE_REPEAT_MEDIAN = 0.40
 
 Face comparisons must be backed by at least two independent confirmed Gallery Shots. A sufficiently strong unique Face match may confirm one known Character from one current-Shot observation; moderate Face support must repeat over current-Shot time.
 
-### 6.3 Body / Person-ReID presence
+### 7.3 Body / Person-ReID presence
 
 ```text
 REID_STRONG = 0.84
@@ -206,15 +274,15 @@ MIN_BODY_MEDIAN = 0.76
 
 Body/ReID presence must repeat through the Shot unless evidence is already part of direct identity classification.
 
-### 6.4 Multi-person Shot occupancy constraints
+### 7.4 Multi-person Shot occupancy constraints
 
 Same-sample cannot-link is used at Shot-assignment time. If one simultaneous Person Instance is already direct evidence for 人物001, another cannot-link Person Instance cannot also be assigned to 人物001. This gives the second visible person a fair comparison against other known identities and is specifically intended for two-person Shots such as the real `SHOT 0004` case.
 
 Ambiguous winner, repeated high-quality Face conflict, or insufficient temporal support stays unassigned. The engine does not fill empty Shot rows by guessing.
 
-## 7. Shot assignment persistence
+## 8. Shot assignment persistence
 
-For each RESOLVED Candidate, persistence now carries:
+For each RESOLVED Candidate, persistence carries:
 
 ```text
 shot_assignment_version
@@ -241,13 +309,15 @@ face_support_count
 winner_margin
 ```
 
-This metadata lives in `CharacterCandidate.evidence_json` via the existing V10.1 persistence bridge. No DB migration is required.
+This metadata lives in `CharacterCandidate.evidence_json` via the existing V10.1 persistence bridge. No DB migration is required for the current Character assignment feature.
 
 Individual unresolved Person Evidence may remain `UNRESOLVED` even when the Shot-level aggregate confirms an already-known Character. That is intentional separation of evidence classification from Shot presence.
 
-## 8. Final Character Gate and Final Shot binding
+Future Breakdown Draft provenance/confidence must remain separate from identity confidence and Shot-presence confidence.
 
-Formal Character cardinality still uses the unchanged fail-closed gate:
+## 9. Final Character Gate and Final Shot binding
+
+Formal Character cardinality uses the fail-closed gate:
 
 ```text
 identity_status == RESOLVED
@@ -277,7 +347,7 @@ engine/app/asset_final_gate_v10.py
 engine/app/asset_final_gate_v9.py
 ```
 
-## 9. Asset Workspace Character evidence
+## 10. Asset Workspace Character evidence
 
 ```text
 evidence_by_shot[shot_id].characters
@@ -287,11 +357,11 @@ evidence_by_shot[shot_id].character_diagnostics
 = UNRESOLVED visual diagnostics only
 ```
 
-For current explicit-assignment Runs, the workspace adapter also follows `shot_presence_assignments`. A Candidate Track that is absent from the explicit assignment map does not silently recreate a Character suggestion.
+For current explicit-assignment Runs, the workspace adapter follows `shot_presence_assignments`. A Candidate Track that is absent from the explicit assignment map does not silently recreate a Character suggestion.
 
 The Gallery / Evidence-vs-Final UI remains a diagnostic aid only. It is not the source of binding truth and is not a substitute for the Shot assignment engine.
 
-## 10. Current Character / Asset code map
+## 11. Current Character / Asset code map
 
 ```text
 engine/app/character_visual_v2.py
@@ -322,11 +392,32 @@ engine/app/character_shot_presence_v101.py
 
 Compatibility filenames do not imply the active algorithm generation.
 
-## 11. Current implementation status
+Current Shot/media baseline important to the Target Plan:
+
+```text
+engine/app/main.py
+engine/app/studio_v2.py
+engine/app/media_v2.py
+engine/app/shot_revision_v2.py
+engine/app/shot_edit_routes_v2.py
+engine/app/content_analysis_v2.py
+```
+
+`main.py` currently wires `media_v2.preprocess_episode` and `media_v2.detect_episode_shots`; do not infer the current formal V2 product path only from historical F04/F05 module docstrings.
+
+## 12. Current implementation status
 
 ```text
 01 剧集管理: IMPLEMENTED
-02 拉片: IMPLEMENTED; real-media release checks still apply
+
+02 拉片:
+  Shot detection / timing: IMPLEMENTED
+  Shot + Reference Clip: IMPLEMENTED
+  Shot revision / manual edit support: IMPLEMENTED
+  Breakdown-first anonymous semantic Draft: PLANNED / NOT IMPLEMENTED
+  SceneSegmentDraft / TimelineEvent: PLANNED / NOT IMPLEMENTED
+  ASR/OCR/VLM unified breakdown facts: PLANNED / NOT IMPLEMENTED
+  Final standard/international breakdown renderer: PLANNED / NOT IMPLEMENTED
 
 03 资产:
   Character V10.1 global identity classification working on current real sample
@@ -339,18 +430,40 @@ Compatibility filenames do not imply the active algorithm generation.
   Final Gate consumes explicit Shot assignments for new Runs
   historical old-Run Track fallback preserved
   workspace consumes explicit Shot assignments for new Runs
-  NEEDS WINDOWS REAL-VIDEO ACCEPTANCE for precise SHOT 0001–0009 binding
+  Character integration with semantic Draft: PLANNED / NOT IMPLEMENTED
+  Scene target semantic resolver: PLANNED; current candidate path is lightweight
+  Prop targeted open-vocabulary extraction: PLANNED; current data boundary exists
+  NEEDS WINDOWS REAL-VIDEO ACCEPTANCE for precise SHOT 0001–0009 Character binding
 
 04 内容剧本: PLANNED / partial compatibility code exists
 05 重制设计: PLANNED
 06 生成 / 导出: PLANNED
 ```
 
-## 12. Test / CI reality
+This is the key anti-drift rule: the accepted Target Plan does not change the above CURRENT statuses until code/tests/acceptance actually land.
+
+## 13. Target implementation order
+
+The accepted safe order is:
+
+```text
+P0 docs/contract only                         = CURRENT TASK / DONE when docs land
+P1 Draft data contract, ADD-only              = PLANNED
+P2 ASR/OCR/VLM anonymous Draft sidecar         = PLANNED
+P3 02 拉片 structured Draft UI                 = PLANNED
+P4 Draft-guided Scene / Prop evidence          = PLANNED
+P5 Draft ↔ Character safe integration          = PLANNED, only after V10.1 baseline acceptance
+P6 Final fill-back + renderers                  = PLANNED
+P7 downstream remake integration               = PLANNED
+```
+
+Implementation details and protection rules are authoritative in `docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md`.
+
+## 14. Test / CI reality
 
 GitHub Actions is **not globally green**.
 
-Latest backend run after the explicit Shot-assignment tests:
+Latest known backend run after the explicit Shot-assignment tests:
 
 ```text
 28 failed, 187 passed, 1 skipped
@@ -362,7 +475,9 @@ Existing failures remain repository-level legacy/runtime/environment issues such
 
 Frontend build remains blocked by the existing `vue-tsc` / TypeScript package compatibility issue. Do not claim the whole repository is green.
 
-## 13. Immediate Windows real-video acceptance
+The documentation-only Breakdown-first planning commits do not change these test results.
+
+## 15. Immediate Windows real-video Character acceptance
 
 A **fresh asset extraction Run is mandatory**; old Runs do not gain explicit Shot assignments automatically.
 
@@ -380,8 +495,22 @@ SHOT 0008 → []
 SHOT 0009 → verify every actually visible known Character
 ```
 
-If a row is still wrong, inspect the relevant Candidate's `shot_presence_assignments` first. That now isolates the actual Face/ReID/temporal/cannot-link decision directly; do not return to generic Gallery UI changes or blindly lower global identity thresholds.
+If a row is still wrong, inspect the relevant Candidate's `shot_presence_assignments` first. That isolates the actual Face/ReID/temporal/cannot-link decision; do not return to generic Gallery UI changes or blindly lower global identity thresholds.
 
-## 14. Documentation rule
+## 16. Documentation rule
 
 Any Character identity/binding code change is incomplete until current state docs and the latest session handoff match executable code. Do not mark Character V10.1 `STABLE/FROZEN` until the user accepts real-video Shot binding accuracy.
+
+Any Breakdown-first Phase is also incomplete until all of these agree:
+
+```text
+AGENTS.md
+SKILL.md
+PROJECT_STATE.md
+CURRENT_IMPLEMENTATION_MANIFEST.md
+BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
+current code/tests
+latest session handoff
+```
+
+When only a plan is accepted, update the Target Plan and record `PLANNED / NOT IMPLEMENTED`; do not rewrite CURRENT as if code already exists.
