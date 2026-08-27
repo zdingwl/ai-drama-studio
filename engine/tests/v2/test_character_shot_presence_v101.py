@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from math import sqrt
+
 import numpy as np
 
 from engine.app.character_person_features_v9 import FEATURE_VERSION, PersonFeatureBundle
@@ -184,6 +186,50 @@ def test_one_strong_face_fragment_can_confirm_presence_of_existing_identity() ->
     recovered = next(track for track in person_a.tracks if track.shot_id == "TARGET_SHOT")
     assert recovered.identity_recovery["source"] == RECOVERY_SOURCE
     assert recovered.identity_recovery["strong_face_support"] is True
+    assert recovered.identity_recovery["face_support_count"] == 1
+
+
+def test_repeated_moderate_face_support_recovers_closeup_even_when_synthetic_reid_points_elsewhere() -> None:
+    person_a = _resolved_candidate("A", "A", (1.0, 0.0), (1.0, 0.0), 1)
+    person_b = _resolved_candidate("B", "B", (0.0, 1.0), (-1.0, 0.0), 10)
+    face = (0.46, sqrt(1.0 - 0.46**2))
+    fragments = [
+        _unresolved_fragment(
+            f"U_FACE_{index}",
+            source_time_us=100_000 + index * 120_000,
+            reid=(0.05, 0.9987),
+            face=face,
+            face_score=0.95,
+        )
+        for index in range(2)
+    ]
+
+    result = recover_fragmented_shot_presence([person_a, person_b, *fragments])
+
+    assert [item.id for item in result] == ["A", "B"]
+    recovered = [track for track in person_a.tracks if track.shot_id == "TARGET_SHOT"]
+    assert len(recovered) == 2
+    assert all(track.identity_recovery["face_support_count"] == 1 for track in recovered)
+    assert all(track.identity_recovery["strong_face_support"] is False for track in recovered)
+    assert "TARGET_SHOT" not in {track.shot_id for track in person_b.tracks}
+
+
+def test_single_moderate_face_fragment_stays_unresolved() -> None:
+    person_a = _resolved_candidate("A", "A", (1.0, 0.0), (1.0, 0.0), 1)
+    person_b = _resolved_candidate("B", "B", (0.0, 1.0), (-1.0, 0.0), 10)
+    face = (0.46, sqrt(1.0 - 0.46**2))
+    fragment = _unresolved_fragment(
+        "U_FACE_ONE",
+        source_time_us=100_000,
+        reid=(0.05, 0.9987),
+        face=face,
+        face_score=0.95,
+    )
+
+    result = recover_fragmented_shot_presence([person_a, person_b, fragment])
+
+    assert [item.id for item in result] == ["A", "B", "U_FACE_ONE"]
+    assert not hasattr(fragment.tracks[0], "identity_recovery")
 
 
 def test_single_weak_body_fragment_stays_unresolved() -> None:
