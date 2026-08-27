@@ -1,14 +1,14 @@
-"""Character V6 Evidence 原子持久化。
+"""Character Evidence 原子持久化（历史文件名 V6）。
 
 职责：
 - 在一次数据库事务里保存 Character / Track / Scene / Shot Evidence；
 - CharacterCandidate 明确保存 RESOLVED / UNRESOLVED 身份状态；
-- RESOLVED 与 UNRESOLVED 分别编号，Unresolved 仍完整保留真实 Face/Track Evidence；
+- RESOLVED 与 UNRESOLVED 分别编号；
 - ContentAnalysisRun counts 同时记录 Final-ready 与待解析数量；
 - 只有全部 Evidence 保存成功后才切换 Current Run。
 
-为什么：V6 的核心产品约束是“视觉碎片 != Final Character”。身份状态必须和 Evidence 一起原子落库，
-不能先提交旧 Candidate 再事后补 identity_status，否则补写失败时会发布一个语义不完整的新 Current。
+V10 兼容：如果 Observation 带 Person Evidence 元数据，Track 代表帧按人物图质量 / 可靠度优先，
+不再按 face_visible 优先。这样侧身、背影、多角色同框拆出的单人图不会被正脸帧天然压制。
 """
 from __future__ import annotations
 
@@ -33,6 +33,34 @@ from engine.app.studio_v2 import Shot, get_session, new_id, utcnow
 PROFILE_VERSION = "f05-assets-v6-global-identity"
 
 
+def _representative_rank(item: Any) -> tuple[float, ...]:
+    """Rank a Track representative without introducing a V10 frontal-face bias."""
+
+    if hasattr(item, "person_evidence_eligible"):
+        eligible = 1.0 if bool(getattr(item, "person_evidence_eligible", False)) else 0.0
+        quality = max(0.0, min(1.0, float(getattr(item, "person_feature_quality", 0.0) or 0.0)))
+        reliability = max(0.0, min(1.0, float(getattr(item, "person_evidence_reliability", 0.0) or 0.0)))
+        body = max(0.0, min(1.0, float(getattr(item, "body_completeness", 0.0) or 0.0)))
+        clarity = max(0.0, min(1.0, float(getattr(item, "clarity_score", 0.0) or 0.0)))
+        detection = max(0.0, min(1.0, float(getattr(item, "detection_score", 0.0) or 0.0)))
+        face = max(0.0, min(1.0, float(getattr(item, "face_score", 0.0) or 0.0)))
+        return (
+            eligible,
+            quality * (0.72 + 0.28 * reliability),
+            body,
+            clarity,
+            detection,
+            face,
+        )
+
+    # Historical pre-V10 behavior stays unchanged for old runs/tests.
+    return (
+        1.0 if bool(getattr(item, "face_visible", False)) else 0.0,
+        float(getattr(item, "face_score", getattr(item, "detection_score", 0.0))),
+        float(getattr(item, "detection_score", 0.0)),
+    )
+
+
 def persist_results_v6(
     *,
     run_id: str,
@@ -44,12 +72,7 @@ def persist_results_v6(
     speaker_segments: list[dict[str, Any]],
     component_status: dict[str, str],
 ) -> None:
-    """把 V6 全部 Evidence 原子写入数据库并安全切换 Current。
-
-    输入：当前 Run、Global Identity Candidates、Scene Segments、Current Shots。
-    输出：无；成功后 Run 成为 Current。
-    为什么：任何一个 Candidate/Track/Scene 保存失败都必须整体回滚，旧 Current 继续可用。
-    """
+    """把人物 / Scene 全部 Evidence 原子写入数据库并安全切换 Current。"""
 
     scene_by_shot: dict[str, str] = {}
     resolved_ordinal = 0
@@ -58,7 +81,7 @@ def persist_results_v6(
     with get_session() as session:
         run = session.get(ContentAnalysisRun, run_id)
         if run is None or run.project_id != project_id:
-            raise ContentAnalysisError("V6 Asset Run 记录丢失")
+            raise ContentAnalysisError("Asset Run 记录丢失")
 
         for candidate in candidates:
             identity_status = str(getattr(candidate, "identity_status", "UNRESOLVED"))
@@ -102,14 +125,7 @@ def persist_results_v6(
             for track in candidate.tracks:
                 if not track.observations:
                     continue
-                representative = max(
-                    track.observations,
-                    key=lambda item: (
-                        1 if item.face_visible else 0,
-                        float(getattr(item, "face_score", item.detection_score)),
-                        item.detection_score,
-                    ),
-                )
+                representative = max(track.observations, key=_representative_rank)
                 face_scores = [
                     float(getattr(item, "face_score", item.detection_score))
                     for item in track.observations if item.face_visible
@@ -135,6 +151,10 @@ def persist_results_v6(
                     evidence_json=json.dumps({
                         "identity_status": identity_status,
                         "final_asset_eligible": identity_status == "RESOLVED",
+                        "representative_policy": (
+                            "V10 person-image-quality-first" if hasattr(representative, "person_evidence_eligible")
+                            else "historical-face-first"
+                        ),
                         "samples": [
                             {
                                 "source_time_us": item.source_time_us,
@@ -144,6 +164,9 @@ def persist_results_v6(
                                 "face_score": float(getattr(item, "face_score", 0.0)),
                                 "face_visible": item.face_visible,
                                 "detection_source": item.detection_source,
+                                "instance_id": getattr(item, "instance_id", None),
+                                "instance_class": getattr(item, "instance_class", None),
+                                "person_evidence_eligible": getattr(item, "person_evidence_eligible", None),
                             }
                             for item in track.observations
                         ],
@@ -175,7 +198,6 @@ def persist_results_v6(
                     confidence=scene_confidence,
                 ))
 
-        # 历史兼容；03 新 Run 正常传空数组，后续内容剧本模块可继续复用这些表。
         for item in speaker_segments:
             session.add(SpeakerSegment(
                 id=item["id"],
@@ -234,7 +256,6 @@ def persist_results_v6(
                 parts.append("已归入场景候选")
             shot.short_description = "；".join(parts) if parts else "暂无人物 / 场景 / 道具自动 Evidence"
 
-        # 直到这里所有 ORM 对象都准备完成，先 flush；任何约束错误都会在 Current 切换前暴露。
         session.flush()
 
         for previous in session.scalars(select(ContentAnalysisRun).where(
