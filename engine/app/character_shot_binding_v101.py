@@ -152,7 +152,7 @@ def _track_candidate_score(track: Any, gallery: list[Any]) -> float | None:
 
     ordered = sorted(supports, reverse=True)
     track_score = float(median(ordered[: min(5, len(ordered))]))
-    risky = risky_count >= max(1, usable // 2)
+    risky = risky_count >= max(1, (usable + 1) // 2)
     threshold = RISKY_TRACK_MEDIAN if risky else NORMAL_TRACK_MEDIAN
     supporting = sum(1 for value in supports if value >= threshold)
     if track_score < threshold or supporting < MIN_SUPPORTING_OBSERVATIONS:
@@ -227,9 +227,10 @@ def recover_unresolved_tracks(candidates: list[Any]) -> list[Any]:
 
     output: list[Any] = list(resolved)
     recovered_by_id: dict[str, list[tuple[str, float]]] = {}
+    resolved_object_ids = {id(candidate) for candidate in resolved}
 
     for candidate in candidates:
-        if candidate in resolved:
+        if id(candidate) in resolved_object_ids:
             continue
         remaining_tracks: list[Any] = []
         for track in list(getattr(candidate, "tracks", []) or []):
