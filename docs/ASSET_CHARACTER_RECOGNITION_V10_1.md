@@ -5,7 +5,7 @@
 > **Formal asset profile:** `f05-assets-v10.1-person-evidence-model-classification`  
 > **Formal resolver:** `person-evidence-model-classifier-v10.1`  
 > **Shot assignment:** `v10.1-shot-character-assignment-1` / `V10_1_SHOT_CHARACTER_ASSIGNMENT`  
-> **Last synchronized:** 2026-08-27 15:52 +08:00
+> **Last synchronized:** 2026-08-27 16:22 +08:00
 
 ## 1. Why the binding architecture changed
 
@@ -92,6 +92,15 @@ Character + ShotCharacterBinding
 
 A Track may remain unresolved identity evidence while the Shot-level aggregate still confidently says that 人物002 is present. That is valid and intentional.
 
+The accepted future Breakdown-first plan adds a **separate** semantic Draft layer:
+
+```text
+LocalSubject / ShotSemanticDraft / SceneSegmentDraft
+= anonymous content understanding
+```
+
+It is not a fifth Character identity layer and cannot be treated as Final Character truth.
+
 ## 4. Capture-first identity contract is unchanged
 
 Evidence condition is metadata, not Character cardinality:
@@ -119,6 +128,8 @@ no high-quality Face hard conflict
 Strong risky views may seed only under stricter confirmation. Weak/tiny partial evidence cannot create a Character.
 
 The Shot assignment engine can only select among already-RESOLVED identities; it cannot create one.
+
+A future VLM/Breakdown Draft cannot bypass these requirements.
 
 ## 5. Formal Shot assignment module
 
@@ -308,6 +319,8 @@ These are deliberately separate quantities.
 
 Direct identity assignments use the identity evidence confidence band. Face/Body recovered Shot assignments use their validated Shot-presence evidence score.
 
+Future Breakdown Draft confidence / DraftResolution confidence must remain a third, separate provenance domain. It cannot be silently reused as Character identity or Shot-presence confidence.
+
 ## 13. Final Character Gate
 
 Identity materialization remains fail-closed:
@@ -364,6 +377,8 @@ This is the key architectural correction.
 An explicit empty assignment list never silently falls back to Track ownership.
 
 Old persisted Runs without `shot_assignment_version` keep historical Track-derived binding so existing projects remain readable.
+
+A future anonymous Draft is **not** a fallback source either.
 
 ## 15. Asset Workspace semantics
 
@@ -441,6 +456,8 @@ At minimum keep these locked:
 19. workspace follows explicit assignment map
 20. UNRESOLVED evidence remains diagnostics only
 21. Final identity gate still requires resolver + >=3 Shots/images
+22. future Breakdown Draft alone cannot create Character or ShotCharacterBinding
+23. future semantic context cannot override hard cannot-link / high-quality Face conflict without a separately approved successor contract
 ```
 
 Focused tests:
@@ -453,7 +470,7 @@ engine/tests/v2/test_asset_workspace_character_v101.py
 
 ## 18. Validation status
 
-Latest backend CI after the explicit assignment work:
+Latest known backend CI after the explicit assignment work:
 
 ```text
 28 failed, 187 passed, 1 skipped
@@ -466,6 +483,8 @@ Existing failures remain known repository-level legacy/runtime/environment categ
 Frontend CI remains blocked by the existing `vue-tsc` / TypeScript compatibility issue.
 
 Do not mark Character V10.1 `STABLE/FROZEN` until the user accepts the real Windows binding result.
+
+The documentation-only Breakdown-first plan does not change this validation status.
 
 ## 19. Real-video acceptance
 
@@ -486,3 +505,37 @@ SHOT 0009 → verify every actually visible known Character
 ```
 
 If a Shot remains wrong, inspect that Character's persisted `shot_presence_assignments` and its mode/support/winner margin. Do not solve the next miss by adding more Gallery UI or blindly lowering global identity thresholds.
+
+## 20. Future Breakdown-first integration guardrail
+
+The accepted target workflow is documented in:
+
+```text
+docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
+```
+
+Its future Character-related phase is deliberately late:
+
+```text
+P1-P4
+→ build and validate anonymous Draft / Scene / Prop path first
+
+P5
+→ only after current V10.1 real-video baseline acceptance
+→ connect LocalSubject / Draft context to Character as an auxiliary, traceable layer
+```
+
+Until a separate successor Character contract is explicitly approved and tested:
+
+```text
+Draft says “人物A”
+!= Character identity
+
+Draft says “这里应该是人物001”
+!= ShotCharacterBinding evidence
+
+Semantic context
+!= permission to bypass cannot-link / Face conflict / Final Gate
+```
+
+Therefore future developers must not “simplify” the Breakdown-first implementation by replacing V10.1 visual identity/assignment with VLM text classification.
