@@ -3,7 +3,7 @@ from __future__ import annotations
 import engine.app.asset_analysis_progress_v4 as progress_v4
 
 
-def test_asset_evidence_reports_character_v9c_shot_progress(monkeypatch) -> None:
+def test_asset_evidence_reports_character_v10_shot_progress(monkeypatch) -> None:
     shots = [
         {
             "id": f"SHOT_{index}",
@@ -37,11 +37,12 @@ def test_asset_evidence_reports_character_v9c_shot_progress(monkeypatch) -> None
         },
     )
 
-    def fake_characters(_shots, progress=None):
+    def fake_characters(_shots, progress=None, *, run_id=None):
         assert progress is not None
-        progress(1, 4, "人物 V9C：Shot 1 / 4")
-        progress(2, 4, "人物 V9C：Shot 2 / 4")
-        progress(4, 4, "人物 V9C：Shot 4 / 4")
+        assert run_id == "RUN_1"
+        progress(1, 4, "人物 V10：Shot 1 / 4")
+        progress(2, 4, "人物 V10：Shot 2 / 4")
+        progress(4, 4, "人物 V10：Shot 4 / 4")
         return []
 
     monkeypatch.setattr(progress_v4, "analyze_characters", fake_characters)
