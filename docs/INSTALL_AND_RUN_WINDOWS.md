@@ -440,7 +440,14 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 项目正常运行不需要这一步。
 
-如果第三方工具明确要求 `.venv` 内存在 pip：
+如果第三方工具明确要求 `.venv` 内存在 pip，优先使用：
+
+```powershell
+python -m ensurepip --upgrade
+python -m pip --version
+```
+
+也可以由 uv 安装 pip：
 
 ```powershell
 uv pip install --python .\.venv\Scripts\python.exe pip
@@ -451,6 +458,8 @@ uv pip install --python .\.venv\Scripts\python.exe pip
 ```powershell
 uv venv .venv --python 3.12 --seed
 ```
+
+> **不要因为 `No module named pip` 直接删除 `.venv`。** 对本项目大多数安装场景，直接改用 `uv pip` 即可。
 
 ---
 
@@ -483,6 +492,145 @@ backend imports OK
 ```
 
 > 主工程 `.venv` 和 TransVLM `.runtime\TransVLM\inference\.venv` 是两个独立 Runtime，不要混装依赖。
+
+## 10.1 Character V10.1 / ONNX Runtime GPU 额外要求
+
+当前主工程人物链中的 YOLOX Person Detection 与 YoutuReID 使用：
+
+```text
+onnxruntime-gpu==1.20.2
+CUDAExecutionProvider
+```
+
+ONNX Runtime 1.20.x 的正式 CUDA 12 路线要求：
+
+```text
+CUDA 12.x
+cuDNN 9.x
+Microsoft Visual C++ Runtime
+```
+
+`nvidia-smi` 中显示的：
+
+```text
+CUDA Version: 13.x
+```
+
+表示当前 NVIDIA Driver 能支持的最高 CUDA API 版本，**不等于本机实际安装的 CUDA Toolkit 版本**。
+
+在 Windows 上可以分别检查：
+
+```powershell
+where.exe cublas64_12.dll
+where.exe cublasLt64_12.dll
+where.exe cudnn64_9.dll
+where.exe vcruntime140_1.dll
+```
+
+如果 `cublas64_12.dll` / `cublasLt64_12.dll` 能找到、但 `cudnn64_9.dll` 找不到，Character GPU 的典型报错是：
+
+```text
+LoadLibrary failed with error 126
+Failed to create CUDAExecutionProvider
+Require cuDNN 9.* and CUDA 12.*
+```
+
+这时不要重装整个项目，也不要因为主 `.venv` 没有 pip 而重建环境。
+
+项目使用 uv 时，直接把 CUDA 12 对应的 cuDNN 9 安装到主 `.venv`：
+
+```powershell
+cd D:\ai-drama-studio
+uv pip install --python .\.venv\Scripts\python.exe nvidia-cudnn-cu12
+```
+
+如果你已经激活 `.venv` 并明确需要传统 pip，也可以先执行：
+
+```powershell
+python -m ensurepip --upgrade
+python -m pip install --upgrade pip wheel
+python -m pip install nvidia-cudnn-cu12
+```
+
+但项目标准路径仍然优先使用 `uv pip`。
+
+NVIDIA 的 Python wheel 会把 cuDNN DLL 放到主 `.venv` 的包目录。当前 PowerShell 会话需要让这个目录进入 DLL 搜索路径：
+
+```powershell
+$cudnnBin = Resolve-Path .\.venv\Lib\site-packages\nvidia\cudnn\bin
+$env:PATH = "$cudnnBin;$env:PATH"
+where.exe cudnn64_9.dll
+```
+
+如果已激活 `.venv`，也可以：
+
+```powershell
+$env:PATH = "$env:VIRTUAL_ENV\Lib\site-packages\nvidia\cudnn\bin;$env:PATH"
+```
+
+### 10.1.1 不要只看 get_available_providers()
+
+下面这条：
+
+```powershell
+python -c "import onnxruntime as ort; print(ort.get_available_providers())"
+```
+
+即使输出包含：
+
+```text
+CUDAExecutionProvider
+```
+
+也只能证明安装的 ORT wheel **包含 CUDA Provider**，不能证明 CUDA/cuDNN DLL 已经能真正加载。
+
+必须创建真实模型 Session 才算 GPU 验证通过。
+
+YOLOX：
+
+```powershell
+python -c "from engine.app import character_visual_v4 as c; from engine.app.inference_runtime_v41 import create_session; m=c.require_models(); s,r=create_session(m['person_detection.yolox.2022nov']); print(r); print(s.get_providers())"
+```
+
+YoutuReID：
+
+```powershell
+python -c "from engine.app import character_visual_v4 as c; from engine.app.inference_runtime_v41 import create_session; m=c.require_models(); s,r=create_session(m['person_reid.youtu.2021nov']); print(r); print(s.get_providers())"
+```
+
+两个 Session 都应看到类似：
+
+```text
+'device': 'GPU'
+'provider': 'CUDAExecutionProvider'
+```
+
+### 10.1.2 主 `.venv` 的 CPU PyTorch 不等于 ORT 不能用 GPU
+
+可能出现：
+
+```text
+torch=2.5.1+cpu
+torch.cuda.is_available()=False
+```
+
+但同时 ONNX Runtime CUDA Session 可以正常使用 GPU。
+
+原因是 Character 的 YOLOX / YoutuReID 正式重推理走 ONNX Runtime；主工程代码只会尝试 `import torch` 帮助预加载可能存在的 CUDA/cuDNN DLL，并不要求 Character GPU 必须由 PyTorch 提供。
+
+因此遇到 ORT `error 126` 时，先检查 CUDA 12 / cuDNN 9 DLL，不要为了这个问题随意更换 PyTorch 大版本。
+
+### 10.1.3 临时 CPU fallback
+
+如果当前只需要先验证业务逻辑，可以在启动后端前：
+
+```powershell
+$env:AI_DRAMA_CHARACTER_DEVICE="cpu"
+```
+
+Character 会跳过 CUDA Provider，使用 CPU fallback。结果逻辑不应因此变化，只是推理速度会明显降低。
+
+关闭当前 PowerShell 后，该临时环境变量自动失效。
 
 ---
 
@@ -841,10 +989,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\check_transvlm_runtime.ps1
 No module named pip
 ```
 
-处理：
+主工程由 `uv venv` 创建时，这个现象本身不表示环境损坏。
+
+如果只是安装项目依赖或 Character cuDNN，优先直接使用：
 
 ```powershell
 uv pip install --python .\.venv\Scripts\python.exe -r .\engine\requirements.txt
+uv pip install --python .\.venv\Scripts\python.exe nvidia-cudnn-cu12
+```
+
+如果确实需要让 `python -m pip` 可用：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m ensurepip --upgrade
+python -m pip --version
 ```
 
 不需要删除 `.venv`。
@@ -963,6 +1122,15 @@ uv pip install --python .\.venv\Scripts\python.exe -r .\engine\requirements.txt
 .\.venv\Scripts\python.exe -c "import fastapi, sqlalchemy, cv2; print('backend imports OK')"
 ```
 
+如果要让 Character V10.1 的 YOLOX / YoutuReID 使用 ONNX Runtime CUDA，还要确认主环境可以找到 CUDA 12 + cuDNN 9。推荐：
+
+```powershell
+uv pip install --python .\.venv\Scripts\python.exe nvidia-cudnn-cu12
+$cudnnBin = Resolve-Path .\.venv\Lib\site-packages\nvidia\cudnn\bin
+$env:PATH = "$cudnnBin;$env:PATH"
+where.exe cudnn64_9.dll
+```
+
 ## E. 前端
 
 ```powershell
@@ -1024,6 +1192,9 @@ http://127.0.0.1:5173
 [ ] uv Python 3.12 正常
 [ ] 主 .venv 正常
 [ ] backend imports OK
+[ ] Character ORT 如需 GPU：cudnn64_9.dll 可找到
+[ ] Character ORT 如需 GPU：YOLOX CUDA Session = CUDAExecutionProvider
+[ ] Character ORT 如需 GPU：YoutuReID CUDA Session = CUDAExecutionProvider
 [ ] npm install 完成
 [ ] setup_transvlm_runtime.ps1 输出 READY
 [ ] check_transvlm_runtime.ps1 输出 RUNTIME CHECK PASSED
@@ -1050,6 +1221,7 @@ AI Drama Studio
 │  ├─ FastAPI
 │  ├─ SQLAlchemy / SQLite
 │  ├─ FFmpeg 调度
+│  ├─ ONNX Runtime GPU（Character V10.1）
 │  └─ Shot / Revision API
 │
 ├─ frontend\
@@ -1064,7 +1236,7 @@ AI Drama Studio
    └─ TransVLM-Qwen3-VL-4B-Instruct
 ```
 
-不要为了“统一环境”把 TransVLM 的 torch / cuDNN 直接塞进主 `.venv`。
+主 `.venv` 的 Character ONNX Runtime GPU 与 TransVLM 隔离 Runtime 是两条不同 GPU 运行链。不要为了“统一环境”把 TransVLM 的 torch / cuDNN 直接塞进主 `.venv`。
 
 当前正式拉片：
 
