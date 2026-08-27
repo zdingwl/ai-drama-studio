@@ -9,6 +9,10 @@ This adapter rebuilds only the Character portion of `evidence_by_shot` from immu
 CharacterCandidate/CharacterTrack evidence. Scene/Prop evidence and all Final Bindings
 remain owned by the existing Asset Workspace.
 
+Resolved Character evidence and unresolved diagnostics are intentionally separated:
+- `characters`: RESOLVED identity evidence that may map to a Final Character;
+- `character_diagnostics`: UNRESOLVED evidence, never treated as a Final binding.
+
 It intentionally does not change DB schema or identity decisions.
 """
 from __future__ import annotations
@@ -76,12 +80,21 @@ def _candidate_to_asset(workspace: dict[str, Any]) -> dict[str, str]:
     return result
 
 
+def _empty_bucket(*, scene: Any = None, props: list[Any] | None = None) -> dict[str, Any]:
+    return {
+        "characters": [],
+        "character_diagnostics": [],
+        "scene": scene,
+        "props": list(props or []),
+    }
+
+
 def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> dict[str, Any]:
     """Return workspace payload with V10.1-correct Character evidence per Shot.
 
     RESOLVED Track evidence is visible even when `face_visible=False`. UNRESOLVED evidence
-    remains diagnostic-only: it has no Final Asset ID and no confidence value that could
-    incorrectly mark the row as a low-confidence Final binding.
+    is moved to `character_diagnostics`, so it cannot appear as a final Character suggestion,
+    create an unbound/conflict state, or pollute Final Shot confidence.
     """
 
     analysis = workspace.get("analysis") or {}
@@ -110,11 +123,10 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
     evidence_by_shot: dict[str, dict[str, Any]] = {}
     for shot_id, raw_bucket in (workspace.get("evidence_by_shot") or {}).items():
         bucket = dict(raw_bucket or {})
-        evidence_by_shot[str(shot_id)] = {
-            "characters": [],
-            "scene": bucket.get("scene"),
-            "props": list(bucket.get("props") or []),
-        }
+        evidence_by_shot[str(shot_id)] = _empty_bucket(
+            scene=bucket.get("scene"),
+            props=list(bucket.get("props") or []),
+        )
 
     for candidate in candidates:
         candidate_evidence = _json(candidate.evidence_json)
@@ -129,9 +141,9 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
             shot_tracks = tracks_by_candidate_shot[(candidate.id, shot_id)]
             confidence, confidence_source = _shot_presence_confidence(candidate, shot_tracks)
             recoveries = [value for value in (_track_recovery(track) for track in shot_tracks) if value]
-            recovered = bool(recoveries) and all(_track_recovery(track) for track in shot_tracks)
-            bucket = evidence_by_shot.setdefault(shot_id, {"characters": [], "scene": None, "props": []})
-            bucket["characters"].append({
+            recovered = bool(recoveries) and len(recoveries) == len(shot_tracks)
+            bucket = evidence_by_shot.setdefault(shot_id, _empty_bucket())
+            item = {
                 "candidate_id": candidate.id,
                 "label": candidate.auto_label,
                 "confidence": confidence if identity_status == "RESOLVED" else None,
@@ -142,7 +154,11 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
                 "recovered_track": recovered,
                 "confidence_source": confidence_source if identity_status == "RESOLVED" else "UNRESOLVED_DIAGNOSTIC",
                 "recovery_source": RECOVERY_SOURCE if recovered else None,
-            })
+            }
+            if identity_status == "RESOLVED":
+                bucket["characters"].append(item)
+            else:
+                bucket["character_diagnostics"].append(item)
 
     result["evidence_by_shot"] = evidence_by_shot
     return result
