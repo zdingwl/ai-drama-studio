@@ -1,10 +1,10 @@
-"""Character V9D -> Final Asset Gate.
+"""Character V9/V10 -> Final Asset Gate.
 
 Formal rules:
-- V9 Character cardinality comes only from confirmed Person Galleries;
-- a RESOLVED Person Gallery can materialize even when none of its Track samples has a visible face;
+- Final Character cardinality comes only from confirmed person identity classes;
+- a confirmed class can materialize with no visible face;
 - UNRESOLVED evidence never materializes and remains immutable AI Evidence;
-- V9 evidence fails closed unless resolver/provenance and >=3 confirmed Gallery shots are present;
+- V9/V10 evidence fails closed unless resolver/provenance and >=3 supporting shots/images are present;
 - historical pre-V9 runs keep their historical face-visible safety gate for compatibility.
 
 Scene / Prop materialization keeps Asset Workspace V3 semantics unchanged.
@@ -27,11 +27,12 @@ from engine.app.content_analysis_v2 import (
     ShotSceneEvidence,
 )
 
-V9_RESOLVERS = {
-    "person-gallery-anchor-first-v9c",       # historical V9C runs
-    "person-gallery-progressive-v9.1",      # formal V9.1
+FORMAL_RESOLVERS = {
+    "person-gallery-anchor-first-v9c",
+    "person-gallery-progressive-v9.1",
+    "person-evidence-model-classifier-v10",
 }
-V9_FINAL_POLICY = "Character V9D: confirmed Person Gallery only; Face optional"
+FINAL_POLICY = "Confirmed Person Identity only; Person ReID model classification; Face optional"
 
 
 def _json(raw: str | None) -> dict[str, Any]:
@@ -42,8 +43,9 @@ def _json(raw: str | None) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _is_v9_profile(profile: str | None) -> bool:
-    return str(profile or "").lower().startswith("f05-assets-v9")
+def _is_formal_person_profile(profile: str | None) -> bool:
+    value = str(profile or "").lower()
+    return value.startswith("f05-assets-v9") or value.startswith("f05-assets-v10")
 
 
 def _candidate_is_final_eligible(
@@ -52,8 +54,6 @@ def _candidate_is_final_eligible(
     run_profile: str | None,
     tracks: list[CharacterTrack],
 ) -> bool:
-    """Fail-closed Final Character admission."""
-
     evidence = _json(candidate.evidence_json)
     if str(evidence.get("identity_status") or "").upper() != "RESOLVED":
         return False
@@ -61,8 +61,8 @@ def _candidate_is_final_eligible(
         return False
 
     candidate_profile = str(evidence.get("profile") or run_profile or "")
-    if _is_v9_profile(candidate_profile) or _is_v9_profile(run_profile):
-        if str(evidence.get("resolver") or "") not in V9_RESOLVERS:
+    if _is_formal_person_profile(candidate_profile) or _is_formal_person_profile(run_profile):
+        if str(evidence.get("resolver") or "") not in FORMAL_RESOLVERS:
             return False
         try:
             confirmed_shots = int(evidence.get("confirmed_gallery_shots") or 0)
@@ -71,7 +71,6 @@ def _candidate_is_final_eligible(
             return False
         return confirmed_shots >= 3 and confirmed_images >= 3
 
-    # Historical compatibility only. V9 formal runs never use Face as the Final gate.
     return any(bool(track.face_visible) for track in tracks)
 
 
@@ -106,12 +105,15 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             "evidence_cover_urls": [f"/api/content-analysis/characters/{candidate.id}/cover"] if candidate.cover_path else [],
             "confidence": candidate.confidence,
             "identity_status": "RESOLVED",
-            "identity_policy": V9_FINAL_POLICY if _is_v9_profile(run.profile_version) else "Historical resolved identity",
+            "identity_policy": FINAL_POLICY if _is_formal_person_profile(run.profile_version) else "Historical resolved identity",
             "resolver": evidence.get("resolver"),
+            "classifier_model": evidence.get("classifier_model"),
             "confirmed_gallery_images": evidence.get("confirmed_gallery_images"),
             "confirmed_gallery_shots": evidence.get("confirmed_gallery_shots"),
+            "captured_classified_images": evidence.get("captured_classified_images"),
+            "classified_shots": evidence.get("classified_shots"),
+            "instance_classes": evidence.get("instance_classes"),
             "face_images": evidence.get("face_images"),
-            "gallery_builder": evidence.get("gallery_builder"),
         }
         session.add(
             legacy.Character(
@@ -141,17 +143,13 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
                 )
             )
 
-    scene_links = list(
-        session.scalars(select(ShotSceneEvidence).where(ShotSceneEvidence.run_id == run_id)).all()
-    )
+    scene_links = list(session.scalars(select(ShotSceneEvidence).where(ShotSceneEvidence.run_id == run_id)).all())
     links_by_scene: dict[str, list[ShotSceneEvidence]] = {}
     for link in scene_links:
         links_by_scene.setdefault(link.scene_candidate_id, []).append(link)
 
     scene_candidates = session.scalars(
-        select(SceneCandidate)
-        .where(SceneCandidate.run_id == run_id)
-        .order_by(SceneCandidate.ordinal)
+        select(SceneCandidate).where(SceneCandidate.run_id == run_id).order_by(SceneCandidate.ordinal)
     ).all()
     for candidate in scene_candidates:
         asset_id = legacy.new_id("SCENE")
@@ -166,40 +164,32 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             "evidence_cover_urls": [cover] if cover else [],
             "confidence": value,
         }
-        session.add(
-            legacy.Scene(
-                id=asset_id,
-                project_id=project_id,
-                name=candidate.auto_label,
-                status="AUTO",
-                metadata_json=json.dumps(metadata, ensure_ascii=False),
-            )
-        )
+        session.add(legacy.Scene(
+            id=asset_id,
+            project_id=project_id,
+            name=candidate.auto_label,
+            status="AUTO",
+            metadata_json=json.dumps(metadata, ensure_ascii=False),
+        ))
         for link in links:
-            session.add(
-                legacy.ShotSceneBinding(
-                    id=legacy.new_id("SHOTSCENEFINAL"),
-                    project_id=project_id,
-                    shot_id=link.shot_id,
-                    scene_id=asset_id,
-                    source="AUTO",
-                    confidence=link.confidence,
-                    source_run_id=run_id,
-                    source_candidate_id=candidate.id,
-                )
-            )
+            session.add(legacy.ShotSceneBinding(
+                id=legacy.new_id("SHOTSCENEFINAL"),
+                project_id=project_id,
+                shot_id=link.shot_id,
+                scene_id=asset_id,
+                source="AUTO",
+                confidence=link.confidence,
+                source_run_id=run_id,
+                source_candidate_id=candidate.id,
+            ))
 
-    prop_links = list(
-        session.scalars(select(ShotPropEvidence).where(ShotPropEvidence.run_id == run_id)).all()
-    )
+    prop_links = list(session.scalars(select(ShotPropEvidence).where(ShotPropEvidence.run_id == run_id)).all())
     links_by_prop: dict[str, list[ShotPropEvidence]] = {}
     for link in prop_links:
         links_by_prop.setdefault(link.prop_candidate_id, []).append(link)
 
     prop_candidates = session.scalars(
-        select(PropCandidate)
-        .where(PropCandidate.run_id == run_id)
-        .order_by(PropCandidate.ordinal)
+        select(PropCandidate).where(PropCandidate.run_id == run_id).order_by(PropCandidate.ordinal)
     ).all()
     for candidate in prop_candidates:
         asset_id = legacy.new_id("PROP")
@@ -209,35 +199,29 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             "source_candidate_ids": [candidate.id],
             "confidence": candidate.confidence,
         }
-        session.add(
-            legacy.Prop(
-                id=asset_id,
-                project_id=project_id,
-                name=candidate.auto_label,
-                is_key_prop=True,
-                metadata_json=json.dumps(metadata, ensure_ascii=False),
-            )
-        )
+        session.add(legacy.Prop(
+            id=asset_id,
+            project_id=project_id,
+            name=candidate.auto_label,
+            is_key_prop=True,
+            metadata_json=json.dumps(metadata, ensure_ascii=False),
+        ))
         for link in links_by_prop.get(candidate.id, []):
-            session.add(
-                legacy.ShotPropBinding(
-                    id=legacy.new_id("SHOTPROPFINAL"),
-                    project_id=project_id,
-                    shot_id=link.shot_id,
-                    prop_id=asset_id,
-                    source="AUTO",
-                    confidence=candidate.confidence,
-                    source_run_id=run_id,
-                    source_candidate_id=candidate.id,
-                )
-            )
+            session.add(legacy.ShotPropBinding(
+                id=legacy.new_id("SHOTPROPFINAL"),
+                project_id=project_id,
+                shot_id=link.shot_id,
+                prop_id=asset_id,
+                source="AUTO",
+                confidence=candidate.confidence,
+                source_run_id=run_id,
+                source_candidate_id=candidate.id,
+            ))
 
     session.flush()
 
 
 def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = False) -> dict[str, Any]:
-    """Materialize a new AUTO Final Asset revision from immutable AI Evidence."""
-
     with legacy.get_session() as session:
         run = session.get(ContentAnalysisRun, run_id)
         if run is None or run.project_id != project_id:
@@ -260,7 +244,7 @@ def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = Fals
             kind="AUTO",
             source_run_id=run_id,
             source_revision_id=source_revision_id,
-            note="基于最新 AI Evidence 自动形成资产；Character V9D 仅发布 Confirmed Person Gallery，Face 为可选证据",
+            note="基于最新 AI Evidence 自动形成资产；Character V10 先采集 Person Evidence 再模型分类，Face 为可选证据",
         )
         session.commit()
         return legacy._serialize_workspace(session, project_id)
