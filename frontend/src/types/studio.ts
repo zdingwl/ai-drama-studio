@@ -219,10 +219,16 @@ export interface AssetEvidenceItem {
   confidence: number | null
   cover_url: string | null
   final_asset_id: string | null
+  identity_status?: 'RESOLVED' | 'UNRESOLVED' | string
+  face_required?: boolean
+  recovered_track?: boolean
+  confidence_source?: string
+  recovery_source?: string | null
 }
 
 export interface ShotAssetEvidence {
   characters: AssetEvidenceItem[]
+  character_diagnostics?: AssetEvidenceItem[]
   scene: AssetEvidenceItem | null
   props: AssetEvidenceItem[]
 }
