@@ -6,7 +6,8 @@ Formal rules:
 - UNRESOLVED evidence never materializes and remains immutable AI Evidence;
 - V9/V10 evidence fails closed unless resolver/provenance and >=3 supporting shots/images are present;
 - historical pre-V9 runs keep their historical face-visible safety gate for compatibility;
-- V10.1 recovered Tracks keep their own Shot-presence confidence instead of reusing global identity confidence.
+- current V10.1 runs consume explicit Shot -> Character presence assignments; historical
+  runs without that metadata keep the old Track-derived binding fallback.
 
 Scene / Prop materialization keeps Asset Workspace V3 semantics unchanged.
 """
@@ -76,7 +77,7 @@ def _candidate_is_final_eligible(
 
 
 def _track_identity_recovery(track: CharacterTrack) -> dict[str, Any]:
-    """Read validated V10.1 Track recovery provenance from immutable Track Evidence."""
+    """Read validated historical V10.1 Track recovery provenance."""
 
     value = _json(track.evidence_json).get("identity_recovery")
     if not isinstance(value, dict):
@@ -93,13 +94,7 @@ def _track_identity_recovery(track: CharacterTrack) -> dict[str, Any]:
 
 
 def _shot_binding_confidence(candidate: CharacterCandidate, tracks: list[CharacterTrack]) -> float | None:
-    """Return Shot-presence confidence without conflating it with identity confidence.
-
-    A normal identity-assigned Track keeps the historical candidate confidence fallback.
-    A Shot represented only by V10.1 recovered Tracks uses the recovery score persisted on
-    those Tracks. If several recovered fragments belong to the same person/Shot, use the
-    strongest validated recovery score and still materialize only one binding.
-    """
+    """Historical Track-derived Shot-presence confidence fallback."""
 
     recovery_scores: list[float] = []
     has_direct_track = False
@@ -114,6 +109,45 @@ def _shot_binding_confidence(candidate: CharacterCandidate, tracks: list[Charact
     if recovery_scores:
         return max(recovery_scores)
     return candidate.confidence
+
+
+def _explicit_shot_presence_assignments(evidence: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Return validated V10.1 explicit Shot assignments, or None for historical runs.
+
+    The presence of ``shot_assignment_version`` is the switch.  Once a Run uses the new
+    assignment engine, Final Binding must not silently fall back to candidate Track
+    ownership, because that would recreate the original binding-recall defect.
+    """
+
+    if not str(evidence.get("shot_assignment_version") or ""):
+        return None
+    raw = evidence.get("shot_presence_assignments")
+    if not isinstance(raw, list):
+        return []
+
+    by_shot: dict[str, dict[str, Any]] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        shot_id = str(item.get("shot_id") or "")
+        if not shot_id:
+            continue
+        confidence: float | None
+        try:
+            confidence = float(item.get("confidence")) if item.get("confidence") is not None else None
+        except (TypeError, ValueError):
+            continue
+        if confidence is not None and not 0.0 <= confidence <= 1.0:
+            continue
+        value = dict(item)
+        value["shot_id"] = shot_id
+        value["confidence"] = confidence
+        previous = by_shot.get(shot_id)
+        previous_confidence = float(previous.get("confidence") or 0.0) if previous else -1.0
+        current_confidence = float(confidence or 0.0)
+        if previous is None or current_confidence > previous_confidence:
+            by_shot[shot_id] = value
+    return list(by_shot.values())
 
 
 def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
@@ -139,6 +173,7 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             continue
 
         evidence = _json(candidate.evidence_json)
+        explicit_assignments = _explicit_shot_presence_assignments(evidence)
         asset_id = legacy.new_id("CHAR")
         metadata = {
             "source_run_id": run_id,
@@ -156,6 +191,13 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             "classified_shots": evidence.get("classified_shots"),
             "instance_classes": evidence.get("instance_classes"),
             "face_images": evidence.get("face_images"),
+            "shot_assignment_version": evidence.get("shot_assignment_version"),
+            "shot_assignment_source": evidence.get("shot_assignment_source"),
+            "shot_assignment_policy": evidence.get("shot_assignment_policy"),
+            "shot_presence_count": evidence.get("shot_presence_count"),
+            "shot_presence_recovered_count": evidence.get("shot_presence_recovered_count"),
+            "shot_presence_shot_ids": evidence.get("shot_presence_shot_ids"),
+            # Historical provenance remains readable for old Runs.
             "track_recovery_count": evidence.get("track_recovery_count"),
             "track_recovery_shot_ids": evidence.get("track_recovery_shot_ids"),
             "track_recovery_scores": evidence.get("track_recovery_scores"),
@@ -172,24 +214,40 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             )
         )
 
-        # Track 是 Evidence 粒度；Final Binding 只表达“Character 出现在 Shot”。
-        # 同一人物在同一 Shot 有多条 Track 时聚合后只写一个 Binding。
-        tracks_by_shot: dict[str, list[CharacterTrack]] = {}
-        for track in members:
-            tracks_by_shot.setdefault(track.shot_id, []).append(track)
-        for shot_id, shot_tracks in tracks_by_shot.items():
-            session.add(
-                legacy.ShotCharacterBinding(
-                    id=legacy.new_id("SHOTCHAR"),
-                    project_id=project_id,
-                    shot_id=shot_id,
-                    character_id=asset_id,
-                    source="AUTO",
-                    confidence=_shot_binding_confidence(candidate, shot_tracks),
-                    source_run_id=run_id,
-                    source_candidate_id=candidate.id,
+        if explicit_assignments is not None:
+            # Current V10.1 contract: Final Binding consumes the explicit Shot assignment
+            # engine output.  Candidate Track ownership is identity evidence only.
+            for assignment in explicit_assignments:
+                session.add(
+                    legacy.ShotCharacterBinding(
+                        id=legacy.new_id("SHOTCHAR"),
+                        project_id=project_id,
+                        shot_id=str(assignment["shot_id"]),
+                        character_id=asset_id,
+                        source="AUTO",
+                        confidence=assignment.get("confidence"),
+                        source_run_id=run_id,
+                        source_candidate_id=candidate.id,
+                    )
                 )
-            )
+        else:
+            # Historical fallback for old persisted V9/V10/V10.1 Runs.
+            tracks_by_shot: dict[str, list[CharacterTrack]] = {}
+            for track in members:
+                tracks_by_shot.setdefault(track.shot_id, []).append(track)
+            for shot_id, shot_tracks in tracks_by_shot.items():
+                session.add(
+                    legacy.ShotCharacterBinding(
+                        id=legacy.new_id("SHOTCHAR"),
+                        project_id=project_id,
+                        shot_id=shot_id,
+                        character_id=asset_id,
+                        source="AUTO",
+                        confidence=_shot_binding_confidence(candidate, shot_tracks),
+                        source_run_id=run_id,
+                        source_candidate_id=candidate.id,
+                    )
+                )
 
     scene_links = list(session.scalars(select(ShotSceneEvidence).where(ShotSceneEvidence.run_id == run_id)).all())
     links_by_scene: dict[str, list[ShotSceneEvidence]] = {}
@@ -292,7 +350,7 @@ def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = Fals
             kind="AUTO",
             source_run_id=run_id,
             source_revision_id=source_revision_id,
-            note="基于最新 AI Evidence 自动形成资产；Character V10.1 使用确认身份 + Shot Track presence，Face 为可选证据",
+            note="基于最新 AI Evidence 自动形成资产；Character V10.1 使用确认身份 + 独立 Shot Character Assignment，Face 为可选证据",
         )
         session.commit()
         return legacy._serialize_workspace(session, project_id)
