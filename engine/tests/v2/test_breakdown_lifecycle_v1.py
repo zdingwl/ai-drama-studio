@@ -8,6 +8,10 @@ from sqlalchemy.orm import sessionmaker
 
 from engine.app import breakdown_service_v1, shot_revision_v2, studio_v2
 from engine.app.breakdown_models_v1 import BreakdownRun
+from engine.app.breakdown_validator_v1 import (
+    BreakdownValidationIssue,
+    BreakdownValidationResult,
+)
 from engine.app.shot_revision_v2 import ShotRevision
 
 
@@ -58,6 +62,23 @@ def setup_episode(monkeypatch, tmp_path: Path):
             ))
         session.commit()
     return factory
+
+
+def stub_validation(monkeypatch, *, passed: bool = True, error: str = "fixture validator error") -> None:
+    issues = () if passed else (
+        BreakdownValidationIssue(code="FIXTURE_INVALID", message=error),
+    )
+    result = BreakdownValidationResult(
+        run_id="fixture",
+        errors=issues,
+        warnings=(),
+        counts={"shot": 2},
+    )
+    monkeypatch.setattr(
+        breakdown_service_v1.breakdown_validator_v1,
+        "validate_breakdown_run_in_session",
+        lambda _session, _run: result,
+    )
 
 
 def new_payloads(tmp_path: Path):
@@ -120,21 +141,16 @@ def test_current_shot_revision_creates_processing_run(monkeypatch, tmp_path: Pat
 
 def test_ready_publish_switches_single_current_without_staling_same_revision_history(monkeypatch, tmp_path: Path) -> None:
     factory = setup_episode(monkeypatch, tmp_path)
+    stub_validation(monkeypatch)
 
     first = breakdown_service_v1.create_breakdown_run("EPISODE_1")
-    published_first = breakdown_service_v1.publish_breakdown_run(
-        first.id,
-        validation_passed=True,
-        counts={"shot": 2},
-    )
+    published_first = breakdown_service_v1.publish_breakdown_run(first.id)
     assert published_first.status == "READY"
     assert published_first.is_current is True
 
     second = breakdown_service_v1.create_breakdown_run("EPISODE_1")
     published_second = breakdown_service_v1.publish_breakdown_run(
         second.id,
-        validation_passed=True,
-        counts={"shot": 2},
         warnings=["fixture warning"],
     )
     assert published_second.status == "READY_WITH_WARNINGS"
@@ -153,17 +169,15 @@ def test_ready_publish_switches_single_current_without_staling_same_revision_his
 
 def test_failed_validation_does_not_replace_old_current(monkeypatch, tmp_path: Path) -> None:
     factory = setup_episode(monkeypatch, tmp_path)
+    stub_validation(monkeypatch)
 
     stable = breakdown_service_v1.create_breakdown_run("EPISODE_1")
-    breakdown_service_v1.publish_breakdown_run(stable.id, validation_passed=True)
+    breakdown_service_v1.publish_breakdown_run(stable.id)
 
     failed = breakdown_service_v1.create_breakdown_run("EPISODE_1")
+    stub_validation(monkeypatch, passed=False)
     with pytest.raises(breakdown_service_v1.BreakdownValidationGateError, match="fixture validator error"):
-        breakdown_service_v1.publish_breakdown_run(
-            failed.id,
-            validation_passed=False,
-            validation_error="fixture validator error",
-        )
+        breakdown_service_v1.publish_breakdown_run(failed.id)
 
     with factory() as session:
         stable_row = session.get(BreakdownRun, stable.id)
@@ -175,13 +189,14 @@ def test_failed_validation_does_not_replace_old_current(monkeypatch, tmp_path: P
 
 def test_old_processing_run_cannot_publish_after_shot_revision_changes(monkeypatch, tmp_path: Path) -> None:
     factory = setup_episode(monkeypatch, tmp_path)
+    stub_validation(monkeypatch)
 
     run = breakdown_service_v1.create_breakdown_run("EPISODE_1")
     old_revision_id = run.source_shot_revision_id
     shot_revision_v2.commit_auto_shot_revision("EPISODE_1", new_payloads(tmp_path))
 
     with pytest.raises(breakdown_service_v1.BreakdownRunStaleError):
-        breakdown_service_v1.publish_breakdown_run(run.id, validation_passed=True)
+        breakdown_service_v1.publish_breakdown_run(run.id)
 
     with factory() as session:
         row = session.get(BreakdownRun, run.id)
@@ -198,9 +213,10 @@ def test_old_processing_run_cannot_publish_after_shot_revision_changes(monkeypat
 
 def test_stale_primitive_preserves_history_and_only_stales_old_revision_runs(monkeypatch, tmp_path: Path) -> None:
     factory = setup_episode(monkeypatch, tmp_path)
+    stub_validation(monkeypatch)
 
     old_run = breakdown_service_v1.create_breakdown_run("EPISODE_1")
-    breakdown_service_v1.publish_breakdown_run(old_run.id, validation_passed=True)
+    breakdown_service_v1.publish_breakdown_run(old_run.id)
     old_revision_id = old_run.source_shot_revision_id
 
     shot_revision_v2.commit_auto_shot_revision("EPISODE_1", new_payloads(tmp_path))
@@ -208,7 +224,7 @@ def test_stale_primitive_preserves_history_and_only_stales_old_revision_runs(mon
     assert changed == [old_run.id]
 
     new_run = breakdown_service_v1.create_breakdown_run("EPISODE_1")
-    breakdown_service_v1.publish_breakdown_run(new_run.id, validation_passed=True)
+    breakdown_service_v1.publish_breakdown_run(new_run.id)
     assert breakdown_service_v1.mark_episode_breakdown_runs_stale("EPISODE_1") == []
 
     with factory() as session:
