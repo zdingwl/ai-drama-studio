@@ -2,7 +2,7 @@
 
 所有写操作都修改 Final Asset / Shot Binding，并在同一事务中创建新的 MANUAL Revision。
 AI Evidence 只读，不会被人工操作覆盖或删除。
-Character V10 先采集 Person Evidence 再模型分类；只有确认的人物类别进入 Final Character。
+Character V10.1 先采集 Person Evidence 再模型分类；只有确认的人物类别进入 Final Character。
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from engine.app.asset_analysis_progress_v4 import run_content_analysis_with_progress
 from engine.app.asset_final_gate_v10 import apply_analysis_to_assets
 from engine.app.asset_semantics_v3 import enrich_asset_run, semantic_model_status
+from engine.app.asset_workspace_character_v101 import decorate_asset_workspace_character_evidence
 from engine.app.asset_workspace_v3 import (
     AssetWorkspaceError,
     create_asset,
@@ -77,11 +78,18 @@ def _bad(exc: Exception) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
-def _run_full_asset_task(task_id: str, project_id: str) -> None:
-    """完整资产任务：V10 Person Evidence → 模型分类 → optional VLM → Final Asset → Shot Binding。
+def _workspace_payload(workspace: dict[str, object]) -> dict[str, object]:
+    """Expose V10.1 face-optional/recovered Character Evidence on every workspace response."""
 
-    Character V10 负责人物实例采集和身份分类；Qwen3-VL 是场景/道具语义增强，不是 Character_ID Source of Truth。
-    Qwen 未配置/失败时，人物 Final Asset 仍可正常完成，任务以 READY_WITH_WARNINGS 结束。
+    return decorate_asset_workspace_character_evidence(workspace)
+
+
+def _run_full_asset_task(task_id: str, project_id: str) -> None:
+    """完整资产任务：V10.1 Person Evidence → 模型分类 → optional VLM → Final Asset → Shot Binding。
+
+    Character V10.1 负责人物实例采集、全局身份分类和已知身份 Track recovery；Qwen3-VL 是场景/道具
+    语义增强，不是 Character_ID Source of Truth。Qwen 未配置/失败时，人物 Final Asset 仍可正常完成，
+    任务以 READY_WITH_WARNINGS 结束。
     """
 
     try:
@@ -89,7 +97,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
             task_id,
             stage_key="asset_prepare",
             stage_label="准备资产提取",
-            message="正在读取 Final Shots 与人物 V10 Person Evidence / Model Classification",
+            message="正在读取 Final Shots 与人物 V10.1 Person Evidence / Model Classification",
         )
         update_task(
             task_id,
@@ -168,7 +176,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
                     stage_key="asset_semantics",
                     stage_label="Qwen3-VL 增强失败",
                     current_item=None,
-                    message="人物 V10 Evidence 已保留；场景语义/道具可人工维护或稍后重跑",
+                    message="人物 V10.1 Evidence 已保留；场景语义/道具可人工维护或稍后重跑",
                 )
         else:
             semantic_warning = True
@@ -191,7 +199,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
             current_item=None,
             current_index=None,
             total_items=None,
-            message=f"V10 只发布 {resolved_characters} 个确认人物类别；{unresolved_evidence} 个待归属 Evidence 不计入人物数",
+            message=f"V10.1 只发布 {resolved_characters} 个确认人物类别；{unresolved_evidence} 个待归属 Evidence 不计入人物数",
         )
         workspace = apply_analysis_to_assets(project_id, run_id)
         manual_preserved = bool(workspace.get("stale"))
@@ -199,7 +207,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
         if manual_preserved:
             message = "资产 Evidence 已更新；当前人工版本已保留，请按需采用新 Evidence"
         else:
-            message = f"人物 V10：{resolved_characters} Final Character · {unresolved_evidence} 待归属 Evidence"
+            message = f"人物 V10.1：{resolved_characters} Final Character · {unresolved_evidence} 待归属 Evidence"
             if semantic_warning:
                 message += "；Qwen3-VL 语义增强未完成"
         finish_task(
@@ -223,14 +231,14 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
 @router.get("/projects/{project_id}/assets/workspace")
 def api_asset_workspace(project_id: str):
     try:
-        return get_asset_workspace(project_id)
+        return _workspace_payload(get_asset_workspace(project_id))
     except (LookupError, AssetWorkspaceError) as exc:
         raise _bad(exc) from exc
 
 
 @router.get("/assets/models/status")
 def api_asset_model_status():
-    """Qwen3-VL 语义增强配置状态；人物 V10 模型由 /api/models/f05/status 提供。"""
+    """Qwen3-VL 语义增强配置状态；人物 V10.1 模型由 /api/models/f05/status 提供。"""
     return semantic_model_status()
 
 
@@ -261,7 +269,7 @@ def api_apply_analysis(project_id: str):
     if not analysis:
         raise _bad(ValueError("当前没有可用资产 AI Run"))
     try:
-        return apply_analysis_to_assets(project_id, analysis["id"], force=True)
+        return _workspace_payload(apply_analysis_to_assets(project_id, analysis["id"], force=True))
     except (LookupError, AssetWorkspaceError) as exc:
         raise _bad(exc) from exc
 
@@ -269,13 +277,13 @@ def api_apply_analysis(project_id: str):
 @router.put("/projects/{project_id}/assets/shots/{shot_id}/bindings")
 def api_set_shot_bindings(project_id: str, shot_id: str, payload: ShotBindingsRequest):
     try:
-        return set_shot_bindings(
+        return _workspace_payload(set_shot_bindings(
             project_id,
             shot_id,
             character_ids=payload.character_ids,
             scene_id=payload.scene_id,
             prop_ids=payload.prop_ids,
-        )
+        ))
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -283,7 +291,7 @@ def api_set_shot_bindings(project_id: str, shot_id: str, payload: ShotBindingsRe
 @router.post("/projects/{project_id}/assets")
 def api_create_asset(project_id: str, payload: AssetCreateRequest):
     try:
-        return create_asset(project_id, payload.entity_type, payload.name, shot_id=payload.shot_id)
+        return _workspace_payload(create_asset(project_id, payload.entity_type, payload.name, shot_id=payload.shot_id))
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -291,7 +299,7 @@ def api_create_asset(project_id: str, payload: AssetCreateRequest):
 @router.patch("/projects/{project_id}/assets/{entity_type}/{entity_id}")
 def api_rename_asset(project_id: str, entity_type: AssetType, entity_id: str, payload: AssetRenameRequest):
     try:
-        return rename_asset(project_id, entity_type, entity_id, payload.name)
+        return _workspace_payload(rename_asset(project_id, entity_type, entity_id, payload.name))
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -299,7 +307,7 @@ def api_rename_asset(project_id: str, entity_type: AssetType, entity_id: str, pa
 @router.delete("/projects/{project_id}/assets/{entity_type}/{entity_id}")
 def api_delete_asset(project_id: str, entity_type: AssetType, entity_id: str):
     try:
-        return delete_asset(project_id, entity_type, entity_id)
+        return _workspace_payload(delete_asset(project_id, entity_type, entity_id))
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -307,7 +315,7 @@ def api_delete_asset(project_id: str, entity_type: AssetType, entity_id: str):
 @router.post("/projects/{project_id}/assets/merge")
 def api_merge_assets(project_id: str, payload: AssetMergeRequest):
     try:
-        return merge_assets(project_id, payload.entity_type, payload.entity_ids, target_id=payload.target_id)
+        return _workspace_payload(merge_assets(project_id, payload.entity_type, payload.entity_ids, target_id=payload.target_id))
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -317,7 +325,7 @@ def api_split_asset(project_id: str, entity_type: AssetType, entity_id: str, pay
     if payload.entity_type != entity_type:
         raise _bad(ValueError("entity_type 不一致"))
     try:
-        return split_asset(project_id, entity_type, entity_id, payload.shot_ids, new_name=payload.new_name)
+        return _workspace_payload(split_asset(project_id, entity_type, entity_id, payload.shot_ids, new_name=payload.new_name))
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -325,7 +333,7 @@ def api_split_asset(project_id: str, entity_type: AssetType, entity_id: str, pay
 @router.patch("/projects/{project_id}/assets/{entity_type}/{entity_id}/cover")
 def api_set_asset_cover(project_id: str, entity_type: AssetType, entity_id: str, payload: AssetCoverRequest):
     try:
-        return set_asset_cover(project_id, entity_type, entity_id, payload.cover_url)
+        return _workspace_payload(set_asset_cover(project_id, entity_type, entity_id, payload.cover_url))
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -333,6 +341,6 @@ def api_set_asset_cover(project_id: str, entity_type: AssetType, entity_id: str,
 @router.post("/asset-revisions/{revision_id}/restore")
 def api_restore_asset_revision(revision_id: str):
     try:
-        return restore_asset_revision(revision_id)
+        return _workspace_payload(restore_asset_revision(revision_id))
     except (LookupError, AssetWorkspaceError) as exc:
         raise _bad(exc) from exc
