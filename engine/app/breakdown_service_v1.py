@@ -1,16 +1,16 @@
-"""Breakdown-first Phase P1.2 的 Breakdown Run 生命周期服务。
+"""Breakdown-first Phase P1.2/P1.3 的 Breakdown Run 生命周期服务。
 
 职责：
 - 为 Episode 当前 ShotRevision 创建 PROCESSING BreakdownRun；
 - 在发布 READY 前锁住 source_shot_revision_id，拒绝过期 Revision 冒充 Current；
+- P1.3 强制执行真实 Draft validator，禁止由调用方用布尔值绕过；
 - 原子切换同 Episode 的 Current Breakdown Run；
 - 失败 Run 不替换旧 Current；
 - 提供 Shot Revision 改变后把旧 Run 标记为 STALE 的独立原语。
 
 边界：
-- P1.2 不实现 Draft validator；``publish_breakdown_run`` 只接受显式 validation gate 结果，
-  真正的 validator 在 P1.3 接入；
-- P1.2 不把 STALE 原语接入 shot_editor/auto rerun/restore，联动留给 P1.6；
+- P1.3 只接入 validator，不实现 P1.4 API/serializer；
+- 不把 STALE 原语接入 shot_editor/auto rerun/restore，联动留给 P1.6；
 - 不运行 ASR/OCR/VLM，不写 Final Character/Scene/Prop 或任何 Shot Binding。
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from engine.app import shot_revision_v2, studio_v2
+from engine.app import breakdown_validator_v1, shot_revision_v2, studio_v2
 from engine.app.breakdown_models_v1 import BREAKDOWN_DRAFT_SCHEMA_VERSION, BreakdownRun
 from engine.app.shot_revision_v2 import ShotRevision
 
@@ -43,6 +43,27 @@ class BreakdownRunStaleError(BreakdownRunLifecycleError):
 def _json_text(value: Any, *, default: Any) -> str:
     payload = default if value is None else value
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _issue_payload(issues: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "code": item.code,
+            "message": item.message,
+            "entity_type": item.entity_type,
+            "entity_id": item.entity_id,
+        }
+        for item in issues
+    ]
+
+
+def _merge_warning_payload(validation_warnings: Any, pipeline_warnings: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if validation_warnings:
+        payload["validator"] = _issue_payload(validation_warnings)
+    if pipeline_warnings:
+        payload["pipeline"] = pipeline_warnings
+    return payload
 
 
 def create_breakdown_run(
@@ -96,20 +117,18 @@ def create_breakdown_run(
 def publish_breakdown_run(
     run_id: str,
     *,
-    validation_passed: bool,
-    validation_error: str | None = None,
-    counts: Any = None,
     warnings: Any = None,
     component_status: Any = None,
     provider_metadata: Any = None,
 ) -> BreakdownRun:
-    """把 PROCESSING Run 发布为 Episode Current READY Run。
+    """验证并把 PROCESSING Run 发布为 Episode Current READY Run。
 
-    P1.2 只实现生命周期 gate，不实现 validator 本身。P1.3 必须把真实 validator
-    结果传入 ``validation_passed``。失败 gate 会把本 Run 收口为 FAILED，并保持旧 Current 不变。
+    P1.3 起发布方不能再传入 ``validation_passed=True``。本函数在同一数据库事务中
+    调用真实 Breakdown Draft validator；任一硬校验失败都会把本 Run 收口为 FAILED，
+    并保持旧 Current 不变。Validator 计算的真实实体数量会写入 ``counts_json``。
 
-    发布前还会再次检查 source ShotRevision 仍然是 Episode Current，避免分析过程中
-    Shot 被 split/merge/restore/auto rerun 后旧 Run 竞态发布成最新结果。
+    Validator 通过后还会再次检查 source ShotRevision 仍然是 Episode Current，避免
+    分析过程中 Shot 被 split/merge/restore/auto rerun 后旧 Run 竞态发布成最新结果。
     """
 
     with studio_v2.get_session() as session:
@@ -119,10 +138,15 @@ def publish_breakdown_run(
         if run.status != "PROCESSING":
             raise BreakdownRunLifecycleError(f"只有 PROCESSING Run 可以发布，当前状态为 {run.status}")
 
-        if not validation_passed:
+        validation = breakdown_validator_v1.validate_breakdown_run_in_session(session, run)
+        run.counts_json = _json_text(validation.counts, default={})
+        warning_payload = _merge_warning_payload(validation.warnings, warnings)
+        run.warning_json = _json_text(warning_payload, default={})
+
+        if not validation.passed:
             run.status = "FAILED"
             run.is_current = False
-            run.error_message = validation_error or "Breakdown Draft validator 未通过"
+            run.error_message = validation.error_message() or "Breakdown Draft validator 未通过"
             if component_status is not None:
                 run.component_status_json = _json_text(component_status, default={})
             if provider_metadata is not None:
@@ -158,14 +182,12 @@ def publish_breakdown_run(
             if prior.source_shot_revision_id != run.source_shot_revision_id and prior.status in READY_STATUSES:
                 prior.status = "STALE"
 
-        run.counts_json = _json_text(counts, default={})
-        run.warning_json = _json_text(warnings, default={})
         if component_status is not None:
             run.component_status_json = _json_text(component_status, default={})
         if provider_metadata is not None:
             run.provider_metadata_json = _json_text(provider_metadata, default={})
         run.error_message = None
-        run.status = "READY_WITH_WARNINGS" if bool(warnings) else "READY"
+        run.status = "READY_WITH_WARNINGS" if warning_payload else "READY"
         run.is_current = True
         run.completed_at = studio_v2.utcnow()
         session.commit()
