@@ -1,18 +1,15 @@
 """人物视觉兼容入口。
 
-正式实现当前为 Character V9.1：
-- Shot 内约 12fps Person / Partial-Person Observation；
+正式实现当前为 Character V10：
 - 一帧多人先拆成独立 Person Instance，禁止整帧做人身份图；
-- 每个 Instance 标记 CLEAN / OCCLUDED / CONTAMINATED / PARTIAL；
-- 同一采样时刻空间不同的 Person Instance 写入 cannot-link Evidence；
-- 每个单人人物图分别保留 Person ReID、上下身服装/纹理、Body histogram、身体结构、可选 Face；
-- 不生成一个不可解释的“人物总 embedding”；Face 只是可选强证据；
-- Track / Candidate Gallery 只允许 CLEAN Person Instance crop 作为正式代表图；
-- V9.1 身份采用 Progressive Person Gallery：seed 只启动图库，先找跨 Shot partner，再从多视角 Gallery 逐步吸收；
-- 所有剩余人物图仍必须先和已确认 A/B/C Gallery 比较；
-- 单张 AMBIGUOUS 不再否决一个整体明确不同的多 Shot 新人物 Gallery；
-- OCCLUDED / CONTAMINATED / PARTIAL 只能保守挂回已确认 Gallery 或留 UNRESOLVED，不能创建新人物；
-- YOLOX / YoutuReID 继续 GPU 优先、CPU fallback。
+- 正面 / 侧身 / 背影 / 多人同框拆出的单人 crop 都先作为 Person Evidence；
+- CLEAN 不再是唯一 Gallery 入口；证据保存资格与“能否创建新人物”分开；
+- 每个单人人物图分别保留 Person ReID、服装、Body、可选 Face；
+- YoutuReID Person 模型作为跨视角人物分类主信号；
+- 已采集 Person Evidence 再分类到 A / B / C；
+- OCCLUDED / CONTAMINATED / PARTIAL 可以保存并分类，低可靠证据不能独立创建新人；
+- 同帧不同 Person Instance cannot-link 仍是硬约束；
+- Track 只负责时序组织，不能决定人物数量。
 
 保留本文件只为了让 content_analysis_v2 / 历史测试 import 路径稳定。
 """
@@ -29,14 +26,14 @@ from engine.app.character_visual_v5 import (  # noqa: F401
     cosine,
     mean_vector,
 )
-from engine.app.character_gallery_v9 import (  # noqa: F401
+from engine.app.character_gallery_v10 import (  # noqa: F401
     save_candidate_cover,
     save_candidate_gallery,
     select_track_representatives,
 )
-from engine.app.character_observation_v9 import detect_observations, sample_times_us  # noqa: F401
-from engine.app.character_tracking_v9 import build_tracks, tracker_runtime_status  # noqa: F401
-from engine.app.character_identity_v91 import resolve_global_identities as cluster_candidates  # noqa: F401
+from engine.app.character_observation_v10 import detect_observations, sample_times_us  # noqa: F401
+from engine.app.character_tracking_v10 import build_tracks, tracker_runtime_status  # noqa: F401
+from engine.app.character_identity_v10 import resolve_global_identities as cluster_candidates  # noqa: F401
 from engine.app.character_runtime_v6 import analyze_characters, runtime_status  # noqa: F401
 
 
