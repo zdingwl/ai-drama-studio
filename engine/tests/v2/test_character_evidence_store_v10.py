@@ -61,6 +61,18 @@ def make_observation(*, shot: int, instance_class: str) -> v5.Observation:
     return observation
 
 
+def track(observation: v5.Observation) -> v5.TrackDraft:
+    value = v5.TrackDraft(
+        shot_id=observation.shot_id,
+        episode_id=observation.episode_id,
+        episode_order=observation.episode_order,
+        shot_ordinal=observation.shot_ordinal,
+        observations=[observation],
+    )
+    v5._refresh_track(value)
+    return value
+
+
 def test_side_back_style_nonclean_person_evidence_is_persisted_before_classification(monkeypatch, tmp_path) -> None:
     # Class names represent crop safety, not view direction. The important contract is
     # that non-CLEAN model-usable Person Images are not discarded before classification.
@@ -76,9 +88,39 @@ def test_side_back_style_nonclean_person_evidence_is_persisted_before_classifica
     result = store.save_person_evidence("RUN_V10", observations)
 
     assert result["evidence_count"] == 3
-    manifest = json.loads((tmp_path / "analysis" / "RUN_V10" / "person_evidence" / "manifest.json").read_text(encoding="utf-8"))
+    manifest_path = tmp_path / "analysis" / "RUN_V10" / "person_evidence" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["evidence_count"] == 3
     assert {item["instance_class"] for item in manifest["records"]} == {"OCCLUDED", "CONTAMINATED", "PARTIAL"}
     assert all(item["classification_status"] == "UNCLASSIFIED" for item in manifest["records"])
     assert all(item["image_path"].endswith(".jpg") for item in manifest["records"])
     assert all(item["feature_path"].endswith(".npz") for item in manifest["records"])
+
+
+def test_saved_person_evidence_receives_model_identity_assignment_after_classification(monkeypatch, tmp_path) -> None:
+    observations = [
+        make_observation(shot=1, instance_class="CLEAN"),
+        make_observation(shot=2, instance_class="OCCLUDED"),
+        make_observation(shot=3, instance_class="CONTAMINATED"),
+    ]
+    frame = np.zeros((960, 640, 3), dtype=np.uint8)
+    monkeypatch.setattr(store.v5, "_read_frame", lambda *_args, **_kwargs: frame.copy())
+    monkeypatch.setattr(store, "workspace_root", lambda: tmp_path)
+    store.save_person_evidence("RUN_V10", observations)
+
+    resolved = v5.CandidateDraft(id="C_RESOLVED", identity_status="RESOLVED")
+    resolved.tracks = [track(observations[0]), track(observations[1])]
+    unresolved = v5.CandidateDraft(id="C_UNRESOLVED", identity_status="UNRESOLVED")
+    unresolved.tracks = [track(observations[2])]
+
+    counts = store.update_person_evidence_classification("RUN_V10", [resolved, unresolved])
+
+    assert counts == {"classified_count": 3, "resolved_count": 2, "unresolved_count": 1}
+    manifest_path = tmp_path / "analysis" / "RUN_V10" / "person_evidence" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    by_instance = {item["instance_id"]: item for item in manifest["records"]}
+    assert by_instance[observations[0].instance_id]["classification_status"] == "RESOLVED"
+    assert by_instance[observations[0].instance_id]["identity_ordinal"] == 1
+    assert by_instance[observations[1].instance_id]["candidate_id"] == "C_RESOLVED"
+    assert by_instance[observations[2].instance_id]["classification_status"] == "UNRESOLVED"
+    assert by_instance[observations[2].instance_id]["identity_ordinal"] is None
