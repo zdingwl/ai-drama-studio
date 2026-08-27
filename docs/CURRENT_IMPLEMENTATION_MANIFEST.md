@@ -1,7 +1,7 @@
 # AI Drama Studio — Current Implementation Manifest
 
-> Purpose: compact code-aligned recovery manifest for new conversations.  
-> Last synchronized: **2026-08-27 14:25 +08:00**
+> Purpose: compact code-aligned manifest for new conversations.  
+> Last synchronized: **2026-08-27 14:59 +08:00**
 
 ## Repository baseline
 
@@ -20,20 +20,11 @@ Runtime profile: character-v10.1-capture-first-model-classification
 Asset profile: f05-assets-v10.1-person-evidence-model-classification
 Resolver: person-evidence-model-classifier-v10.1
 Primary identity model: YoutuReID Person Re-identification
-Face role: optional support / known-identity Shot presence / high-quality conflict
+Face role: optional identity support / known-identity Shot presence / high-quality conflict
 Final Gate: confirmed formal RESOLVED identity only
 ```
 
-Fixed model package:
-
-```text
-YOLOX person detection
-YoutuReID person re-identification
-YuNet face detection
-SFace face embedding/support
-```
-
-## Executable Character wiring
+## Executable wiring
 
 ```text
 content_analysis_v2
@@ -43,19 +34,18 @@ content_analysis_v2
 → character_tracking_v10.build_tracks
 → character_identity_v101.resolve_global_identities
 → character_shot_binding_v101.recover_unresolved_tracks
-   # Pass 1: repeated evidence inside one unresolved Track
 → character_shot_presence_v101.recover_fragmented_shot_presence
-   # Pass 2: same-Shot fragment aggregation + known-Face presence
 → character_evidence_store_v10.update_person_evidence_classification
 → character_persistence_v6.persist_results_v6
 → asset_final_gate_v10.apply_analysis_to_assets
 → Character / ShotCharacterBinding
+→ asset_routes_v3
 → asset_workspace_character_v101
 ```
 
-## New identity contract
+## New identity confirmation
 
-A new formal Character still requires:
+Formal identity creation stays fail-closed:
 
 ```text
 >=3 independent Shots
@@ -66,121 +56,49 @@ same-sample cannot-link preserved
 no high-quality Face hard conflict
 ```
 
-Neither Shot-presence recovery pass may create a new Character.
+Neither Shot recovery pass can create a new Character.
 
-## Shot-presence Pass 1
+## Shot-presence recovery
 
-Module:
+Pass 1:
 
 ```text
 engine/app/character_shot_binding_v101.py
-```
-
-Source:
-
-```text
 V10_1_TRACK_KNOWN_IDENTITY_RECOVERY
 ```
 
-Key rules:
+Repeated evidence inside one unresolved Track may attach the whole Track to an already-confirmed identity. Key gates include >=3 Track observations, >=2 supporting observations, unique winner + margin, cannot-link/Face conflict fail closed.
 
-```text
->=3 usable observations in one unresolved Track
->=2 supporting observations
-NORMAL_TRACK_MEDIAN = 0.74
-RISKY_TRACK_MEDIAN = 0.79
-STRONG_TRACK_MEDIAN = 0.84
-winner margin >= 0.07
-cannot-link / Face conflict fail closed
-```
-
-## Shot-presence Pass 2
-
-Module:
+Pass 2:
 
 ```text
 engine/app/character_shot_presence_v101.py
-```
-
-Source:
-
-```text
 V10_1_SHOT_FRAGMENT_AGGREGATION
 ```
 
-Body/side/back path:
+Remaining short fragments are aggregated by Shot and known Character. Body/side/back needs repeated timestamps/support; close-up Face may confirm only an already-known identity. Current Face presence patch uses `FACE_SUPPORTED=0.40`, `FACE_STRONG=0.50`, `FACE_PAIR_MIN_SCORE=0.76`, repeated moderate current-Shot Face support, independent Gallery-Shot support, and consistent multi-Gallery Face conflict before hard veto.
 
-```text
-REID_STRONG = 0.84
-REID_SUPPORTED = 0.74
-RISKY_REID_SUPPORTED = 0.80
-MIN_SHOT_SUPPORT_OBSERVATIONS = 3
-MIN_SHOT_SUPPORT_TIMESTAMPS = 3
-MIN_SHOT_MEDIAN = 0.76
-WINNER_MARGIN = 0.075
-```
-
-Known-Face presence path after the 2026-08-27 second real-video rerun:
-
-```text
-FACE_SUPPORTED = 0.40
-FACE_STRONG = 0.50
-FACE_PAIR_MIN_SCORE = 0.76
-moderate Face: >=2 current-Shot observations + >=2 timestamps
-Face comparison: supported by >=2 independent confirmed Gallery Shots
-one very strong Face may still recover immediately
-Face-supported identities are ranked before synthetic-body ReID for close-up fallbacks
-hard Face conflict requires consistent conflict across >=2 Gallery Shots with no positive Face support
-```
-
-This Face path answers only “does this already-confirmed Character appear in this Shot?”. It does not seed identity and does not make Face mandatory.
-
-## Why the latest patch exists
-
-The first fragment-recovery rerun improved some rows but did not complete binding:
-
-```text
-SHOT 0006: old woman close-up became correctly bound
-SHOT 0007: young woman partial/body view became correctly bound
-SHOT 0002: young woman clear face close-up still unbound
-SHOT 0004: old + young visible, young woman still missing
-```
-
-That result narrows the remaining defect to the known-Face/close-up presence branch rather than global identity classification or generic body-fragment aggregation.
-
-The old Pass-2 Face positive threshold (`0.52`) was stricter than the project’s earlier real-video SFace experience, and one bad Gallery Face crop could previously veto a whole identity. The current implementation uses repeated moderate Face support plus cross-Gallery consistency instead of blindly lowering body/ReID thresholds.
-
-## Recovery persistence
-
-Recovered Track provenance is stored at:
+## Recovery persistence / confidence
 
 ```text
 CharacterTrack.evidence_json.identity_recovery
 ```
 
-Pass 2 can include:
+stores the exact recovery source, target, Shot, score and pass-specific diagnostics.
 
 ```text
-source
-target_candidate_id
-shot_id
-score
-observation_count
-support_count
-face_support_count
-strong_face_support
-policy
+direct Track in Shot
+→ binding confidence falls back to global identity confidence
+
+recovered-only Shot
+→ binding confidence uses strongest validated recovery score
 ```
 
-Identity confidence and Shot-presence confidence remain separate. Recovered-only Shot bindings use the strongest validated recovery score.
-
-## Final Character Gate
-
-Formal materialization remains fail-closed:
+## Final Character gate
 
 ```text
 identity_status == RESOLVED
-resolver in formal allow-list
+formal resolver allow-list
 confirmed_gallery_shots >= 3
 confirmed_gallery_images >= 3
 final_asset_eligible is not false
@@ -188,7 +106,7 @@ final_asset_eligible is not false
 
 Face visibility is not required.
 
-## Asset Workspace contract
+## Asset Workspace Character evidence
 
 ```text
 evidence_by_shot.characters
@@ -198,15 +116,103 @@ evidence_by_shot.character_diagnostics
 = UNRESOLVED diagnostics only
 ```
 
-The workspace reads the actual per-Track recovery source. UNRESOLVED diagnostics never become Final suggestions.
+UNRESOLVED diagnostics never become Final suggestions.
 
-## Character Gallery labels
+## Character Evidence visualization contract
 
-Gallery `shot_id` is UUID-based. UI labels are resolved from real `v2_shots.ordinal`; UUID suffixes are never treated as Shot numbers.
+Three layers are explicitly different:
+
+```text
+CharacterTrack Shot membership
+= exhaustive immutable AI identity evidence
+
+V10 Gallery
+= bounded/diversified identity representative subset
+
+ShotCharacterBinding
+= editable Final binding
+```
+
+Formal read API:
+
+```text
+GET /api/content-analysis/characters/{candidate_id}/gallery
+```
+
+returns:
+
+```text
+evidence_shot_count
+evidence_shots[]          # exhaustive CharacterTrack Shot set
+gallery_image_count       # true bounded Gallery images
+images[]                  # visual evidence covering every evidence Shot
+```
+
+For an evidence Shot omitted from the bounded Gallery, `images[]` contains one genuine on-demand persisted Track representative crop:
+
+```text
+GET /api/content-analysis/characters/{candidate_id}/evidence-shot/{shot_id}
+```
+
+`source_kind` distinguishes:
+
+```text
+gallery
+track_representative
+```
+
+This prevents “not selected into bounded Gallery” from being misread as “no AI evidence”.
+
+## Asset library Evidence-vs-Final comparison
+
+Character asset detail now loads **all** `source_candidate_ids` and compares AI evidence Shots with Final `shot_ids`.
+
+Each Shot card shows:
+
+```text
+whole-Shot context thumbnail
++ Person Evidence crop(s)
++ one status
+```
+
+Status contract:
+
+```text
+Evidence + Final = Track evidence and Final binding both exist
+AI ONLY         = Track evidence exists, Final binding missing
+FINAL ONLY      = Final binding exists, source Candidate has no Track evidence
+```
+
+`AI ONLY` is therefore the direct UI signal for a likely Shot-binding recall failure.
+
+## Character Gallery UI
+
+`CharacterPersonGalleryV10.vue` groups by real Shot and displays:
+
+```text
+Evidence Shots
+Gallery 代表图
+可视证据图
+```
+
+Fallback Track crops are labelled `Track 代表图`. Shot labels always come from real `v2_shots.ordinal`, never UUID suffixes.
+
+## Fixed model package
+
+```text
+YOLOX person detection
+YoutuReID person re-identification
+YuNet face detection
+SFace face embedding/support
+```
 
 ## Current key modules
 
 ```text
+engine/app/main.py
+engine/app/content_analysis_v2.py
+engine/app/content_models_v2.py
+engine/app/character_visual_v2.py
 engine/app/character_runtime_v6.py
 engine/app/character_observation_v10.py
 engine/app/character_person_evidence_v10.py
@@ -218,48 +224,60 @@ engine/app/character_shot_presence_v101.py
 engine/app/character_persistence_v6.py
 engine/app/character_gallery_v10.py
 engine/app/character_gallery_routes_v10.py
+engine/app/character_evidence_store_v10.py
 engine/app/asset_final_gate_v10.py
 engine/app/asset_final_gate_v9.py
 engine/app/asset_workspace_character_v101.py
 engine/app/asset_routes_v3.py
-frontend/src/components/CharacterPersonGalleryV10.vue
+frontend/src/api/client.ts
 frontend/src/types/studio.ts
+frontend/src/components/CharacterPersonGalleryV10.vue
+frontend/src/components/AssetReviewMatrixV4.vue
+frontend/src/asset-review-matrix-v4.css
 ```
 
-Compatibility filenames do not imply active algorithm version.
+Do not infer active algorithm generation from historical compatibility filenames.
 
-## Validation state
+## Current validation state
 
 ```text
-Global Character identity classification: working on current real sample
-Pass-1 Track recovery: implemented
-Pass-2 body/fragment aggregation: implemented and improved SHOT 0006/0007 in real rerun
-Repeated moderate known-Face presence patch: implemented, needs next real rerun
-Per-Track recovery provenance: implemented
-Final Gate: implemented
+Character V10.1 identity classification: implemented
+Pass-1 known identity recovery: implemented
+Pass-2 fragmented/Face known-presence recovery: implemented
+Per-Track provenance: implemented
+Shot-presence confidence separation: implemented
+Face-optional workspace evidence: implemented
+RESOLVED/UNRESOLVED workspace split: implemented
+Real Shot ordinal Gallery labels: implemented
+Exhaustive CharacterTrack evidence-Shot API: implemented
+On-demand Track representative crop: implemented
+Gallery grouped by Shot: implemented
+Evidence-vs-Final Asset library comparison: implemented
+Real Windows UI + remaining binding regression: pending
 Whole repository CI: not green
 ```
 
-Before the latest Face patch, backend full-test summary was:
+Latest backend CI after this work:
 
 ```text
-28 failed, 176 passed, 1 skipped
+28 failed, 179 passed, 1 skipped
 ```
 
-The existing failures are still repository-level legacy/runtime/environment categories. Do not claim all tests pass. CI for the newest Face patch may still be pending when this manifest is read.
+The new exhaustive-evidence test is not among failures. Compile and FastAPI import pass. Existing failures remain legacy/runtime/environment categories (`cv2`, `trackers`, FFmpeg and obsolete historical assertions).
 
-## Next real-video acceptance
+Frontend CI still fails before project type checking at the existing `vue-tsc` / TypeScript package incompatibility (`typescript` does not export `./lib/tsc`).
 
-A fresh asset extraction is mandatory; old Runs do not auto-rebind.
+## New-conversation guardrail
 
-Priority rows:
+Before changing Character/binding behavior verify:
 
 ```text
-SHOT 0002 → should bind 人物002
-SHOT 0004 → should bind 人物001 + 人物002
-SHOT 0006 → should remain 人物001
-SHOT 0007 → should remain 人物002
-SHOT 0009 → verify all actually visible known Characters
+character_runtime_v6 runs both recovery passes
+character_persistence_v6 persists identity_recovery
+asset_final_gate_v10 contains resolver v10.1
+asset_workspace_character_v101 keeps RESOLVED and diagnostics separate
+character_gallery_routes_v10 distinguishes exhaustive Track evidence from bounded Gallery
+AssetReviewMatrixV4 compares Evidence and Final without treating Shot thumbnail as a Person crop
 ```
 
-If 0002/0004 still miss after this patch, inspect whether YuNet produced repeated high-quality Face observations and inspect `identity_recovery.face_support_count` before changing any more thresholds.
+If code differs, reconcile this manifest and `PROJECT_STATE.md` before continuing.
