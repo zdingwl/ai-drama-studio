@@ -1,12 +1,12 @@
 # AI Drama Studio — Project State
 
-> **Last synchronized:** 2026-08-27 20:15 +09:00  
+> **Last synchronized:** 2026-08-27 21:12 +09:00  
 > **Repository:** `zdingwl/ai-drama-studio`  
 > **Branch:** `main`  
 > **Architecture:** Reference Video V2  
 > **FastAPI app version:** `2.4.1`  
 > **Formal Character runtime:** Character V10.1  
-> **Breakdown-first phase:** P1 COMPLETE / P2 NEXT
+> **Breakdown-first phase:** P2 IN PROGRESS / P2.1 COMPLETE / P2.2 NEXT
 
 ## 1. Current-state source of truth
 
@@ -21,6 +21,7 @@ AGENTS.md
 → docs/CURRENT_IMPLEMENTATION_MANIFEST.md
 → docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
 → docs/BREAKDOWN_DRAFT_DATA_CONTRACT.md
+→ docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
 → docs/ASSET_CHARACTER_RECOGNITION_V10_1.md    # when Character is involved
 → latest docs/sessions/* Breakdown handoff
 → current code/tests
@@ -37,9 +38,12 @@ BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN
 
 BREAKDOWN_DRAFT_DATA_CONTRACT
 = frozen P1 semantic/data contract consumed by later phases
+
+BREAKDOWN_P2_SIDECAR_CONTRACT
+= frozen P2 Provider/raw-Evidence sidecar contract
 ```
 
-Never mark P2+ as implemented because P1 tables now exist.
+Do not mark P2.2+ as implemented because the P2.1 Provider/Evidence infrastructure now exists.
 
 ## 2. Accepted Breakdown-first product direction
 
@@ -63,14 +67,17 @@ Core principle:
 
 > **先看懂，再识别，再回填。**
 
-Important distinction after P1:
+Important distinction after entering P2:
 
 ```text
 P1 implemented
 = the anonymous Draft data/runtime/history contract exists
 
-P2 not implemented
-= the system does not yet run ASR/OCR/VLM to automatically populate that Draft
+P2.1 implemented
+= exact ShotRevision provider input + unified raw Evidence contract + immutable local sidecar persistence exist
+
+P2.2–P2.5 not implemented
+= the system does not yet run the formal ASR/OCR/VLM providers or fuse them into complete P1 Draft rows
 
 P3 not implemented
 = 02 拉片 does not yet expose the final structured Draft workbench
@@ -280,20 +287,20 @@ read-only Breakdown access with no hidden writes
 full focused P1 lifecycle/validator/history/STALE regression
 ```
 
-Verified on the P1.7 PR:
+Verified P1 baseline:
 
 ```text
 Windows focused P1 suite: 32/32 PASS
-Ubuntu full pytest: 28 failed, 219 passed, 1 skipped
+Ubuntu full pytest at P1 close: 28 failed, 219 passed, 1 skipped
 Backend compile: PASS
 FastAPI import/version: PASS
 ```
 
-The 28 Ubuntu failures are the same existing legacy/runtime/environment categories from before P1.7. The whole repository is still **not globally green**.
+The 28 Ubuntu failures are the same existing legacy/runtime/environment categories. The whole repository is still **not globally green**.
 
 Frontend continues to have the existing `vue-tsc` / TypeScript package compatibility build failure.
 
-## 7. Formal Character V10.1 baseline — unchanged by P1
+## 7. Formal Character V10.1 baseline — unchanged by Breakdown P1/P2.1
 
 ```text
 Runtime profile: character-v10.1-capture-first-model-classification
@@ -325,7 +332,7 @@ Reference Clip / Shot
 → Character + ShotCharacterBinding
 ```
 
-P1 did not change Character thresholds, same-sample cannot-link, Face hard-conflict behavior, identity creation gates or explicit Shot assignment.
+Breakdown P1/P2.1 did not change Character thresholds, same-sample cannot-link, Face hard-conflict behavior, identity creation gates or explicit Shot assignment.
 
 Formal Final binding for new V10.1 Runs remains:
 
@@ -353,22 +360,80 @@ Current Prop path remains fail-closed; without reliable configured detection it 
 
 P1 `SceneSegmentDraft` / `DraftPropHint` are separate anonymous semantic layers and do not mean P4 is implemented.
 
-## 9. Current Dialogue / ASR/OCR/VLM reality
+## 9. Breakdown P2 — IN PROGRESS
 
-P1 does not run semantic inference.
-
-Still NOT implemented as the formal Breakdown chain:
+P2 has now been explicitly entered. Its formal sidecar contract is:
 
 ```text
-ASR + word timing
-Speaker diarization
-OCR Observation extraction
-active-speaker mapping
-VLM anonymous Shot semantics
-ASR/OCR/VLM fusion into TimelineEvent
+docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
+schema: breakdown-p2-evidence-v1
 ```
 
-These belong to P2.
+### 9.1 P2.1 unified Provider / raw Evidence sidecar — IMPLEMENTED
+
+Formal module:
+
+```text
+engine/app/breakdown_p2_sidecar_v1.py
+```
+
+P2.1 can recover a `PROCESSING BreakdownRun` into an exact immutable provider context:
+
+```text
+BreakdownRun.source_shot_revision_id
+→ exact ShotRevision
+→ exact ShotRevisionItems
+→ Reference Clip / thumbnail / keyframes
++ Episode preprocess audio
++ Project source_language
+```
+
+It defines one synchronous local Provider boundary for:
+
+```text
+ASR
+OCR
+VLM
+```
+
+Raw Evidence source types include:
+
+```text
+ASR_SEGMENT
+ASR_WORD
+OCR_OBSERVATION
+VLM_OUTPUT
+FRAME
+AUDIO_RANGE
+RULE
+```
+
+Provider results are validated before persistence. Shot-bound evidence must stay inside its exact `ShotRevisionItem`; confidence is `0..1`; Final Asset/Binding IDs are rejected recursively.
+
+Raw model output is stored separately from future fused Draft rows:
+
+```text
+workspace/<project>/episodes/<episode>/breakdown/<run>/evidence/<component>/<sha256>.json
+```
+
+The artifact write is fingerprinted, idempotent and atomic (`.tmp → os.replace`). `BreakdownRun.component_status_json` / `provider_metadata_json` store only component/provenance summaries.
+
+P2.1 rechecks Current ShotRevision before and after provider work. A STALE Run cannot continue writing active P2 Evidence.
+
+P2.1 does **not** create `BreakdownEvidenceLink` yet because no Draft owner row exists. P2.5 Fusion will link actual Draft owners to raw artifacts/Evidence.
+
+### 9.2 P2.2–P2.5 — NOT IMPLEMENTED YET
+
+Still missing from the formal Breakdown path:
+
+```text
+P2.2 real ASR Provider + segment/word timing
+P2.3 OCR Observation Provider
+P2.4 VLM anonymous Shot semantics Provider
+P2.5 ASR/OCR/VLM Fusion → complete P1 Draft → validator/publish
+```
+
+Historical `content_analysis_v2.py` ASR/Speaker helpers remain compatibility code. In particular, direct Speaker → CharacterCandidate mapping is not the P2 identity path; P2 speaker semantics stay anonymous until later resolution.
 
 ## 10. Current implementation status
 
@@ -389,7 +454,11 @@ These belong to P2.
   P1 automatic ShotRevision → STALE: IMPLEMENTED
   P1 Windows empty/historical compatibility acceptance: IMPLEMENTED
 
-  P2 ASR/OCR/VLM automatic Draft generation: NOT IMPLEMENTED
+  P2.1 Provider/raw Evidence sidecar contract: IMPLEMENTED
+  P2.2 ASR Provider + word timing: NOT IMPLEMENTED
+  P2.3 OCR Provider: NOT IMPLEMENTED
+  P2.4 VLM anonymous semantics Provider: NOT IMPLEMENTED
+  P2.5 Fusion → complete anonymous Draft publish: NOT IMPLEMENTED
   P3 structured Draft UI: NOT IMPLEMENTED
   Final standard/international Breakdown renderer: NOT IMPLEMENTED
 
@@ -413,7 +482,13 @@ These belong to P2.
 ```text
 P0 planning/contracts                            = COMPLETE
 P1 Draft data/runtime contract + compatibility   = COMPLETE
-P2 ASR/OCR/VLM anonymous Draft sidecar           = NEXT / PLANNED
+P2 ASR/OCR/VLM anonymous Draft sidecar           = IN PROGRESS
+  P2.1 Provider/Evidence sidecar                  = COMPLETE
+  P2.2 ASR Provider + word timing                 = NEXT
+  P2.3 OCR Provider                               = PLANNED
+  P2.4 VLM anonymous semantics                    = PLANNED
+  P2.5 Fusion / P1 Draft publish                  = PLANNED
+  P2.6 real-video/Windows/docs closure            = PLANNED
 P3 02 拉片 structured Draft UI                   = PLANNED
 P4 Draft-guided Scene / Prop evidence            = PLANNED
 P5 Draft ↔ Character safe integration            = PLANNED
@@ -423,9 +498,9 @@ P7 downstream remake integration                 = PLANNED
 
 **Do not start P3/P4/P5 while pretending P2 already exists.**
 
-P2 must consume the P1 Contract rather than inventing a parallel schema.
+P2 consumes the P1 Contract rather than inventing a parallel semantic Draft schema.
 
-P2 is still forbidden from writing:
+P2 remains forbidden from writing:
 
 ```text
 Character
@@ -439,15 +514,18 @@ AssetRevision
 
 ## 12. Current test / CI reality
 
-Latest P1.7 acceptance baseline:
+Latest P2.1 PR acceptance before status-only docs synchronization:
 
 ```text
 Ubuntu backend compile: PASS
 FastAPI import/version: PASS (2.4.1)
-Ubuntu pytest: 28 failed, 219 passed, 1 skipped
-Windows Breakdown P1 focused suite: 32/32 PASS
+Ubuntu pytest: 28 failed, 224 passed, 1 skipped
+Windows Breakdown P1 gate: PASS (same 32-case P1 suite)
+Windows Breakdown P2 sidecar gate: 18/18 PASS
 Frontend: existing build failure
 ```
+
+The five additional Ubuntu passes are exactly the five new P2.1 focused tests. The same 28 historical failures remain; no new P2 failure category was introduced.
 
 Known backend failure categories include missing lightweight-CI `cv2`, missing `trackers`, FFmpeg assumptions, obsolete V6-era assertions and historical Final Gate/workspace expectations.
 
@@ -462,10 +540,11 @@ PROJECT_STATE.md
 CURRENT_IMPLEMENTATION_MANIFEST.md
 BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
 BREAKDOWN_DRAFT_DATA_CONTRACT.md where applicable
+BREAKDOWN_P2_SIDECAR_CONTRACT.md for P2
 current code/tests
 latest session handoff
 ```
 
 For the next conversation, verify `main` SHA before relying on a handoff commit SHA.
 
-P1 is now closed. P2 must be explicitly entered as a separate phase before any ASR/OCR/VLM production work begins.
+P1 is closed. P2 has been entered; P2.1 is complete. The next safe implementation step is P2.2 ASR Provider + word timing.
