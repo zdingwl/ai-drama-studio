@@ -91,6 +91,31 @@ export interface CharacterCandidate {
   tracks: CharacterTrackEvidence[]
 }
 
+export interface CharacterGalleryImage {
+  index: number
+  url: string
+  shot_id: string | null
+  shot_ordinal: number | null
+  episode_id: string | null
+  episode_order: number | null
+  source_time_us: number | null
+  instance_id: string | null
+  instance_class: string | null
+  quality: number | null
+  reliability: number | null
+  seed_eligible: boolean | null
+  face_visible: boolean | null
+  feature_channels: string[]
+}
+
+export interface CharacterGalleryPayload {
+  candidate_id: string
+  identity_status: string | null
+  policy: string | null
+  image_count: number
+  images: CharacterGalleryImage[]
+}
+
 export interface SceneCandidate {
   id: string
   ordinal: number
