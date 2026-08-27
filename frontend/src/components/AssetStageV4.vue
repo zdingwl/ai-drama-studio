@@ -53,11 +53,6 @@ async function refreshModelStatus(): Promise<void> {
   }
 }
 
-/**
- * Final Character 与未归属 Evidence 必须分层。
- * 未归属 Track / Person Image 是内部证据，不再在主页面铺成“待解析人物”卡片，
- * 也绝不能根据 face_visible 猜测人物身份状态。
- */
 async function refreshPersonCompleteness(): Promise<void> {
   try {
     const analysis: ContentAnalysisRun | null = await api.getCurrentContentAnalysis(props.projectId)
@@ -82,7 +77,7 @@ async function prepareModels(): Promise<void> {
   try {
     status.value = await api.prepareF05Models() as CharacterModelStatus
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '人物 V9.1 模型准备失败'
+    error.value = err instanceof Error ? err.message : '人物 V10 模型准备失败'
   } finally {
     preparing.value = false
   }
@@ -109,20 +104,20 @@ onUnmounted(() => {
   <div class="asset-stage-v4">
     <div v-if="!loading && status && !status.ready" class="character-v4-banner warning">
       <div>
-        <strong>人物识别 V9.1 运行时未准备完整</strong>
-        <span>V9.1 需要 YOLOX / YuNet-SFace / YoutuReID + Mature MOT。未准备完整时不要重新提取资产，旧 Current 会继续保留。</span>
+        <strong>人物识别 V10 运行时未准备完整</strong>
+        <span>V10 需要 YOLOX / YoutuReID + Mature MOT。未准备完整时不要重新提取资产，旧 Current 会继续保留。</span>
         <small v-if="missingModels.length">缺少模型：{{ missingModels.map((item) => item.filename).join('、') }}</small>
         <small v-if="status.tracking_runtime && !status.tracking_runtime.ready">MOT：{{ status.tracking_runtime.error || 'trackers/supervision 未准备' }}</small>
       </div>
-      <button :disabled="preparing" @click="prepareModels">{{ preparing ? '正在准备模型…' : '准备人物 V9.1 模型' }}</button>
+      <button :disabled="preparing" @click="prepareModels">{{ preparing ? '正在准备模型…' : '准备人物 V10 模型' }}</button>
     </div>
 
     <div v-else-if="!loading && status?.ready" class="character-v4-banner ready">
       <div>
-        <strong>人物识别 V9.1D · READY · {{ runtimeLabel }} · {{ trackingLabel }}</strong>
-        <span>多人先拆 Person Instance → CLEAN 单人人物图 → Progressive Person Gallery → Confirmed Gallery 才发布 Final Character。</span>
-        <small>seed 只负责启动图库：先找跨 Shot 同人图，再用多视角 Gallery 逐步吸收；ReID / 服装 / Body / Face(可选) 分通道判断。</small>
-        <small>整帧、单张脸、单条 Track、单张 Person Image 都不能直接创建人物。</small>
+        <strong>人物识别 V10 · READY · {{ runtimeLabel }} · {{ trackingLabel }}</strong>
+        <span>先采集每个 Person Instance，再用人物模型分类：正面 / 侧身 / 背影 / 多人同框拆出的单人图都保留。</span>
+        <small>YoutuReID 作为跨视角人物分类主模型；服装 / Body / Face(可选) 作为支持。整帧永远不直接做人身份比较。</small>
+        <small>未形成 Mature Track 的有效人物实例也会作为 Evidence-only Track 进入分类，不会因为短暂出现而直接丢失。</small>
         <small v-if="analysisProfile">当前 Asset Run：{{ analysisProfile }}</small>
         <small v-if="status.runtime?.fallback">⚠ CUDA 未实际启用，当前已自动降级 CPU；结果逻辑不变，但分析会明显变慢。</small>
       </div>
@@ -130,9 +125,9 @@ onUnmounted(() => {
 
     <div v-if="resolvedCount || unresolvedEvidenceCount" class="character-v4-banner identity-summary">
       <div>
-        <strong>Person Gallery：{{ resolvedCount }} 个 Final Character</strong>
-        <span>人物数量只统计 Confirmed Person Gallery；未确认碎片不会生成“人物卡”。</span>
-        <small v-if="unresolvedEvidenceCount">待归属 Evidence：{{ unresolvedEvidenceCount }} 条（内部识别证据，不计入人物数量，也不在主页面展开）</small>
+        <strong>人物分类：{{ resolvedCount }} 个 Final Character</strong>
+        <span>人物数量只统计模型确认的身份类别；人物内容先保存、后分类。</span>
+        <small v-if="unresolvedEvidenceCount">待归属 Evidence：{{ unresolvedEvidenceCount }} 条（已保留，不计入人物数量）</small>
       </div>
     </div>
 
