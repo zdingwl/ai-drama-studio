@@ -5,7 +5,8 @@
 - 自动重跑只有在新 Shot 全部生成成功后才切换 Current；
 - 人工修改后创建新的 MANUAL Revision；
 - 支持查看历史 Revision、查看历史 Shot 和恢复历史版本；
-- Current Shot 发生切换时把依赖旧 Shot 的资产分析标记为 STALE。
+- Current Shot 发生切换时把依赖旧 Shot 的资产分析标记为 STALE；
+- P1.6：任何新 Current ShotRevision 都在同一事务把旧 BreakdownRun 标记为 STALE。
 
 不负责：
 - 不运行 TransNetV2 / FFmpeg；
@@ -17,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, select
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, inspect, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from engine.app.studio_v2 import Base, Episode, Shot, get_session, new_id, serialize_shot, utcnow
@@ -103,6 +104,29 @@ def _mark_assets_stale(session: Any, project_id: str) -> None:
             run.status = "STALE"
 
 
+def _mark_breakdown_runs_stale(session: Any, episode_id: str, current_revision_id: str) -> list[str]:
+    """P1.6：把 Breakdown STALE 写入当前 ShotRevision 事务，不产生第二次提交窗口。
+
+    Breakdown 模型延迟导入以避免 ``breakdown_models_v1 -> shot_revision_v2`` 的循环导入。
+    旧的独立测试/历史脚本若尚未创建 P1 ADD-only 表则安全跳过；正式应用启动会由
+    ``studio_v2.init_database`` 注册并创建这些表，因此业务链会正常执行 STALE 联动。
+    """
+
+    from engine.app.breakdown_models_v1 import BreakdownRun
+
+    bind = session.get_bind()
+    if BreakdownRun.__table__.name not in inspect(bind).get_table_names():
+        return []
+
+    from engine.app.breakdown_service_v1 import mark_episode_breakdown_runs_stale_in_session
+
+    return mark_episode_breakdown_runs_stale_in_session(
+        session,
+        episode_id,
+        current_shot_revision_id=current_revision_id,
+    )
+
+
 def _create_revision_from_current(
     session: Any,
     *,
@@ -131,6 +155,9 @@ def _create_revision_from_current(
     session.add(revision)
     session.flush()
     _snapshot_items(session, revision.id, shots)
+    session.flush()
+    if make_current:
+        _mark_breakdown_runs_stale(session, episode_id, revision.id)
     return revision
 
 
@@ -166,7 +193,8 @@ def record_manual_revision(episode_id: str, *, note: str | None = None) -> dict[
 def commit_auto_shot_revision(episode_id: str, shot_payloads: list[dict[str, Any]], *, note: str | None = None) -> list[dict[str, Any]]:
     """把已经完整生成成功的 Shot 原子切换为新的 Current Revision。
 
-    调用前媒体文件必须已经全部生成成功。数据库事务失败时旧 Current Shot / Revision 不变。
+    调用前媒体文件必须已经全部生成成功。数据库事务失败时旧 Current Shot / Revision /
+    Breakdown Current 状态全部不变。
     """
 
     if not shot_payloads:
@@ -213,10 +241,12 @@ def commit_auto_shot_revision(episode_id: str, shot_payloads: list[dict[str, Any
         session.add(revision)
         session.flush()
         _snapshot_items(session, revision.id, new_shots)
+        session.flush()
 
         episode.status = "SHOTS_READY"
         episode.updated_at = utcnow()
         _mark_assets_stale(session, episode.project_id)
+        _mark_breakdown_runs_stale(session, episode.id, revision.id)
         session.commit()
         for shot in new_shots:
             session.refresh(shot)
