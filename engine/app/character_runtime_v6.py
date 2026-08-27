@@ -9,6 +9,7 @@ Person / Partial-Person Observation (12fps)
 → classify captured Person Evidence with YoutuReID person model against full identity galleries
 → allow strong contaminated / substantial partial views to form a new identity only
   after strict cross-shot model confirmation
+→ recover repeatedly-consistent unresolved Tracks into already-confirmed identities
 → write A/B/C identity assignments back to the captured evidence manifest
 → persist multi-view classified Person Gallery
 → Final Character is identity class cardinality, never Track/Face count.
@@ -23,6 +24,7 @@ from engine.app.character_evidence_store_v10 import save_person_evidence, update
 from engine.app.character_identity_v101 import CLASSIFIER_MODEL, RESOLVER_VERSION, resolve_global_identities
 from engine.app.character_observation_v10 import detect_observations
 from engine.app.character_person_features_v9 import FEATURE_VERSION
+from engine.app.character_shot_binding_v101 import recover_unresolved_tracks
 from engine.app.character_tracking_v10 import build_tracks, tracker_runtime_status
 from engine.app.content_models_v2 import RequiredCharacterModelError
 
@@ -41,7 +43,8 @@ def _bridge_persistence_metadata(candidates: list[v5.CandidateDraft]) -> None:
             "identity_policy": (
                 "capture every model-usable Person Instance first; classify with Person ReID model; "
                 "front/side/back and multi-person-frame crops are valid evidence; Face optional; "
-                "strong contaminated/substantial partial views require stricter multi-shot confirmation"
+                "strong contaminated/substantial partial views require stricter multi-shot confirmation; "
+                "known identities may absorb only uniquely-consistent repeated unresolved Tracks"
             ),
             **metadata,
         }
@@ -60,12 +63,17 @@ def analyze_characters(
             evidence_store = save_person_evidence(run_id, observations)
         tracks = build_tracks(observations)
         candidates = resolve_global_identities(tracks)
+        candidates = recover_unresolved_tracks(candidates)
         classification_store: dict[str, int] | None = None
         if run_id and evidence_store is not None:
             classification_store = update_person_evidence_classification(run_id, candidates)
         _bridge_persistence_metadata(candidates)
         resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
         unresolved = [item for item in candidates if item.identity_status != "RESOLVED"]
+        recovered_tracks = sum(
+            int((getattr(item, "v10_metadata", {}) or {}).get("track_recovery_count") or 0)
+            for item in resolved
+        )
 
         classes: dict[str, int] = {}
         seedable_classes: dict[str, int] = {}
@@ -82,17 +90,19 @@ def analyze_characters(
 
         logger.warning(
             "[CharacterV10.1] observations=%s captured_person_evidence=%s persisted_person_evidence=%s classified_persisted=%s "
-            "seedable=%s seedable_classes=%s tracks=%s confirmed_identities=%s unresolved_fragments=%s instance_classes=%s",
+            "seedable=%s seedable_classes=%s tracks=%s confirmed_identities=%s recovered_tracks=%s "
+            "unresolved_fragments=%s instance_classes=%s",
             len(observations), captured,
             (evidence_store or {}).get("evidence_count") if evidence_store else None,
             (classification_store or {}).get("classified_count") if classification_store else None,
-            seedable, seedable_classes, len(tracks), len(resolved), len(unresolved), classes,
+            seedable, seedable_classes, len(tracks), len(resolved), recovered_tracks, len(unresolved), classes,
         )
         for index, candidate in enumerate(resolved, start=1):
             metadata = dict(getattr(candidate, "v10_metadata", {}) or {})
             logger.warning(
                 "[CharacterV10.1] identity=%s classified_gallery_images=%s confirmed_seed_images=%s "
-                "confirmed_seed_shots=%s classified_shots=%s classes=%s seed_classes=%s risky_seed=%s tracks=%s",
+                "confirmed_seed_shots=%s classified_shots=%s classes=%s seed_classes=%s risky_seed=%s "
+                "recovered_tracks=%s recovered_shots=%s tracks=%s",
                 index,
                 metadata.get("captured_classified_images"),
                 metadata.get("confirmed_gallery_images"),
@@ -101,6 +111,8 @@ def analyze_characters(
                 metadata.get("instance_classes"),
                 metadata.get("seed_instance_classes"),
                 metadata.get("risky_seed_confirmation"),
+                metadata.get("track_recovery_count"),
+                metadata.get("track_recovery_shot_ids"),
                 len(candidate.tracks),
             )
         return candidates
@@ -153,12 +165,19 @@ def runtime_status() -> dict[str, object]:
         "identity": {
             "resolver": RESOLVER_VERSION,
             "classifier_model": CLASSIFIER_MODEL,
-            "workflow": "capture Person Evidence -> persist -> model compare -> classify A/B/C -> write assignment back -> persist classified galleries",
+            "workflow": (
+                "capture Person Evidence -> persist -> model compare -> classify A/B/C -> "
+                "track-level known-identity recovery -> write assignment back -> persist classified galleries"
+            ),
             "person_reid_role": "primary model signal for viewpoint-invariant person comparison",
             "clothing_body_role": "supporting channels",
             "face_role": "optional support; never required",
-            "track_role": "temporal organization only; never identity cardinality",
+            "track_role": "temporal organization and repeated-evidence recovery; never identity cardinality",
             "risky_seed_policy": "strong contaminated/substantial partial person images may seed only after stricter >=3-shot Person-ReID confirmation",
             "weak_partial_policy": "save/classify/attach only; cannot seed new identity",
+            "shot_binding_recovery": (
+                "an unresolved Track may attach only to an already-confirmed identity when >=3 usable observations "
+                "produce a unique repeated Person-ReID winner with cannot-link/face-conflict fail-closed checks"
+            ),
         },
     }
