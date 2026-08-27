@@ -1,15 +1,15 @@
 # AI Drama Studio — Project State
 
-> **Last synchronized:** 2026-08-27 14:25 +08:00  
+> **Last synchronized:** 2026-08-27 14:59 +08:00  
 > **Repository:** `zdingwl/ai-drama-studio`  
 > **Branch:** `main`  
 > **Architecture:** Reference Video V2  
 > **FastAPI app version:** `2.4.1`  
-> **Formal character runtime:** Character V10.1
+> **Formal Character runtime:** Character V10.1
 
 ## 1. Current-state source of truth
 
-This document describes what the repository runs now. Historical V1–V10/F06 plans are not authoritative unless referenced here.
+This file describes what the repository actually runs now. Older V1–V10/F06 plans are historical unless explicitly referenced here.
 
 New-conversation recovery order:
 
@@ -23,7 +23,7 @@ AGENTS.md
 → latest session handoff
 ```
 
-Before changing Character logic, inspect:
+Before changing Character behavior, inspect at least:
 
 ```text
 engine/app/character_runtime_v6.py
@@ -31,8 +31,11 @@ engine/app/character_identity_v101.py
 engine/app/character_shot_binding_v101.py
 engine/app/character_shot_presence_v101.py
 engine/app/character_persistence_v6.py
+engine/app/character_gallery_routes_v10.py
 engine/app/asset_final_gate_v10.py
 engine/app/asset_workspace_character_v101.py
+frontend/src/components/CharacterPersonGalleryV10.vue
+frontend/src/components/AssetReviewMatrixV4.vue
 ```
 
 ## 2. Product workspaces
@@ -46,7 +49,7 @@ engine/app/asset_workspace_character_v101.py
 06 生成 / 导出
 ```
 
-Shot + frame-owned Reference Clip remains the core production unit. Heavy video/model work is sequential by default.
+Shot + frame-owned Reference Clip remains the core production unit. Heavy media/model work remains sequential by default.
 
 ## 3. Formal Character V10.1 baseline
 
@@ -65,7 +68,7 @@ YuNet Face Detection
 SFace Face embedding/support
 ```
 
-YoutuReID is the primary new-identity signal. Face is optional support, a known-identity Shot-presence signal, and a high-quality conflict signal.
+YoutuReID is the primary new-identity model signal. Face is optional support, may confirm presence of an already-known identity in a Shot, and remains a high-quality conflict signal.
 
 ## 4. Formal Character pipeline
 
@@ -97,15 +100,16 @@ Character + ShotCharacterBinding
 Asset Workspace V10.1 adapter
 ```
 
-Never collapse:
+Never collapse these layers:
 
 ```text
-Observation / Person Evidence / Track = visual evidence
-Identity Class = cross-Shot person identity
+Observation / Person Evidence / CharacterTrack = immutable AI visual evidence
+Identity Class / CharacterCandidate = cross-Shot identity classification
 Character = Final project asset
+ShotCharacterBinding = editable Final Shot binding
 ```
 
-## 5. New identity creation stays fail-closed
+## 5. New Character creation stays fail-closed
 
 A formal new Character requires at least:
 
@@ -118,7 +122,7 @@ same-sample cannot-link preserved
 no high-quality Face hard conflict
 ```
 
-Strong contaminated/substantial partial crops may seed only under stricter confirmation. Weak partials remain attach-only. Shot-presence recovery never creates a Character.
+Strong contaminated/substantial partial crops may seed only under stricter confirmation. Weak/tiny partials remain attach-only. Neither Shot-presence recovery pass creates a new Character.
 
 ## 6. Pass 1 — repeated Track recovery
 
@@ -147,7 +151,7 @@ WINNER_MARGIN >= 0.07
 
 Ambiguous winner, same-sample cannot-link, or strong Face conflict stays unresolved.
 
-## 7. Pass 2 — Shot presence recovery
+## 7. Pass 2 — same-Shot known-presence recovery
 
 Module:
 
@@ -161,7 +165,7 @@ Source:
 V10_1_SHOT_FRAGMENT_AGGREGATION
 ```
 
-### Body/side/back path
+Body/side/back path:
 
 ```text
 REID_STRONG = 0.84
@@ -173,47 +177,31 @@ MIN_SHOT_MEDIAN = 0.76
 WINNER_MARGIN = 0.075
 ```
 
-### Known-Face close-up path — current patch
-
-The second real-video rerun showed a useful split:
-
-```text
-SHOT 0006 old-woman close-up → fixed
-SHOT 0007 young-woman partial/body → fixed
-SHOT 0002 young-woman clear face close-up → still missing
-SHOT 0004 old + young two-person Shot → young woman still missing
-```
-
-This proves the generic fragment/body path is working better, while the remaining misses are concentrated in the Face/close-up known-presence branch.
-
-The old implementation required `FACE_STRONG = 0.52` for positive Face presence and could hard-veto an identity because of one bad Gallery Face crop. That was too brittle for expression/angle changes.
-
-Current rules:
+Known-Face path after real-video regressions:
 
 ```text
 FACE_SUPPORTED = 0.40
 FACE_STRONG = 0.50
 FACE_PAIR_MIN_SCORE = 0.76
-moderate Face recovery requires >=2 supported current-Shot observations
+moderate Face recovery requires >=2 current-Shot observations
 and >=2 distinct current-Shot timestamps
-Face support must come from >=2 independent confirmed Gallery Shots
+positive Face comparison must be supported by >=2 independent confirmed Gallery Shots
+very strong Face may confirm an already-known Character from one observation
 Face-supported identities rank before synthetic-body ReID for face-fallback close-ups
 hard Face conflict requires consistent conflict across >=2 Gallery Shots with no positive support
 ```
 
-One truly strong Face observation can still confirm presence of an already-known identity. Moderate Face cannot recover from a single observation.
+The current real sample already showed improved binding for `SHOT 0006` and `SHOT 0007`; `SHOT 0002 / 0004 / 0009` remain the priority real-material checks after the latest Face patch.
 
-This path does not seed a new identity and does not make Face mandatory.
+## 8. Recovery provenance and Shot confidence
 
-## 8. Recovery provenance and confidence
-
-Recovered Track data lives in:
+Recovered Track metadata persists at:
 
 ```text
 CharacterTrack.evidence_json.identity_recovery
 ```
 
-Pass 2 can persist:
+Pass 2 may include:
 
 ```text
 source
@@ -227,11 +215,11 @@ strong_face_support
 policy
 ```
 
-Identity confidence and Shot-presence confidence are different. A recovered-only Shot binding uses the strongest validated recovery score. Multiple fragments of the same Character in one Shot still materialize one `ShotCharacterBinding`.
+Identity confidence and Shot-presence confidence are separate. Recovered-only Final bindings use the strongest validated recovery score. Multiple fragments of one Character in one Shot still materialize one `ShotCharacterBinding`.
 
 ## 9. Final Character Gate
 
-Formal V10/V10.1 materialization requires:
+Formal V10/V10.1 Final materialization requires:
 
 ```text
 identity_status == RESOLVED
@@ -259,13 +247,107 @@ evidence_by_shot[shot_id].character_diagnostics
 = UNRESOLVED diagnostics only
 ```
 
-The adapter reads the actual Track recovery source. Pending diagnostics never become Final Character suggestions.
+The V10.1 workspace adapter reads the exact Track recovery source. UNRESOLVED diagnostics never become Final Character suggestions.
 
-## 11. Character Gallery labels
+## 11. Character Gallery, exhaustive AI Evidence and Final Binding are now visibly separated
 
-Gallery card labels are resolved from real `v2_shots.ordinal`. UUID suffixes are never treated as Shot numbers.
+A real UI regression exposed a conceptual ambiguity: the Character Gallery showed several Person crops from one Shot while the Asset library showed one whole-Shot thumbnail, so the two pages looked inconsistent even when they referred to the same Shot.
 
-## 12. Current Character code map
+The formal distinction is now explicit:
+
+```text
+CharacterTrack rows
+= exhaustive persisted AI identity evidence by Shot
+
+V10 Gallery
+= bounded/diversified strong representative subset
+
+Gallery/Evidence viewer images
+= Gallery crops
++ one persisted CharacterTrack representative crop for any evidence Shot omitted by the bounded Gallery
+
+Shot.thumbnail_url
+= whole-Shot context image
+
+ShotCharacterBinding
+= editable Final binding
+```
+
+`engine/app/character_gallery_routes_v10.py` now returns both:
+
+```text
+evidence_shot_count / evidence_shots
+= exhaustive Candidate CharacterTrack Shot membership
+
+gallery_image_count
+= true bounded Gallery image count
+
+images
+= visual comparison images that cover every evidence Shot
+  (real Gallery crop when available; otherwise one on-demand persisted Track representative crop)
+```
+
+The on-demand fallback crop endpoint is:
+
+```text
+GET /api/content-analysis/characters/{candidate_id}/evidence-shot/{shot_id}
+```
+
+It reads the persisted Track `representative_source_us + bbox_json`, decodes the Shot Reference Clip, and returns the actual person crop. It does not invent a classification or modify identity state.
+
+### Asset library comparison UI
+
+For a Character, the Asset library now shows:
+
+```text
+Final Binding Shots
+Evidence Shots
+Person crop count
+Mismatch Shots
+```
+
+Every comparison card contains:
+
+```text
+top:    Shot whole-frame thumbnail / context
+bottom: AI Person Evidence crops
+status: Evidence + Final | AI ONLY | FINAL ONLY
+```
+
+Status semantics:
+
+```text
+Evidence + Final
+= immutable Candidate Track evidence exists AND Final binding exists
+
+AI ONLY
+= AI has persisted identity evidence in this Shot but Final binding is missing
+  → primary signal for a Shot-binding recall defect
+
+FINAL ONLY
+= Final binding exists but this Character's source Candidate has no persisted Track evidence in the Shot
+  → often manual binding, stale version, or a condition requiring review
+```
+
+Merged Final Characters load all `source_candidate_ids`; comparison is not limited to the first historical Candidate.
+
+### Character Gallery UI
+
+`CharacterPersonGalleryV10.vue` now groups visual evidence by real Shot ordinal and labels:
+
+```text
+N Evidence Shots
+M Gallery 代表图
+K 可视证据图
+```
+
+A crop labelled `Track 代表图` means that Shot has real persisted CharacterTrack identity evidence but was not selected into the bounded Gallery subset. This prevents the UI from falsely presenting “not selected into Gallery” as “no AI evidence”.
+
+## 12. Character Gallery Shot labels
+
+All human-facing Gallery Shot labels resolve immutable `shot_id` through real `v2_shots.ordinal`. UUID suffixes are never interpreted as Shot numbers.
+
+## 13. Current Character / Asset code map
 
 ```text
 engine/app/character_visual_v2.py
@@ -285,12 +367,16 @@ engine/app/asset_final_gate_v10.py
 engine/app/asset_final_gate_v9.py
 engine/app/asset_workspace_character_v101.py
 engine/app/asset_routes_v3.py
+frontend/src/api/client.ts
+frontend/src/types/studio.ts
 frontend/src/components/CharacterPersonGalleryV10.vue
+frontend/src/components/AssetReviewMatrixV4.vue
+frontend/src/asset-review-matrix-v4.css
 ```
 
-Compatibility filenames do not imply active algorithm version.
+Compatibility filenames do not imply the active algorithm version.
 
-## 13. Current implementation status
+## 14. Current implementation status
 
 ```text
 01 剧集管理: IMPLEMENTED
@@ -301,56 +387,50 @@ Compatibility filenames do not imply active algorithm version.
   risky-view identity creation implemented
   Pass-1 Track recovery implemented
   Pass-2 body/fragment aggregation implemented
-  real rerun confirmed SHOT 0006/0007 improved
-  repeated moderate known-Face presence patch implemented
+  repeated moderate known-Face presence implemented
   exact recovery provenance implemented
   identity vs Shot-presence confidence separation implemented
   V10/V10.1 Final Gate implemented
-  NEEDS NEXT WINDOWS REAL-VIDEO RERUN for SHOT 0002/0004/0009
+  exhaustive CharacterTrack Evidence Shot API implemented
+  per-evidence-Shot on-demand Track crop implemented
+  Gallery grouped by real Shot implemented
+  Evidence-vs-Final Asset library comparison implemented
+  NEEDS LOCAL UI / REAL-VIDEO CHECK for remaining Shot binding misses
 
 04 内容剧本: PLANNED / partial compatibility code exists
 05 重制设计: PLANNED
 06 生成 / 导出: PLANNED
 ```
 
-## 14. Test / CI reality
+## 15. Test / CI reality
 
-GitHub Actions is not globally green. Before the newest Face-presence patch, the backend full-test summary was:
+GitHub Actions is **not globally green**.
 
-```text
-28 failed, 176 passed, 1 skipped
-```
-
-The repository still has legacy/runtime/environment failures (`cv2`, trackers, FFmpeg/media assumptions and old semantic assertions). Frontend build still has the existing `vue-tsc` / TypeScript compatibility issue.
-
-Focused tests now additionally lock:
+Latest backend run after the Evidence-vs-Final comparison work:
 
 ```text
-three singleton body fragments → known Character may recover
-one strong Face → known Character may recover
-repeated moderate Face below old 0.52 threshold → may recover
-single moderate Face → stays unresolved
-Face-supported identity outranks synthetic-body ReID in close-up fallback
-same-sample cannot-link → cannot fake repeated support
+28 failed, 179 passed, 1 skipped
 ```
 
-Do not claim the whole repository passes.
+The new `test_character_gallery_routes_v10.py` is not among the failures. Backend compile and FastAPI import pass. Existing failures remain repository-level legacy/runtime/environment issues including missing CI `cv2`, missing `trackers`, FFmpeg assumptions, and obsolete V6-era semantic assertions.
 
-## 15. Immediate local acceptance
+Frontend build remains blocked before project type checking by the existing `vue-tsc` / TypeScript package compatibility problem (`typescript` does not export `./lib/tsc`). Do not claim the frontend or whole repository build is green.
+
+## 16. Immediate local acceptance
 
 ```text
 1. git pull latest main
-2. restart backend
-3. rerun asset extraction; old Analysis Runs do not auto-rebind
-4. confirm Final Character count remains correct
-5. check SHOT 0002 → 人物002
-6. check SHOT 0004 → 人物001 + 人物002
-7. confirm SHOT 0006 → 人物001 remains correct
-8. confirm SHOT 0007 → 人物002 remains correct
-9. inspect SHOT 0009 for every actually visible known Character
-10. if 0002/0004 still miss, inspect identity_recovery.face_support_count and YuNet/SFace observations before any further threshold tuning
+2. restart backend + frontend
+3. open 03 资产 → 资产库 → 人物
+4. select 人物001 / 002 / 003 and verify the comparison cards
+5. confirm top image is Shot whole-frame context and bottom images are actual Person crops
+6. use AI ONLY to identify binding misses directly
+7. use FINAL ONLY to identify manual/stale/no-track cases
+8. verify Character Gallery counts distinguish Evidence Shots from bounded Gallery representatives
+9. for the algorithm regression, rerun asset extraction if needed and recheck SHOT 0002 / 0004 / 0006 / 0007 / 0009
+10. do not tune identity thresholds based only on Gallery representative counts
 ```
 
-## 16. Documentation rule
+## 17. Documentation rule
 
-Any Character code change is incomplete until current project docs and the latest session handoff match executable code. Do not mark Character V10.1 `STABLE/FROZEN` until the user accepts real-video Shot binding accuracy.
+Any Character code change is incomplete until current state docs and the latest session handoff match executable code. Do not mark Character V10.1 `STABLE/FROZEN` until the user accepts real-video Shot binding accuracy.
