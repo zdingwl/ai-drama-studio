@@ -5,7 +5,8 @@ Formal rules:
 - a confirmed class can materialize with no visible face;
 - UNRESOLVED evidence never materializes and remains immutable AI Evidence;
 - V9/V10 evidence fails closed unless resolver/provenance and >=3 supporting shots/images are present;
-- historical pre-V9 runs keep their historical face-visible safety gate for compatibility.
+- historical pre-V9 runs keep their historical face-visible safety gate for compatibility;
+- V10.1 recovered Tracks keep their own Shot-presence confidence instead of reusing global identity confidence.
 
 Scene / Prop materialization keeps Asset Workspace V3 semantics unchanged.
 """
@@ -74,6 +75,47 @@ def _candidate_is_final_eligible(
     return any(bool(track.face_visible) for track in tracks)
 
 
+def _track_identity_recovery(track: CharacterTrack) -> dict[str, Any]:
+    """Read validated V10.1 Track recovery provenance from immutable Track Evidence."""
+
+    value = _json(track.evidence_json).get("identity_recovery")
+    if not isinstance(value, dict):
+        return {}
+    try:
+        score = float(value.get("score"))
+    except (TypeError, ValueError):
+        return {}
+    if not 0.0 <= score <= 1.0:
+        return {}
+    result = dict(value)
+    result["score"] = score
+    return result
+
+
+def _shot_binding_confidence(candidate: CharacterCandidate, tracks: list[CharacterTrack]) -> float | None:
+    """Return Shot-presence confidence without conflating it with identity confidence.
+
+    A normal identity-assigned Track keeps the historical candidate confidence fallback.
+    A Shot represented only by V10.1 recovered Tracks uses the recovery score persisted on
+    those Tracks. If several recovered fragments belong to the same person/Shot, use the
+    strongest validated recovery score and still materialize only one binding.
+    """
+
+    recovery_scores: list[float] = []
+    has_direct_track = False
+    for track in tracks:
+        recovery = _track_identity_recovery(track)
+        if recovery:
+            recovery_scores.append(float(recovery["score"]))
+        else:
+            has_direct_track = True
+    if has_direct_track:
+        return candidate.confidence
+    if recovery_scores:
+        return max(recovery_scores)
+    return candidate.confidence
+
+
 def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
     run = session.get(ContentAnalysisRun, run_id)
     if run is None or run.project_id != project_id:
@@ -114,6 +156,11 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             "classified_shots": evidence.get("classified_shots"),
             "instance_classes": evidence.get("instance_classes"),
             "face_images": evidence.get("face_images"),
+            "track_recovery_count": evidence.get("track_recovery_count"),
+            "track_recovery_shot_ids": evidence.get("track_recovery_shot_ids"),
+            "track_recovery_scores": evidence.get("track_recovery_scores"),
+            "track_recovery_source": evidence.get("track_recovery_source"),
+            "track_recovery_policy": evidence.get("track_recovery_policy"),
         }
         session.add(
             legacy.Character(
@@ -125,19 +172,20 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             )
         )
 
-        bound_shot_ids: set[str] = set()
+        # Track 是 Evidence 粒度；Final Binding 只表达“Character 出现在 Shot”。
+        # 同一人物在同一 Shot 有多条 Track 时聚合后只写一个 Binding。
+        tracks_by_shot: dict[str, list[CharacterTrack]] = {}
         for track in members:
-            if track.shot_id in bound_shot_ids:
-                continue
-            bound_shot_ids.add(track.shot_id)
+            tracks_by_shot.setdefault(track.shot_id, []).append(track)
+        for shot_id, shot_tracks in tracks_by_shot.items():
             session.add(
                 legacy.ShotCharacterBinding(
                     id=legacy.new_id("SHOTCHAR"),
                     project_id=project_id,
-                    shot_id=track.shot_id,
+                    shot_id=shot_id,
                     character_id=asset_id,
                     source="AUTO",
-                    confidence=candidate.confidence,
+                    confidence=_shot_binding_confidence(candidate, shot_tracks),
                     source_run_id=run_id,
                     source_candidate_id=candidate.id,
                 )
@@ -244,7 +292,7 @@ def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = Fals
             kind="AUTO",
             source_run_id=run_id,
             source_revision_id=source_revision_id,
-            note="基于最新 AI Evidence 自动形成资产；Character V10 先采集 Person Evidence 再模型分类，Face 为可选证据",
+            note="基于最新 AI Evidence 自动形成资产；Character V10.1 使用确认身份 + Shot Track presence，Face 为可选证据",
         )
         session.commit()
         return legacy._serialize_workspace(session, project_id)
