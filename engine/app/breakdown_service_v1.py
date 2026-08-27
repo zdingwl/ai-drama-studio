@@ -1,4 +1,4 @@
-"""Breakdown-first Phase P1.2/P1.3 的 Breakdown Run 生命周期服务。
+"""Breakdown-first Phase P1.2/P1.3/P1.6 的 Breakdown Run 生命周期服务。
 
 职责：
 - 为 Episode 当前 ShotRevision 创建 PROCESSING BreakdownRun；
@@ -6,12 +6,11 @@
 - P1.3 强制执行真实 Draft validator，禁止由调用方用布尔值绕过；
 - 原子切换同 Episode 的 Current Breakdown Run；
 - 失败 Run 不替换旧 Current；
-- 提供 Shot Revision 改变后把旧 Run 标记为 STALE 的独立原语。
+- P1.6 提供可加入 ShotRevision 同一事务的 STALE 标记能力。
 
 边界：
-- P1.3 只接入 validator，不实现 P1.4 API/serializer；
-- 不把 STALE 原语接入 shot_editor/auto rerun/restore，联动留给 P1.6；
-- 不运行 ASR/OCR/VLM，不写 Final Character/Scene/Prop 或任何 Shot Binding。
+- 不运行 ASR/OCR/VLM，不写 Final Character/Scene/Prop 或任何 Shot Binding；
+- P1.6 只负责 ShotRevision → BreakdownRun STALE 联动，不做 P1.7 文档收口。
 """
 from __future__ import annotations
 
@@ -218,6 +217,44 @@ def fail_breakdown_run(
         return run
 
 
+def mark_episode_breakdown_runs_stale_in_session(
+    session: Any,
+    episode_id: str,
+    *,
+    current_shot_revision_id: str,
+) -> list[str]:
+    """在调用方事务内把旧 ShotRevision 的活动 Breakdown Run 标记为 STALE。
+
+    P1.6 的 ShotRevision 切换必须与 STALE 标记共用一个数据库事务：如果 Shot 修改或
+    Revision 写入最终回滚，BreakdownRun 的状态也一起回滚，不能出现“Shot 没切成功但
+    Breakdown 已 STALE”的半提交状态。函数只 flush/修改 ORM，不自行 commit。
+    """
+
+    episode = session.get(studio_v2.Episode, episode_id)
+    if episode is None:
+        raise LookupError("剧集不存在")
+    current_revision = session.get(ShotRevision, current_shot_revision_id)
+    if current_revision is None or current_revision.episode_id != episode_id or not current_revision.is_current:
+        raise BreakdownRunLifecycleError("Episode 当前没有可用的 Current ShotRevision")
+
+    runs = session.scalars(
+        select(BreakdownRun).where(
+            BreakdownRun.episode_id == episode_id,
+            BreakdownRun.source_shot_revision_id != current_revision.id,
+            BreakdownRun.status.in_(ACTIVE_SOURCE_STATUSES),
+        )
+    ).all()
+    changed: list[str] = []
+    now = studio_v2.utcnow()
+    for run in runs:
+        run.status = "STALE"
+        run.is_current = False
+        if run.completed_at is None:
+            run.completed_at = now
+        changed.append(run.id)
+    return changed
+
+
 def mark_episode_breakdown_runs_stale(
     episode_id: str,
     *,
@@ -225,7 +262,8 @@ def mark_episode_breakdown_runs_stale(
 ) -> list[str]:
     """把不再解释 Episode Current ShotRevision 的活动 Run 标记为 STALE。
 
-    这是 P1.2 提供给 P1.6 的独立原语；本阶段不会修改 ``shot_revision_v2.py`` 去调用它。
+    保留给显式维护/修复调用；P1.6 正常 ShotRevision 提交流程使用
+    ``mark_episode_breakdown_runs_stale_in_session``，与 Revision 切换保持原子性。
     历史 Draft 行不会删除。FAILED/已 STALE Run 保持原状态；同一 Current Revision 上的
     非 Current READY 历史 Run也保持可读 READY 状态。
     """
@@ -252,20 +290,10 @@ def mark_episode_breakdown_runs_stale(
         if current_revision is None:
             raise BreakdownRunLifecycleError("Episode 当前没有可用的 Current ShotRevision")
 
-        runs = session.scalars(
-            select(BreakdownRun).where(
-                BreakdownRun.episode_id == episode_id,
-                BreakdownRun.source_shot_revision_id != current_revision.id,
-                BreakdownRun.status.in_(ACTIVE_SOURCE_STATUSES),
-            )
-        ).all()
-        changed: list[str] = []
-        now = studio_v2.utcnow()
-        for run in runs:
-            run.status = "STALE"
-            run.is_current = False
-            if run.completed_at is None:
-                run.completed_at = now
-            changed.append(run.id)
+        changed = mark_episode_breakdown_runs_stale_in_session(
+            session,
+            episode_id,
+            current_shot_revision_id=current_revision.id,
+        )
         session.commit()
         return changed
