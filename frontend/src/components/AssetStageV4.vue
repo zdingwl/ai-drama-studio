@@ -78,7 +78,7 @@ async function prepareModels(): Promise<void> {
   try {
     status.value = await api.prepareF05Models() as CharacterModelStatus
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '人物 V10 模型准备失败'
+    error.value = err instanceof Error ? err.message : '人物 V10.1 模型准备失败'
   } finally {
     preparing.value = false
   }
@@ -105,20 +105,21 @@ onUnmounted(() => {
   <div class="asset-stage-v4">
     <div v-if="!loading && status && !status.ready" class="character-v4-banner warning">
       <div>
-        <strong>人物识别 V10 运行时未准备完整</strong>
-        <span>V10 需要 YOLOX / YoutuReID + Mature MOT。未准备完整时不要重新提取资产，旧 Current 会继续保留。</span>
+        <strong>人物识别 V10.1 运行时未准备完整</strong>
+        <span>V10.1 需要 YOLOX / YoutuReID + Mature MOT。未准备完整时不要重新提取资产，旧 Current 会继续保留。</span>
         <small v-if="missingModels.length">缺少模型：{{ missingModels.map((item) => item.filename).join('、') }}</small>
         <small v-if="status.tracking_runtime && !status.tracking_runtime.ready">MOT：{{ status.tracking_runtime.error || 'trackers/supervision 未准备' }}</small>
       </div>
-      <button :disabled="preparing" @click="prepareModels">{{ preparing ? '正在准备模型…' : '准备人物 V10 模型' }}</button>
+      <button :disabled="preparing" @click="prepareModels">{{ preparing ? '正在准备模型…' : '准备人物 V10.1 模型' }}</button>
     </div>
 
     <div v-else-if="!loading && status?.ready" class="character-v4-banner ready">
       <div>
-        <strong>人物识别 V10 · READY · {{ runtimeLabel }} · {{ trackingLabel }}</strong>
+        <strong>人物识别 V10.1 · READY · {{ runtimeLabel }} · {{ trackingLabel }}</strong>
         <span>先采集每个 Person Instance，再用人物模型分类：正面 / 侧身 / 背影 / 多人同框拆出的单人图都保留。</span>
         <small>YoutuReID 作为跨视角人物分类主模型；服装 / Body / Face(可选) 作为支持。整帧永远不直接做人身份比较。</small>
-        <small>未形成 Mature Track 的有效人物实例也会作为 Evidence-only Track 进入分类，不会因为短暂出现而直接丢失。</small>
+        <small>强污染 / 大面积边缘人物图不会再被永久挡在待归属区，但必须通过更严格的 ≥3 Shot ReID 一致性才能形成新人。</small>
+        <small>弱 Partial 仍只保留 Evidence / 挂回已有角色，不能单独创建新人。</small>
         <small v-if="analysisProfile">当前 Asset Run：{{ analysisProfile }}</small>
         <small v-if="status.runtime?.fallback">⚠ CUDA 未实际启用，当前已自动降级 CPU；结果逻辑不变，但分析会明显变慢。</small>
       </div>
