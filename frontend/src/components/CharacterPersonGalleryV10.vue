@@ -9,6 +9,9 @@ type GalleryImage = {
   index: number
   url: string
   shot_id: string | null
+  shot_ordinal: number | null
+  episode_id: string | null
+  episode_order: number | null
   source_time_us: number | null
   instance_id: string | null
   instance_class: string | null
@@ -65,10 +68,11 @@ async function refresh(): Promise<void> {
   }
 }
 
-function shotLabel(shotId: string | null): string {
-  if (!shotId) return '未知 Shot'
-  const match = shotId.match(/(\d+)$/)
-  return match ? `SHOT ${String(Number(match[1])).padStart(4, '0')}` : shotId
+function shotLabel(image: GalleryImage): string {
+  if (typeof image.shot_ordinal === 'number') {
+    return `SHOT ${String(image.shot_ordinal).padStart(4, '0')}`
+  }
+  return image.shot_id || '未知 Shot'
 }
 
 function classLabel(value: string | null): string {
@@ -112,9 +116,9 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
       </div>
       <div v-if="gallery.images.length" class="person-gallery-grid">
         <figure v-for="image in gallery.images" :key="`${gallery.candidateId}-${image.index}`">
-          <img :src="image.url" :alt="`${gallery.name} ${shotLabel(image.shot_id)}`" loading="lazy" />
+          <img :src="image.url" :alt="`${gallery.name} ${shotLabel(image)}`" loading="lazy" />
           <figcaption>
-            <b>{{ shotLabel(image.shot_id) }}</b>
+            <b>{{ shotLabel(image) }}</b>
             <span>{{ classLabel(image.instance_class) }}</span>
           </figcaption>
         </figure>
