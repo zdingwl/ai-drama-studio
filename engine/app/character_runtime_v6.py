@@ -5,9 +5,9 @@ Person / Partial-Person Observation (12fps)
 → extract isolated-person model features
 → capture every model-usable front/side/back/occluded/multi-person-frame crop
 → persist pre-classification Person Evidence when a Run id is available
-→ Mature MOT
-→ build reliable identity seeds
+→ Mature MOT + evidence-only singleton fallback
 → classify captured Person Evidence with YoutuReID person model against full identity galleries
+→ write A/B/C identity assignments back to the captured evidence manifest
 → persist multi-view classified Person Gallery
 → Final Character is identity class cardinality, never Track/Face count.
 """
@@ -17,7 +17,7 @@ import logging
 from typing import Any
 
 from engine.app import character_visual_v5 as v5
-from engine.app.character_evidence_store_v10 import save_person_evidence
+from engine.app.character_evidence_store_v10 import save_person_evidence, update_person_evidence_classification
 from engine.app.character_identity_v10 import CLASSIFIER_MODEL, RESOLVER_VERSION, resolve_global_identities
 from engine.app.character_observation_v10 import detect_observations
 from engine.app.character_person_features_v9 import FEATURE_VERSION
@@ -57,6 +57,9 @@ def analyze_characters(
             evidence_store = save_person_evidence(run_id, observations)
         tracks = build_tracks(observations)
         candidates = resolve_global_identities(tracks)
+        classification_store: dict[str, int] | None = None
+        if run_id and evidence_store is not None:
+            classification_store = update_person_evidence_classification(run_id, candidates)
         _bridge_persistence_metadata(candidates)
         resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
         unresolved = [item for item in candidates if item.identity_status != "RESOLVED"]
@@ -73,10 +76,11 @@ def analyze_characters(
                 seedable += 1
 
         logger.warning(
-            "[CharacterV10] observations=%s captured_person_evidence=%s persisted_person_evidence=%s seedable=%s tracks=%s "
-            "confirmed_identities=%s unresolved_fragments=%s instance_classes=%s",
+            "[CharacterV10] observations=%s captured_person_evidence=%s persisted_person_evidence=%s classified_persisted=%s "
+            "seedable=%s tracks=%s confirmed_identities=%s unresolved_fragments=%s instance_classes=%s",
             len(observations), captured,
             (evidence_store or {}).get("evidence_count") if evidence_store else None,
+            (classification_store or {}).get("classified_count") if classification_store else None,
             seedable, len(tracks), len(resolved), len(unresolved), classes,
         )
         for index, candidate in enumerate(resolved, start=1):
@@ -108,6 +112,7 @@ def runtime_status() -> dict[str, object]:
             "person_instance": "one detected person -> one explicit person crop, including multi-person frames",
             "capture_first": True,
             "preclassification_persistence": True,
+            "classification_written_back": True,
             "identity_before_capture_filter": False,
             "crop_classes": ["CLEAN", "OCCLUDED", "CONTAMINATED", "PARTIAL"],
             "front_side_back_supported": True,
@@ -141,7 +146,7 @@ def runtime_status() -> dict[str, object]:
         "identity": {
             "resolver": RESOLVER_VERSION,
             "classifier_model": CLASSIFIER_MODEL,
-            "workflow": "capture Person Evidence -> persist -> model compare -> classify A/B/C -> persist classified galleries",
+            "workflow": "capture Person Evidence -> persist -> model compare -> classify A/B/C -> write assignment back -> persist classified galleries",
             "person_reid_role": "primary model signal for viewpoint-invariant person comparison",
             "clothing_body_role": "supporting channels",
             "face_role": "optional support; never required",
