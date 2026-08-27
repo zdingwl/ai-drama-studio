@@ -1,17 +1,14 @@
-"""Character V9.1 formal runtime entry.
+"""Character V10 formal runtime entry.
 
-Person + Partial-Person Observation (12fps)
-→ explicit Person Instance split and crop safety
-→ multi-channel Person Image features (ReID / clothing / body / optional face)
-→ Mature MOT (BoT-SORT / ByteTrack fallback)
-→ CLEAN-only Person Gallery evidence
-→ V9.1 progressive Person Gallery identity
-→ seed -> cross-shot partner -> proto-gallery -> multi-view growth
-→ confirm A -> absorb all remaining -> confirm B -> absorb against A+B -> ...
-→ partial/occluded/contaminated evidence may only extend confirmed identities or remain UNRESOLVED
-
-Track count and Face count never determine Final Character count.  A seed image starts a
-Person Gallery but does not define the identity by itself.
+Person / Partial-Person Observation (12fps)
+→ split every detected person into an explicit Person Instance
+→ extract isolated-person model features
+→ capture every model-usable front/side/back/occluded/multi-person-frame crop
+→ Mature MOT
+→ build reliable identity seeds
+→ classify captured Person Evidence with YoutuReID person model against full identity galleries
+→ persist multi-view classified Person Gallery
+→ Final Character is identity class cardinality, never Track/Face count.
 """
 from __future__ import annotations
 
@@ -19,29 +16,29 @@ import logging
 from typing import Any
 
 from engine.app import character_visual_v5 as v5
-from engine.app.character_identity_v91 import RESOLVER_VERSION, resolve_global_identities
-from engine.app.character_observation_v9 import detect_observations
+from engine.app.character_identity_v10 import CLASSIFIER_MODEL, RESOLVER_VERSION, resolve_global_identities
+from engine.app.character_observation_v10 import detect_observations
 from engine.app.character_person_features_v9 import FEATURE_VERSION
-from engine.app.character_tracking_v9 import build_tracks, tracker_runtime_status
+from engine.app.character_tracking_v10 import build_tracks, tracker_runtime_status
 from engine.app.content_models_v2 import RequiredCharacterModelError
 
 logger = logging.getLogger(__name__)
 
-FORMAL_IDENTITY_EVIDENCE = "Character V9.1 progressive Person Gallery; multi-channel Person Image identity"
-FORMAL_IDENTITY_PROFILE = "f05-assets-v9.1-confirmed-person-gallery-final-gate"
+FORMAL_IDENTITY_EVIDENCE = "Character V10 capture-first Person Evidence + model classification"
+FORMAL_IDENTITY_PROFILE = "f05-assets-v10-person-evidence-model-classification"
 
 
 def _bridge_persistence_metadata(candidates: list[v5.CandidateDraft]) -> None:
-    """Feed truthful V9.1 metadata through the historical persistence field."""
+    """Feed truthful V10 metadata through the historical persistence transaction."""
 
     for candidate in candidates:
-        metadata = dict(getattr(candidate, "v9_metadata", {}) or {})
+        metadata = dict(getattr(candidate, "v10_metadata", {}) or {})
         candidate.v6_metadata = {  # type: ignore[attr-defined]
             "identity": FORMAL_IDENTITY_EVIDENCE,
             "profile": FORMAL_IDENTITY_PROFILE,
             "identity_policy": (
-                "Progressive Person Gallery Confirm-then-Absorb; seed starts a gallery but never defines identity alone; "
-                "Face optional; Track never defines identity cardinality"
+                "capture every model-usable Person Instance first; classify with Person ReID model; "
+                "front/side/back and multi-person-frame crops are valid evidence; Face optional"
             ),
             **metadata,
         }
@@ -58,65 +55,61 @@ def analyze_characters(
         _bridge_persistence_metadata(candidates)
         resolved = [item for item in candidates if item.identity_status == "RESOLVED"]
         unresolved = [item for item in candidates if item.identity_status != "RESOLVED"]
+
         classes: dict[str, int] = {}
-        channels: dict[str, int] = {}
-        ready_features = 0
+        captured = 0
+        seedable = 0
         for item in observations:
             key = str(getattr(item, "instance_class", "UNKNOWN"))
             classes[key] = classes.get(key, 0) + 1
-            bundle = getattr(item, "person_feature_bundle", None)
-            if bundle is None:
-                continue
-            ready_features += 1
-            for channel in bundle.available_channels:
-                channels[channel] = channels.get(channel, 0) + 1
+            if bool(getattr(item, "person_evidence_eligible", False)):
+                captured += 1
+            if bool(getattr(item, "person_seed_eligible", False)):
+                seedable += 1
+
         logger.warning(
-            "[CharacterV9.1] observations=%s feature_ready=%s tracks=%s confirmed_galleries=%s "
-            "unresolved_evidence=%s instance_classes=%s feature_channels=%s",
-            len(observations),
-            ready_features,
-            len(tracks),
-            len(resolved),
-            len(unresolved),
-            classes,
-            channels,
+            "[CharacterV10] observations=%s captured_person_evidence=%s seedable=%s tracks=%s "
+            "confirmed_identities=%s unresolved_fragments=%s instance_classes=%s",
+            len(observations), captured, seedable, len(tracks), len(resolved), len(unresolved), classes,
         )
         for index, candidate in enumerate(resolved, start=1):
-            metadata = dict(getattr(candidate, "v9_metadata", {}) or {})
+            metadata = dict(getattr(candidate, "v10_metadata", {}) or {})
             logger.warning(
-                "[CharacterV9.1] gallery=%s images=%s shots=%s face_images=%s tracks=%s bound_shots=%s builder=%s",
+                "[CharacterV10] identity=%s classified_gallery_images=%s confirmed_seed_images=%s "
+                "confirmed_seed_shots=%s classified_shots=%s classes=%s tracks=%s",
                 index,
+                metadata.get("captured_classified_images"),
                 metadata.get("confirmed_gallery_images"),
                 metadata.get("confirmed_gallery_shots"),
-                metadata.get("face_images"),
+                metadata.get("classified_shots"),
+                metadata.get("instance_classes"),
                 len(candidate.tracks),
-                len({track.shot_id for track in candidate.tracks}),
-                metadata.get("gallery_builder"),
             )
         return candidates
     except (ImportError, ModuleNotFoundError) as exc:
         raise RequiredCharacterModelError(
-            "人物识别 V9.1 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
-            "YOLOX/ReID CUDA 不可用可以 CPU fallback，但 trackers/supervision 运行时缺失不能发布人物结果。"
+            "人物识别 V10 运行时未准备完整。请重新安装 engine/requirements.txt 后重启后端；"
+            "YOLOX / YoutuReID 可 CPU fallback，但 Mature MOT 运行时缺失不能发布人物结果。"
         ) from exc
 
 
 def runtime_status() -> dict[str, object]:
     return {
-        "profile": "character-v9.1-person-gallery-progressive-anchor",
+        "profile": "character-v10-capture-first-model-classification",
         "observation": {
             "sample_fps": 12.0,
-            "normal_person_threshold": 0.32,
-            "partial_person_proposal_threshold": 0.10,
-            "person_instance": "one detected person -> one explicit instance/crop",
+            "person_instance": "one detected person -> one explicit person crop, including multi-person frames",
+            "capture_first": True,
+            "identity_before_capture_filter": False,
             "crop_classes": ["CLEAN", "OCCLUDED", "CONTAMINATED", "PARTIAL"],
+            "front_side_back_supported": True,
             "whole_frame_identity_input": False,
             "same_sample_cannot_link": True,
-            "face_ownership": "global one-to-one geometry gate; partial cannot own face",
         },
         "features": {
             "version": FEATURE_VERSION,
             "unit": "isolated Person Instance image",
+            "primary_model": "YoutuReID Person Re-identification",
             "channels": [
                 "person_reid",
                 "clothing_upper",
@@ -131,23 +124,19 @@ def runtime_status() -> dict[str, object]:
         },
         "tracking": tracker_runtime_status(),
         "gallery": {
-            "formal_representatives": "CLEAN Person Instance crops only",
-            "quality_basis": "whole-person quality; face prominence is not required",
+            "formal_representatives": "classified model-usable Person Instance crops; CLEAN is not required",
+            "views": "front / side / back / occluded / person split from multi-person frame",
             "feature_sidecar": "compressed NPZ per gallery image",
-            "builder": "progressive proto-gallery: seed -> partner -> multi-view growth",
-            "single_seed_identity": False,
-            "occluded_contaminated_partial": "may extend confirmed gallery only; never seed a Character",
             "whole_frame_gallery_image": False,
         },
         "identity": {
             "resolver": RESOLVER_VERSION,
-            "comparison_order": "all remaining images compare to every confirmed gallery before any new gallery may be created",
-            "outcomes": ["MATCH", "AMBIGUOUS", "DIFFERENT"],
-            "ambiguous_policy": "single ambiguous image does not veto a clearly novel multi-shot group; ambiguous evidence cannot by itself create a Character",
-            "new_identity_gate": "3+ independent CLEAN Person Gallery shots + progressive multiview consistency + gallery-level novelty",
-            "face_role": "optional supporting channel; never sole identity definition",
-            "track_role": "presence/evidence only; never identity cardinality",
-            "v8_identity": "DISABLED",
-            "v9c_single_seed_grouping": "DISABLED",
+            "classifier_model": CLASSIFIER_MODEL,
+            "workflow": "capture Person Evidence -> model compare -> classify A/B/C -> persist classified galleries",
+            "person_reid_role": "primary model signal for viewpoint-invariant person comparison",
+            "clothing_body_role": "supporting channels",
+            "face_role": "optional support; never required",
+            "track_role": "temporal organization only; never identity cardinality",
+            "partial_policy": "save/classify/attach with stronger support; cannot seed new identity",
         },
     }
