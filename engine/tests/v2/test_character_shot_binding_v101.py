@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from engine.app.character_person_features_v9 import FEATURE_VERSION, PersonFeatureBundle
-from engine.app.character_shot_binding_v101 import recover_unresolved_tracks
+from engine.app.character_shot_binding_v101 import RECOVERY_SOURCE, recover_unresolved_tracks
 from engine.app.character_visual_v5 import CandidateDraft, Observation, TrackDraft, TrackRepresentative
 
 
@@ -143,10 +143,15 @@ def test_repeated_track_evidence_recovers_known_identity_for_shot_binding() -> N
     result = recover_unresolved_tracks([person_a, person_b, unresolved])
 
     assert [item.id for item in result] == ["A", "B"]
-    assert "TARGET_SHOT" in {track.shot_id for track in person_a.tracks}
+    recovered_track = next(track for track in person_a.tracks if track.shot_id == "TARGET_SHOT")
     assert "TARGET_SHOT" not in {track.shot_id for track in person_b.tracks}
     assert person_a.v10_metadata["track_recovery_count"] == 1
     assert person_a.v10_metadata["track_recovery_shot_ids"] == ["TARGET_SHOT"]
+    assert recovered_track.identity_recovery["source"] == RECOVERY_SOURCE
+    assert recovered_track.identity_recovery["target_candidate_id"] == "A"
+    assert recovered_track.identity_recovery["shot_id"] == "TARGET_SHOT"
+    assert recovered_track.identity_recovery["observation_count"] == 3
+    assert 0.0 < recovered_track.identity_recovery["score"] <= 1.0
 
 
 def test_ambiguous_track_stays_unresolved() -> None:
@@ -159,6 +164,7 @@ def test_ambiguous_track_stays_unresolved() -> None:
     assert [item.id for item in result] == ["A", "B", "UNRESOLVED"]
     assert "TARGET_SHOT" not in {track.shot_id for track in person_a.tracks}
     assert "TARGET_SHOT" not in {track.shot_id for track in person_b.tracks}
+    assert not hasattr(unresolved.tracks[0], "identity_recovery")
 
 
 def test_cannot_link_blocks_recovery_even_with_strong_reid() -> None:
@@ -170,3 +176,4 @@ def test_cannot_link_blocks_recovery_even_with_strong_reid() -> None:
 
     assert [item.id for item in result] == ["A", "B", "UNRESOLVED"]
     assert "TARGET_SHOT" not in {track.shot_id for track in person_a.tracks}
+    assert not hasattr(unresolved.tracks[0], "identity_recovery")
