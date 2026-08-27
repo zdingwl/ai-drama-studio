@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 from engine.app import character_gallery_v10 as gallery_v10
-from engine.app import character_identity_v10 as identity
+from engine.app import character_identity_v101 as identity
 from engine.app import character_visual_v5 as v5
 from engine.app.character_person_evidence_v10 import attach_v10_policy
 from engine.app.character_person_features_v9 import FEATURE_VERSION, PersonFeatureBundle
@@ -32,8 +32,11 @@ def make_observation(
     at_us: int | None = None,
     x: int = 100,
     suffix: str = "P01",
+    detection_score: float = 0.95,
+    bbox: tuple[int, int, int, int] | None = None,
 ) -> v5.Observation:
     source_time = int(at_us if at_us is not None else shot * 1_000_000)
+    person_bbox = bbox or (x, 60, 220, 760)
     observation = v5.Observation(
         shot_id=f"SHOT_{shot:04d}",
         episode_id="EP_1",
@@ -41,10 +44,10 @@ def make_observation(
         shot_ordinal=shot,
         source_time_us=source_time,
         local_time_us=100_000,
-        bbox=(x, 60, 220, 760),
+        bbox=person_bbox,
         face_bbox=None,
         reference_path="unused.mp4",
-        detection_score=0.95,
+        detection_score=detection_score,
         face_embedding=None,
         reid_embedding=vector,
         body_hist=vector,
@@ -101,7 +104,6 @@ def resolved(candidates: list[v5.CandidateDraft]) -> list[v5.CandidateDraft]:
 
 
 def test_front_side_back_and_occluded_views_classify_to_one_person() -> None:
-    # Simulate one actor across progressively changing whole-person views.
     observations = [
         make_observation(shot=1, vector=angle_vector(0), instance_class="CLEAN"),
         make_observation(shot=2, vector=angle_vector(20), instance_class="CLEAN"),
@@ -117,7 +119,7 @@ def test_front_side_back_and_occluded_views_classify_to_one_person() -> None:
         "SHOT_0001", "SHOT_0002", "SHOT_0003", "SHOT_0004", "SHOT_0005"
     }
     metadata = getattr(people[0], "v10_metadata", {})
-    assert metadata["resolver"] == "person-evidence-model-classifier-v10"
+    assert metadata["resolver"] == "person-evidence-model-classifier-v10.1"
     assert metadata["classified_shots"] == 5
     assert "OCCLUDED" in metadata["instance_classes"]
     assert "CONTAMINATED" in metadata["instance_classes"]
@@ -139,9 +141,15 @@ def test_same_sample_different_people_are_hard_cannot_link() -> None:
     assert "same-sample-cannot-link" in decision.reasons
 
 
-def test_partial_evidence_is_saved_for_classification_but_cannot_seed_identity() -> None:
+def test_weak_partial_evidence_is_saved_but_cannot_seed_identity() -> None:
     partials = [
-        make_observation(shot=shot, vector=unit(0), instance_class="PARTIAL", quality=0.75)
+        make_observation(
+            shot=shot,
+            vector=unit(0),
+            instance_class="PARTIAL",
+            quality=0.52,
+            detection_score=0.24,
+        )
         for shot in (1, 2, 3, 4)
     ]
     assert all(item.person_evidence_eligible for item in partials)
@@ -149,6 +157,38 @@ def test_partial_evidence_is_saved_for_classification_but_cannot_seed_identity()
 
     candidates = identity.resolve_global_identities([make_track(item) for item in partials])
     assert len(resolved(candidates)) == 0
+
+
+def test_strong_contaminated_person_can_form_new_identity_across_three_shots() -> None:
+    observations = [
+        make_observation(shot=1, vector=angle_vector(0), instance_class="CONTAMINATED", quality=0.82),
+        make_observation(shot=2, vector=angle_vector(8), instance_class="CONTAMINATED", quality=0.80),
+        make_observation(shot=3, vector=angle_vector(12), instance_class="CONTAMINATED", quality=0.78),
+    ]
+    assert all(item.person_seed_eligible for item in observations)
+
+    people = resolved(identity.resolve_global_identities([make_track(item) for item in observations]))
+    assert len(people) == 1
+    metadata = getattr(people[0], "v10_metadata", {})
+    assert metadata["confirmed_gallery_shots"] == 3
+    assert metadata["risky_seed_confirmation"] is True
+    assert metadata["seed_instance_classes"] == ["CONTAMINATED"]
+
+
+def test_strong_substantial_partial_person_can_form_new_identity_across_three_shots() -> None:
+    observations = [
+        make_observation(shot=1, vector=angle_vector(0), instance_class="PARTIAL", quality=0.82),
+        make_observation(shot=2, vector=angle_vector(8), instance_class="PARTIAL", quality=0.80),
+        make_observation(shot=3, vector=angle_vector(12), instance_class="PARTIAL", quality=0.78),
+    ]
+    assert all(item.person_seed_eligible for item in observations)
+
+    people = resolved(identity.resolve_global_identities([make_track(item) for item in observations]))
+    assert len(people) == 1
+    metadata = getattr(people[0], "v10_metadata", {})
+    assert metadata["confirmed_gallery_shots"] == 3
+    assert metadata["risky_seed_confirmation"] is True
+    assert metadata["seed_instance_classes"] == ["PARTIAL"]
 
 
 def test_three_people_many_views_still_resolve_to_three_identity_classes() -> None:
@@ -160,9 +200,14 @@ def test_three_people_many_views_still_resolve_to_three_identity_classes() -> No
     for shot in (9, 10, 11, 12):
         tracks.append(make_track(make_observation(shot=shot, vector=unit(3))))
 
-    # Extra low-reliability content exists but cannot manufacture new people.
     tracks.append(make_track(make_observation(shot=13, vector=unit(2), instance_class="CONTAMINATED")))
-    tracks.append(make_track(make_observation(shot=14, vector=unit(3), instance_class="PARTIAL")))
+    tracks.append(make_track(make_observation(
+        shot=14,
+        vector=unit(3),
+        instance_class="PARTIAL",
+        quality=0.52,
+        detection_score=0.24,
+    )))
 
     candidates = identity.resolve_global_identities(tracks)
     assert len(resolved(candidates)) == 3
