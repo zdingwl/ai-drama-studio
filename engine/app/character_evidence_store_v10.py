@@ -1,8 +1,8 @@
 """Character V10 pre-classification Person Evidence store.
 
 Every model-usable Person Instance crop is persisted before identity classification.
-This makes capture and classification independent: a side/back/occluded crop does not
-disappear merely because the identity classifier is not confident yet.
+After model classification the same manifest is updated with the resulting identity
+assignment, so capture and classification remain separate stages over the same data.
 """
 from __future__ import annotations
 
@@ -16,6 +16,10 @@ from engine.app.character_person_features_v9 import feature_dimensions
 from engine.app.studio_v2 import workspace_root
 
 JPEG_QUALITY = 88
+
+
+def _root(run_id: str) -> Path:
+    return workspace_root() / "analysis" / run_id / "person_evidence"
 
 
 def _crop(observation: Any):
@@ -55,7 +59,7 @@ def _save_features(root: Path, stem: str, observation: Any) -> tuple[str | None,
 def save_person_evidence(run_id: str, observations: list[Any]) -> dict[str, Any]:
     import cv2
 
-    root = workspace_root() / "analysis" / run_id / "person_evidence"
+    root = _root(run_id)
     root.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
     counters: dict[str, int] = {}
@@ -100,6 +104,8 @@ def save_person_evidence(run_id: str, observations: list[Any]) -> dict[str, Any]
             "face_visible": bool(observation.face_visible),
             "detection_source": str(observation.detection_source or ""),
             "classification_status": "UNCLASSIFIED",
+            "identity_ordinal": None,
+            "candidate_id": None,
         })
 
     manifest = {
@@ -107,7 +113,65 @@ def save_person_evidence(run_id: str, observations: list[Any]) -> dict[str, Any]
         "policy": "capture model-usable Person Instance crops before identity classification",
         "whole_frame_identity_input": False,
         "evidence_count": len(records),
+        "classified_count": 0,
+        "resolved_count": 0,
+        "unresolved_count": 0,
         "records": records,
     }
-    (root / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"root": str(root), "evidence_count": len(records), "manifest": str(root / "manifest.json")}
+    manifest_path = root / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"root": str(root), "evidence_count": len(records), "manifest": str(manifest_path)}
+
+
+def update_person_evidence_classification(run_id: str, candidates: list[Any]) -> dict[str, int]:
+    """Write model identity assignments back to the pre-classification manifest."""
+
+    path = _root(run_id) / "manifest.json"
+    if not path.exists():
+        return {"classified_count": 0, "resolved_count": 0, "unresolved_count": 0}
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"classified_count": 0, "resolved_count": 0, "unresolved_count": 0}
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("records"), list):
+        return {"classified_count": 0, "resolved_count": 0, "unresolved_count": 0}
+
+    assignments: dict[str, dict[str, Any]] = {}
+    resolved_ordinal = 0
+    for candidate in candidates:
+        status = str(getattr(candidate, "identity_status", "UNRESOLVED") or "UNRESOLVED").upper()
+        identity_ordinal: int | None = None
+        if status == "RESOLVED":
+            resolved_ordinal += 1
+            identity_ordinal = resolved_ordinal
+        for track in getattr(candidate, "tracks", []) or []:
+            for observation in getattr(track, "observations", []) or []:
+                instance_id = getattr(observation, "instance_id", None)
+                if not instance_id:
+                    continue
+                assignments[str(instance_id)] = {
+                    "classification_status": status,
+                    "identity_ordinal": identity_ordinal,
+                    "candidate_id": str(getattr(candidate, "id", "")) or None,
+                }
+
+    classified = resolved = unresolved = 0
+    for record in manifest["records"]:
+        if not isinstance(record, dict):
+            continue
+        assignment = assignments.get(str(record.get("instance_id") or ""))
+        if assignment is None:
+            continue
+        record.update(assignment)
+        classified += 1
+        if assignment["classification_status"] == "RESOLVED":
+            resolved += 1
+        else:
+            unresolved += 1
+
+    manifest["classified_count"] = classified
+    manifest["resolved_count"] = resolved
+    manifest["unresolved_count"] = unresolved
+    manifest["classification_policy"] = "YoutuReID primary person-model classification over captured Person Evidence"
+    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"classified_count": classified, "resolved_count": resolved, "unresolved_count": unresolved}
