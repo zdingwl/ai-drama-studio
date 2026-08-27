@@ -451,12 +451,18 @@ def test_cross_run_subject_event_prop_and_evidence_links_are_rejected(monkeypatc
     assert "EVIDENCE_OWNER_CROSS_RUN" in codes
 
 
-def test_current_ready_run_detects_source_revision_change(monkeypatch, tmp_path: Path) -> None:
-    _, run_id = setup_valid_draft(monkeypatch, tmp_path)
+def test_stale_historical_run_remains_structurally_valid_after_source_revision_change(monkeypatch, tmp_path: Path) -> None:
+    factory, run_id = setup_valid_draft(monkeypatch, tmp_path)
     breakdown_service_v1.publish_breakdown_run(run_id)
 
     shot_revision_v2.commit_auto_shot_revision("EPISODE_1", new_payloads(tmp_path))
     result = breakdown_validator_v1.validate_breakdown_run(run_id)
 
-    assert result.passed is False
-    assert "CURRENT_RUN_SOURCE_STALE" in error_codes(result)
+    with factory() as session:
+        run = session.get(BreakdownRun, run_id)
+        assert run is not None
+        assert run.status == "STALE"
+        assert run.is_current is False
+
+    assert result.passed is True
+    assert "CURRENT_RUN_SOURCE_STALE" not in error_codes(result)
