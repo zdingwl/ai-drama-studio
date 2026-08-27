@@ -27,7 +27,8 @@ opencv-python==4.11.0.86
 # 同时安装 NVIDIA Python runtime DLL，Windows 不再依赖系统 CUDA Toolkit 才能做人脸/人物 GPU 推理。
 onnxruntime-gpu[cuda,cudnn]==1.21.1
 
-# F05 源对白 ASR。默认模型由 AI_DRAMA_WHISPER_MODEL 控制，首次使用需要准备对应模型缓存。
+# Breakdown P2.2 本地 ASR Provider。正式入口使用 AI_DRAMA_P2_ASR_* 配置；
+# 默认质量模型为 large-v3，首次使用需要准备对应模型缓存。旧 F05 helper 继续兼容旧 AI_DRAMA_WHISPER_* 配置。
 faster-whisper==1.2.1
 
 # Speaker Diarization 当前是可选能力：只有设置 AI_DRAMA_DIARIZATION_MODEL_PATH 且本机
