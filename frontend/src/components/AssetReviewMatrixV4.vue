@@ -5,6 +5,8 @@ import type {
   AssetEntityType,
   AssetEvidenceItem,
   AssetWorkspace,
+  CharacterGalleryImage,
+  CharacterGalleryPayload,
   Episode,
   FinalAssetEntity,
   Shot,
@@ -19,6 +21,7 @@ const props = defineProps<{
 
 type FilterKey = 'all' | 'pending' | 'conflict' | 'unbound' | 'low'
 type PickerKind = 'character' | 'prop'
+type CharacterCompareStatus = 'matched' | 'evidence_only' | 'final_only'
 
 type ReviewState = {
   key: 'ok' | 'conflict' | 'unbound' | 'low'
@@ -26,6 +29,16 @@ type ReviewState = {
   conflict: boolean
   unbound: boolean
   low: boolean
+}
+
+type CharacterShotComparison = {
+  shotId: string
+  shot: Shot | null
+  shotOrdinal: number | null
+  episodeOrder: number | null
+  evidenceImages: CharacterGalleryImage[]
+  finalBound: boolean
+  status: CharacterCompareStatus
 }
 
 const workspace = ref<AssetWorkspace | null>(null)
@@ -49,6 +62,10 @@ const librarySearch = ref('')
 const librarySelectedIds = ref<string[]>([])
 const libraryFocusId = ref<string | null>(null)
 const librarySplitShotIds = ref<string[]>([])
+const libraryCharacterGalleries = ref<CharacterGalleryPayload[]>([])
+const libraryGalleryLoading = ref(false)
+const libraryGalleryError = ref('')
+let libraryGalleryRequestId = 0
 const batchType = ref<AssetEntityType | null>(null)
 const batchCharacterIds = ref<string[]>([])
 const batchSceneId = ref<string | null>(null)
@@ -63,6 +80,8 @@ const charactersById = computed(() => new Map((workspace.value?.characters ?? []
 const scenesById = computed(() => new Map((workspace.value?.scenes ?? []).map((item) => [item.id, item])))
 const propsById = computed(() => new Map((workspace.value?.props ?? []).map((item) => [item.id, item])))
 const currentRevision = computed(() => workspace.value?.revision ?? null)
+const allShotsById = computed(() => new Map(allShots.value.map((shot) => [shot.id, shot])))
+const episodeOrderById = computed(() => new Map(props.episodes.map((episode) => [episode.id, episode.sort_order])))
 
 function emptyBindings(): ShotAssetBindings {
   return { character_ids: [], scene_id: null, prop_ids: [] }
@@ -196,6 +215,71 @@ const libraryFocusShots = computed(() => {
   const ids = new Set(libraryFocus.value?.shot_ids ?? [])
   return allShots.value.filter((shot) => ids.has(shot.id))
 })
+const libraryGalleryKey = computed(() => {
+  if (!libraryOpen.value || libraryType.value !== 'character' || !libraryFocus.value) return ''
+  return `${libraryFocus.value.id}:${[...new Set(libraryFocus.value.source_candidate_ids ?? [])].sort().join(',')}`
+})
+const libraryCharacterEvidenceByShot = computed(() => {
+  const result = new Map<string, CharacterGalleryImage[]>()
+  for (const gallery of libraryCharacterGalleries.value) {
+    for (const image of gallery.images) {
+      if (!image.shot_id) continue
+      const values = result.get(image.shot_id) ?? []
+      values.push(image)
+      result.set(image.shot_id, values)
+    }
+  }
+  for (const values of result.values()) {
+    values.sort((left, right) => (left.source_time_us ?? 0) - (right.source_time_us ?? 0))
+  }
+  return result
+})
+const libraryCharacterComparison = computed<CharacterShotComparison[]>(() => {
+  if (libraryType.value !== 'character' || !libraryFocus.value) return []
+  const finalIds = new Set(libraryFocus.value.shot_ids ?? [])
+  const evidence = libraryCharacterEvidenceByShot.value
+  const shotIds = new Set([...finalIds, ...evidence.keys()])
+
+  return [...shotIds].map((shotId) => {
+    const shot = allShotsById.value.get(shotId) ?? null
+    const images = evidence.get(shotId) ?? []
+    const first = images[0]
+    const finalBound = finalIds.has(shotId)
+    const status: CharacterCompareStatus = finalBound && images.length
+      ? 'matched'
+      : images.length
+        ? 'evidence_only'
+        : 'final_only'
+    return {
+      shotId,
+      shot,
+      shotOrdinal: shot?.ordinal ?? first?.shot_ordinal ?? null,
+      episodeOrder: (shot ? episodeOrderById.value.get(shot.episode_id) : undefined) ?? first?.episode_order ?? null,
+      evidenceImages: images,
+      finalBound,
+      status,
+    }
+  }).sort((left, right) => {
+    const episode = (left.episodeOrder ?? 999999) - (right.episodeOrder ?? 999999)
+    if (episode) return episode
+    return (left.shotOrdinal ?? 999999) - (right.shotOrdinal ?? 999999)
+  })
+})
+const libraryCharacterEvidenceShotCount = computed(() => libraryCharacterEvidenceByShot.value.size)
+const libraryCharacterImageCount = computed(() => libraryCharacterGalleries.value.reduce((total, item) => total + item.images.length, 0))
+const libraryCharacterMismatchCount = computed(() => libraryCharacterComparison.value.filter((item) => item.status !== 'matched').length)
+
+function comparisonShotLabel(item: CharacterShotComparison): string {
+  const shot = item.shotOrdinal === null ? item.shotId : `SHOT ${String(item.shotOrdinal).padStart(4, '0')}`
+  if (props.episodes.length > 1 && item.episodeOrder !== null) return `E${String(item.episodeOrder).padStart(2, '0')} · ${shot}`
+  return shot
+}
+
+function comparisonStatusLabel(status: CharacterCompareStatus): string {
+  if (status === 'matched') return 'Evidence + Final'
+  if (status === 'evidence_only') return 'AI ONLY'
+  return 'FINAL ONLY'
+}
 
 function revisionKind(kind: string): string {
   return ({ AUTO: '自动资产', MANUAL: '人工修正', RESTORE: '历史恢复' } as Record<string, string>)[kind] || kind
@@ -406,6 +490,38 @@ function switchLibraryType(type: AssetEntityType): void {
   libraryFocusId.value = source?.[0]?.id ?? null
 }
 
+function focusLibraryAsset(id: string): void {
+  libraryFocusId.value = id
+  librarySplitShotIds.value = []
+}
+
+async function loadLibraryCharacterGallery(): Promise<void> {
+  const requestId = ++libraryGalleryRequestId
+  libraryCharacterGalleries.value = []
+  libraryGalleryError.value = ''
+  if (!libraryOpen.value || libraryType.value !== 'character' || !libraryFocus.value) {
+    libraryGalleryLoading.value = false
+    return
+  }
+
+  const candidateIds = [...new Set(libraryFocus.value.source_candidate_ids ?? [])]
+  if (!candidateIds.length) {
+    libraryGalleryLoading.value = false
+    return
+  }
+
+  libraryGalleryLoading.value = true
+  const settled = await Promise.allSettled(candidateIds.map((candidateId) => api.getCharacterGallery(candidateId)))
+  if (requestId !== libraryGalleryRequestId) return
+
+  libraryCharacterGalleries.value = settled
+    .filter((item): item is PromiseFulfilledResult<CharacterGalleryPayload> => item.status === 'fulfilled')
+    .map((item) => item.value)
+  const failed = settled.filter((item) => item.status === 'rejected').length
+  if (failed) libraryGalleryError.value = `${failed} 个历史 Candidate Gallery 无法读取；已展示其余 Evidence。`
+  libraryGalleryLoading.value = false
+}
+
 function toggleLibrarySelected(id: string): void {
   librarySelectedIds.value = librarySelectedIds.value.includes(id)
     ? librarySelectedIds.value.filter((item) => item !== id)
@@ -471,6 +587,7 @@ function onTaskFinished(event: Event): void {
 watch([filter, search, selectedEpisodeId], () => { page.value = 1 })
 watch(pageCount, (count) => { if (page.value > count) page.value = count })
 watch(detailShotId, syncDrawerDraft)
+watch(libraryGalleryKey, () => { void loadLibraryCharacterGallery() })
 
 onMounted(async () => {
   if (props.episodes.length) selectedEpisodeId.value = props.episodes[0].id
@@ -649,13 +766,51 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
         <div class="asset-library-toolbar"><input v-model="librarySearch" type="search" placeholder="搜索资产" /><button class="matrix-button secondary" @click="createLibraryAsset">+ 新建</button><button class="matrix-button secondary" :disabled="librarySelectedIds.length < 2" @click="mergeLibraryAssets">合并选中 {{ librarySelectedIds.length }}</button></div>
         <div class="asset-library-body">
           <div class="asset-library-list">
-            <button v-for="item in libraryAssets" :key="item.id" :class="{ active: item.id === libraryFocusId }" @click="libraryFocusId = item.id; librarySplitShotIds = []"><input type="checkbox" :checked="librarySelectedIds.includes(item.id)" @click.stop @change="toggleLibrarySelected(item.id)" /><img v-if="item.cover_url" :src="item.cover_url" alt="" /><span><strong>{{ item.name }}</strong><small>{{ item.shot_count }} Shots · {{ item.status }}</small></span></button>
+            <button v-for="item in libraryAssets" :key="item.id" :class="{ active: item.id === libraryFocusId }" @click="focusLibraryAsset(item.id)"><input type="checkbox" :checked="librarySelectedIds.includes(item.id)" @click.stop @change="toggleLibrarySelected(item.id)" /><img v-if="item.cover_url" :src="item.cover_url" alt="" /><span><strong>{{ item.name }}</strong><small>{{ item.shot_count }} Shots · {{ item.status }}</small></span></button>
           </div>
           <div v-if="libraryFocus" class="asset-library-detail">
-            <div class="asset-library-detail-head"><div><strong>{{ libraryFocus.name }}</strong><span>{{ libraryFocus.shot_count }} Shots</span></div><div><button @click="renameLibraryAsset">改名</button><button class="danger" @click="deleteLibraryAsset">删除</button></div></div>
-            <p>选择其中部分 Shot，可以把它们拆成新的独立资产。</p>
-            <div class="asset-library-shot-grid"><label v-for="shot in libraryFocusShots" :key="shot.id"><input type="checkbox" :checked="librarySplitShotIds.includes(shot.id)" @change="toggleLibrarySplitShot(shot.id)" /><img v-if="shot.thumbnail_url" :src="thumbnailUrl(shot)" alt="" /><span>SHOT {{ String(shot.ordinal).padStart(4, '0') }}</span></label></div>
-            <button class="matrix-button primary" :disabled="!librarySplitShotIds.length || librarySplitShotIds.length >= libraryFocusShots.length" @click="splitLibraryAsset">拆分所选 {{ librarySplitShotIds.length }} 个 Shots</button>
+            <div class="asset-library-detail-head"><div><strong>{{ libraryFocus.name }}</strong><span>{{ libraryType === 'character' ? `${libraryFocus.shot_count} Final Binding Shots` : `${libraryFocus.shot_count} Shots` }}</span></div><div><button @click="renameLibraryAsset">改名</button><button class="danger" @click="deleteLibraryAsset">删除</button></div></div>
+
+            <template v-if="libraryType === 'character'">
+              <div class="asset-library-character-summary">
+                <div><strong>{{ libraryFocus.shot_count }}</strong><span>Final Binding Shots</span></div>
+                <div><strong>{{ libraryCharacterEvidenceShotCount }}</strong><span>Evidence Shots</span></div>
+                <div><strong>{{ libraryCharacterImageCount }}</strong><span>人物 crop</span></div>
+                <div :class="{ warning: libraryCharacterMismatchCount > 0 }"><strong>{{ libraryCharacterMismatchCount }}</strong><span>不一致 Shots</span></div>
+              </div>
+              <p class="asset-library-character-help">每张卡片上方是 Shot 整帧上下文，下方是模型真正分类到该人物的 Person crop。绿色表示 Evidence 与 Final Binding 同时存在；AI ONLY / FINAL ONLY 就是需要继续检查的差异。</p>
+              <div v-if="libraryGalleryLoading" class="asset-library-gallery-state">正在读取人物 Evidence Gallery…</div>
+              <p v-if="libraryGalleryError" class="asset-library-gallery-warning">{{ libraryGalleryError }}</p>
+              <div v-if="!libraryGalleryLoading && !libraryFocus.source_candidate_ids.length" class="asset-library-gallery-state">这个人物没有关联 AI Candidate，属于人工 Final Asset，因此没有可对照的 Gallery Evidence。</div>
+              <div v-else-if="!libraryGalleryLoading && !libraryCharacterComparison.length" class="asset-library-gallery-state">当前人物没有可对照的 Shot Evidence / Final Binding。</div>
+              <div v-else class="asset-library-character-grid">
+                <article v-for="item in libraryCharacterComparison" :key="item.shotId" :class="['asset-library-character-shot', item.status]">
+                  <div class="asset-library-character-shot-head">
+                    <label v-if="item.finalBound" title="勾选后可从当前 Final Asset 拆分"><input type="checkbox" :checked="librarySplitShotIds.includes(item.shotId)" @change="toggleLibrarySplitShot(item.shotId)" /></label>
+                    <b>{{ comparisonShotLabel(item) }}</b>
+                    <em :class="item.status">{{ comparisonStatusLabel(item.status) }}</em>
+                  </div>
+                  <div class="asset-library-context-frame">
+                    <img v-if="item.shot?.thumbnail_url" :src="thumbnailUrl(item.shot)" alt="Shot 整帧" />
+                    <span v-else>无 Shot 整帧缩略图</span>
+                    <small>SHOT 整帧</small>
+                  </div>
+                  <div v-if="item.evidenceImages.length" class="asset-library-evidence-strip">
+                    <img v-for="image in item.evidenceImages.slice(0, 3)" :key="`${image.index}-${image.url}`" :src="image.url" alt="人物 Evidence crop" loading="lazy" />
+                    <span v-if="item.evidenceImages.length > 3">+{{ item.evidenceImages.length - 3 }}</span>
+                  </div>
+                  <div v-else class="asset-library-no-evidence">没有 AI 人物 crop</div>
+                  <small class="asset-library-evidence-caption">{{ item.evidenceImages.length }} 张 Evidence crop</small>
+                </article>
+              </div>
+              <button class="matrix-button primary" :disabled="!librarySplitShotIds.length || librarySplitShotIds.length >= libraryFocusShots.length" @click="splitLibraryAsset">拆分所选 {{ librarySplitShotIds.length }} 个 Final Shots</button>
+            </template>
+
+            <template v-else>
+              <p>选择其中部分 Shot，可以把它们拆成新的独立资产。</p>
+              <div class="asset-library-shot-grid"><label v-for="shot in libraryFocusShots" :key="shot.id"><input type="checkbox" :checked="librarySplitShotIds.includes(shot.id)" @change="toggleLibrarySplitShot(shot.id)" /><img v-if="shot.thumbnail_url" :src="thumbnailUrl(shot)" alt="" /><span>SHOT {{ String(shot.ordinal).padStart(4, '0') }}</span></label></div>
+              <button class="matrix-button primary" :disabled="!librarySplitShotIds.length || librarySplitShotIds.length >= libraryFocusShots.length" @click="splitLibraryAsset">拆分所选 {{ librarySplitShotIds.length }} 个 Shots</button>
+            </template>
           </div>
         </div>
       </div>
