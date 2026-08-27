@@ -1,11 +1,11 @@
 # AI Drama Studio — 拉片先行 / Breakdown-first 资产识别改造地图
 
-> **Status:** ACCEPTED TARGET PLAN / P1 IMPLEMENTED / P2 NEXT  
+> **Status:** ACCEPTED TARGET PLAN / P1 COMPLETE / P2 IN PROGRESS / P2.1 COMPLETE  
 > **Created:** 2026-08-27 16:22 +08:00  
-> **Last synchronized:** 2026-08-27 20:15 +09:00  
+> **Last synchronized:** 2026-08-27  
 > **Repository:** `zdingwl/ai-drama-studio`  
 > **Branch:** `main`  
-> **Current executable baseline:** Reference Video V2 / FastAPI 2.4.1 / Character V10.1 / Breakdown P1
+> **Current executable baseline:** Reference Video V2 / FastAPI 2.4.1 / Character V10.1 / Breakdown P1 + P2.1
 
 ## 0. 这份文档是什么
 
@@ -22,16 +22,19 @@ docs/PROJECT_STATE.md
 
 本文件同时记录目标与每个 Phase 的实施状态。
 
-截至 P1.7：
+截至 P2.1：
 
 ```text
 P0 = COMPLETE
 P1 = COMPLETE
-P2 = NEXT / NOT IMPLEMENTED
+P2 = IN PROGRESS
+  P2.1 = COMPLETE
+  P2.2 = NEXT
+  P2.3-P2.6 = PLANNED / NOT IMPLEMENTED
 P3-P7 = PLANNED / NOT IMPLEMENTED
 ```
 
-因此不能因为 `LocalSubject` / `TimelineEvent` 等表已经存在，就声称 ASR/OCR/VLM 内容拉片已经完成。
+因此不能因为 P2.1 Provider/raw Evidence sidecar 已存在，就声称 ASR/OCR/VLM 内容拉片或完整匿名 Draft 已经完成。
 
 ---
 
@@ -119,6 +122,8 @@ ShotSemanticDraft → source_shot_revision_item_id
 + source_shot_id_snapshot
 ```
 
+P2.1 Provider 输入同样严格绑定 `BreakdownRun.source_shot_revision_id` 和 exact `ShotRevisionItem`，禁止重新从 Current `v2_shots` 猜历史输入。
+
 ### 2.2 第一遍 Draft 是语义 Evidence，不是身份真值
 
 允许：
@@ -134,6 +139,8 @@ ShotSemanticDraft → source_shot_revision_item_id
 人物A = Character_001 = 徐然
 ```
 
+P2.1 进一步把这个边界落实到 raw Evidence：`character_id / scene_id / prop_id / Final Binding ID` 泄漏会直接 fail closed。
+
 ### 2.3 Semantic Prior 不能覆盖硬证据
 
 ```text
@@ -148,7 +155,7 @@ Detection / Track / Face / Person-ReID / Audio / OCR
 
 ### 2.4 Character V10.1 Contract 保护
 
-P1 已证明匿名 Draft 可以独立落地而无需修改 Character V10.1。
+P1 和 P2.1 已证明匿名 Draft/Evidence 可以独立落地而无需修改 Character V10.1。
 
 后续阶段仍禁止：
 
@@ -189,9 +196,11 @@ EvidenceLink
 confidence / provenance
 ```
 
+P2 raw Provider Evidence 还必须与这些融合后 Draft rows 分层保存，不能在 Fusion 后丢失原始 ASR/OCR/VLM 证据。
+
 ### 2.7 Migration 先 ADD，不先 DROP
 
-P1 已按此原则完成。
+P1 已按此原则完成，P2.1 也未新增/删除数据库表，只增加 workspace sidecar 与 CI。
 
 后续继续：
 
@@ -215,15 +224,19 @@ P1 已按此原则完成。
 | Shot | TransNetV2 + integer-us boundaries | 保留 |
 | Shot history | ShotRevision/ShotRevisionItem + manual/split/merge/restore | 保留，Breakdown 绑定 Revision history |
 | Reference Clip | 每 Shot 独立 Clip + thumbnail/keyframes | 保留，P2 VLM/OCR 输入 |
-| Anonymous Draft storage | **P1 IMPLEMENTED** | P2 自动填充 |
-| SceneSegmentDraft | **P1 entity IMPLEMENTED** | P2 生成剧情段；P3 UI 展示 |
-| LocalSubject | **P1 entity IMPLEMENTED** | P2 匿名主体；P5 才做安全 Character mapping |
-| TimelineEvent | **P1 entity IMPLEMENTED** | P2 用 ASR/OCR/VLM/FUSION 填充 |
+| Anonymous Draft storage | **P1 IMPLEMENTED** | P2.5 自动填充/发布 |
+| P2 Provider/raw Evidence sidecar | **P2.1 IMPLEMENTED** | P2.2-P2.4 接真实 Provider |
+| SceneSegmentDraft | **P1 entity IMPLEMENTED** | P2.5 生成剧情段；P3 UI 展示 |
+| LocalSubject | **P1 entity IMPLEMENTED** | P2.5 匿名主体；P5 才做安全 Character mapping |
+| TimelineEvent | **P1 entity IMPLEMENTED** | P2.5 用 ASR/OCR/VLM/FUSION 填充 |
 | DraftPropHint | **P1 entity IMPLEMENTED** | P4 定向视觉验证 |
 | Run lifecycle/validator | **P1 IMPLEMENTED** | P2 必须复用，不能绕过 |
-| ShotRevision→STALE | **P1.6 IMPLEMENTED** | 所有后续 Breakdown producer 自动继承 |
+| ShotRevision→STALE | **P1.6 IMPLEMENTED** | P2.1 已继承并在 Provider 写入前后复核 |
 | read-only history API | **P1.4 IMPLEMENTED** | P3 消费 |
-| ASR/OCR/VLM semantic producer | NOT IMPLEMENTED | **P2 NEXT** |
+| ASR semantic producer | NOT IMPLEMENTED | **P2.2 NEXT** |
+| OCR semantic producer | NOT IMPLEMENTED | P2.3 |
+| VLM semantic producer | NOT IMPLEMENTED | P2.4 |
+| ASR/OCR/VLM Fusion | NOT IMPLEMENTED | P2.5 |
 | 02 拉片 structured UI | NOT IMPLEMENTED | P3 |
 | Character | V10.1 implemented | P5 才允许解释性 Draft mapping；硬 Gate 不动 |
 | Scene asset | 当前轻量候选 | P4/P6 增强 resolver/fill-back |
@@ -308,6 +321,8 @@ R5 Reference Clips
 
 禁止把 R5 Draft 按 ordinal/time 猜测迁移为 R6 Draft。
 
+P2.1 额外在 Provider 推理前、artifact 写入前、Run provenance 更新前复核 Current Revision，避免长耗时模型把旧结果登记为新 Current Evidence。
+
 ---
 
 ## 6. 推荐技术方向（P2+ 候选，不代表已安装/已实现）
@@ -316,10 +331,10 @@ R5 Reference Clips
 |---|---|---|
 | 媒体 | 当前 FFmpeg / FFprobe | 保留 |
 | Shot boundary | 当前 TransNetV2 | 保留 |
-| ASR | 评估 Qwen3-ASR / WhisperX 等 | 用真实短剧 benchmark 后选 Provider |
-| Speaker | diarization + active speaker | 先匿名 Speaker，再映射主体 |
+| ASR | 评估 faster-whisper / WhisperX / 当前可行本地模型 | P2.2 用真实短剧 benchmark 后锁 Provider；必须 segment + word timing |
+| Speaker | diarization + active speaker | 先匿名 Speaker，再映射 LocalSubject；禁止直连 Character |
 | OCR | PaddleOCR 类 | 保存原始 OCR Evidence，不只写 Timeline prose |
-| 视频理解 | 独立 VLM Provider，评估 Qwen3-VL 等 | 当前 TransVLM route 不等于 P2 |
+| 视频理解 | 独立 VLM Provider，评估 Qwen 系列等 | 当前 TransVLM route 不等于 P2 |
 | Character | 当前 V10.1 | 硬身份验证核心不变 |
 | Scene | visual embedding + VLM + OCR + object + temporal context | 不把轻量 HSV candidate 当 Final Scene |
 | Prop | Draft hints + open-vocabulary detector + mask/track/OCR | 只物化剧情关键 Prop |
@@ -328,13 +343,17 @@ R5 Reference Clips
 任何 Provider 正式落地前都必须检查：
 
 ```text
-效果
+真实短剧效果
 Windows兼容
 本地部署/显存/速度
+CPU/GPU fallback
 模型/权重来源
 商业许可
+离线缓存/下载策略
 可替换 Provider Contract
 ```
+
+P2.1 已建立与具体模型品牌解耦的 `BreakdownP2Provider / P2ProviderResult / P2EvidenceRecord` Contract；P2.2-P2.4 必须通过该边界接入。
 
 ---
 
@@ -364,25 +383,44 @@ P1 未接 ASR/OCR/VLM inference，未写 Final Asset/Binding。
 
 ### P2 — ASR / OCR / VLM anonymous Draft sidecar
 
-**NEXT / NOT IMPLEMENTED**。
+**IN PROGRESS**。
 
-目标：
+固定子阶段：
 
 ```text
-Current ShotRevision
-+ ShotRevisionItems / Reference Clips / keyframes
-+ Episode audio
-↓
-ASR Evidence
-OCR Evidence
-VLM semantic output
-↓
-P1 validator-compatible anonymous Draft rows
-↓
-publish BreakdownRun
+P2.1 unified Provider/raw Evidence sidecar              COMPLETE
+P2.2 ASR Provider + segment/word timing                 NEXT
+P2.3 OCR Observation Provider                           PLANNED
+P2.4 VLM anonymous Shot semantics                       PLANNED
+P2.5 ASR/OCR/VLM Fusion → P1 Draft → validator/publish PLANNED
+P2.6 real-video benchmark + Windows/docs closure        PLANNED
 ```
 
-P2 只能写 P1 anonymous Draft/Evidence layer。
+P2.1 已实现：
+
+```text
+PROCESSING BreakdownRun
+→ exact source ShotRevision / ShotRevisionItems
+→ Reference Clip / thumbnail / keyframes
++ Episode audio / source language
+→ unified ASR/OCR/VLM Provider Contract
+→ validated anonymous raw Evidence
+→ fingerprinted immutable local sidecar
+→ compact BreakdownRun component provenance
+```
+
+P2.1 raw Evidence sidecar：
+
+```text
+workspace/<project>/episodes/<episode>/breakdown/<run>/evidence/
+  asr/<sha256>.json
+  ocr/<sha256>.json
+  vlm/<sha256>.json
+```
+
+P2.1 **未实现**真实 ASR/OCR/VLM 推理，也未生成完整 SceneSegmentDraft / ShotSemanticDraft / LocalSubject / TimelineEvent。P2.5 才负责把真正消费过的 raw Evidence 链接到 Draft owner 并通过 P1 validator 发布。
+
+P2 全阶段只能写 raw anonymous Evidence / P1 anonymous Draft/Evidence layer。
 
 明确禁止写：
 
@@ -438,18 +476,18 @@ Final Breakdown contract 稳定后再让内容剧本/重制/生成消费。
 
 ```text
 1. 先读取 CURRENT docs + 当前代码 + 本 Plan
-2. 一次只进入一个明确 Phase
+2. 一次只进入一个明确 Phase / 子阶段
 3. 旧项目兼容优先
 4. 数据变化 ADD-only 优先
 5. 新 Run 完整成功后才切 Current
 6. focused tests + 原有回归
 7. Windows acceptance
-8. 再同步 CURRENT docs / 本 Plan
+8. 再同步 CURRENT docs / 本 Plan / 对应 Phase Contract
 9. 新建 session handoff
 10. 通过 PR 合入 main
 ```
 
-P1.7 已把 Windows P1 focused suite 固化为 CI job，后续 P2+ 不能移除该兼容门槛。
+P1.7 已把 Windows P1 focused suite 固化为 `breakdown-p1-windows`；P2.1 又增加 `breakdown-p2-windows`。后续 P2+ 不能移除这些兼容门槛。
 
 ---
 
@@ -458,16 +496,19 @@ P1.7 已把 Windows P1 focused suite 固化为 CI job，后续 P2+ 不能移除�
 ```text
 禁止：把 Shot Detection 完成当成完整拉片完成
 禁止：把 P1 表存在当成 P2 模型推理已实现
+禁止：把 P2.1 sidecar 完成当成 P2.2-P2.5 已实现
 禁止：VLM 直接创建 Character / Scene / Prop Final Asset
 禁止：VLM prose 直接写 ShotCharacterBinding
+禁止：ASR speaker label 直接映射 CharacterCandidate
 禁止：从 candidate.tracks 恢复新 Run Final人物绑定
 禁止：SceneSegmentDraft 与 Final Scene 共用身份概念
 禁止：完整 Draft 只存一段 prose
+禁止：Fusion 后丢失 raw ASR/OCR/VLM Evidence
 禁止：剧情上下文覆盖可靠 Face/cannot-link 冲突
 禁止：没有可靠 Prop Evidence 时伪造 Prop
 禁止：删除旧 Breakdown/ShotRevision/Reference Clip 来“清理历史”
 禁止：ShotRevision 变化后让旧 Breakdown 继续冒充 Current
-禁止：P2 自己发明一套与 P1 平行的数据 schema
+禁止：P2 自己发明一套与 P1 平行的语义 Draft schema
 ```
 
 ---
@@ -488,7 +529,7 @@ P1.7 已把 Windows P1 focused suite 固化为 CI job，后续 P2+ 不能移除�
 
 ---
 
-## 11. P1.7 验收记录
+## 11. 已完成验收记录
 
 P1 closure acceptance：
 
@@ -500,25 +541,41 @@ Ubuntu full pytest: 28 failed, 219 passed, 1 skipped
 Frontend build: existing vue-tsc / TypeScript failure
 ```
 
-新增兼容门槛覆盖：
+P2.1 acceptance：
 
 ```text
-fresh empty DB
+Windows Breakdown P2 sidecar suite: 18/18 PASS
+Windows Breakdown P1 regression gate: PASS
+Ubuntu backend compile: PASS
+FastAPI import/version: PASS
+Ubuntu full pytest: 28 failed, 224 passed, 1 skipped
+Frontend build: same existing vue-tsc / TypeScript failure
+```
+
+P2.1 的 5 个新增测试全部进入 full pytest 的 pass 数；历史 28 个失败类别没有新增。
+
+P1/P2.1 兼容门槛覆盖：
+
+```text
+fresh empty DB / pre-P1 historical DB
 idempotent ADD-only init
-pre-P1 historical V2 DB
 Windows space/Unicode paths
 legacy Project/Episode/Shot/reference clip readability
 read-only Breakdown no hidden baseline writes
+exact ShotRevisionItem Provider context
+fingerprinted/atomic raw Evidence sidecar
+Final Asset ID leakage fail closed
+STALE Run cannot continue active P2 writes
 ```
 
-因此 **P1 已完成并可作为 P2 的稳定输入 Contract**。
+因此 **P1 已关闭，P2 已正式进入，P2.1 可作为 P2.2-P2.5 的稳定 Provider/Evidence 输入 Contract**。
 
 ---
 
-## 12. 当前唯一下一阶段
+## 12. 当前唯一下一子阶段
 
 ```text
-P2 — ASR/OCR/VLM anonymous Draft sidecar
+P2.2 — ASR Provider + segment/word timing
 ```
 
-开始 P2 前仍需重新读取 `main` 当前 SHA、CURRENT docs、P1 Contract 和最新 handoff。未经明确进入 P2，不提前修改 Provider/runtime。
+P2.2 开始前必须重新读取 `main` 当前 SHA、CURRENT docs、P1 Contract、`BREAKDOWN_P2_SIDECAR_CONTRACT.md` 和最新 P2 handoff。ASR 输出先进入 anonymous raw Evidence sidecar，不直接写 Character / Final Asset / Binding。
