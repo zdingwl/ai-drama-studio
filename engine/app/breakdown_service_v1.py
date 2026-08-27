@@ -1,0 +1,249 @@
+"""Breakdown-first Phase P1.2 的 Breakdown Run 生命周期服务。
+
+职责：
+- 为 Episode 当前 ShotRevision 创建 PROCESSING BreakdownRun；
+- 在发布 READY 前锁住 source_shot_revision_id，拒绝过期 Revision 冒充 Current；
+- 原子切换同 Episode 的 Current Breakdown Run；
+- 失败 Run 不替换旧 Current；
+- 提供 Shot Revision 改变后把旧 Run 标记为 STALE 的独立原语。
+
+边界：
+- P1.2 不实现 Draft validator；``publish_breakdown_run`` 只接受显式 validation gate 结果，
+  真正的 validator 在 P1.3 接入；
+- P1.2 不把 STALE 原语接入 shot_editor/auto rerun/restore，联动留给 P1.6；
+- 不运行 ASR/OCR/VLM，不写 Final Character/Scene/Prop 或任何 Shot Binding。
+"""
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from sqlalchemy import select
+
+from engine.app import shot_revision_v2, studio_v2
+from engine.app.breakdown_models_v1 import BREAKDOWN_DRAFT_SCHEMA_VERSION, BreakdownRun
+from engine.app.shot_revision_v2 import ShotRevision
+
+READY_STATUSES = {"READY", "READY_WITH_WARNINGS"}
+ACTIVE_SOURCE_STATUSES = {"PROCESSING", "READY", "READY_WITH_WARNINGS"}
+
+
+class BreakdownRunLifecycleError(RuntimeError):
+    """Breakdown Run 生命周期违反 Contract。"""
+
+
+class BreakdownValidationGateError(BreakdownRunLifecycleError):
+    """P1.3 validator gate 未通过，因此 Run 已按 FAILED 收口。"""
+
+
+class BreakdownRunStaleError(BreakdownRunLifecycleError):
+    """Run 绑定的 ShotRevision 已不是 Current，禁止发布。"""
+
+
+def _json_text(value: Any, *, default: Any) -> str:
+    payload = default if value is None else value
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def create_breakdown_run(
+    episode_id: str,
+    *,
+    pipeline_profile: str | None = None,
+    component_status: Any = None,
+    provider_metadata: Any = None,
+) -> BreakdownRun:
+    """基于 Episode 当前 ShotRevision 创建一个新的 PROCESSING Run。
+
+    对旧项目会复用 ``ensure_current_revision`` 的 BASELINE 兼容逻辑；如果 Episode
+    还没有 Shot，则拒绝创建空 Run。创建新 PROCESSING Run 不会抢占已有 Current READY Run。
+    """
+
+    revision_snapshot = shot_revision_v2.ensure_current_revision(episode_id)
+    if revision_snapshot is None:
+        raise BreakdownRunLifecycleError("当前剧集没有 ShotRevision/Shot，无法创建 Breakdown Run")
+    source_revision_id = str(revision_snapshot["id"])
+
+    with studio_v2.get_session() as session:
+        episode = session.get(studio_v2.Episode, episode_id)
+        if episode is None:
+            raise LookupError("剧集不存在")
+        revision = session.get(ShotRevision, source_revision_id)
+        if revision is None or revision.episode_id != episode_id or not revision.is_current:
+            raise BreakdownRunLifecycleError("创建 Breakdown Run 时 Current ShotRevision 已变化，请重新启动")
+
+        run = BreakdownRun(
+            id=studio_v2.new_id("BREAKDOWNRUN"),
+            project_id=episode.project_id,
+            episode_id=episode.id,
+            source_shot_revision_id=revision.id,
+            status="PROCESSING",
+            is_current=False,
+            schema_version=BREAKDOWN_DRAFT_SCHEMA_VERSION,
+            pipeline_profile=pipeline_profile,
+            component_status_json=_json_text(component_status, default={}),
+            provider_metadata_json=_json_text(provider_metadata, default={}),
+            counts_json="{}",
+            warning_json="{}",
+            error_message=None,
+            started_at=studio_v2.utcnow(),
+            completed_at=None,
+        )
+        session.add(run)
+        session.commit()
+        return run
+
+
+def publish_breakdown_run(
+    run_id: str,
+    *,
+    validation_passed: bool,
+    validation_error: str | None = None,
+    counts: Any = None,
+    warnings: Any = None,
+    component_status: Any = None,
+    provider_metadata: Any = None,
+) -> BreakdownRun:
+    """把 PROCESSING Run 发布为 Episode Current READY Run。
+
+    P1.2 只实现生命周期 gate，不实现 validator 本身。P1.3 必须把真实 validator
+    结果传入 ``validation_passed``。失败 gate 会把本 Run 收口为 FAILED，并保持旧 Current 不变。
+
+    发布前还会再次检查 source ShotRevision 仍然是 Episode Current，避免分析过程中
+    Shot 被 split/merge/restore/auto rerun 后旧 Run 竞态发布成最新结果。
+    """
+
+    with studio_v2.get_session() as session:
+        run = session.get(BreakdownRun, run_id)
+        if run is None:
+            raise LookupError("Breakdown Run 不存在")
+        if run.status != "PROCESSING":
+            raise BreakdownRunLifecycleError(f"只有 PROCESSING Run 可以发布，当前状态为 {run.status}")
+
+        if not validation_passed:
+            run.status = "FAILED"
+            run.is_current = False
+            run.error_message = validation_error or "Breakdown Draft validator 未通过"
+            if component_status is not None:
+                run.component_status_json = _json_text(component_status, default={})
+            if provider_metadata is not None:
+                run.provider_metadata_json = _json_text(provider_metadata, default={})
+            run.completed_at = studio_v2.utcnow()
+            session.commit()
+            raise BreakdownValidationGateError(run.error_message)
+
+        current_revision = session.scalar(
+            select(ShotRevision).where(
+                ShotRevision.episode_id == run.episode_id,
+                ShotRevision.is_current.is_(True),
+            )
+        )
+        if current_revision is None or current_revision.id != run.source_shot_revision_id:
+            run.status = "STALE"
+            run.is_current = False
+            run.error_message = "source ShotRevision 已不是 Episode Current，禁止发布旧 Breakdown Run"
+            run.completed_at = studio_v2.utcnow()
+            session.commit()
+            raise BreakdownRunStaleError(run.error_message)
+
+        prior_currents = session.scalars(
+            select(BreakdownRun).where(
+                BreakdownRun.episode_id == run.episode_id,
+                BreakdownRun.is_current.is_(True),
+            )
+        ).all()
+        for prior in prior_currents:
+            if prior.id == run.id:
+                continue
+            prior.is_current = False
+            if prior.source_shot_revision_id != run.source_shot_revision_id and prior.status in READY_STATUSES:
+                prior.status = "STALE"
+
+        run.counts_json = _json_text(counts, default={})
+        run.warning_json = _json_text(warnings, default={})
+        if component_status is not None:
+            run.component_status_json = _json_text(component_status, default={})
+        if provider_metadata is not None:
+            run.provider_metadata_json = _json_text(provider_metadata, default={})
+        run.error_message = None
+        run.status = "READY_WITH_WARNINGS" if bool(warnings) else "READY"
+        run.is_current = True
+        run.completed_at = studio_v2.utcnow()
+        session.commit()
+        return run
+
+
+def fail_breakdown_run(
+    run_id: str,
+    error_message: str,
+    *,
+    component_status: Any = None,
+) -> BreakdownRun:
+    """把 PROCESSING Run 显式收口为 FAILED；绝不替换旧 Current。"""
+
+    with studio_v2.get_session() as session:
+        run = session.get(BreakdownRun, run_id)
+        if run is None:
+            raise LookupError("Breakdown Run 不存在")
+        if run.status != "PROCESSING":
+            raise BreakdownRunLifecycleError(f"只有 PROCESSING Run 可以失败收口，当前状态为 {run.status}")
+        run.status = "FAILED"
+        run.is_current = False
+        run.error_message = error_message
+        if component_status is not None:
+            run.component_status_json = _json_text(component_status, default={})
+        run.completed_at = studio_v2.utcnow()
+        session.commit()
+        return run
+
+
+def mark_episode_breakdown_runs_stale(
+    episode_id: str,
+    *,
+    current_shot_revision_id: str | None = None,
+) -> list[str]:
+    """把不再解释 Episode Current ShotRevision 的活动 Run 标记为 STALE。
+
+    这是 P1.2 提供给 P1.6 的独立原语；本阶段不会修改 ``shot_revision_v2.py`` 去调用它。
+    历史 Draft 行不会删除。FAILED/已 STALE Run 保持原状态；同一 Current Revision 上的
+    非 Current READY 历史 Run也保持可读 READY 状态。
+    """
+
+    with studio_v2.get_session() as session:
+        episode = session.get(studio_v2.Episode, episode_id)
+        if episode is None:
+            raise LookupError("剧集不存在")
+
+        if current_shot_revision_id is None:
+            current_revision = session.scalar(
+                select(ShotRevision).where(
+                    ShotRevision.episode_id == episode_id,
+                    ShotRevision.is_current.is_(True),
+                )
+            )
+        else:
+            current_revision = session.get(ShotRevision, current_shot_revision_id)
+            if current_revision is not None and (
+                current_revision.episode_id != episode_id or not current_revision.is_current
+            ):
+                current_revision = None
+
+        if current_revision is None:
+            raise BreakdownRunLifecycleError("Episode 当前没有可用的 Current ShotRevision")
+
+        runs = session.scalars(
+            select(BreakdownRun).where(
+                BreakdownRun.episode_id == episode_id,
+                BreakdownRun.source_shot_revision_id != current_revision.id,
+                BreakdownRun.status.in_(ACTIVE_SOURCE_STATUSES),
+            )
+        ).all()
+        changed: list[str] = []
+        now = studio_v2.utcnow()
+        for run in runs:
+            run.status = "STALE"
+            run.is_current = False
+            if run.completed_at is None:
+                run.completed_at = now
+            changed.append(run.id)
+        session.commit()
+        return changed
