@@ -2,7 +2,7 @@
 
 所有写操作都修改 Final Asset / Shot Binding，并在同一事务中创建新的 MANUAL Revision。
 AI Evidence 只读，不会被人工操作覆盖或删除。
-Character V9D 只有 Confirmed Person Gallery 才能进入 Final Character；UNRESOLVED 只保留 Evidence。
+Character V10 先采集 Person Evidence 再模型分类；只有确认的人物类别进入 Final Character。
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
 from engine.app.asset_analysis_progress_v4 import run_content_analysis_with_progress
-from engine.app.asset_final_gate_v9 import apply_analysis_to_assets
+from engine.app.asset_final_gate_v10 import apply_analysis_to_assets
 from engine.app.asset_semantics_v3 import enrich_asset_run, semantic_model_status
 from engine.app.asset_workspace_v3 import (
     AssetWorkspaceError,
@@ -78,9 +78,9 @@ def _bad(exc: Exception) -> HTTPException:
 
 
 def _run_full_asset_task(task_id: str, project_id: str) -> None:
-    """完整资产任务：V9C 人物 Gallery Evidence → optional VLM → V9D Final Asset → Shot Binding。
+    """完整资产任务：V10 Person Evidence → 模型分类 → optional VLM → Final Asset → Shot Binding。
 
-    Character V9C 只负责人物身份；Qwen3-VL 是场景/道具语义增强，不是 Character_ID Source of Truth。
+    Character V10 负责人物实例采集和身份分类；Qwen3-VL 是场景/道具语义增强，不是 Character_ID Source of Truth。
     Qwen 未配置/失败时，人物 Final Asset 仍可正常完成，任务以 READY_WITH_WARNINGS 结束。
     """
 
@@ -89,7 +89,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
             task_id,
             stage_key="asset_prepare",
             stage_label="准备资产提取",
-            message="正在读取 Final Shots 与人物 V9C Person Gallery Identity",
+            message="正在读取 Final Shots 与人物 V10 Person Evidence / Model Classification",
         )
         update_task(
             task_id,
@@ -168,7 +168,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
                     stage_key="asset_semantics",
                     stage_label="Qwen3-VL 增强失败",
                     current_item=None,
-                    message="人物 V9C Evidence 已保留；场景语义/道具可人工维护或稍后重跑",
+                    message="人物 V10 Evidence 已保留；场景语义/道具可人工维护或稍后重跑",
                 )
         else:
             semantic_warning = True
@@ -191,7 +191,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
             current_item=None,
             current_index=None,
             total_items=None,
-            message=f"V9D 只发布 {resolved_characters} 个 Confirmed Person Gallery；{unresolved_evidence} 个待解析 Evidence 不计入人物数",
+            message=f"V10 只发布 {resolved_characters} 个确认人物类别；{unresolved_evidence} 个待归属 Evidence 不计入人物数",
         )
         workspace = apply_analysis_to_assets(project_id, run_id)
         manual_preserved = bool(workspace.get("stale"))
@@ -199,7 +199,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
         if manual_preserved:
             message = "资产 Evidence 已更新；当前人工版本已保留，请按需采用新 Evidence"
         else:
-            message = f"人物 V9D：{resolved_characters} Final Character · {unresolved_evidence} 待解析 Evidence"
+            message = f"人物 V10：{resolved_characters} Final Character · {unresolved_evidence} 待归属 Evidence"
             if semantic_warning:
                 message += "；Qwen3-VL 语义增强未完成"
         finish_task(
@@ -230,7 +230,7 @@ def api_asset_workspace(project_id: str):
 
 @router.get("/assets/models/status")
 def api_asset_model_status():
-    """Qwen3-VL 语义增强配置状态；人物 V9 模型由 /api/models/f05/status 提供。"""
+    """Qwen3-VL 语义增强配置状态；人物 V10 模型由 /api/models/f05/status 提供。"""
     return semantic_model_status()
 
 
