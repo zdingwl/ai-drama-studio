@@ -1,27 +1,67 @@
 # Feature Documents
 
-本目录保存每一个 Feature 的长期规格、实现、测试、验收和 Freeze 文档。
+本目录保存项目历史 Feature 规格、实现、测试、验收和 Freeze 文档。
 
-命名固定：
+## Current architecture warning
+
+AI Drama Studio 已经重构为 **Reference Video V2**。因此这里的旧 `F01-F06`、Frozen Snapshot、旧 35-Feature 顺序不再自动代表当前可执行架构。
+
+新对话不要从本目录开始恢复项目状态。
+
+当前强制读取顺序：
 
 ```text
-F01-create-project.md
-F02-upload-video.md
-F03-video-preprocess.md
-...
-F30-export.md
+AGENTS.md
+→ SKILL.md
+→ docs/PROJECT_STATE.md
+→ docs/CURRENT_IMPLEMENTATION_MANIFEST.md
+→ PROJECT_STATE 指定的 current implementation doc
+→ current code
 ```
 
-规则：
+当前人物实现文档：
 
-- 一个 Feature 只维护一份主文档，不按会话重复建 Feature 文档。
-- 从 PLANNED 开始创建，开发过程中持续追加实现和测试记录。
-- Stable 后写入 Freeze Snapshot。
-- 下游 Feature 读取上游 Contract Snapshot，不重新推断上游实现。
-- 如果 Stable Feature 必须升级 Contract，优先记录 V2 Contract 和迁移方案，不破坏 V1 语义。
-- 每次修改 Feature 代码时，必须同步更新对应 Feature 文档的 Development Log / Change Log。
+```text
+docs/ASSET_CHARACTER_RECOGNITION_V10_1.md
+```
 
-模板：
+## Historical value
 
-- `templates/FEATURE_SPEC_TEMPLATE.md`
-- `templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md`
+本目录中的 Feature 文档仍然有价值，用于：
+
+- 追溯为什么曾经这样设计；
+- 查找旧 API/DB/UX 决策；
+- 复用低层实现思路；
+- 理解迁移路径。
+
+但旧文档不能在没有新的用户明确决策时覆盖当前正式 wiring。
+
+旧 Feature 文件如果被后续架构取代，应在文件顶部明确标记：
+
+```text
+LEGACY / SUPERSEDED
+```
+
+而不是让新对话误以为它仍是 `PLANNED` 的下一步。
+
+## Documentation synchronization rule
+
+当前代码发生正式架构/profile/resolver/Final Gate/Binding 变化时，优先同步：
+
+```text
+AGENTS.md
+SKILL.md
+docs/PROJECT_STATE.md
+docs/CURRENT_IMPLEMENTATION_MANIFEST.md
+current implementation doc
+latest docs/sessions handoff
+```
+
+代码与这些入口文档不一致时，先修文档再继续开发。
+
+历史模板仍保留：
+
+```text
+templates/FEATURE_SPEC_TEMPLATE.md
+templates/FEATURE_IMPLEMENTATION_LOG_TEMPLATE.md
+```
