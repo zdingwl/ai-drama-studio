@@ -706,7 +706,7 @@ def test_read_only_api_does_not_create_baseline_revision_for_legacy_episode(monk
 
 
 def test_auto_rerun_history_survives_and_old_reference_clip_stays_open(monkeypatch, tmp_path: Path) -> None:
-    """Contract 11/12/13：P1.5 验证 STALE primitive；自动接线明确留给 P1.6。"""
+    """Contract 11/12/13：P1.6 自动 STALE 后历史 Draft / RevisionItem / Reference Clip 仍可读。"""
 
     factory = setup_episode(monkeypatch, tmp_path)
     run = create_contract_draft(factory)
@@ -723,13 +723,10 @@ def test_auto_rerun_history_survives_and_old_reference_clip_stays_open(monkeypat
     new_shots = shot_revision_v2.commit_auto_shot_revision(
         "EPISODE_1",
         new_auto_payloads(tmp_path),
-        note="P1.5 auto rerun fixture",
+        note="P1.6 auto rerun compatibility fixture",
     )
     assert old_shot_id not in {item["id"] for item in new_shots}
-
-    # P1.6 will wire this primitive into every Shot Revision mutation automatically.
-    changed = breakdown_service_v1.mark_episode_breakdown_runs_stale("EPISODE_1")
-    assert changed == [run.id]
+    assert breakdown_serializer_v1.get_current_breakdown("EPISODE_1") is None
 
     with factory() as session:
         old_run = session.get(BreakdownRun, run.id)
