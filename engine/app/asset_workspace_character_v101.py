@@ -25,7 +25,6 @@ from sqlalchemy import select
 from engine.app.content_analysis_v2 import CharacterCandidate, CharacterTrack, ContentAnalysisRun
 from engine.app.studio_v2 import get_session
 
-RECOVERY_SOURCE = "V10_1_TRACK_KNOWN_IDENTITY_RECOVERY"
 
 
 def _json(raw: str | None) -> dict[str, Any]:
@@ -48,24 +47,31 @@ def _track_recovery(track: CharacterTrack) -> dict[str, Any]:
         return {}
     result = dict(value)
     result["score"] = score
+    result["source"] = str(value.get("source") or "V10_1_RECOVERED_TRACK")
     return result
 
 
 def _shot_presence_confidence(candidate: CharacterCandidate, tracks: list[CharacterTrack]) -> tuple[float | None, str]:
-    """Separate global identity confidence from recovered Shot-presence confidence."""
+    """Separate global identity confidence from recovered Shot-presence confidence.
 
-    recovery_scores: list[float] = []
+    Recovery source is read from the exact Track instead of being hard-coded. This keeps
+    the Workspace diagnostic truthful for both the original per-Track recovery and the
+    newer same-Shot fragmented-presence aggregation.
+    """
+
+    recoveries: list[dict[str, Any]] = []
     has_direct_track = False
     for track in tracks:
         recovery = _track_recovery(track)
         if recovery:
-            recovery_scores.append(float(recovery["score"]))
+            recoveries.append(recovery)
         else:
             has_direct_track = True
     if has_direct_track:
         return candidate.confidence, "IDENTITY_CLASSIFICATION"
-    if recovery_scores:
-        return max(recovery_scores), RECOVERY_SOURCE
+    if recoveries:
+        strongest = max(recoveries, key=lambda value: float(value["score"]))
+        return float(strongest["score"]), str(strongest["source"])
     return candidate.confidence, "IDENTITY_CLASSIFICATION"
 
 
@@ -153,7 +159,7 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
                 "face_required": False,
                 "recovered_track": recovered,
                 "confidence_source": confidence_source if identity_status == "RESOLVED" else "UNRESOLVED_DIAGNOSTIC",
-                "recovery_source": RECOVERY_SOURCE if recovered else None,
+                "recovery_source": confidence_source if recovered else None,
             }
             if identity_status == "RESOLVED":
                 bucket["characters"].append(item)
