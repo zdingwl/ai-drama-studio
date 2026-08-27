@@ -19,7 +19,9 @@ type CharacterGallery = {
   assetId: string
   name: string
   candidateIds: string[]
-  imageCount: number
+  evidenceShotCount: number
+  galleryImageCount: number
+  visualEvidenceCount: number
   shotGroups: ShotGalleryGroup[]
 }
 
@@ -69,26 +71,33 @@ async function refresh(): Promise<void> {
       const candidateIds = [...new Set(character.source_candidate_ids ?? [])]
       const settled = await Promise.allSettled(candidateIds.map((candidateId) => api.getCharacterGallery(candidateId)))
       const images: GalleryImageView[] = []
+      const evidenceShotIds = new Set<string>()
+      let galleryImageCount = 0
+
       settled.forEach((item, index) => {
         if (item.status === 'rejected') {
           failedCandidates += 1
           return
         }
         const candidateId = candidateIds[index]
+        item.value.evidence_shots.forEach((shot) => evidenceShotIds.add(shot.shot_id))
+        galleryImageCount += item.value.gallery_image_count ?? item.value.images.filter((image) => image.source_kind !== 'track_representative').length
         images.push(...item.value.images.map((image) => ({ ...image, candidateId })))
       })
       result.push({
         assetId: character.id,
         name: character.name,
         candidateIds,
-        imageCount: images.length,
+        evidenceShotCount: evidenceShotIds.size,
+        galleryImageCount,
+        visualEvidenceCount: images.length,
         shotGroups: groupByShot(images),
       })
     }
     galleries.value = result
-    if (failedCandidates) error.value = `${failedCandidates} 个历史人物 Candidate 的 Gallery 无法读取；其余 Evidence 已正常展示。`
+    if (failedCandidates) error.value = `${failedCandidates} 个历史人物 Candidate 的 Evidence 无法读取；其余内容已正常展示。`
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '人物 Gallery 读取失败'
+    error.value = err instanceof Error ? err.message : '人物 Evidence 读取失败'
     galleries.value = []
   } finally {
     loading.value = false
@@ -99,18 +108,20 @@ function shotLabel(group: ShotGalleryGroup): string {
   const shot = typeof group.shotOrdinal === 'number'
     ? `SHOT ${String(group.shotOrdinal).padStart(4, '0')}`
     : group.shotId || '未知 Shot'
-  return props.projectId && typeof group.episodeOrder === 'number' && group.episodeOrder > 1
+  return typeof group.episodeOrder === 'number' && group.episodeOrder > 1
     ? `E${String(group.episodeOrder).padStart(2, '0')} · ${shot}`
     : shot
 }
 
-function classLabel(value: string | null): string {
+function classLabel(image: GalleryImageView): string {
+  if (image.source_kind === 'track_representative') return 'Track 代表图'
+  const value = image.instance_class
   return ({
     CLEAN: '清晰',
     OCCLUDED: '遮挡',
     CONTAMINATED: '同框干扰',
     PARTIAL: '局部',
-  } as Record<string, string>)[value || ''] || value || '人物图'
+  } as Record<string, string>)[value || ''] || value || 'Gallery 人物图'
 }
 
 function onTaskFinished(event: Event): void {
@@ -132,7 +143,7 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
     <header>
       <div>
         <strong>人物图 Gallery · AI Evidence</strong>
-        <span>按真实 Shot 分组展示模型分类到人物身份的单人 crop；这里不是 Final Binding，也不是 Shot 整帧缩略图。</span>
+        <span>按真实 Shot 展示人物 Evidence。Gallery 是身份代表子集；未入选 Gallery 的 Evidence Shot 会补一张持久化 Track 代表 crop，便于和 Final Binding 完整对照。</span>
       </div>
       <small v-if="loading">读取中…</small>
     </header>
@@ -141,7 +152,7 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
     <div v-for="gallery in galleries" :key="gallery.assetId" class="person-gallery-group">
       <div class="person-gallery-title">
         <strong>{{ gallery.name }}</strong>
-        <span>{{ gallery.shotGroups.length }} Evidence Shots · {{ gallery.imageCount }} 张人物证据图</span>
+        <span>{{ gallery.evidenceShotCount }} Evidence Shots · {{ gallery.galleryImageCount }} Gallery 代表图 · {{ gallery.visualEvidenceCount }} 张可视证据图</span>
       </div>
 
       <div v-if="gallery.shotGroups.length" class="person-gallery-shot-list">
@@ -151,17 +162,17 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
             <span>{{ group.images.length }} 张 crop</span>
           </div>
           <div class="person-gallery-grid">
-            <figure v-for="image in group.images" :key="`${image.candidateId}-${image.index}`">
+            <figure v-for="image in group.images" :key="`${image.candidateId}-${image.source_kind}-${image.index}-${image.url}`">
               <img :src="image.url" :alt="`${gallery.name} ${shotLabel(group)}`" loading="lazy" />
               <figcaption>
-                <b>{{ classLabel(image.instance_class) }}</b>
+                <b>{{ classLabel(image) }}</b>
                 <span v-if="image.source_time_us !== null">{{ (image.source_time_us / 1_000_000).toFixed(2) }}s</span>
               </figcaption>
             </figure>
           </div>
         </section>
       </div>
-      <p v-else class="gallery-empty">当前人物没有可展示的 V10 单人物 Evidence Gallery。</p>
+      <p v-else class="gallery-empty">当前人物没有可展示的 V10 Person Evidence。</p>
     </div>
   </section>
 </template>
