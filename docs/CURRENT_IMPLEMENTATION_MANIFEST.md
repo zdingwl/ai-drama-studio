@@ -1,7 +1,7 @@
 # AI Drama Studio — Current Implementation Manifest
 
 > Purpose: compact **code-aligned CURRENT manifest** for new conversations.  
-> Last synchronized: **2026-08-27 21:12 +09:00**
+> Last synchronized: **2026-08-27 22:05 +09:00**
 
 ## Repository baseline
 
@@ -12,17 +12,18 @@ Architecture: Reference Video V2
 FastAPI app version: 2.4.1
 Formal Character runtime: Character V10.1
 Breakdown-first infrastructure: P1 COMPLETE
-Breakdown semantic inference: P2 IN PROGRESS / P2.1 COMPLETE / P2.2 NEXT
+Breakdown semantic inference: P2 IN PROGRESS / P2.1 + P2.2 COMPLETE / P2.3 NEXT
 ```
 
 ## Current vs Target — do not merge them
 
 This file is executable CURRENT truth only.
 
-The accepted Breakdown-first workflow is documented at:
+Accepted Breakdown-first workflow/contracts:
 
 ```text
 docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
+docs/BREAKDOWN_DRAFT_DATA_CONTRACT.md
 docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
 ```
 
@@ -38,15 +39,16 @@ Shot + Reference Clip
 → Final Breakdown
 ```
 
-Current implementation has completed P1 and P2.1. That means the anonymous Breakdown data/runtime contract and the unified raw Provider/Evidence sidecar exist. It does **not** mean real ASR/OCR/VLM inference, fusion into complete Draft rows, or the final Breakdown UI is implemented.
+Current implementation has completed P1, P2.1 and P2.2. This means the anonymous Breakdown data/runtime contract, unified raw Provider/Evidence sidecar, and formal local ASR segment/word Evidence producer exist. It does **not** mean OCR/VLM, ASR/OCR/VLM fusion into complete Draft rows, speaker identity mapping, or the final Breakdown UI is implemented.
 
 ```text
 P1 storage/lifecycle/validator/read API/history/STALE = IMPLEMENTED
 P2.1 Provider/raw Evidence sidecar                  = IMPLEMENTED
-P2.2 ASR + word timing                             = NOT IMPLEMENTED
+P2.2 ASR segment + word timing                     = IMPLEMENTED
 P2.3 OCR                                           = NOT IMPLEMENTED
 P2.4 VLM anonymous semantics                       = NOT IMPLEMENTED
 P2.5 ASR/OCR/VLM → complete Draft fusion           = NOT IMPLEMENTED
+P2.6 real-video benchmark/closure                  = NOT IMPLEMENTED
 P3 structured 02 拉片 UI                           = NOT IMPLEMENTED
 P4+ Draft-guided assets/fill-back/renderers         = NOT IMPLEMENTED
 ```
@@ -91,9 +93,7 @@ camera_motion
 status
 ```
 
-Historical `shot_detection.py` / `shot_workbench.py` still exist with older F04/F05 naming, but current Reference Video V2 FastAPI wiring uses `media_v2` for preprocess/Shot analysis. Do not reconstruct current architecture from historical feature names alone.
-
-Current `transvlm_runtime_v51.py` uses a Qwen3-VL-based TransVLM route for transition detection/caching. It is **not** the semantic Breakdown engine planned for P2.
+Historical `shot_detection.py` / `shot_workbench.py` still exist with older F04/F05 naming, but current Reference Video V2 FastAPI wiring uses `media_v2` for preprocess/Shot analysis. Current `transvlm_runtime_v51.py` is a Qwen3-VL transition-detection/caching route, **not** the P2 semantic Breakdown VLM provider.
 
 ## Breakdown P1 — executable infrastructure
 
@@ -132,7 +132,7 @@ v2_draft_prop_occurrences
 v2_breakdown_evidence_links
 ```
 
-Resolution tables remain deferred to later phases as allowed by the frozen Contract; P1 does not add Final Asset foreign keys to Draft rows.
+Resolution tables remain deferred to later phases; P1 does not add Final Asset foreign keys to Draft rows.
 
 ### P1 data semantics
 
@@ -222,23 +222,11 @@ record_manual_revision
 restore
 ```
 
-The Current ShotRevision switch and Breakdown STALE mutation share the **same database transaction**. If the ShotRevision transaction rolls back, the Breakdown status rolls back too.
-
-STALE does not delete historical data:
-
-```text
-old BreakdownRun remains readable
-old Scene/Shot/Subject/Event/Prop Draft rows remain readable
-old ShotRevision remains readable
-old ShotRevisionItem remains readable
-old Reference Clip remains readable
-```
-
-No ordinal/time heuristic automatically migrates old Draft into a new ShotRevision.
+The Current ShotRevision switch and Breakdown STALE mutation share the same database transaction. STALE does not delete historical Breakdown/Draft/Revision/Reference Clip data, and no ordinal/time heuristic automatically migrates old Draft into a new ShotRevision.
 
 ## Breakdown P1 validator boundary
 
-P1 validation enforces the frozen contract, including:
+P1 validation enforces:
 
 ```text
 Run ↔ Episode ↔ ShotRevision consistency
@@ -259,25 +247,11 @@ A historical `STALE` Run remains structurally readable/valid; it simply cannot m
 
 ## Breakdown P1 compatibility acceptance
 
-P1.7 added a durable Windows CI gate:
+Durable CI gate:
 
 ```text
 job: breakdown-p1-windows
 runner: windows-latest
-```
-
-It runs the focused P1 lifecycle/validator/history/STALE/compatibility suite.
-
-Acceptance explicitly covers:
-
-```text
-fresh empty database init
-init_database() idempotence
-ADD-only creation of ShotRevision + Breakdown tables
-pre-P1 historical V2 Project/Episode/Shot database upgrade
-Windows paths containing spaces/Chinese text
-legacy Project/Episode/Shot/reference clip remains readable
-read-only Breakdown access performs no hidden writes
 ```
 
 P1 close baseline:
@@ -286,8 +260,6 @@ P1 close baseline:
 Windows focused P1 suite: 32/32 PASS
 Ubuntu full pytest: 28 failed, 219 passed, 1 skipped
 ```
-
-The 28 Ubuntu failures are the same pre-existing repository categories; P1 introduced no new failure category.
 
 ## Breakdown P2.1 — executable Provider / raw Evidence sidecar
 
@@ -316,9 +288,9 @@ BreakdownRun.source_shot_revision_id
 + Project source_language
 ```
 
-Only a `PROCESSING` Run whose source ShotRevision is still Episode Current can be consumed. The source is checked before inference, before artifact persistence and again before component provenance is written.
+Only a `PROCESSING` Run whose source ShotRevision is still Episode Current can be consumed. The source is checked before inference, before artifact persistence and before component provenance is written.
 
-Unified synchronous local Provider components:
+Unified local Provider components:
 
 ```text
 ASR
@@ -338,19 +310,7 @@ AUDIO_RANGE
 RULE
 ```
 
-Provider result validation includes:
-
-```text
-known component/status/source_type only
-READY must contain Evidence
-non-READY must not contain consumable Evidence
-integer microsecond time ranges
-shot-bound Evidence must stay within exact ShotRevisionItem
-confidence in 0..1 or NULL
-recursive Final Asset/Binding ID leakage rejection
-```
-
-Raw Evidence is physically separate from future fused P1 Draft rows:
+Raw Evidence is separate from future fused P1 Draft rows:
 
 ```text
 workspace/<project_id>/episodes/<episode_id>/breakdown/<run_id>/evidence/
@@ -366,33 +326,97 @@ stable normalized JSON fingerprint
 same result → same artifact path
 changed result → new artifact, no overwrite
 atomic .tmp → os.replace
-component_status_json stores only quick status/provenance
+component_status_json stores quick status/provenance
 provider_metadata_json stores non-secret provider/model metadata
+Final Asset/Binding ID leakage rejected recursively
 STALE Run cannot continue active sidecar writes
 ```
 
-P2.1 does not create a fake Run-level `BreakdownEvidenceLink`. P2.5 Fusion will attach consumed raw Evidence to actual Draft owner rows such as Shot Draft / Timeline Event / Local Subject / Scene Segment / Prop Hint.
-
 P2.1 introduced no new database table and writes no Final Character/Scene/Prop/Binding.
 
-Durable CI gate:
+## Breakdown P2.2 — executable ASR Provider
+
+Formal module/tests/dependency:
 
 ```text
-job: breakdown-p2-windows
-runner: windows-latest
+engine/app/breakdown_p2_asr_v1.py
+engine/tests/v2/test_breakdown_p2_asr_v1.py
+engine/requirements.txt → faster-whisper==1.2.1
 ```
 
-Current P2.1 acceptance:
+Provider:
 
 ```text
-Windows P2 sidecar suite: 18/18 PASS
-Windows P1 regression gate: PASS
+FasterWhisperASRProvider
+component = ASR
+provider = faster-whisper
+default model = large-v3
+```
+
+Configuration:
+
+```text
+AI_DRAMA_P2_ASR_MODEL
+AI_DRAMA_P2_ASR_DEVICE        # auto/cpu/cuda
+AI_DRAMA_P2_ASR_COMPUTE_TYPE
+AI_DRAMA_P2_ASR_MODEL_CACHE
+```
+
+Default inference contract:
+
+```text
+beam_size = 5
+vad_filter = true
+word_timestamps = true
+source timing → integer microseconds
+```
+
+Outputs:
+
+```text
+ASR_SEGMENT
+ASR_WORD
+```
+
+Important timing rule:
+
+```text
+ASR segment/word shot_revision_item_id = NULL in P2.2
+```
+
+Dialogue can cross a Shot cut, so P2.2 preserves Episode source absolute time rather than selecting a “largest-overlap Shot”. P2.5 Fusion will split/assign Evidence against exact ShotRevisionItem boundaries and produce Shot-relative TimelineEvents.
+
+ASR metadata can retain source/detected language, language probability, duration, device/compute type, segment/word counts and provider diagnostics. `ASR_WORD.confidence` may contain valid provider word probability.
+
+Device policy:
+
+```text
+auto → detect CTranslate2 CUDA
+CUDA available → try cuda/float16
+auto-selected CUDA load failure → visible cpu/int8 fallback allowed
+explicit cuda load failure → FAILED, no silent CPU fallback
+missing preprocess audio → NOT_AVAILABLE
+no usable speech → NO_EVIDENCE
+load/transcription failure → FAILED
+```
+
+The module lazy-loads faster-whisper and caches the model on the Provider instance. CI focused tests inject a fake model, so CI does not download `large-v3` weights.
+
+P2.2 does not write `studio_v2.Dialogue`, does not diarize speakers, does not map speaker labels to LocalSubject/Character, does not publish BreakdownRun, and writes no Final Asset/Binding.
+
+P2.2 acceptance:
+
+```text
+Windows Breakdown P2 provider suite: 24/24 PASS
+Windows Breakdown P1 regression gate: PASS
 Ubuntu backend compile: PASS
 FastAPI import/version: PASS
-Ubuntu full pytest: 28 failed, 224 passed, 1 skipped
+Ubuntu full pytest: 28 failed, 230 passed, 1 skipped
 ```
 
-The five additional Ubuntu passes are exactly the five new P2.1 focused tests; the same historical 28 failures remain.
+The six extra passes over P2.1 are exactly the six P2.2 ASR focused tests. Historical 28 failure categories are unchanged.
+
+`large-v3` has **not** yet been declared the real short-drama accuracy winner. Qwen3-ASR + ForcedAligner and other candidates remain P2.6 benchmark options; the Provider contract allows later replacement without changing the Draft schema.
 
 ## Formal Character baseline
 
@@ -408,7 +432,7 @@ Face role: optional identity support / known-identity Shot presence / high-quali
 Final identity gate: confirmed formal RESOLVED identity only
 ```
 
-Breakdown P1/P2.1 does **not** change Character runtime/gates.
+Breakdown P1/P2.1/P2.2 does **not** change Character runtime/gates.
 
 ## Executable Character wiring
 
@@ -429,14 +453,7 @@ content_analysis_v2
 → asset_workspace_character_v101
 ```
 
-The formal runtime no longer calls:
-
-```text
-character_shot_binding_v101.recover_unresolved_tracks
-character_shot_presence_v101.recover_fragmented_shot_presence
-```
-
-Those modules remain for historical compatibility/tests only.
+The formal runtime no longer calls `character_shot_binding_v101.recover_unresolved_tracks` or `character_shot_presence_v101.recover_fragmented_shot_presence`; those remain historical compatibility/test code.
 
 ## Semantic layers
 
@@ -463,7 +480,7 @@ Character / ShotCharacterBinding
 = editable Final asset / binding
 ```
 
-The layers are intentionally separate. P2 raw evidence and P1 Draft text/hints cannot create a Character or write Final Shot bindings.
+The layers are intentionally separate. P2 raw Evidence and P1 Draft text/hints cannot create a Character or write Final Shot bindings.
 
 ## New identity confirmation
 
@@ -486,25 +503,6 @@ Formal module:
 
 ```text
 engine/app/character_shot_assignment_v101.py
-```
-
-Inputs:
-
-```text
-all original Tracks / Observations
-+ all already-RESOLVED identity galleries
-```
-
-Outputs on each RESOLVED Candidate:
-
-```text
-shot_assignment_version
-shot_assignment_source
-shot_assignment_policy
-shot_presence_assignments[]
-shot_presence_shot_ids
-shot_presence_count
-shot_presence_recovered_count
 ```
 
 Assignment modes:
@@ -562,7 +560,7 @@ ShotCharacterBinding
 = explicit shot_presence_assignments only
 ```
 
-An explicit empty assignment list does **not** fall back to Candidate Track membership. Historical persisted Runs without `shot_assignment_version` retain the old Track-derived fallback.
+An explicit empty assignment list does not fall back to Candidate Track membership. Historical persisted Runs without `shot_assignment_version` retain the old Track-derived fallback.
 
 ## Current Scene / Prop analysis reality
 
@@ -575,9 +573,7 @@ PropCandidate
 ShotPropEvidence
 ```
 
-Current Scene candidate generation is still lightweight; it is not the target final semantic Scene resolver.
-
-Current Prop behavior remains fail-closed: without a reliable configured object/VLM model, Prop extraction may return `NOT_CONFIGURED` rather than fabricate assets.
+Current Scene candidate generation is still lightweight; it is not the target final semantic Scene resolver. Current Prop behavior remains fail-closed: without a reliable configured object/VLM model, Prop extraction may return `NOT_CONFIGURED` rather than fabricate assets.
 
 P1 Draft Scene/Prop hints are separate from these Final/candidate layers and do not make P4 implemented.
 
@@ -585,17 +581,18 @@ P1 Draft Scene/Prop hints are separate from these Final/candidate layers and do 
 
 `studio_v2.Dialogue` and historical/compatibility ASR/Speaker helpers still exist.
 
-P2.1 now provides the formal raw Evidence transport/persistence boundary, but the production Breakdown pipeline still does **not** implement:
+Formal Breakdown reality now is:
 
 ```text
-P2.2 ASR + word timing Provider
-Speaker diarization → anonymous LocalSubject mapping
-P2.3 OCR Observation extraction
-P2.4 VLM anonymous Shot semantics
-P2.5 ASR/OCR/VLM fusion into complete Draft rows
+P2.1 Provider/raw Evidence transport: IMPLEMENTED
+P2.2 ASR segment + word timing: IMPLEMENTED
+Speaker diarization → anonymous LocalSubject mapping: NOT IMPLEMENTED
+P2.3 OCR Observation extraction: NOT IMPLEMENTED
+P2.4 VLM anonymous Shot semantics: NOT IMPLEMENTED
+P2.5 ASR/OCR/VLM fusion into complete Draft rows: NOT IMPLEMENTED
 ```
 
-Historical `_map_speaker_to_character()` style direct mapping is not the P2 target. Speaker semantics remain anonymous until the later identity-resolution phase.
+Historical `_map_speaker_to_character()` direct mapping is not the P2 target. Speaker semantics remain anonymous until later identity resolution.
 
 ## Current key modules
 
@@ -613,6 +610,7 @@ engine/app/breakdown_validator_v1.py
 engine/app/breakdown_serializer_v1.py
 engine/app/breakdown_routes_v1.py
 engine/app/breakdown_p2_sidecar_v1.py
+engine/app/breakdown_p2_asr_v1.py
 
 engine/app/character_visual_v2.py
 engine/app/character_runtime_v6.py
@@ -650,7 +648,7 @@ Breakdown P1.6 ShotRevision automatic STALE integration: IMPLEMENTED
 Breakdown P1.7 docs + Windows empty/historical compatibility acceptance: IMPLEMENTED
 
 Breakdown P2.1 Provider/raw Evidence sidecar: IMPLEMENTED
-Breakdown P2.2 ASR + word timing: NOT IMPLEMENTED
+Breakdown P2.2 ASR segment/word Evidence Provider: IMPLEMENTED
 Breakdown P2.3 OCR Observations: NOT IMPLEMENTED
 Breakdown P2.4 VLM anonymous semantics: NOT IMPLEMENTED
 Breakdown P2.5 Fusion → P1 Draft publish: NOT IMPLEMENTED
@@ -673,13 +671,6 @@ Whole repository CI: NOT GREEN
 
 ## Accepted Target phase pointer
 
-Do not implement ad hoc from conversation history. Use the frozen phase order in:
-
-```text
-docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
-docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
-```
-
 Current phase status:
 
 ```text
@@ -687,8 +678,8 @@ P0 planning/contracts                            = COMPLETE
 P1 Draft data/runtime contract + compatibility   = COMPLETE
 P2 ASR/OCR/VLM anonymous Draft sidecar           = IN PROGRESS
   P2.1 Provider/raw Evidence sidecar              = COMPLETE
-  P2.2 ASR + word timing                         = NEXT
-  P2.3 OCR                                       = PLANNED
+  P2.2 ASR + segment/word timing                 = COMPLETE
+  P2.3 OCR                                       = NEXT
   P2.4 VLM anonymous semantics                   = PLANNED
   P2.5 Fusion / P1 Draft publish                 = PLANNED
   P2.6 real-video/Windows/docs closure            = PLANNED
@@ -701,20 +692,20 @@ P7 downstream remake integration                 = PLANNED
 
 ## CI reality
 
-P2.1 acceptance:
+P2.2 acceptance:
 
 ```text
 Ubuntu backend compile: PASS
 FastAPI import/version: PASS (AI Drama Studio 2.4.1)
-Ubuntu full pytest: 28 failed, 224 passed, 1 skipped
+Ubuntu full pytest: 28 failed, 230 passed, 1 skipped
 Windows Breakdown P1 regression gate: PASS
-Windows Breakdown P2 sidecar suite: 18/18 PASS
+Windows Breakdown P2 provider suite: 24/24 PASS
 Frontend build: existing vue-tsc / TypeScript compatibility failure
 ```
 
-Existing backend failures remain legacy/runtime/environment categories such as missing lightweight-CI `cv2`, missing `trackers`, FFmpeg assumptions, obsolete V6-era assertions and historical Final Gate/workspace expectations.
+Existing backend failures remain the same legacy/runtime/environment categories such as missing lightweight-CI `cv2`, missing `trackers`, FFmpeg assumptions, obsolete V6-era assertions and historical Final Gate/workspace expectations.
 
-Do **not** claim the whole repository is green.
+Do **not** claim the whole repository is green. Do **not** claim `large-v3` real-video accuracy has been benchmarked from these CI tests.
 
 ## Required new-conversation checks
 
@@ -743,4 +734,6 @@ keep provider metadata/provenance non-secret
 keep Windows compatibility
 ```
 
-Before changing Character binding behavior, continue to verify the formal V10.1 runtime and explicit `shot_presence_assignments` path. Do not use P1 Draft prose or P2 raw Evidence to bypass identity or assignment gates.
+Next safe subphase: **P2.3 OCR Observation Provider**.
+
+Before changing Character binding behavior, continue to verify formal V10.1 runtime and explicit `shot_presence_assignments`. Do not use P1 Draft prose or P2 raw Evidence to bypass identity or assignment gates.
