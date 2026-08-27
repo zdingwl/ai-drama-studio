@@ -1,6 +1,6 @@
 # AI Drama Studio — Breakdown P2 Evidence Sidecar Contract
 
-> **Status:** P2.1 IMPLEMENTATION CONTRACT  
+> **Status:** P2.1 IMPLEMENTED / P2 IN PROGRESS  
 > **Contract date:** 2026-08-27  
 > **Parent:** `docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md`  
 > **P1 schema:** `breakdown-draft-v1`  
@@ -39,12 +39,12 @@ BreakdownRun READY / READY_WITH_WARNINGS
 为避免 ASR/OCR/VLM、模型下载、GPU、融合、发布一次性耦合，P2 固定按以下顺序落地：
 
 ```text
-P2.1 统一 Evidence/Provider Contract + local sidecar persistence
-P2.2 ASR Provider + segment/word timing
-P2.3 OCR Observation Provider
-P2.4 VLM anonymous Shot semantics Provider
-P2.5 ASR/OCR/VLM Fusion → 完整 P1 Draft → validator/publish
-P2.6 真实短剧 benchmark + Windows acceptance + docs closure
+P2.1 统一 Evidence/Provider Contract + local sidecar persistence      COMPLETE
+P2.2 ASR Provider + segment/word timing                               NEXT
+P2.3 OCR Observation Provider                                         PLANNED
+P2.4 VLM anonymous Shot semantics Provider                            PLANNED
+P2.5 ASR/OCR/VLM Fusion → 完整 P1 Draft → validator/publish          PLANNED
+P2.6 真实短剧 benchmark + Windows acceptance + docs closure           PLANNED
 ```
 
 P2.1 完成不代表 P2 整体完成。
@@ -442,21 +442,23 @@ Final Character Gate
 
 ## 12. P2.1 Stable Gate
 
-P2.1 完成必须满足：
+P2.1 已满足：
 
 ```text
-[ ] Provider 输入固定到 BreakdownRun.source_shot_revision_id
-[ ] exact ShotRevisionItems/Reference Clips/keyframes 可读取
-[ ] Episode audio/source language 可读取
-[ ] ASR/OCR/VLM 统一 Result Contract
-[ ] raw Evidence source type/time/confidence 校验
-[ ] Final Asset ID leakage fail closed
-[ ] fingerprint artifact 幂等
-[ ] atomic sidecar write
-[ ] component provenance 写回 PROCESSING Run
-[ ] STALE Run 不能继续写 P2 Evidence
-[ ] 不新增 Final Asset/Binding write
-[ ] P1 Windows 32-case gate 不回归
+[x] Provider 输入固定到 BreakdownRun.source_shot_revision_id
+[x] exact ShotRevisionItems/Reference Clips/keyframes 可读取
+[x] Episode audio/source language 可读取
+[x] ASR/OCR/VLM 统一 Result Contract
+[x] raw Evidence source type/time/confidence 校验
+[x] Final Asset ID leakage fail closed
+[x] fingerprint artifact 幂等
+[x] atomic sidecar write
+[x] component provenance 写回 PROCESSING Run
+[x] STALE Run 不能继续写 P2 Evidence
+[x] 不新增 Final Asset/Binding write
+[x] P1 Windows 32-case gate 不回归
+[x] Windows P2 sidecar focused suite 18/18 PASS
+[x] Ubuntu full pytest only adds the 5 new P2.1 passes; historical 28 failures unchanged
 ```
 
-P2.1 通过后，下一步唯一是 P2.2：接正式 ASR Provider，并把 word timing 作为 raw Evidence 保存。
+P2.1 已关闭。下一步唯一是 P2.2：接正式 ASR Provider，并把 segment/word timing 作为 raw Evidence 保存。
