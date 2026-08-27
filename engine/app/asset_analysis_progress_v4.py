@@ -5,7 +5,7 @@
 - 正面 / 侧身 / 背影 / 多人同框拆出的单人 crop 先完整采集为 Person Evidence；
 - CLEAN 不再是唯一身份输入；Evidence eligibility 与 new-identity seed eligibility 分开；
 - Person ReID 模型作为跨视角分类主信号，服装 / Body / optional Face 分通道支持；
-- 先采集人物内容，再由模型分类到 A / B / C；
+- 先采集人物内容并落盘，再由模型分类到 A / B / C；
 - OCCLUDED / CONTAMINATED / PARTIAL 可以保存和分类，低可靠 Evidence 不能独立创建新人；
 - Final Gate 只发布已确认的人物类别；新 Run 完整成功后才切 Current。
 """
@@ -122,7 +122,7 @@ def run_content_analysis_with_progress(
                 message,
             )
 
-        candidates = analyze_characters(shots, progress=character_progress)
+        candidates = analyze_characters(shots, progress=character_progress, run_id=run_id)
         resolved_count = sum(1 for item in candidates if item.identity_status == "RESOLVED")
         unresolved_count = len(candidates) - resolved_count
         component_status["characters"] = "READY" if candidates else "NO_CHARACTER"
