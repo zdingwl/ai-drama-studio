@@ -4,6 +4,7 @@ Person / Partial-Person Observation (12fps)
 → split every detected person into an explicit Person Instance
 → extract isolated-person model features
 → capture every model-usable front/side/back/occluded/multi-person-frame crop
+→ persist pre-classification Person Evidence when a Run id is available
 → Mature MOT
 → build reliable identity seeds
 → classify captured Person Evidence with YoutuReID person model against full identity galleries
@@ -16,6 +17,7 @@ import logging
 from typing import Any
 
 from engine.app import character_visual_v5 as v5
+from engine.app.character_evidence_store_v10 import save_person_evidence
 from engine.app.character_identity_v10 import CLASSIFIER_MODEL, RESOLVER_VERSION, resolve_global_identities
 from engine.app.character_observation_v10 import detect_observations
 from engine.app.character_person_features_v9 import FEATURE_VERSION
@@ -29,8 +31,6 @@ FORMAL_IDENTITY_PROFILE = "f05-assets-v10-person-evidence-model-classification"
 
 
 def _bridge_persistence_metadata(candidates: list[v5.CandidateDraft]) -> None:
-    """Feed truthful V10 metadata through the historical persistence transaction."""
-
     for candidate in candidates:
         metadata = dict(getattr(candidate, "v10_metadata", {}) or {})
         candidate.v6_metadata = {  # type: ignore[attr-defined]
@@ -47,9 +47,14 @@ def _bridge_persistence_metadata(candidates: list[v5.CandidateDraft]) -> None:
 def analyze_characters(
     shots: list[dict[str, Any]],
     progress: v5.CharacterProgress | None = None,
+    *,
+    run_id: str | None = None,
 ) -> list[v5.CandidateDraft]:
     try:
         observations = detect_observations(shots, progress=progress)
+        evidence_store: dict[str, Any] | None = None
+        if run_id:
+            evidence_store = save_person_evidence(run_id, observations)
         tracks = build_tracks(observations)
         candidates = resolve_global_identities(tracks)
         _bridge_persistence_metadata(candidates)
@@ -68,9 +73,11 @@ def analyze_characters(
                 seedable += 1
 
         logger.warning(
-            "[CharacterV10] observations=%s captured_person_evidence=%s seedable=%s tracks=%s "
+            "[CharacterV10] observations=%s captured_person_evidence=%s persisted_person_evidence=%s seedable=%s tracks=%s "
             "confirmed_identities=%s unresolved_fragments=%s instance_classes=%s",
-            len(observations), captured, seedable, len(tracks), len(resolved), len(unresolved), classes,
+            len(observations), captured,
+            (evidence_store or {}).get("evidence_count") if evidence_store else None,
+            seedable, len(tracks), len(resolved), len(unresolved), classes,
         )
         for index, candidate in enumerate(resolved, start=1):
             metadata = dict(getattr(candidate, "v10_metadata", {}) or {})
@@ -100,6 +107,7 @@ def runtime_status() -> dict[str, object]:
             "sample_fps": 12.0,
             "person_instance": "one detected person -> one explicit person crop, including multi-person frames",
             "capture_first": True,
+            "preclassification_persistence": True,
             "identity_before_capture_filter": False,
             "crop_classes": ["CLEAN", "OCCLUDED", "CONTAMINATED", "PARTIAL"],
             "front_side_back_supported": True,
@@ -127,12 +135,13 @@ def runtime_status() -> dict[str, object]:
             "formal_representatives": "classified model-usable Person Instance crops; CLEAN is not required",
             "views": "front / side / back / occluded / person split from multi-person frame",
             "feature_sidecar": "compressed NPZ per gallery image",
+            "preclassification_store": "analysis/<run_id>/person_evidence",
             "whole_frame_gallery_image": False,
         },
         "identity": {
             "resolver": RESOLVER_VERSION,
             "classifier_model": CLASSIFIER_MODEL,
-            "workflow": "capture Person Evidence -> model compare -> classify A/B/C -> persist classified galleries",
+            "workflow": "capture Person Evidence -> persist -> model compare -> classify A/B/C -> persist classified galleries",
             "person_reid_role": "primary model signal for viewpoint-invariant person comparison",
             "clothing_body_role": "supporting channels",
             "face_role": "optional support; never required",
