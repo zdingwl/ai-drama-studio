@@ -4,6 +4,7 @@ import type {
   AssetWorkspace,
   BackgroundTask,
   BatchShotAssetBindings,
+  CharacterGalleryPayload,
   ContentAnalysisRun,
   Episode,
   F05ModelStatus,
@@ -87,6 +88,7 @@ export const api = {
   // 03 Final Asset 工作台：AI Evidence 与人工 Final Asset 完全分层。
   getAssetWorkspace: (projectId: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/workspace`),
   getAssetSemanticModelStatus: () => request<AssetSemanticModelStatus>('/api/assets/models/status'),
+  getCharacterGallery: (candidateId: string) => request<CharacterGalleryPayload>(`/api/content-analysis/characters/${candidateId}/gallery`),
   startFullAssetExtractionTask: (projectId: string) => requestTask(`/api/projects/${projectId}/assets/tasks/extract`, { method: 'POST' }),
   applyLatestAssetAnalysis: (projectId: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/apply-analysis`, { method: 'POST' }),
   setShotAssetBindings: (projectId: string, shotId: string, payload: ShotAssetBindings) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/shots/${shotId}/bindings`, {
