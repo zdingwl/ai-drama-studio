@@ -1,195 +1,263 @@
 # AI Drama Studio — Reference Video V2 Architecture
 
-## 1. 架构目标
+> **Current architecture document.**  
+> Last synchronized: 2026-08-27.  
+> Character baseline: **V10.1**.
 
-本项目最终目标不是产出一份影视分析报告，而是把原短剧拆成可控制的镜头，并用新的语言、人物、声音、场景和关键道具重新制作。
+## 1. Architecture goal
 
-V2 核心：
+The project is not primarily a film-analysis-report generator. It is a local short-drama remake/localization workstation.
+
+Core model:
 
 ```text
 Reference Video + Structured Control Data
 ```
 
-原 Shot Reference Video 本身负责保留：
-- 人物动作和走位；
-- 摄像机运动；
-- 景别与构图；
-- 大部分空间关系；
-- 动作节奏；
-- 原镜头的时序结构。
+Each original Shot keeps a Reference Clip that already preserves:
 
-结构化拉片重点保存后续替换、绑定、翻译、配音和生成模型必须明确控制的信息。
+- character action and blocking;
+- camera motion;
+- shot scale and framing;
+- most spatial relationships;
+- motion rhythm;
+- original temporal structure.
 
-## 2. 13 阶段生产链
+Structured data should focus on what later localization/replacement/generation must explicitly know and control.
 
-### F01 项目管理
+## 2. Current six user workspaces
 
-字段：
-- project_name；
-- source_language；
-- target_language；
-- target_region。
-
-目标语言与目标地区分开保存，供后续本地化表达、Voice、Prompt 和文化适配使用。
-
-### F02 剧集导入与排序
-
-一个 Project 对应多个 Episode。
-
-必须支持：
-- 多视频导入；
-- 拖动排序；
-- 单集删除；
-- 后续按 `sort_order` 顺序批量处理。
-
-批量不是并行：
+The old 13-stage / 35-Feature numbering is legacy history. The current product UI/workflow is:
 
 ```text
-EP01 完成 → EP02 完成 → EP03 完成
+01 剧集管理
+02 拉片
+03 资产
+04 内容剧本
+05 重制设计
+06 生成 / 导出
 ```
 
-### F03 视频预处理
+Technical stages are background capabilities, not separate user pages.
 
-每集生成：
-- Media Info；
-- Proxy Video；
-- Audio WAV。
+## 3. 01 剧集管理
 
-Source Video 始终作为原始证据，不被预处理覆盖。
+A Project represents one drama and can contain multiple Episodes.
 
-### F04 自动拉片 / Reference Clip
-
-产物：
+Project localization fields include:
 
 ```text
-Shot
-├ shot_id
-├ episode_id
-├ ordinal
-├ start_us
-├ end_us
-├ duration_us
-├ reference_clip
-├ thumbnail
-└ keyframes
+name
+source_language
+target_language
+target_region
 ```
 
-Reference Clip 从 Original Source 按 Shot 边界重新编码生成并永久保存。
+Episode operations include import, delete/replace, append and drag reorder.
 
-可以重新拉片；新结果替代当前 Shot 集合。V2 不继承旧 Candidate / Final Shot 双层业务模型。
-
-### F05 智能内容识别
-
-F05 是 **AI Evidence 层**，不是人工 Final 数据层。
-
-重点识别：
-- Character Identity；
-- Character Track；
-- Face / Body Evidence；
-- Scene Candidate / Scene ID Evidence；
-- Source Dialogue / ASR；
-- Speaker Diarization；
-- Speaker → Character；
-- Key Prop Candidate；
-- 轻量 Structured Description。
-
-当前 V1 人物视觉链：
+Formal batch order:
 
 ```text
-YuNet Face Detection
-+ SFace Identity Embedding
-+ OpenCV HOG Person Detection
-+ Body / Clothing Visual Evidence
-→ Shot-local Track
-→ Conservative Cross-shot Clustering
+Episode.sort_order
 ```
 
-人物不能等同于人脸。没有脸但检测到人体时允许形成 body-only Track；无脸证据只允许保守相邻 Shot 自动连接，避免仅因服装相似造成跨场景误合。
-
-当前 Scene 使用 Shot Thumbnail 视觉聚类；ASR 使用 faster-whisper。
-
-Speaker 是可选本地能力；未配置时必须显式返回 `NOT_CONFIGURED`，不能让其它组件一起失败。
-
-Key Prop 已建立 Evidence 数据结构，但在没有可靠对象 + 交互 + 剧情语义模型时保持 `NOT_CONFIGURED`，禁止把普通环境物体冒充剧情关键道具。
-
-不要求第一版高精度结构化：
-- 复杂动作序列；
-- 精确空间距离；
-- 摄影机轨迹；
-- 灯光参数；
-- 逐帧动作文字。
-
-详细 Contract：`docs/F05_CONTENT_ANALYSIS_V2.md`。
-
-### F06 拉片审核与人工修正
-
-F06 读取 F05 AI Evidence，不重新跑识别模型。
-
-用户围绕 Reference Video 审核：
-- 人物命名 / 增删 / 改绑；
-- 人物合并 / 拆分；
-- Scene 命名 / 修正 / 合并；
-- Key Prop 增删 / 命名 / 合并；
-- Speaker 修正；
-- Dialogue 文本和类型修正。
-
-最终形成：
+Heavy batch work is sequential by default:
 
 ```text
-Final Character
-Final Scene
-Final Prop
-Final Source Dialogue
-Final Speaker → Character
+EP01 complete
+→ EP02 complete
+→ EP03 complete
 ```
 
-AI Evidence 与人工 Final 值保持可区分。
+## 4. 02 拉片
 
-### F07 替换素材与资产绑定
+The output is a production Shot, not a temporary “candidate shot”.
 
-建立 Asset Library：
+Each current Shot owns:
 
 ```text
-Character Asset
-Scene Asset
-Prop Asset
+shot_id
+episode_id
+ordinal
+start_us
+end_us
+duration_us
+reference_clip
+thumbnail
+revision history
 ```
 
-支持：
-- 上传参考图；
-- AI 自动生成 Prompt；
-- 手工 Prompt；
-- AI 生成图片；
-- 资产版本。
+Reference Clip is a formal project asset.
 
-资产绑定实体，不绑定单个 Shot。Shot 通过 Character / Scene / Prop ID 自动继承。
+Shot/Reference behavior is versioned through safe revisions. A failed rerun must not destroy the previously current valid Shot set.
 
-### F08 翻译 / 本地化 / Voice / TTS
+All formal media time uses integer microseconds.
 
-Dialogue 至少保留：
+## 5. 03 资产
+
+Current asset scope:
 
 ```text
-original_text
-translated_text
-localized_text
-final_text
+Character
+Scene
+Key Prop
 ```
 
-人物级绑定 Voice；每句 Dialogue 可以额外保存 emotion / speaking_style。
+The asset workflow separates immutable AI Evidence from project Final Assets/Bindings.
 
-Dialogue Type：
+### 5.1 Character V10.1
+
+Formal identifiers:
+
+```text
+runtime profile:
+character-v10.1-capture-first-model-classification
+
+asset profile:
+f05-assets-v10.1-person-evidence-model-classification
+
+resolver:
+person-evidence-model-classifier-v10.1
+```
+
+Formal pipeline:
+
+```text
+Shot / Reference Clip
+↓
+YOLOX Person Detection
+↓
+explicit isolated Person Instance crops
+↓
+Capture-first Person Evidence
+  YoutuReID = primary identity model signal
+  clothing/body = support
+  YuNet/SFace Face = optional support / conflict
+↓
+Mature MOT = Shot-local temporal organization
+↓
+Project-level model identity classification
+↓
+RESOLVED / UNRESOLVED
+↓
+V10.1 known-identity Track recovery
+↓
+Final Gate
+↓
+Character + ShotCharacterBinding
+```
+
+Business layers:
+
+```text
+Observation / Person Evidence / Track = AI evidence
+Identity Class = cross-Shot person identity
+Character = project-level Final Asset
+```
+
+Track/crop/Face count must never become Character count.
+
+### 5.2 Identity confirmation
+
+A formal new identity requires at least:
+
+```text
+>= 3 independent Shots
+>= 3 model-usable Person Images
+stable cross-Shot Person-ReID class
+unique winner
+same-sample cannot-link preserved
+no high-quality Face hard conflict
+```
+
+Face is optional.
+
+Strong contaminated/substantial partial crops may seed only with stricter confirmation. Weak/tiny partial evidence is save/classify/attach-only.
+
+### 5.3 Shot-level known identity recovery
+
+After global identity resolution, one unresolved Track may attach to an already-confirmed identity only when repeated Track observations create one unique winner.
+
+Current recovery requires repeated usable evidence and fails closed on cannot-link/Face conflict.
+
+It never creates a new Character.
+
+This pass exists so Character identity and Shot binding use the same resolved Track membership.
+
+### 5.4 Final Gate
+
+Formal V10/V10.1 Candidate materialization requires:
+
+```text
+identity_status == RESOLVED
+formal resolver
+confirmed_gallery_shots >= 3
+confirmed_gallery_images >= 3
+final_asset_eligible is not false
+```
+
+Face visibility is not required for formal V10/V10.1 identities.
+
+### 5.5 Scene
+
+Scene extraction is a lighter AI Evidence layer. Current implementation prefers contiguous Episode context rather than globally grouping unrelated Shots only because their color histograms look similar.
+
+Scene Candidate is not automatically a human semantic location name.
+
+### 5.6 Key Prop
+
+Prop tables/contracts exist, but the system must not fabricate “key props” when no reliable object+interaction+story-context model is configured.
+
+Generic detected environment objects are not automatically story-critical props.
+
+## 6. 04 内容剧本
+
+This workspace is where source narrative/dialogue structure should converge.
+
+Planned/partial capabilities include:
+
+```text
+ASR
+Speaker Diarization
+Active Speaker / Speaker → Character
+OCR / VLM support
+Source Dialogue
+Dialogue Type
+Emotion / Speaking Style
+structured source script
+```
+
+Historical ASR/Speaker helpers may still exist in `content_analysis_v2.py` for compatibility, but their presence does not make them the current 03 资产 contract.
+
+Dialogue types must be able to distinguish at least:
 
 ```text
 dialogue
 narration
 inner_monologue
+unknown
 ```
 
-只有真正画面开口对白才默认需要 Lip Sync。
+## 7. 05 重制设计
 
-### F09 重制任务规划
+This is the editable production design layer.
 
-每个 Shot 根据“到底变化了什么”选择成本最低的处理策略：
+Expected project-level controls include:
+
+```text
+Character Bible / target character assets
+Scene Bible / target scene assets
+Prop replacement assets
+localized/final Dialogue
+Voice
+Shot Specification / remake strategy
+```
+
+AI suggestions can exist, but user-editable production data needs revisions and must remain separate from raw AI Evidence.
+
+## 8. 06 生成 / 导出
+
+Per Shot, choose the lowest-cost strategy that satisfies the requested change:
 
 ```text
 REUSE_REFERENCE
@@ -202,234 +270,135 @@ PARTIAL_EDIT
 FULL_VIDEO_REGEN
 ```
 
-例如只是翻译配音的镜头不需要 Full Regen；无变化镜头直接复用 Reference。
-
-### F10 Reference Video 视频重制
-
-典型输入：
+Typical generation inputs:
 
 ```text
 Reference Clip
-+ Character Reference Assets
-+ Scene Reference Asset
-+ Prop Reference Assets
-+ Target Dialogue Audio
-+ Minimal Generation Prompt
++ Character assets
++ Scene asset
++ Prop assets
++ Target Dialogue audio
++ Minimal generation instructions
 ```
 
-Prompt 主要强调“保持原运动/构图/摄影”，而不是重新用文字重建原视频动作。
+Reference Video should carry original motion/framing whenever possible instead of recreating all movement from text.
 
-### F11 弹性时间轴
-
-语言变化允许 Shot 时长变化。
-
-必须区分：
+Production output also needs:
 
 ```text
-original_duration_us
-target_audio_duration_us
-generated_duration_us
-final_duration_us
+Voice/TTS
+LipSync
+QC
+Timeline assembly
+Final export
 ```
 
-根据最终 Shot 时长重新生成 Production Timeline、字幕时间和音频对齐。
+## 9. Time model
 
-### F12 QC
+Source evidence and target production timelines are different domains.
 
-自动检查至少覆盖：
-- Missing Shot；
-- Failed Generation；
-- Black Frame；
-- Missing Audio；
-- Missing Dialogue；
-- Missing Asset / Voice；
-- Lip Sync Failure；
-- Duration Outlier；
-- Subtitle Timing Error。
+Do not assume:
 
-允许单 Shot 重试，不要求整集重跑。
+```text
+original_duration_us == target_audio_duration_us == generated_duration_us == final_duration_us
+```
 
-### F13 导出
+Source Shot/Dialogue time is integer microseconds. Final production can rebuild timing after localization/generation.
 
-支持：
-- 单集 MP4；
-- 批量 MP4；
-- SRT / ASS；
-- Dialogue JSON；
-- Shot JSON；
-- Project JSON；
-- 可选音频输出。
-
-## 3. 核心实体关系
+## 10. Core entity relationship
 
 ```text
 Project
 ├ Episode
 │  └ Shot
-│     ├ Character links
-│     ├ Scene link
-│     ├ Prop links
-│     ├ Dialogue
+│     ├ Character bindings
+│     ├ Scene binding
+│     ├ Prop bindings
+│     ├ Dialogue / script links
 │     └ Generation versions
 ├ Character
 ├ Scene
 ├ Prop
 ├ Asset
-└ Voice
+├ Voice
+└ Production outputs
 ```
 
-### Project
+## 11. AI Evidence vs Final Data
 
-业务范围和本地化目标。
-
-### Episode
-
-原始视频的剧集容器；所有批量任务按 `sort_order`。
-
-### Shot
-
-最小可独立处理和重制的生产单元。
-
-### Character / Scene / Prop
-
-跨 Shot 复用的语义实体。
-
-### Dialogue
-
-绑定 Shot 和 Speaker；源文本与目标文本分层保存。
-
-### Asset / Voice
-
-重制所需替换素材与声音实体。
-
-### Generation
-
-保存每次 Shot 重制策略、版本、目标时长与输出。
-
-## 4. F05 AI Evidence 与 Final 分层
-
-F05 写：
+Current asset evidence includes:
 
 ```text
 ContentAnalysisRun
 CharacterCandidate
 CharacterTrack
+Person Evidence manifest/gallery
 SceneCandidate
 ShotSceneEvidence
 PropCandidate
 ShotPropEvidence
-SpeakerSegment
-AnalysisDialogue
 ```
 
-F06 写人工 Final：
+Final production entities include:
 
 ```text
 Character
 Scene
 Prop
+ShotCharacterBinding
+ShotSceneBinding
+ShotPropBinding
 Dialogue
 ```
 
-F05 重跑不能覆盖旧 Evidence；新 Run 成功后切换 current。F06 人工修正不得覆盖原始 AI Evidence。
+AI Evidence should remain traceable. Human/manual revisions must not silently overwrite it.
 
-## 5. Shot 数据优先级
+A new AI Run must not silently overwrite a protected MANUAL/RESTORE Final Asset revision.
 
-### 必须高准确率
-
-```text
-Shot Boundaries
-Reference Clip
-Character Identity
-Character Track
-Dialogue
-Speaker → Character
-```
-
-### 高价值
+## 12. Current formal code map for Character
 
 ```text
-Character Mask
-Scene ID
-Key Prop ID
-Dialogue Type
-Emotion / Speaking Style
+engine/app/character_visual_v2.py
+engine/app/character_runtime_v6.py
+engine/app/character_observation_v10.py
+engine/app/character_person_evidence_v10.py
+engine/app/character_person_features_v9.py
+engine/app/character_tracking_v10.py
+engine/app/character_identity_v10.py
+engine/app/character_identity_v101.py
+engine/app/character_shot_binding_v101.py
+engine/app/character_gallery_v10.py
+engine/app/character_evidence_store_v10.py
+engine/app/asset_final_gate_v10.py
+engine/app/asset_workspace_v3.py
 ```
 
-### 辅助
+Some filenames retain old version numbers for compatibility. Do not infer the active algorithm from filenames alone.
+
+## 13. Current implementation status
 
 ```text
-Short Description
-Shot Type
-Camera Motion
-Prop Track / Mask
+01 剧集管理: IMPLEMENTED
+02 拉片: IMPLEMENTED / real Windows-video release regression remains
+03 资产: Character V10.1 implemented / latest Shot Binding fix needs real-video regression
+04 内容剧本: planned / partial low-level compatibility exists
+05 重制设计: planned
+06 生成 / 导出: planned
 ```
 
-Character Mask 仍属于高价值后续增强；当前 F05 V1 先稳定 Track / BBox，不用低质量伪 Mask 冒充正式分割结果。
+Current whole-repository CI is not globally green; do not treat legacy/environment CI failures as proof that the Character V10.1 binding change is wrong, and do not claim all tests pass.
 
-## 6. Reference Clip 存储原则
+## 14. Documentation authority
 
-建议工作区：
+For current implementation facts read:
 
 ```text
-PROJECT_ID/
-└ episodes/
-   └ EPISODE_ID/
-      ├ source/
-      ├ preprocess/
-      └ shots/
-         ├ reference/
-         │  ├ shot_0001.mp4
-         │  ├ shot_0002.mp4
-         │  └ ...
-         └ thumbnails/
+AGENTS.md
+SKILL.md
+docs/PROJECT_STATE.md
+docs/CURRENT_IMPLEMENTATION_MANIFEST.md
+docs/ASSET_CHARACTER_RECOGNITION_V10_1.md
+current code
 ```
 
-Reference Clip 以后可作为：
-- Video-to-Video 输入；
-- Character Replacement 输入；
-- Inpainting 输入；
-- Lip Sync 输入；
-- 生成结果对比证据。
-
-## 7. 时间模型
-
-所有数据库正式时间单位使用：
-
-```text
-integer microseconds
-```
-
-Source Timeline 只描述原视频证据。
-Production Timeline 描述目标语言重制成片。
-
-F05 Dialogue 同时保存 Source Time 与 Shot-local Time。
-
-禁止假设：
-
-```text
-Production Shot duration == Source Shot duration
-```
-
-## 8. 当前实现范围
-
-```text
-F01-F02 = IMPLEMENTED
-F03-F04 = IMPLEMENTED / NEEDS WINDOWS REAL-VIDEO TEST
-F05 = IMPLEMENTED V1 / NEEDS REAL-SAMPLE TEST
-F06-F13 = NOT IMPLEMENTED
-```
-
-F04 当前本地方案继续使用 TransNetV2 + FFprobe PTS；后续如果更换切镜算法，只替换 detector，不改变 Shot / Reference Clip Contract。
-
-F05 当前算法也采用能力分层：Character Visual、Scene、ASR、Speaker、Prop 可以分别替换，不允许再次做成一个不可拆的黑盒。
-
-## 9. 与 Legacy 的关系
-
-V2 不要求：
-- 旧数据库迁移兼容；
-- 旧 API 兼容；
-- 旧页面兼容；
-- 旧 Frozen Feature 顺序兼容。
-
-历史代码可以作为算法参考，但新实现必须以本文件、`docs/PROJECT_STATE.md`、当前 Feature Contract 和用户最新决策为准。
+Old F01-F13/F01-F35 Feature plans and Frozen snapshots remain historical references unless one of the current documents explicitly points to them.
