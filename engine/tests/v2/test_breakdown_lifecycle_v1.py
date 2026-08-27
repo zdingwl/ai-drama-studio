@@ -187,16 +187,13 @@ def test_failed_validation_does_not_replace_old_current(monkeypatch, tmp_path: P
         assert failed_row.completed_at is not None
 
 
-def test_old_processing_run_cannot_publish_after_shot_revision_changes(monkeypatch, tmp_path: Path) -> None:
+def test_old_processing_run_is_automatically_staled_when_shot_revision_changes(monkeypatch, tmp_path: Path) -> None:
     factory = setup_episode(monkeypatch, tmp_path)
     stub_validation(monkeypatch)
 
     run = breakdown_service_v1.create_breakdown_run("EPISODE_1")
     old_revision_id = run.source_shot_revision_id
     shot_revision_v2.commit_auto_shot_revision("EPISODE_1", new_payloads(tmp_path))
-
-    with pytest.raises(breakdown_service_v1.BreakdownRunStaleError):
-        breakdown_service_v1.publish_breakdown_run(run.id)
 
     with factory() as session:
         row = session.get(BreakdownRun, run.id)
@@ -207,11 +204,15 @@ def test_old_processing_run_cannot_publish_after_shot_revision_changes(monkeypat
             )
         )
         assert row is not None and row.status == "STALE" and row.is_current is False
+        assert row.completed_at is not None
         assert row.source_shot_revision_id == old_revision_id
         assert current_revision is not None and current_revision.id != old_revision_id
 
+    with pytest.raises(breakdown_service_v1.BreakdownRunLifecycleError, match="当前状态为 STALE"):
+        breakdown_service_v1.publish_breakdown_run(run.id)
 
-def test_stale_primitive_preserves_history_and_only_stales_old_revision_runs(monkeypatch, tmp_path: Path) -> None:
+
+def test_stale_primitive_is_idempotent_after_automatic_stale_and_preserves_history(monkeypatch, tmp_path: Path) -> None:
     factory = setup_episode(monkeypatch, tmp_path)
     stub_validation(monkeypatch)
 
@@ -220,8 +221,13 @@ def test_stale_primitive_preserves_history_and_only_stales_old_revision_runs(mon
     old_revision_id = old_run.source_shot_revision_id
 
     shot_revision_v2.commit_auto_shot_revision("EPISODE_1", new_payloads(tmp_path))
-    changed = breakdown_service_v1.mark_episode_breakdown_runs_stale("EPISODE_1")
-    assert changed == [old_run.id]
+    with factory() as session:
+        automatically_staled = session.get(BreakdownRun, old_run.id)
+        assert automatically_staled is not None
+        assert automatically_staled.status == "STALE"
+        assert automatically_staled.is_current is False
+
+    assert breakdown_service_v1.mark_episode_breakdown_runs_stale("EPISODE_1") == []
 
     new_run = breakdown_service_v1.create_breakdown_run("EPISODE_1")
     breakdown_service_v1.publish_breakdown_run(new_run.id)
