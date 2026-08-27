@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../api/client'
 import type { BackgroundTask, ContentAnalysisRun, Episode, F05ModelStatus } from '../types/studio'
 import AssetReviewMatrixV4 from './AssetReviewMatrixV4.vue'
+import CharacterPersonGalleryV10 from './CharacterPersonGalleryV10.vue'
 
 const props = defineProps<{
   projectId: string
@@ -132,6 +133,7 @@ onUnmounted(() => {
     </div>
 
     <div v-if="error" class="character-v4-error">{{ error }}</div>
+    <CharacterPersonGalleryV10 :project-id="props.projectId" />
     <AssetReviewMatrixV4 :project-id="props.projectId" :episodes="props.episodes" />
   </div>
 </template>
