@@ -94,6 +94,7 @@ export interface CharacterCandidate {
 export interface CharacterGalleryImage {
   index: number
   url: string
+  source_kind?: 'gallery' | 'track_representative' | string
   shot_id: string | null
   shot_ordinal: number | null
   episode_id: string | null
@@ -125,6 +126,7 @@ export interface CharacterGalleryPayload {
   policy: string | null
   evidence_shot_count: number
   evidence_shots: CharacterGalleryEvidenceShot[]
+  gallery_image_count?: number
   image_count: number
   images: CharacterGalleryImage[]
 }
