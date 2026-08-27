@@ -1,44 +1,59 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from '../api/client'
-import type { AssetWorkspace, BackgroundTask } from '../types/studio'
+import type { AssetWorkspace, BackgroundTask, CharacterGalleryImage } from '../types/studio'
 
 const props = defineProps<{ projectId: string }>()
 
-type GalleryImage = {
-  index: number
-  url: string
-  shot_id: string | null
-  shot_ordinal: number | null
-  episode_id: string | null
-  episode_order: number | null
-  source_time_us: number | null
-  instance_id: string | null
-  instance_class: string | null
-  quality: number | null
-  reliability: number | null
-  seed_eligible: boolean | null
-  face_visible: boolean | null
-  feature_channels: string[]
+type GalleryImageView = CharacterGalleryImage & { candidateId: string }
+
+type ShotGalleryGroup = {
+  key: string
+  shotId: string | null
+  shotOrdinal: number | null
+  episodeOrder: number | null
+  images: GalleryImageView[]
 }
 
 type CharacterGallery = {
   assetId: string
   name: string
-  candidateId: string
-  images: GalleryImage[]
+  candidateIds: string[]
+  imageCount: number
+  shotGroups: ShotGalleryGroup[]
 }
 
 const galleries = ref<CharacterGallery[]>([])
 const loading = ref(false)
 const error = ref('')
 
-async function getGallery(candidateId: string): Promise<GalleryImage[]> {
-  const response = await fetch(`/api/content-analysis/characters/${candidateId}/gallery`)
-  if (response.status === 404) return []
-  if (!response.ok) throw new Error(`人物 Gallery 读取失败（${response.status}）`)
-  const payload = await response.json() as { images?: GalleryImage[] }
-  return Array.isArray(payload.images) ? payload.images : []
+function groupByShot(images: GalleryImageView[]): ShotGalleryGroup[] {
+  const groups = new Map<string, ShotGalleryGroup>()
+  for (const image of images) {
+    const key = image.shot_id || `unknown:${image.candidateId}:${image.index}`
+    const group = groups.get(key) ?? {
+      key,
+      shotId: image.shot_id,
+      shotOrdinal: image.shot_ordinal,
+      episodeOrder: image.episode_order,
+      images: [],
+    }
+    group.images.push(image)
+    if (group.shotOrdinal === null && image.shot_ordinal !== null) group.shotOrdinal = image.shot_ordinal
+    if (group.episodeOrder === null && image.episode_order !== null) group.episodeOrder = image.episode_order
+    groups.set(key, group)
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      images: [...group.images].sort((left, right) => (left.source_time_us ?? 0) - (right.source_time_us ?? 0)),
+    }))
+    .sort((left, right) => {
+      const episode = (left.episodeOrder ?? 999999) - (right.episodeOrder ?? 999999)
+      if (episode) return episode
+      return (left.shotOrdinal ?? 999999) - (right.shotOrdinal ?? 999999)
+    })
 }
 
 async function refresh(): Promise<void> {
@@ -48,18 +63,30 @@ async function refresh(): Promise<void> {
   try {
     const workspace: AssetWorkspace = await api.getAssetWorkspace(props.projectId)
     const result: CharacterGallery[] = []
+    let failedCandidates = 0
+
     for (const character of workspace.characters) {
-      const candidateId = character.source_candidate_ids?.[0]
-      if (!candidateId) continue
-      const images = await getGallery(candidateId)
+      const candidateIds = [...new Set(character.source_candidate_ids ?? [])]
+      const settled = await Promise.allSettled(candidateIds.map((candidateId) => api.getCharacterGallery(candidateId)))
+      const images: GalleryImageView[] = []
+      settled.forEach((item, index) => {
+        if (item.status === 'rejected') {
+          failedCandidates += 1
+          return
+        }
+        const candidateId = candidateIds[index]
+        images.push(...item.value.images.map((image) => ({ ...image, candidateId })))
+      })
       result.push({
         assetId: character.id,
         name: character.name,
-        candidateId,
-        images,
+        candidateIds,
+        imageCount: images.length,
+        shotGroups: groupByShot(images),
       })
     }
     galleries.value = result
+    if (failedCandidates) error.value = `${failedCandidates} 个历史人物 Candidate 的 Gallery 无法读取；其余 Evidence 已正常展示。`
   } catch (err) {
     error.value = err instanceof Error ? err.message : '人物 Gallery 读取失败'
     galleries.value = []
@@ -68,11 +95,13 @@ async function refresh(): Promise<void> {
   }
 }
 
-function shotLabel(image: GalleryImage): string {
-  if (typeof image.shot_ordinal === 'number') {
-    return `SHOT ${String(image.shot_ordinal).padStart(4, '0')}`
-  }
-  return image.shot_id || '未知 Shot'
+function shotLabel(group: ShotGalleryGroup): string {
+  const shot = typeof group.shotOrdinal === 'number'
+    ? `SHOT ${String(group.shotOrdinal).padStart(4, '0')}`
+    : group.shotId || '未知 Shot'
+  return props.projectId && typeof group.episodeOrder === 'number' && group.episodeOrder > 1
+    ? `E${String(group.episodeOrder).padStart(2, '0')} · ${shot}`
+    : shot
 }
 
 function classLabel(value: string | null): string {
@@ -102,8 +131,8 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
   <section v-if="loading || error || galleries.length" class="person-gallery-v10">
     <header>
       <div>
-        <strong>人物图 Gallery</strong>
-        <span>这里展示模型实际分类到每个人物的单人 crop；不是 Shot 整帧。</span>
+        <strong>人物图 Gallery · AI Evidence</strong>
+        <span>按真实 Shot 分组展示模型分类到人物身份的单人 crop；这里不是 Final Binding，也不是 Shot 整帧缩略图。</span>
       </div>
       <small v-if="loading">读取中…</small>
     </header>
@@ -112,22 +141,31 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
     <div v-for="gallery in galleries" :key="gallery.assetId" class="person-gallery-group">
       <div class="person-gallery-title">
         <strong>{{ gallery.name }}</strong>
-        <span>{{ gallery.images.length }} 张已分类人物图</span>
+        <span>{{ gallery.shotGroups.length }} Evidence Shots · {{ gallery.imageCount }} 张人物证据图</span>
       </div>
-      <div v-if="gallery.images.length" class="person-gallery-grid">
-        <figure v-for="image in gallery.images" :key="`${gallery.candidateId}-${image.index}`">
-          <img :src="image.url" :alt="`${gallery.name} ${shotLabel(image)}`" loading="lazy" />
-          <figcaption>
-            <b>{{ shotLabel(image) }}</b>
-            <span>{{ classLabel(image.instance_class) }}</span>
-          </figcaption>
-        </figure>
+
+      <div v-if="gallery.shotGroups.length" class="person-gallery-shot-list">
+        <section v-for="group in gallery.shotGroups" :key="group.key" class="person-gallery-shot-group">
+          <div class="person-gallery-shot-head">
+            <b>{{ shotLabel(group) }}</b>
+            <span>{{ group.images.length }} 张 crop</span>
+          </div>
+          <div class="person-gallery-grid">
+            <figure v-for="image in group.images" :key="`${image.candidateId}-${image.index}`">
+              <img :src="image.url" :alt="`${gallery.name} ${shotLabel(group)}`" loading="lazy" />
+              <figcaption>
+                <b>{{ classLabel(image.instance_class) }}</b>
+                <span v-if="image.source_time_us !== null">{{ (image.source_time_us / 1_000_000).toFixed(2) }}s</span>
+              </figcaption>
+            </figure>
+          </div>
+        </section>
       </div>
-      <p v-else class="gallery-empty">当前人物没有可展示的 V10 单人物图 Gallery。</p>
+      <p v-else class="gallery-empty">当前人物没有可展示的 V10 单人物 Evidence Gallery。</p>
     </div>
   </section>
 </template>
 
 <style scoped>
-.person-gallery-v10{margin:14px 22px 0;padding:12px;border:1px solid #d7e0ef;border-radius:12px;background:#fff}.person-gallery-v10>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.person-gallery-v10>header>div{display:grid;gap:2px}.person-gallery-v10>header strong{font-size:14px;color:#253a60}.person-gallery-v10>header span,.person-gallery-v10>header small{font-size:11px;color:#667892}.person-gallery-group{margin-top:12px;padding-top:10px;border-top:1px solid #edf0f5}.person-gallery-title{display:flex;align-items:center;gap:9px;margin-bottom:8px}.person-gallery-title strong{font-size:13px}.person-gallery-title span{font-size:10px;color:#708099}.person-gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}.person-gallery-grid figure{margin:0;border:1px solid #e1e6ee;border-radius:9px;overflow:hidden;background:#f7f9fc}.person-gallery-grid img{display:block;width:100%;height:132px;object-fit:cover;background:#eef1f5}.person-gallery-grid figcaption{display:grid;gap:1px;padding:5px 6px}.person-gallery-grid figcaption b{font-size:9px;color:#27384f}.person-gallery-grid figcaption span{font-size:9px;color:#7a8797}.gallery-error{color:#b33b3b;font-size:11px}.gallery-empty{font-size:11px;color:#8a94a3}
+.person-gallery-v10{margin:14px 22px 0;padding:12px;border:1px solid #d7e0ef;border-radius:12px;background:#fff}.person-gallery-v10>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.person-gallery-v10>header>div{display:grid;gap:2px}.person-gallery-v10>header strong{font-size:14px;color:#253a60}.person-gallery-v10>header span,.person-gallery-v10>header small{font-size:11px;color:#667892}.person-gallery-group{margin-top:12px;padding-top:10px;border-top:1px solid #edf0f5}.person-gallery-title{display:flex;align-items:center;gap:9px;margin-bottom:8px}.person-gallery-title strong{font-size:13px}.person-gallery-title span{font-size:10px;color:#708099}.person-gallery-shot-list{display:grid;gap:10px}.person-gallery-shot-group{padding:8px;border:1px solid #e4e9f1;border-radius:9px;background:#fafbfe}.person-gallery-shot-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}.person-gallery-shot-head b{font-size:10px;color:#30415d}.person-gallery-shot-head span{font-size:9px;color:#7d899b}.person-gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,118px));gap:7px}.person-gallery-grid figure{margin:0;border:1px solid #e1e6ee;border-radius:8px;overflow:hidden;background:#fff}.person-gallery-grid img{display:block;width:100%;height:124px;object-fit:cover;background:#eef1f5}.person-gallery-grid figcaption{display:flex;align-items:center;justify-content:space-between;gap:4px;padding:5px 6px}.person-gallery-grid figcaption b{font-size:9px;color:#27384f}.person-gallery-grid figcaption span{font-size:9px;color:#7a8797}.gallery-error{color:#9b6200;background:#fff8e8;border:1px solid #f0d8a3;border-radius:7px;padding:7px 9px;font-size:11px}.gallery-empty{font-size:11px;color:#8a94a3}
 </style>
