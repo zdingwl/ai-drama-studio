@@ -1,20 +1,41 @@
-# AI Drama Studio — Project State (Reference Video V2 / Character V6)
+# AI Drama Studio — Project State
 
-> 当前开发基线：`main`。
-> 产品采用“后台自动能力 + 少量可操作工作区”，人物资产当前正式算法基线为 Character V6。
+> **Last synchronized:** 2026-08-27 12:12 +08:00  
+> **Repository:** `zdingwl/ai-drama-studio`  
+> **Branch:** `main`  
+> **Architecture:** Reference Video V2  
+> **FastAPI app version:** `2.4.1`  
+> **Formal character runtime:** Character V10.1
 
-## 当前基线
+## 1. This file is the current-state source of truth
+
+This document records what the repository actually runs now. It is not a historical plan.
+
+If an older Feature/Frozen document says Character V1–V9, face-only identity, 2-shot Face confirmation, or a planned F06 YuNet-only pipeline, that text is **legacy history** unless this file explicitly says otherwise.
+
+For a new conversation, use this recovery order:
 
 ```text
-Repository: zdingwl/ai-drama-studio
-Branch: main
-Architecture: Reference Video V2
-Character: V6 Global Identity
-Project Format: 2.0
-App Version: 2.3.x
+AGENTS.md
+→ SKILL.md
+→ docs/PROJECT_STATE.md
+→ docs/CURRENT_IMPLEMENTATION_MANIFEST.md
+→ docs/ASSET_CHARACTER_RECOGNITION_V10_1.md
+→ current code/tests
+→ latest session handoff
 ```
 
-## 正式用户工作区
+Before changing character logic, verify the executable wiring in:
+
+```text
+engine/app/character_visual_v2.py
+engine/app/character_runtime_v6.py
+engine/app/character_identity_v101.py
+engine/app/character_shot_binding_v101.py
+engine/app/asset_final_gate_v10.py
+```
+
+## 2. Current product workspaces
 
 ```text
 01 剧集管理
@@ -25,259 +46,250 @@ App Version: 2.3.x
 06 生成 / 导出
 ```
 
-核心原则：
+Internal technical stages such as FFprobe, model embedding, MOT, Person Evidence, ASR, and model logs are background capabilities, not separate production pages.
+
+## 3. Current Shot baseline
+
+The project is Reference Video driven. A Shot and its Reference Clip are the core production unit.
+
+Current product principle:
 
 ```text
-不可修改、无需确认的技术中间结果
-→ 后台自动执行
-→ 不单独做阶段页面
-
-容易出错，而且用户能够修正的结果
-→ 提供编辑 / 修正能力
-
-正常结果
-→ 不要求用户逐项确认
-
-异常或用户主动发现问题
-→ 再进入人工修正
+Source Video
+→ Shot boundaries
+→ frame-owned Reference Clip
+→ assets/evidence bound to Shot
+→ replacement/localization controls
+→ Reference Video driven remake
 ```
 
-FFprobe、Proxy、Audio WAV、Frame PTS、关键帧缓存、Embedding、MOT、模型内部日志等都不是独立生产页面。
+`Episode.sort_order` remains the only formal batch order. Heavy video/model work is sequential by default (`concurrency = 1`).
 
-## 01 剧集管理
+## 4. Current Character baseline — V10.1
 
-一个 Project 表示一部短剧；一个 Project 可以包含多个 Episode。
-
-用户负责批量导入、拖动排序、删除 / 替换单集、追加剧集。
-
-`Episode.sort_order` 是所有批量任务的正式处理顺序。
-
-## 02 拉片
-
-正式用户动作：
+### Formal runtime profiles
 
 ```text
-单集拉片 / 重新自动拉片
-顺序批量拉片
-必要时打开“修正镜头”
-查看 Shot Revision 历史
-恢复历史 Revision
+Runtime profile:
+character-v10.1-capture-first-model-classification
+
+Asset profile:
+f05-assets-v10.1-person-evidence-model-classification
+
+Resolver:
+person-evidence-model-classifier-v10.1
 ```
 
-后台链：
+`content_models_v2.model_status()` may still report the **V10 model-package profile** because V10.1 reuses the same fixed model files. That does not mean the runtime resolver reverted to V10.
+
+### Formal pipeline
 
 ```text
-Media Preprocess
-→ FFprobe Frame PTS
-→ TransNetV2 / Scene evidence
-→ Shot Boundaries
-→ Reference Clip
-→ Thumbnail / Keyframe
-→ Safe Current Shot Revision switch
-```
-
-批量拉片严格按 `Episode.sort_order` 顺序执行，不并行多个 Episode。
-
-Shot Revision 已实现 AUTO / MANUAL / RESTORE，自动重跑失败不破坏旧 Current。
-
-Current Shot Revision 改变后，当前资产 ContentAnalysisRun 标记为 `STALE`。
-
-## 03 资产
-
-目标：从当前 Shot / Reference Clip 中形成：
-
-```text
-人物
-场景
-关键道具
-```
-
-并绑定回 Shot。
-
-### Character V6 正式链
-
-```text
-YOLOX Person Observation（约 12fps，长 Shot 有采样上限）
-+ YuNet Face
-+ SFace Face Embedding Provider
-+ YoutuReID Body Evidence
+Reference Clip / Shot
 ↓
-BoT-SORT Mature MOT + CMC
-  └ init/runtime failure → 当前 Shot 从头 ByteTrack fallback
+YOLOX Person Detection (~12 fps sampling, bounded on long Shots)
 ↓
-CLEAN Track Gallery
-+ Face hard-conflict split
+Every detected person becomes an explicit isolated Person Instance
 ↓
-Project-level Global Identity Graph
+YuNet + optional SFace face evidence
+YoutuReID Person embedding (primary identity model signal)
+clothing_upper / clothing_lower / body_hist / body_structure support channels
 ↓
-RESOLVED / UNRESOLVED
+Capture and persist every model-usable Person Evidence crop
+(CLEAN / OCCLUDED / CONTAMINATED / substantial PARTIAL)
 ↓
-Final Gate = RESOLVED only
+Mature MOT for temporal organization
+BoT-SORT preferred; ByteTrack fallback according to tracker runtime
+↓
+Project-level Person Evidence model classification
+↓
+confirmed RESOLVED identities + UNRESOLVED evidence
+↓
+V10.1 shot-level known-identity recovery
+(repeated unresolved Track → already-confirmed identity only)
+↓
+write classification back to Person Evidence manifest
+↓
+Final Gate
+↓
+Character + ShotCharacterBinding
 ```
 
-Tracking、Identity、Final Character 已彻底分层：
+### Three layers must never be collapsed
 
 ```text
-Observation / Track = Evidence
-Global Identity = 身份解析
-Character = Final Asset
+Observation / Person Evidence / Track = visual evidence
+Identity Class = cross-Shot person identity
+Character = project-level Final Asset
 ```
 
-Track 数量不能当人物数量。
+Track count, face count, or crop count must never be used as Character cardinality.
 
-### 当前自动 Resolve 门槛
+## 5. V10.1 identity creation contract
 
-为了防止同一演员的侧脸 / 特写 / 遮挡碎片制造“人物020”式虚假人物，当前规则是：
+Character V10.1 is **capture-first**. Image condition labels do not decide whether a real person exists.
+
+Normal and risky views can participate in classification, but new identity creation remains fail-closed.
+
+A confirmed formal identity requires at least:
 
 ```text
-至少 2 条 Face Track
-且 Face Evidence 覆盖至少 2 个不同 Shot
-→ RESOLVED
+>= 3 independent Shots
+>= 3 model-usable Person Images
+stable cross-Shot Person-ReID consistency
+unique identity class
+no same-sample cannot-link violation
+no high-quality Face hard conflict
 ```
 
-因此：
-- 单 Shot 高清脸仍 `UNRESOLVED`；
-- 孤立脸 / 一次误检保留 Evidence；
-- 纯 body-only 不能创建 Character；
-- body-only 只能在相邻 Shot + 极强 CLEAN ReID 时挂回 Face cluster；
-- 同 Shot 时间重叠的人物是永久 cannot-link；
-- Face hard conflict 阻断传递合并。
+For risky seed classes (`CONTAMINATED`, substantial `PARTIAL`), confirmation uses stricter Person-ReID thresholds than normal evidence.
 
-### Final Character Gate
+Face is optional support. A confirmed V10/V10.1 identity may materialize without visible Face evidence.
 
-只有明确：
+Weak/tiny/low-score partial fragments remain evidence/attach-only and cannot create a new Character.
+
+## 6. Shot-level Character Binding recovery — current fix
+
+The global resolver is intentionally conservative at single-image level. That can leave a Shot unbound even when several observations from the same Track consistently match an already-confirmed Character.
+
+V10.1 therefore performs a second pass after global identity confirmation:
+
+```text
+UNRESOLVED Track
+→ compare each usable observation against every RESOLVED identity gallery
+→ aggregate Person-ReID support across time and independent gallery Shots
+→ require >= 3 usable observations
+→ require >= 2 supporting observations
+→ require a unique winner with margin
+→ fail closed on cannot-link / high-quality Face conflict
+→ attach whole Track to that existing identity
+```
+
+Important invariants:
+
+- This pass **never creates a new Character**.
+- It only attaches to an already-confirmed `RESOLVED` identity.
+- Ambiguous winner stays `UNRESOLVED`.
+- Same-sample cannot-link and strong Face conflict block recovery.
+- After recovery, persistence uses the recovered Track membership, so `ShotCharacterBinding` is built from the corrected identity tracks.
+
+Formal module:
+
+```text
+engine/app/character_shot_binding_v101.py
+```
+
+Formal runtime call order:
+
+```text
+resolve_global_identities(tracks)
+→ recover_unresolved_tracks(candidates)
+→ update_person_evidence_classification(...)
+→ persist Candidate / Track
+→ Final Gate
+→ ShotCharacterBinding
+```
+
+## 7. Final Character Gate
+
+Formal V10/V10.1 Final Gate is fail-closed.
+
+A Candidate can materialize only when:
 
 ```text
 identity_status == RESOLVED
+resolver is in the formal resolver allow-list
+confirmed_gallery_shots >= 3
+confirmed_gallery_images >= 3
+final_asset_eligible is not false
 ```
 
-才物化 AUTO Final Character。
+`UNRESOLVED`, missing/invalid identity status, unknown resolver, or insufficient confirmation never becomes a Final Character.
 
-以下全部只保留 Evidence：
-- `UNRESOLVED`；
-- 缺失 identity_status；
-- 非法 / 损坏状态；
-- 未定义为可发布的未来中间状态。
+For V10/V10.1, Face visibility is **not** required by the formal gate.
 
-Final Gate 已改为显式 fail-closed allow-list，不再临时修改 `face_visible`，也不再 monkeypatch legacy materializer。
-
-即使 Candidate 标为 RESOLVED，也必须至少存在一条真实 face-visible Track，纯 body-only 不能绕过 Gate。
-
-### MOT 稀疏时间
-
-长 Shot 因采样上限可能低于名义 12fps。V6 会把：
+Formal entry:
 
 ```text
-local_time_us / 1_000_000
+engine/app/asset_final_gate_v10.py
 ```
 
-作为真实 timestamp 传入 Mature MOT，避免 Kalman / lost-track 按固定调用间隔误判。
+The implementation currently reuses compatibility logic from `asset_final_gate_v9.py`, with the V10.1 resolver explicitly added to the formal allow-list.
 
-BoT-SORT 若在 Shot 中途失败，本 Shot 的部分结果全部丢弃，从 Shot 开头用 ByteTrack 完整重跑，避免两套 tracker 的 ID / state 混杂。
-
-### Face Provider
-
-当前继续使用 YuNet + SFace。Global Identity 已与 face embedding provider 解耦；以后选定明确可商用或已有授权的 ArcFace 权重后可替换 provider，不改变 Track / Final Asset Contract。
-
-## Evidence / Final Asset / Revision
+## 8. Evidence / Final Asset separation
 
 ```text
-CharacterCandidate / CharacterTrack / SceneCandidate / PropCandidate
-= immutable AI Evidence
+v2_content_analysis_runs
+v2_character_candidates
+v2_character_tracks
+Person Evidence files/manifests
+= immutable AI Evidence / analysis output
 
 Character / Scene / Prop
-= Project Final Asset
-
 ShotCharacterBinding / ShotSceneBinding / ShotPropBinding
-= Final Binding
+= Final Asset / Final Binding
 ```
 
-人物 RESOLVED Identity 可以自动形成 AUTO Final Character；UNRESOLVED 永远不会增加 Final Character 数量。
+A new AI Run must not silently overwrite MANUAL / RESTORE asset revisions.
 
-Asset Revision 继续保护 MANUAL / RESTORE：新 AI Run 默认不能静默覆盖人工版本。
+Old analysis runs do not automatically rebind after code changes. To test a new identity/binding algorithm, rerun asset extraction so new `CharacterTrack` and `ShotCharacterBinding` records are produced.
 
-## Character V6 Run 原子性
+## 9. Current character code map
 
-新 Run 完整成功才切 Current：
+Formal or currently-wired modules:
 
 ```text
-Track / Global Identity
-→ RESOLVED / UNRESOLVED 标记
-→ Candidate / Track / Scene Evidence
-→ counts
-→ Current Run 切换
-→ commit
+engine/app/character_visual_v2.py            compatibility facade; points to V10.1
+engine/app/character_runtime_v6.py           formal V10.1 runtime entry (filename retained for compatibility)
+engine/app/character_observation_v10.py      Person Instance detection/capture
+engine/app/character_person_evidence_v10.py  evidence eligibility / crop policy
+engine/app/character_person_features_v9.py   separated Person feature channels
+engine/app/character_tracking_v10.py         temporal tracking
+engine/app/character_identity_v10.py         V10 base classifier helpers
+engine/app/character_identity_v101.py        formal V10.1 global identity classifier
+engine/app/character_shot_binding_v101.py    V10.1 known-identity Track recovery
+engine/app/character_gallery_v10.py          classified person gallery
+engine/app/character_evidence_store_v10.py   pre/post-classification evidence store
+engine/app/asset_final_gate_v10.py           formal V10/V10.1 Final Gate entry
+engine/app/asset_workspace_v3.py             Final Asset workspace/bindings
+engine/app/content_analysis_v2.py            Project asset analysis persistence
 ```
 
-任何一步失败，旧 Current 不动。
+Do not infer the active version from filenames alone. Some compatibility filenames (`character_runtime_v6.py`, `character_person_features_v9.py`) intentionally remain while their formal caller is V10.1.
 
-## 04 内容剧本
+## 10. Models / runtime
 
-规划 / 后续能力：Whisper ASR、Speaker Diarization、OCR、VLM、人物 ↔ Speaker / Dialogue、多模态融合、结构化源剧本。
-
-这些不会各自做页面。用户最终修改的是结构化剧情与可生产数据。
-
-## 05 重制设计
-
-后续人工创作工作区：
+Fixed local model set remains:
 
 ```text
-Character Bible
-Scene Bible
-本土化对白
-Target Character / Scene
-Shot Specification
+YOLOX person detection
+YoutuReID person re-identification
+YuNet face detection
+SFace face embedding/support
 ```
 
-必须可编辑、可重做、可保留 Revision。
+YoutuReID is the primary identity model signal. Clothing/body channels are supporting signals. Face is optional support and a hard-conflict signal when high-quality Face evidence disagrees.
 
-## 06 生成 / 导出
+Do not silently bundle non-commercial/research-only InsightFace/ArcFace pretrained weights. A future Face provider replacement must have a clear commercial/license path and must not change the Track → Identity → Final Asset contract.
 
-统一生产工作区：
-
-```text
-Video Generation
-Voice / TTS
-LipSync
-QC
-Timeline Assembly
-Final Export
-```
-
-默认异常驱动，不要求用户逐项确认所有正常结果。
-
-## 统一后台 Task Progress
-
-耗时任务使用持久化 `BackgroundTaskRecord`：
-
-```text
-QUEUED
-PROCESSING
-READY
-READY_WITH_WARNINGS
-FAILED
-CANCELLED
-```
-
-页面刷新 / 切换工作区不会丢进度；重复点击不重复创建同作用域活动任务；服务重启后遗留 PROCESSING 明确标记为中断失败。
-
-## 当前开发状态
+## 11. Current implementation status
 
 ```text
 01 剧集管理:
-  IMPLEMENTED / NEEDS LOCAL REGRESSION
+  IMPLEMENTED
 
 02 拉片:
-  AUTO-PREPROCESS + TASK PROGRESS + MANUAL EDIT + SHOT REVISION + SAFE RERUN
-  IMPLEMENTED / NEEDS LOCAL REAL-VIDEO REGRESSION
+  IMPLEMENTED; real Windows/video regression remains release gate
 
 03 资产:
-  Character V6 Mature MOT + Global Identity + RESOLVED-only Final Gate
-  IMPLEMENTED / NEEDS WINDOWS REAL-SAMPLE REGRESSION
-  Scene / Prop 继续沿用当前 Evidence / Semantic 链
+  Character V10.1 capture-first classification implemented
+  V10.1 risky-view identity creation implemented
+  V10.1 shot-level known-identity Track recovery implemented
+  V10/V10.1 fail-closed Final Gate implemented
+  NEEDS LOCAL REAL-VIDEO REGRESSION after latest binding change
 
 04 内容剧本:
-  PLANNED / PARTIAL LOW-LEVEL CAPABILITIES EXIST
+  PLANNED / partial low-level compatibility code exists
 
 05 重制设计:
   PLANNED
@@ -286,45 +298,54 @@ CANCELLED
   PLANNED
 ```
 
-## Character V6 已锁行为测试
+## 12. Current test / CI reality
+
+The latest GitHub Actions run after the shot-binding change is **not globally green**.
+
+Backend import/compile now passes after CI dependency/version fixes, but the whole legacy test suite still has failures caused by a mix of:
+
+- CI missing `cv2` / full media runtime;
+- CI missing the external `trackers` package/runtime;
+- legacy V6 assertions that intentionally no longer match V10/V10.1 semantics;
+- tests expecting FFmpeg where the lightweight CI runner does not provide it;
+- legacy workspace dictionary expectations;
+- frontend `vue-tsc` / TypeScript package compatibility failure.
+
+Therefore do **not** claim “all tests pass” from the current repository state.
+
+The new V10.1 shot-level recovery regression tests were added specifically to cover:
 
 ```text
-15 Track 碎片 / 3 人 → 3 RESOLVED Identity
-同框两人不能经 bridge Track 传递合并
-孤立 Face → UNRESOLVED
-单 Shot 高清 Face → UNRESOLVED
-同身份两 Shot Face → RESOLVED
-body-only → 不能创建 Character
-body-only 可挂回 Face cluster 但不能晋级单 Shot Face
-UNRESOLVED face_visible Evidence → 不物化 Final Character
-缺失 identity_status → Final Gate fail closed
-MOT tracker rows → 按 IoU 映射 Observation
-稀疏采样 → 真实 timestamp
-BoT-SORT runtime failure → 整 Shot ByteTrack 重跑
-未确认 observation → 仍保留 Evidence
+repeated unresolved Track → confirmed identity
+ambiguous winner → stays unresolved
+cannot-link conflict → no recovery
 ```
 
-## 近期优先级
+Real-video release validation must still happen on the user's Windows environment with the installed model/MOT/FFmpeg runtime.
+
+## 13. Immediate next action
 
 ```text
-P0-1 Windows 本机安装/确认 trackers 2.6 + supervision + ONNX Runtime GPU Runtime
-P0-2 用真实短剧重新跑资产，验收 Final Character 数量而不是 Track 数量
-P0-3 重点检查人物进入 / 遮挡 / 交叉 / 离开、长 Shot、侧脸和同框 cannot-link
-P0-4 核对 RESOLVED / UNRESOLVED Evidence 页面与 Final Asset 数量
-P0-5 继续内容剧本（ASR + Speaker + VLM + Structured Script）
+1. Pull latest main locally.
+2. Prepare/verify F05 character models and MOT runtime.
+3. Rerun asset extraction on the same real short-drama sample.
+4. Verify Final Character count first.
+5. Verify ShotCharacterBinding for the previously wrong Shots.
+6. Inspect recovered Track metadata (`track_recovery_*`) if a Shot is still unbound.
+7. Only after real-video confirmation continue threshold tuning or the next content-script feature.
 ```
 
-## 测试入口
+## 14. Documentation rule for future sessions
+
+Any character code change is incomplete until these are reconciled in the same work session:
 
 ```text
-python -m pytest engine/tests/v2/test_character_identity_v6.py -q
-python -m pytest engine/tests/v2/test_character_tracking_v6.py -q
-python -m pytest engine/tests/v2/test_asset_final_gate_v6.py -q
-python -m pytest engine/tests/v2 -q
-
-cd frontend
-npm run typecheck
-npm run build
+AGENTS.md (if baseline changes)
+SKILL.md (if formal project rules/baseline changes)
+docs/PROJECT_STATE.md
+docs/CURRENT_IMPLEMENTATION_MANIFEST.md
+docs/ASSET_CHARACTER_RECOGNITION_V10_1.md (or the active successor)
+latest docs/sessions/... handoff
 ```
 
-真实媒体 Release Gate 仍必须在用户 Windows 本机完成；仓库单元测试不能替代 GPU / FFmpeg / Reference Clip / 人物真实素材验收。
+If code and documents disagree, stop and reconcile them before continuing feature work.
