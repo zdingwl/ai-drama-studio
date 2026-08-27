@@ -148,6 +148,7 @@ def test_face_optional_recovered_track_is_visible_as_resolved_shot_evidence(monk
     shot2 = result["evidence_by_shot"]["SHOT_2"]
     assert shot2["scene"] == {"candidate_id": "SCENE_A"}
     assert shot2["props"] == [{"candidate_id": "PROP_A"}]
+    assert shot2["character_diagnostics"] == []
     assert shot2["characters"] == [{
         "candidate_id": "RESOLVED_A",
         "label": "人物 001",
@@ -173,7 +174,9 @@ def test_unresolved_track_stays_diagnostic_and_cannot_look_like_final_binding(mo
 
     result = decorate_asset_workspace_character_evidence(workspace)
 
-    pending = result["evidence_by_shot"]["SHOT_3"]["characters"][0]
+    shot3 = result["evidence_by_shot"]["SHOT_3"]
+    assert shot3["characters"] == []
+    pending = shot3["character_diagnostics"][0]
     assert pending["candidate_id"] == "UNRESOLVED_B"
     assert pending["identity_status"] == "UNRESOLVED"
     assert pending["final_asset_id"] is None
