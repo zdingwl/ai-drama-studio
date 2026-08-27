@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from engine.app.asset_final_gate_v10 import _candidate_is_final_eligible
-from engine.app.asset_final_gate_v9 import _shot_binding_confidence
+from engine.app.asset_final_gate_v9 import _explicit_shot_presence_assignments, _shot_binding_confidence
 from engine.app.content_analysis_v2 import CharacterCandidate, CharacterTrack
 
 
@@ -99,6 +99,45 @@ def test_v10_unresolved_never_passes_final_gate() -> None:
         run_profile="f05-assets-v10.1-person-evidence-model-classification",
         tracks=[],
     ) is False
+
+
+def test_current_v101_explicit_shot_assignment_is_validated_without_track_ownership() -> None:
+    evidence = {
+        "shot_assignment_version": "v10.1-shot-character-assignment-1",
+        "shot_presence_assignments": [
+            {
+                "shot_id": "SHOT_0002",
+                "confidence": 0.91,
+                "mode": "FACE_STRONG",
+                "source": "V10_1_SHOT_CHARACTER_ASSIGNMENT",
+            },
+            {
+                "shot_id": "SHOT_0004",
+                "confidence": 0.88,
+                "mode": "BODY_REID",
+                "source": "V10_1_SHOT_CHARACTER_ASSIGNMENT",
+            },
+        ],
+    }
+
+    values = _explicit_shot_presence_assignments(evidence)
+
+    assert values is not None
+    assert {item["shot_id"] for item in values} == {"SHOT_0002", "SHOT_0004"}
+    assert {item["mode"] for item in values} == {"FACE_STRONG", "BODY_REID"}
+
+
+def test_assignment_version_with_empty_list_does_not_fall_back_to_tracks() -> None:
+    values = _explicit_shot_presence_assignments({
+        "shot_assignment_version": "v10.1-shot-character-assignment-1",
+        "shot_presence_assignments": [],
+    })
+
+    assert values == []
+
+
+def test_historical_run_without_assignment_version_keeps_track_fallback() -> None:
+    assert _explicit_shot_presence_assignments({"shot_presence_assignments": []}) is None
 
 
 def test_recovered_only_shot_uses_track_presence_confidence() -> None:
