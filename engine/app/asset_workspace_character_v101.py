@@ -1,19 +1,15 @@
 """Character V10.1 adapter for Asset Workspace shot evidence.
 
-`asset_workspace_v3` still contains a historical face-visible filter in its diagnostic
-`evidence_by_shot` serializer. That filter predates the V10/V10.1 contract where Face is
-optional and can therefore hide a correctly classified body/side/back/recovered Track
-from the Shot review table.
+`asset_workspace_v3` still contains historical Character evidence semantics.  Current
+V10.1 separates three decisions:
 
-This adapter rebuilds only the Character portion of `evidence_by_shot` from immutable
-CharacterCandidate/CharacterTrack evidence. Scene/Prop evidence and all Final Bindings
-remain owned by the existing Asset Workspace.
+- CharacterTrack = immutable visual/identity evidence;
+- CharacterCandidate = project-level identity class;
+- explicit Shot Character Assignment = known Character presence in one Shot.
 
-Resolved Character evidence and unresolved diagnostics are intentionally separated:
-- `characters`: RESOLVED identity evidence that may map to a Final Character;
-- `character_diagnostics`: UNRESOLVED evidence, never treated as a Final binding.
-
-It intentionally does not change DB schema or identity decisions.
+The adapter therefore prefers explicit Shot assignments for RESOLVED Characters, while
+keeping UNRESOLVED Track evidence in a separate diagnostics lane.  Historical Runs that
+predate explicit assignment continue to use Track-derived presence as a fallback.
 """
 from __future__ import annotations
 
@@ -24,7 +20,6 @@ from sqlalchemy import select
 
 from engine.app.content_analysis_v2 import CharacterCandidate, CharacterTrack, ContentAnalysisRun
 from engine.app.studio_v2 import get_session
-
 
 
 def _json(raw: str | None) -> dict[str, Any]:
@@ -52,12 +47,7 @@ def _track_recovery(track: CharacterTrack) -> dict[str, Any]:
 
 
 def _shot_presence_confidence(candidate: CharacterCandidate, tracks: list[CharacterTrack]) -> tuple[float | None, str]:
-    """Separate global identity confidence from recovered Shot-presence confidence.
-
-    Recovery source is read from the exact Track instead of being hard-coded. This keeps
-    the Workspace diagnostic truthful for both the original per-Track recovery and the
-    newer same-Shot fragmented-presence aggregation.
-    """
+    """Historical Track-derived confidence fallback for pre-assignment Runs."""
 
     recoveries: list[dict[str, Any]] = []
     has_direct_track = False
@@ -73,6 +63,31 @@ def _shot_presence_confidence(candidate: CharacterCandidate, tracks: list[Charac
         strongest = max(recoveries, key=lambda value: float(value["score"]))
         return float(strongest["score"]), str(strongest["source"])
     return candidate.confidence, "IDENTITY_CLASSIFICATION"
+
+
+def _explicit_assignments(evidence: dict[str, Any]) -> dict[str, dict[str, Any]] | None:
+    if not str(evidence.get("shot_assignment_version") or ""):
+        return None
+    raw = evidence.get("shot_presence_assignments")
+    if not isinstance(raw, list):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        shot_id = str(item.get("shot_id") or "")
+        if not shot_id:
+            continue
+        try:
+            confidence = float(item.get("confidence")) if item.get("confidence") is not None else None
+        except (TypeError, ValueError):
+            continue
+        if confidence is not None and not 0.0 <= confidence <= 1.0:
+            continue
+        value = dict(item)
+        value["confidence"] = confidence
+        result[shot_id] = value
+    return result
 
 
 def _candidate_to_asset(workspace: dict[str, Any]) -> dict[str, str]:
@@ -96,12 +111,7 @@ def _empty_bucket(*, scene: Any = None, props: list[Any] | None = None) -> dict[
 
 
 def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> dict[str, Any]:
-    """Return workspace payload with V10.1-correct Character evidence per Shot.
-
-    RESOLVED Track evidence is visible even when `face_visible=False`. UNRESOLVED evidence
-    is moved to `character_diagnostics`, so it cannot appear as a final Character suggestion,
-    create an unbound/conflict state, or pollute Final Shot confidence.
-    """
+    """Return workspace payload with V10.1-correct Character presence per Shot."""
 
     analysis = workspace.get("analysis") or {}
     run_id = str(analysis.get("id") or "")
@@ -138,16 +148,31 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
         candidate_evidence = _json(candidate.evidence_json)
         identity_status = str(candidate_evidence.get("identity_status") or "UNRESOLVED").upper()
         final_asset_id = candidate_to_asset.get(candidate.id) if identity_status == "RESOLVED" else None
-        candidate_shots = sorted({
+        assignment_by_shot = _explicit_assignments(candidate_evidence) if identity_status == "RESOLVED" else None
+        track_shots = {
             shot_id
             for candidate_id, shot_id in tracks_by_candidate_shot
             if candidate_id == candidate.id
-        })
+        }
+        candidate_shots = sorted(
+            set(track_shots) | (set(assignment_by_shot) if assignment_by_shot is not None else set())
+        )
+
         for shot_id in candidate_shots:
-            shot_tracks = tracks_by_candidate_shot[(candidate.id, shot_id)]
-            confidence, confidence_source = _shot_presence_confidence(candidate, shot_tracks)
-            recoveries = [value for value in (_track_recovery(track) for track in shot_tracks) if value]
-            recovered = bool(recoveries) and len(recoveries) == len(shot_tracks)
+            shot_tracks = tracks_by_candidate_shot.get((candidate.id, shot_id), [])
+            assignment = assignment_by_shot.get(shot_id) if assignment_by_shot is not None else None
+            if assignment is not None:
+                confidence = assignment.get("confidence")
+                mode = str(assignment.get("mode") or "SHOT_ASSIGNMENT")
+                source = str(assignment.get("source") or candidate_evidence.get("shot_assignment_source") or "V10_1_SHOT_CHARACTER_ASSIGNMENT")
+                confidence_source = f"{source}:{mode}"
+                recovered = mode != "DIRECT_IDENTITY"
+            else:
+                confidence, confidence_source = _shot_presence_confidence(candidate, shot_tracks)
+                recoveries = [value for value in (_track_recovery(track) for track in shot_tracks) if value]
+                recovered = bool(recoveries) and len(recoveries) == len(shot_tracks)
+                mode = "TRACK_FALLBACK"
+
             bucket = evidence_by_shot.setdefault(shot_id, _empty_bucket())
             item = {
                 "candidate_id": candidate.id,
@@ -160,9 +185,13 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
                 "recovered_track": recovered,
                 "confidence_source": confidence_source if identity_status == "RESOLVED" else "UNRESOLVED_DIAGNOSTIC",
                 "recovery_source": confidence_source if recovered else None,
+                "assignment_mode": mode if identity_status == "RESOLVED" else None,
             }
             if identity_status == "RESOLVED":
-                bucket["characters"].append(item)
+                # For an explicit-assignment Run, a RESOLVED Track not present in the
+                # assignment map must not silently recreate a Shot presence decision.
+                if assignment_by_shot is None or assignment is not None:
+                    bucket["characters"].append(item)
             else:
                 bucket["character_diagnostics"].append(item)
 
