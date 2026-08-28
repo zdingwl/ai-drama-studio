@@ -1,0 +1,501 @@
+/* P3 Structured Draft readability / UI acceptance overrides.
+   Keep semantic/data behavior in Vue components; this file only normalizes visual density. */
+
+.breakdown-stage-v1 .breakdown-stage-switcher {
+  grid-template-columns: 210px minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 13px 15px;
+}
+.breakdown-stage-v1 .breakdown-stage-switcher > div:first-child span {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-stage-switcher > div:first-child strong {
+  font-size: 16px;
+}
+.breakdown-stage-v1 .breakdown-stage-tabs {
+  gap: 8px;
+}
+.breakdown-stage-v1 .breakdown-stage-tabs button {
+  min-width: 220px;
+  gap: 4px;
+  padding: 10px 13px;
+}
+.breakdown-stage-v1 .breakdown-stage-tabs b {
+  font-size: 14px;
+}
+.breakdown-stage-v1 .breakdown-stage-tabs small {
+  font-size: 12px;
+  line-height: 1.4;
+}
+.breakdown-stage-v1 .breakdown-stage-boundary {
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.breakdown-stage-v1 .breakdown-task-bar {
+  grid-template-columns: minmax(250px, .85fr) minmax(320px, 1fr) auto;
+  gap: 12px 16px;
+  padding: 14px 16px;
+}
+.breakdown-stage-v1 .task-bar-copy {
+  gap: 3px;
+}
+.breakdown-stage-v1 .task-bar-copy > span {
+  font-size: 11px;
+}
+.breakdown-stage-v1 .task-bar-copy strong {
+  font-size: 15px;
+}
+.breakdown-stage-v1 .task-bar-copy small {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.breakdown-stage-v1 .task-episode-select {
+  gap: 5px;
+}
+.breakdown-stage-v1 .task-episode-select span {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .task-episode-select select {
+  min-height: 40px;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+.breakdown-stage-v1 .task-bar-actions {
+  gap: 8px;
+}
+.breakdown-stage-v1 .task-bar-actions button {
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.breakdown-stage-v1 .task-bar-state {
+  padding-top: 9px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.breakdown-stage-v1 .breakdown-draft {
+  gap: 18px;
+}
+.breakdown-stage-v1 .breakdown-head {
+  gap: 28px;
+  padding: 6px 2px;
+}
+.breakdown-stage-v1 .breakdown-eyebrow {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-head h2 {
+  margin-top: 5px;
+  font-size: 27px;
+}
+.breakdown-stage-v1 .breakdown-head p {
+  max-width: 820px;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.breakdown-stage-v1 .breakdown-head-stats {
+  gap: 8px;
+}
+.breakdown-stage-v1 .breakdown-head-stats span {
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-head-stats b {
+  font-size: 14px;
+}
+
+.breakdown-stage-v1 .breakdown-draft .breakdown-layout {
+  grid-template-columns: 240px minmax(620px, 1fr) 370px;
+  gap: 16px;
+  min-height: 720px;
+}
+.breakdown-stage-v1 .breakdown-draft .breakdown-sidebar,
+.breakdown-stage-v1 .breakdown-draft .breakdown-inspector {
+  gap: 12px;
+  max-height: calc(100vh - 126px);
+}
+.breakdown-stage-v1 .breakdown-draft .breakdown-panel {
+  padding: 13px;
+}
+.breakdown-stage-v1 .breakdown-draft .panel-title {
+  padding: 2px 2px 10px;
+}
+.breakdown-stage-v1 .breakdown-draft .panel-title strong {
+  font-size: 14px;
+}
+.breakdown-stage-v1 .breakdown-draft .panel-title span {
+  min-width: 24px;
+  padding: 3px 7px;
+  font-size: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .episode-list,
+.breakdown-stage-v1 .breakdown-draft .run-list {
+  gap: 7px;
+}
+.breakdown-stage-v1 .breakdown-draft .episode-button {
+  gap: 3px 9px;
+  padding: 10px;
+}
+.breakdown-stage-v1 .breakdown-draft .episode-button b {
+  font-size: 13px;
+}
+.breakdown-stage-v1 .breakdown-draft .episode-button span {
+  font-size: 13px;
+}
+.breakdown-stage-v1 .breakdown-draft .episode-button small {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .run-list {
+  max-height: 360px;
+}
+.breakdown-stage-v1 .breakdown-draft .run-button {
+  gap: 5px;
+  padding: 10px;
+}
+.breakdown-stage-v1 .breakdown-draft .run-button b {
+  font-size: 13px;
+}
+.breakdown-stage-v1 .breakdown-draft .run-button i {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .run-button span,
+.breakdown-stage-v1 .breakdown-draft .run-button small {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .mini-empty {
+  padding: 16px 6px;
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .draft-boundary-note,
+.breakdown-stage-v1 .breakdown-draft .inspector-note {
+  padding: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .draft-boundary-note strong,
+.breakdown-stage-v1 .breakdown-draft .inspector-note strong {
+  font-size: 13px;
+}
+.breakdown-stage-v1 .breakdown-draft .draft-boundary-note p,
+.breakdown-stage-v1 .breakdown-draft .inspector-note p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.breakdown-stage-v1 .breakdown-draft .breakdown-empty strong {
+  font-size: 17px;
+}
+.breakdown-stage-v1 .breakdown-draft .breakdown-empty p {
+  font-size: 13px;
+}
+.breakdown-stage-v1 .breakdown-draft .breakdown-loading,
+.breakdown-stage-v1 .breakdown-draft .breakdown-alert {
+  font-size: 13px;
+}
+.breakdown-stage-v1 .breakdown-draft .run-banner {
+  padding: 12px 14px;
+}
+.breakdown-stage-v1 .breakdown-draft .run-banner strong {
+  font-size: 14px;
+}
+.breakdown-stage-v1 .breakdown-draft .run-banner span {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .run-banner-meta span {
+  padding: 5px 8px;
+}
+
+.breakdown-stage-v1 .breakdown-draft .scene-stack {
+  gap: 15px;
+}
+.breakdown-stage-v1 .breakdown-draft .scene-head {
+  gap: 12px;
+  padding: 13px 14px;
+}
+.breakdown-stage-v1 .breakdown-draft .scene-number {
+  padding: 6px 9px;
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .scene-title strong {
+  font-size: 15px;
+}
+.breakdown-stage-v1 .breakdown-draft .scene-title span,
+.breakdown-stage-v1 .breakdown-draft .confidence {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .scene-copy {
+  gap: 7px;
+  padding: 13px 14px 3px;
+}
+.breakdown-stage-v1 .breakdown-draft .scene-copy p {
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.breakdown-stage-v1 .breakdown-draft .hint,
+.breakdown-stage-v1 .breakdown-draft .shot-hints span,
+.breakdown-stage-v1 .breakdown-draft .inspector-tags span {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .subject-strip,
+.breakdown-stage-v1 .breakdown-draft .prop-strip {
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 14px 0;
+}
+.breakdown-stage-v1 .breakdown-draft .strip-label {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .subject-chip-list,
+.breakdown-stage-v1 .breakdown-draft .prop-chip-list {
+  gap: 7px;
+}
+.breakdown-stage-v1 .breakdown-draft .subject-chip {
+  min-width: 180px;
+  max-width: 300px;
+  gap: 2px;
+  padding: 7px 9px;
+}
+.breakdown-stage-v1 .breakdown-draft .subject-chip strong {
+  font-size: 13px;
+}
+.breakdown-stage-v1 .breakdown-draft .subject-chip span,
+.breakdown-stage-v1 .breakdown-draft .subject-chip small {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .prop-chip {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.breakdown-stage-v1 .breakdown-draft .shot-stack {
+  gap: 10px;
+  padding: 13px 14px 14px;
+}
+.breakdown-stage-v1 .breakdown-draft .draft-shot {
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 13px;
+  padding: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-preview {
+  width: 160px;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-preview span {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-body {
+  gap: 7px;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-meta {
+  gap: 8px;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-meta strong {
+  font-size: 13px;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-meta span {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-meta i {
+  font-size: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-summary {
+  font-size: 14px;
+  line-height: 1.55;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-visual {
+  font-size: 13px;
+  line-height: 1.55;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-subjects {
+  gap: 5px;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-subject-row {
+  grid-template-columns: 86px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 6px 8px;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-subject-row b,
+.breakdown-stage-v1 .breakdown-draft .shot-subject-row span {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .shot-subject-row small {
+  font-size: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .event-list {
+  gap: 5px;
+  margin-top: 5px;
+}
+.breakdown-stage-v1 .breakdown-draft .event-row {
+  grid-template-columns: 86px 68px minmax(0, 1fr) 62px;
+  gap: 8px;
+  padding: 8px 9px;
+}
+.breakdown-stage-v1 .breakdown-draft .event-time,
+.breakdown-stage-v1 .breakdown-draft .event-type,
+.breakdown-stage-v1 .breakdown-draft .event-origin {
+  font-size: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .event-copy {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.breakdown-stage-v1 .breakdown-draft .event-empty {
+  font-size: 12px;
+}
+
+.breakdown-stage-v1 .breakdown-draft .breakdown-inspector {
+  padding: 14px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-title span {
+  font-size: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-title strong {
+  font-size: 15px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-title i {
+  padding: 4px 7px;
+  font-size: 10px;
+}
+.breakdown-stage-v1 .breakdown-draft .reference-missing {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .reference-meta {
+  padding: 8px 10px;
+  font-size: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-section {
+  gap: 7px;
+  padding-top: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-section-title strong {
+  font-size: 13px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-section-title span {
+  font-size: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-section p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-list {
+  gap: 6px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-list > div {
+  gap: 3px;
+  padding: 8px 9px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-list b,
+.breakdown-stage-v1 .breakdown-draft .inspector-list span {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-list small {
+  font-size: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .evidence-details {
+  padding-top: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .evidence-details summary {
+  font-size: 12px;
+}
+.breakdown-stage-v1 .breakdown-draft .evidence-details p {
+  font-size: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .evidence-list {
+  gap: 6px;
+}
+.breakdown-stage-v1 .breakdown-draft .evidence-list > div {
+  gap: 2px;
+  padding: 7px 8px;
+}
+.breakdown-stage-v1 .breakdown-draft .evidence-list strong {
+  font-size: 11px;
+}
+.breakdown-stage-v1 .breakdown-draft .evidence-list span {
+  font-size: 10px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-empty strong {
+  font-size: 15px;
+}
+.breakdown-stage-v1 .breakdown-draft .inspector-empty p {
+  font-size: 12px;
+}
+
+@media (max-width: 1500px) {
+  .breakdown-stage-v1 .breakdown-draft .breakdown-layout {
+    grid-template-columns: 215px minmax(520px, 1fr) 335px;
+  }
+  .breakdown-stage-v1 .breakdown-draft .draft-shot {
+    grid-template-columns: 140px minmax(0, 1fr);
+  }
+  .breakdown-stage-v1 .breakdown-draft .shot-preview {
+    width: 140px;
+  }
+  .breakdown-stage-v1 .breakdown-draft .event-row {
+    grid-template-columns: 80px 64px minmax(0, 1fr);
+  }
+  .breakdown-stage-v1 .breakdown-draft .event-origin {
+    display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .breakdown-stage-v1 .breakdown-stage-switcher {
+    grid-template-columns: 1fr;
+  }
+  .breakdown-stage-v1 .breakdown-stage-tabs {
+    justify-content: flex-start;
+  }
+  .breakdown-stage-v1 .breakdown-stage-boundary {
+    justify-self: start;
+  }
+  .breakdown-stage-v1 .breakdown-task-bar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .breakdown-stage-v1 .task-bar-state {
+    grid-column: auto;
+  }
+  .breakdown-stage-v1 .breakdown-draft .breakdown-layout {
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+  .breakdown-stage-v1 .breakdown-draft .breakdown-inspector {
+    position: static;
+    grid-column: 1 / -1;
+    max-height: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .breakdown-stage-v1 .breakdown-stage-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+  .breakdown-stage-v1 .breakdown-stage-tabs button {
+    min-width: 0;
+  }
+  .breakdown-stage-v1 .breakdown-draft .breakdown-layout {
+    grid-template-columns: 1fr;
+  }
+  .breakdown-stage-v1 .breakdown-draft .breakdown-sidebar {
+    position: static;
+    grid-template-columns: 1fr 1fr;
+    max-height: none;
+  }
+  .breakdown-stage-v1 .breakdown-draft .draft-boundary-note {
+    grid-column: 1 / -1;
+  }
+  .breakdown-stage-v1 .breakdown-draft .draft-shot {
+    grid-template-columns: 1fr;
+  }
+  .breakdown-stage-v1 .breakdown-draft .shot-preview {
+    width: 100%;
+    max-width: 320px;
+  }
+  .breakdown-stage-v1 .breakdown-draft .subject-strip,
+  .breakdown-stage-v1 .breakdown-draft .prop-strip {
+    grid-template-columns: 1fr;
+  }
+}
