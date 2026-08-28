@@ -3,9 +3,15 @@
 The frozen provider contract intentionally fail-closes on unusable VLM semantics. This
 wrapper keeps that behaviour while preserving short, non-secret diagnostics emitted by
 the isolated runner so local Windows acceptance can distinguish the actual failure.
+
+On Windows the Qwen utility stack can fall back from TorchCodec to torchvision when a
+Reference Clip cannot be opened. torchvision's legacy video metadata path may then raise
+``KeyError('video_fps')``, masking the real decode issue. The production compatibility
+profile therefore prefers the already-installed TransVLM ``decord`` backend on Windows.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 from typing import Any, Mapping, Sequence
@@ -15,6 +21,8 @@ from engine.app.breakdown_p2_vlm_v1 import (
     Qwen3VLSemanticProvider as _BaseQwen3VLSemanticProvider,
     VLMRuntimeConfig,
 )
+
+_ALLOWED_VIDEO_READERS = frozenset({"decord", "torchcodec", "torchvision"})
 
 
 class Qwen3VLSemanticProvider(_BaseQwen3VLSemanticProvider):
@@ -49,6 +57,22 @@ class Qwen3VLSemanticProvider(_BaseQwen3VLSemanticProvider):
         if not lines:
             return None
         return " | ".join(lines[-4:])[:max_len]
+
+    @staticmethod
+    def _subprocess_env(config: VLMRuntimeConfig) -> dict[str, str]:
+        env = _BaseQwen3VLSemanticProvider._subprocess_env(config)
+        configured = (
+            env.get("AI_DRAMA_P2_VLM_VIDEO_READER")
+            or env.get("FORCE_QWENVL_VIDEO_READER")
+            or ("decord" if os.name == "nt" else "")
+        ).strip().lower()
+        if configured:
+            if configured not in _ALLOWED_VIDEO_READERS:
+                raise ValueError(
+                    "P2 VLM video reader 只允许 decord/torchcodec/torchvision"
+                )
+            env["FORCE_QWENVL_VIDEO_READER"] = configured
+        return env
 
     def _run_subprocess(
         self,
