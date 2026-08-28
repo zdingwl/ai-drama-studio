@@ -171,6 +171,44 @@ def _apply_contextual_grounding(
     return result
 
 
+def _with_e2_runtime_diagnostics(result: p2.P2ProviderResult) -> p2.P2ProviderResult:
+    """Promote sanitized E2 subprocess/window diagnostics into the first warning.
+
+    The production pipeline intentionally surfaces the first Provider warning to the user. E2
+    already stored subprocess_failure_detail/window_failure_details in metadata, but the old
+    wrapper returned only the generic warning. That made model-load/CUDA/runner crashes appear as
+    just "P2-E2 VLM inference failed". Keep metadata and prepend a bounded readable detail.
+    """
+
+    if result.status == "READY":
+        return result
+    metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
+    details: list[str] = []
+    subprocess_detail = " ".join(str(metadata.get("subprocess_failure_detail") or "").split())
+    if subprocess_detail:
+        details.append(subprocess_detail[:1200])
+    raw_window_details = metadata.get("window_failure_details")
+    if isinstance(raw_window_details, list):
+        for item in raw_window_details[:3]:
+            text = " ".join(str(item or "").split())
+            if text and text not in details:
+                details.append(text[:900])
+    if not details:
+        return result
+
+    diagnostic = "P2-E2 runtime detail: " + " | ".join(details)
+    warnings = tuple(dict.fromkeys((diagnostic, *result.warnings)))
+    return p2.P2ProviderResult(
+        component=result.component,
+        provider=result.provider,
+        model=result.model,
+        status=result.status,
+        evidence=result.evidence,
+        metadata=result.metadata,
+        warnings=warnings,
+    )
+
+
 class Qwen3VLSemanticProvider(episode_window.Qwen3VLSemanticProvider):
     """Production E2+E3 provider while preserving the formal VLM Provider contract."""
 
@@ -187,7 +225,9 @@ class Qwen3VLSemanticProvider(episode_window.Qwen3VLSemanticProvider):
 
     def analyze(self, context: p2.P2RunContext) -> p2.P2ProviderResult:
         e2_result = super().analyze(context)
-        if not self.enable_contextual_refinement or e2_result.status != "READY":
+        if e2_result.status != "READY":
+            return _with_e2_runtime_diagnostics(e2_result)
+        if not self.enable_contextual_refinement:
             return e2_result
         active = self._contextual_refiner or refinement.ContextualShotRefiner.from_vlm_provider(self)
         refined = refinement.refine_e2_provider_result(context, e2_result, refiner=active)
