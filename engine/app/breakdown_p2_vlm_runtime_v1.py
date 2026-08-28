@@ -4,10 +4,11 @@ The frozen provider contract intentionally fail-closes on unusable VLM semantics
 wrapper keeps that behaviour while preserving short, non-secret diagnostics emitted by
 the isolated runner so local Windows acceptance can distinguish the actual failure.
 
-On Windows the Qwen utility stack can fall back from TorchCodec to torchvision when a
-Reference Clip cannot be opened. torchvision's legacy video metadata path may then raise
-``KeyError('video_fps')``, masking the real decode issue. The production compatibility
-profile therefore prefers the already-installed TransVLM ``decord`` backend on Windows.
+On Windows the Qwen utility stack can fall back from TorchCodec/decord to torchvision
+when a Reference Clip cannot be opened. torchvision's legacy video metadata path may
+then raise ``KeyError('video_fps')``, masking the real decode issue. The production
+compatibility profile therefore prefers decord and launches Qwen through a strict-reader
+shim that prevents qwen-vl-utils from silently switching back to torchvision.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ class Qwen3VLSemanticProvider(_BaseQwen3VLSemanticProvider):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         if kwargs.get("runner_script") is None:
             repo_root = Path(__file__).resolve().parents[2]
-            kwargs["runner_script"] = str(repo_root / "scripts" / "run_breakdown_vlm_qwen3_diagnostic.py")
+            kwargs["runner_script"] = str(repo_root / "scripts" / "run_breakdown_vlm_qwen3_strict_reader.py")
         self._runtime_failure_details: tuple[str, ...] = ()
         self._subprocess_failure_detail: str | None = None
         super().__init__(*args, **kwargs)
