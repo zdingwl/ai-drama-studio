@@ -1,12 +1,12 @@
 # AI Drama Studio — Project State
 
-> **Last synchronized:** 2026-08-28 09:18 +08:00  
+> **Last synchronized:** 2026-08-28  
 > **Repository:** `zdingwl/ai-drama-studio`  
 > **Branch:** `main`  
 > **Architecture:** Reference Video V2  
 > **FastAPI app version:** `2.4.1`  
 > **Formal Character runtime:** Character V10.1  
-> **Breakdown-first phase:** P2 IN PROGRESS / P2.1 + P2.2 + P2.3 + P2.4 COMPLETE / P2.5 NEXT
+> **Breakdown-first phase:** P2 IN PROGRESS / P2.1 + P2.2 + P2.3 + P2.4 + P2.5 COMPLETE / P2.6 NEXT
 
 ## 1. Current-state source of truth
 
@@ -33,10 +33,10 @@ Source-of-truth split:
 PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests = CURRENT
 BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN = accepted TARGET + phase status
 BREAKDOWN_DRAFT_DATA_CONTRACT = frozen P1 semantic/data contract
-BREAKDOWN_P2_SIDECAR_CONTRACT = P2 Provider/raw-Evidence contract + implemented subphase status
+BREAKDOWN_P2_SIDECAR_CONTRACT = P2 Provider/raw-Evidence/Fusion contract + implemented subphase status
 ```
 
-Do not mark P2.5+ as implemented because ASR/OCR/VLM raw Evidence now exists. Do not mark P2 complete until Fusion and real-video closure are complete.
+P2.5 Fusion is now implemented. Do not mark the whole P2 phase complete until P2.6 real-video/model-quality/Windows closure is complete.
 
 ## 2. Accepted Breakdown-first product direction
 
@@ -58,7 +58,7 @@ Core principle:
 
 > **先看懂，再识别，再回填。**
 
-Current distinction after P2.4:
+Current distinction after P2.5:
 
 ```text
 P1 implemented
@@ -76,8 +76,8 @@ P2.3 implemented
 P2.4 implemented
 = formal local Qwen3-VL Provider analyzes exact historical Reference Clips and emits strict anonymous shot-bound VLM_OUTPUT semantic JSON
 
-P2.5 not implemented
-= ASR/OCR/VLM Fusion into complete P1 Draft is absent
+P2.5 implemented
+= immutable ASR/OCR/VLM sidecars are deterministically fused into complete P1 anonymous Draft rows, provenance links and validator/publish lifecycle
 
 P3 not implemented
 = 02 拉片 does not yet expose final structured Draft workbench
@@ -218,7 +218,7 @@ Reference Clip / Shot
 → Character + ShotCharacterBinding
 ```
 
-P1/P2.1/P2.2/P2.3/P2.4 do not change Character thresholds, same-sample cannot-link, Face hard conflict, identity creation gates or explicit Shot assignment. New V10.1 Final bindings remain explicit `shot_presence_assignments` only; historical Runs without assignment version retain compatibility fallback.
+P1/P2.1/P2.2/P2.3/P2.4/P2.5 do not change Character thresholds, same-sample cannot-link, Face hard conflict, identity creation gates or explicit Shot assignment. New V10.1 Final bindings remain explicit `shot_presence_assignments` only; historical Runs without assignment version retain compatibility fallback.
 
 ## 7. Current Scene / Prop reality
 
@@ -229,7 +229,7 @@ SceneCandidate / ShotSceneEvidence
 PropCandidate / ShotPropEvidence
 ```
 
-Current Scene logic is still lightweight, not target semantic Scene resolver. Prop remains fail-closed when reliable detection is not configured. P1 SceneSegmentDraft/DraftPropHint and P2 OCR/VLM semantics are anonymous Evidence layers, not Final Scene/Prop truth.
+Current Scene logic is still lightweight, not target semantic Scene resolver. Prop remains fail-closed when reliable detection is not configured. P1 SceneSegmentDraft/DraftPropHint and P2 OCR/VLM/Fusion semantics are anonymous Evidence/Draft layers, not Final Scene/Prop truth.
 
 ## 8. Breakdown P2 — IN PROGRESS
 
@@ -259,7 +259,7 @@ ASR/OCR/VLM share one synchronous local Provider boundary. Provider results are 
 workspace/<project>/episodes/<episode>/breakdown/<run>/evidence/<component>/<sha256>.json
 ```
 
-Final Asset/Binding IDs are rejected recursively. STALE/non-current Runs cannot continue active writes. P2.1 does not create fake Run-level BreakdownEvidenceLink; P2.5 will link actual Draft owners.
+Final Asset/Binding IDs are rejected recursively. STALE/non-current Runs cannot continue active writes. P2.1 does not create fake Run-level BreakdownEvidenceLink; P2.5 links actual Draft owners after Fusion creates them.
 
 ### 8.2 P2.2 formal ASR Provider — IMPLEMENTED
 
@@ -378,26 +378,97 @@ partial per-Shot failure + usable outputs → READY with warnings
 all Shot outputs unusable/failed → FAILED
 ```
 
-P2.4 does not create `SceneSegmentDraft`, `ShotSemanticDraft`, `LocalSubject`, `TimelineEvent`, `DraftPropHint`, Character, Scene, Prop, AssetRevision or Final Bindings. These boundaries remain for P2.5+.
+P2.4 does not create `SceneSegmentDraft`, `ShotSemanticDraft`, `LocalSubject`, `TimelineEvent`, `DraftPropHint`, Character, Scene, Prop, AssetRevision or Final Bindings. P2.5 is the first phase that materializes the anonymous P1 Draft graph from raw Evidence.
 
-### 8.5 P2.5 — NEXT / NOT IMPLEMENTED
+### 8.5 P2.5 multimodal Fusion → complete anonymous P1 Draft — IMPLEMENTED
 
-Still missing:
+Formal implementation:
 
 ```text
-P2.5 load immutable ASR/OCR/VLM sidecars
-→ align ASR across exact ShotRevisionItem boundaries
-→ OCR temporal stitching/deduping
-→ VLM + ASR + OCR evidence fusion
-→ SceneSegmentDraft / ShotSemanticDraft / LocalSubject / TimelineEvent / DraftPropHint
-→ BreakdownEvidenceLink provenance
-→ P1 validator
-→ publish READY / READY_WITH_WARNINGS
+engine/app/breakdown_p2_fusion_v1.py
+engine/tests/v2/test_breakdown_p2_fusion_v1.py
 ```
 
-P2.5 must not create Final Character/Scene/Prop or Final Shot Bindings. Historical ASR/Speaker helpers remain compatibility code; direct Speaker → CharacterCandidate is not the P2 identity path.
+Formal input remains the immutable P2 sidecars already registered on the same `PROCESSING BreakdownRun`. Fusion does **not** rerun ASR/OCR/VLM. Before consuming an artifact it verifies:
 
-P2.6 still owns real short-drama benchmark/Windows real-model quality closure. Contract/fake-runner CI is not proof that Qwen3-VL-4B, faster-whisper large-v3 or PP-OCRv6 small is the permanent quality winner.
+```text
+file:// artifact exists
+sha256 fingerprint matches registered fingerprint
+sidecar schema matches breakdown-p2-evidence-v1
+run/project/episode/source_shot_revision/component all match current context
+Provider status/provider/model/evidence_count match registered component status
+source ShotRevision is still Current
+```
+
+Hard/degraded component policy:
+
+```text
+VLM READY required for complete ShotSemanticDraft generation
+VLM FAILED / NOT_CONFIGURED / non-READY → hard fail
+ASR/OCR NO_EVIDENCE or NOT_AVAILABLE → allowed, publish with warnings
+FAILED / NOT_CONFIGURED component → hard fail
+```
+
+Fusion policies:
+
+```text
+Scene Segment:
+  consecutive ShotRevisionItems only
+  merge adjacent Shots only when normalized VLM location + INT/EXT + time-of-day signature matches
+  unknown location starts a new conservative Segment
+
+Shot Draft:
+  exactly one ShotSemanticDraft per historical ShotRevisionItem
+  source Shot/time/ordinal snapshots copied from exact RevisionItem
+
+LocalSubject:
+  Segment-scoped anonymous subject only
+  exact normalized appearance can link across Shots inside the Segment
+  if the same appearance occurs for 2+ subjects in any one Shot, that appearance is cannot-link for the whole Segment
+  ambiguous occurrences fall back to shot-local subject keys
+  VLM subject_A/subject_B labels never become Character identity
+
+VLM TimelineEvent:
+  VISUAL/ACTION only
+  start_ratio/end_ratio converted to exact source microseconds inside the Shot
+
+ASR TimelineEvent:
+  ASR_SEGMENT is intersected with exact historical Shot boundaries
+  ASR_WORD timing is preferred for per-Shot text/time reconstruction
+  cross-Shot segment text fallback is warning-visible when word timing is unavailable
+
+OCR TimelineEvent:
+  raw repeated OCR observations remain immutable sidecars
+  Fusion groups same text by Shot + temporal gap + normalized geometry compatibility
+  inferred OCR duration never crosses the Shot boundary
+
+Props:
+  plot-relevant VLM prop hints become Segment-scoped DraftPropHint + Shot occurrence
+  still not Final Prop
+
+Provenance:
+  BreakdownEvidenceLink is created only after real Draft owners exist
+  links point back to immutable ASR/OCR/VLM sidecar source IDs/URIs
+```
+
+The complete graph is written before calling the existing P1 validator. Publish still goes through `breakdown_service_v1.publish_breakdown_run`; validator failure marks the Run FAILED and never replaces an older Current READY Run.
+
+P2.5 still does **not** create Character, Scene, Prop, AssetRevision or Final Shot Bindings, and it does not modify Character V10.1 thresholds/cannot-link/Face conflicts/explicit assignment/Final Gate.
+
+### 8.6 P2.6 — NEXT
+
+P2.6 owns real short-drama benchmark and real-model closure:
+
+```text
+run actual faster-whisper / PP-OCRv6 / Qwen3-VL on representative short-drama clips
+inspect Shot-level Draft quality and timing
+measure ASR split/OCR stitch/VLM semantic failure cases
+validate Windows/local-GPU setup and recovery paths
+record quality/cost/runtime evidence
+close or revise model/runtime defaults before P3 UI depends on them
+```
+
+Contract/fake-runner tests are not proof that Qwen3-VL-4B, faster-whisper large-v3 or PP-OCRv6 small is the permanent quality winner.
 
 ## 9. Current implementation status
 
@@ -417,7 +488,7 @@ P2.6 still owns real short-drama benchmark/Windows real-model quality closure. C
   P2.2 ASR Provider + segment/word timing: IMPLEMENTED
   P2.3 OCR Observation Provider: IMPLEMENTED
   P2.4 VLM anonymous semantics Provider: IMPLEMENTED
-  P2.5 Fusion → complete anonymous Draft publish: NOT IMPLEMENTED
+  P2.5 Fusion → complete anonymous Draft publish: IMPLEMENTED
   P2.6 real-video benchmark/closure: NOT IMPLEMENTED
   P3 structured Draft UI: NOT IMPLEMENTED
   Final standard/international Breakdown renderer: NOT IMPLEMENTED
@@ -437,13 +508,13 @@ P2.6 still owns real short-drama benchmark/Windows real-model quality closure. C
 ```text
 P0 planning/contracts                            = COMPLETE
 P1 Draft data/runtime contract + compatibility   = COMPLETE
-P2 ASR/OCR/VLM anonymous Draft sidecar           = IN PROGRESS
+P2 ASR/OCR/VLM anonymous Draft sidecar/Fusion    = IN PROGRESS
   P2.1 Provider/Evidence sidecar                  = COMPLETE
   P2.2 ASR Provider + segment/word timing         = COMPLETE
   P2.3 OCR Observation Provider                   = COMPLETE
   P2.4 VLM anonymous Shot semantics               = COMPLETE
-  P2.5 Fusion / P1 Draft publish                  = NEXT
-  P2.6 real-video/Windows/docs closure            = PLANNED
+  P2.5 Fusion / P1 Draft publish                  = COMPLETE
+  P2.6 real-video/Windows/docs closure            = NEXT
 P3 02 拉片 structured Draft UI                   = PLANNED
 P4 Draft-guided Scene / Prop evidence            = PLANNED
 P5 Draft ↔ Character safe integration            = PLANNED
@@ -463,7 +534,7 @@ ShotPropBinding
 AssetRevision
 ```
 
-## 11. Current CI reality
+## 11. Current CI / verification reality
 
 P2.4 implementation acceptance at commit `4872333e4833eb421850509d860e11f58b1687a0`:
 
@@ -475,11 +546,22 @@ Windows Breakdown P2 provider suite: 37/37 PASS
 Frontend: existing vue-tsc / TypeScript build failure
 ```
 
-The six additional Ubuntu passes over P2.3 are exactly the six new P2.4 VLM focused tests. The same historical 28 backend failure categories remain; no new P2.4 backend failure category was introduced.
+P2.5 initial multimodal Fusion test commit `942f9f524d0ccd1f11c911d60b9b148b18d9396d` produced:
 
-Known historical categories include missing lightweight-CI `cv2`, missing `trackers`, FFmpeg assumptions, obsolete V6-era assertions and historical Final Gate/workspace expectations.
+```text
+Ubuntu full pytest: 29 failed, 248 passed, 1 skipped
+P2.5 focused tests: 5 passed / 1 failed
+```
 
-Do not claim the whole repository is green. Do not claim contract/fake-provider tests are real-video VLM quality acceptance.
+The only new P2.5 failure was `test_same_shot_identical_appearance_subjects_remain_distinct`: two same-Shot subjects with identical appearance text were incorrectly merged into one LocalSubject. The historical 28 failure categories were otherwise unchanged.
+
+That cannot-link bug was fixed on `main` by commit chain ending at `b59309d305a15dfa80e9a6af0f961f93fcac5bf9`: if an appearance signature occurs for multiple people in the same Shot, that signature is no longer allowed to drive cross-Shot LocalSubject merging inside the Segment. A local pure-logic check verified the normal same-person cross-Shot key remains shared while the same-Shot collision produces separate shot-local keys.
+
+Per user instruction, **no fresh GitHub Actions CI rerun was requested after this fix because the repository has no CI quota to spend**. Therefore do not claim a fresh 6/6 hosted-CI result for P2.5. The implementation is considered contract-complete from the prior 5/6 run plus the narrowly scoped cannot-link correction and logic verification; P2.6 remains responsible for real-video/model quality closure.
+
+Known historical backend categories include missing lightweight-CI `cv2`, missing `trackers`, FFmpeg assumptions, obsolete V6-era assertions and historical Final Gate/workspace expectations.
+
+Do not claim the whole repository is green. Do not claim contract/fake-provider tests are real-video VLM/ASR/OCR quality acceptance.
 
 ## 12. Documentation / phase-completion rule
 
@@ -497,4 +579,4 @@ latest session handoff
 
 For the next conversation, verify `main` SHA before relying on a handoff commit SHA.
 
-P1 is closed. P2.1–P2.4 are complete. The next safe implementation step is **P2.5 ASR/OCR/VLM Fusion → complete P1 Draft → validator/publish**.
+P1 is closed. P2.1–P2.5 are complete. The next safe implementation step is **P2.6 real short-drama / real-model benchmark + Windows/local-GPU closure**, then P3 structured Draft UI.
