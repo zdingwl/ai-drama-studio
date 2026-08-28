@@ -18,11 +18,11 @@ const shotRefreshToken = ref(0)
 
 const stages = [
   { id: 1, title: '剧集管理', subtitle: '批量导入 / 排序 / 替换' },
-  { id: 2, title: '拉片', subtitle: '镜头边界 / AI Structured Draft' },
-  { id: 3, title: '资产', subtitle: '人物 / 场景 / 道具 + Shot 绑定' },
-  { id: 4, title: '内容剧本', subtitle: '对白 / Speaker / 动作 / 结构化剧本' },
-  { id: 5, title: '重制设计', subtitle: '角色 / 场景 / 本土化 / Shot Spec' },
-  { id: 6, title: '生成 / 导出', subtitle: 'Video / Voice / LipSync / QC / Export' },
+  { id: 2, title: '拉片', subtitle: '镜头边界 / AI 结构化草稿' },
+  { id: 3, title: '资产', subtitle: '人物 / 场景 / 道具 + 镜头绑定' },
+  { id: 4, title: '内容剧本', subtitle: '对白 / 说话人 / 动作 / 结构化剧本' },
+  { id: 5, title: '重制设计', subtitle: '角色 / 场景 / 本土化 / 镜头规格' },
+  { id: 6, title: '生成 / 导出', subtitle: '视频 / 语音 / 口型同步 / 质检 / 导出' },
 ]
 
 /**
@@ -83,7 +83,7 @@ onUnmounted(() => {
         </button>
       </nav>
       <div class="sidebar-footer">
-        <span>REFERENCE VIDEO V2.5</span>
+        <span>参考视频 V2.5</span>
         <small>{{ project.episodes.length }} 集 · 本地工作流</small>
       </div>
     </aside>
