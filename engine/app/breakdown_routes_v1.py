@@ -5,10 +5,12 @@ formal ASR -> OCR -> VLM -> Fusion pipeline; they do not expose lower-level prov
 """
 from __future__ import annotations
 
+from threading import Lock
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from engine.app.breakdown_p2_acceptance_v1 import (
     build_acceptance_report,
@@ -21,9 +23,10 @@ from engine.app.breakdown_serializer_v1 import (
     get_current_breakdown,
     list_breakdown_runs,
 )
-from engine.app.studio_v2 import get_episode, get_project, list_episode_records
+from engine.app.studio_v2 import get_episode, get_project, get_session, list_episode_records
 from engine.app.task_progress_v2 import (
     ACTIVE_TASK_STATUSES,
+    BackgroundTaskRecord,
     create_task,
     fail_task,
     finish_task,
@@ -36,6 +39,8 @@ router = APIRouter(prefix="/api", tags=["breakdown"])
 
 BREAKDOWN_TASK_TYPE = "EPISODE_BREAKDOWN_P2"
 BREAKDOWN_BATCH_TASK_TYPE = "BATCH_BREAKDOWN_P2"
+_P2_TASK_TYPES = {BREAKDOWN_TASK_TYPE, BREAKDOWN_BATCH_TASK_TYPE}
+_P2_ENQUEUE_LOCK = Lock()
 _STAGE_LABELS = {
     "breakdown_prepare": "准备 AI 拉片",
     "breakdown_asr": "对白识别",
@@ -66,6 +71,25 @@ def _active_task(project_id: str, task_type: str, episode_id: str | None) -> dic
     return None
 
 
+def _has_any_active_p2_task() -> bool:
+    """Global local-runtime mutex guard for heavy P2 work.
+
+    The product currently runs local heavy media/model jobs with concurrency=1. The in-process Lock
+    closes same-process enqueue races; the persisted task lookup also protects normal restart/UI flows.
+    """
+
+    with get_session() as session:
+        active = session.scalar(
+            select(BackgroundTaskRecord.id)
+            .where(
+                BackgroundTaskRecord.task_type.in_(_P2_TASK_TYPES),
+                BackgroundTaskRecord.status.in_(ACTIVE_TASK_STATUSES),
+            )
+            .limit(1)
+        )
+        return active is not None
+
+
 def _enqueue(
     background: BackgroundTasks,
     *,
@@ -77,18 +101,26 @@ def _enqueue(
     runner_args: tuple[Any, ...],
     total_items: int | None,
 ) -> dict[str, Any]:
-    existing = _active_task(project_id, task_type, episode_id)
-    if existing is not None:
-        return existing
-    task = create_task(
-        project_id=project_id,
-        episode_id=episode_id,
-        task_type=task_type,
-        title=title,
-        progress_mode="determinate",
-        total_items=total_items,
-        deduplicate_active=False,
-    )
+    with _P2_ENQUEUE_LOCK:
+        # Exact duplicate clicks remain idempotent: return the already-active task.
+        existing = _active_task(project_id, task_type, episode_id)
+        if existing is not None:
+            return existing
+        # Different single/batch/project P2 jobs must not run concurrently on the same local runtime/GPU.
+        if _has_any_active_p2_task():
+            raise HTTPException(
+                status_code=409,
+                detail="当前已有 AI 拉片任务正在执行；P2 本地重任务固定 concurrency=1",
+            )
+        task = create_task(
+            project_id=project_id,
+            episode_id=episode_id,
+            task_type=task_type,
+            title=title,
+            progress_mode="determinate",
+            total_items=total_items,
+            deduplicate_active=False,
+        )
     background.add_task(runner, task["id"], *runner_args)
     return task
 
@@ -256,6 +288,8 @@ def api_start_batch_breakdown(project_id: str, background: BackgroundTasks) -> d
     if get_project(project_id) is None:
         raise _not_found("项目不存在")
     episodes = list_episode_records(project_id)
+    if not episodes:
+        raise HTTPException(status_code=400, detail="项目还没有剧集")
     return _enqueue(
         background,
         project_id=project_id,
