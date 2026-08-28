@@ -13,6 +13,7 @@ import type { Episode } from '../types/studio'
 import { runStatusLabel } from '../utils/breakdownUiText'
 import BreakdownInspectorV1 from './BreakdownInspectorV1.vue'
 import BreakdownNavigatorV1 from './BreakdownNavigatorV1.vue'
+import BreakdownRunStatePanelV1 from './BreakdownRunStatePanelV1.vue'
 import BreakdownShotWorkspaceV1 from './BreakdownShotWorkspaceV1.vue'
 
 const props = defineProps<{
@@ -277,7 +278,7 @@ watch(
         <span v-if="warningLines.length > 8">还有 {{ warningLines.length - 8 }} 条提示</span>
       </div>
 
-      <div v-if="draft.run.error_message" class="draft-v2-alert danger">
+      <div v-if="draft.run.error_message && draft.scene_segments.length" class="draft-v2-alert danger">
         <strong>运行错误</strong>
         <span>{{ draft.run.error_message }}</span>
       </div>
@@ -287,6 +288,12 @@ watch(
       <strong>暂无可读取的结构化草稿</strong>
       <p>选择的剧集还没有拉片运行记录。P3 不会伪造结果，也不会在读取时自动运行模型。</p>
     </div>
+
+    <BreakdownRunStatePanelV1
+      v-else-if="draft && !draft.scene_segments.length"
+      :run="draft.run"
+      :unassigned-count="unassignedCount"
+    />
 
     <div v-else-if="draft" class="draft-v2-grid">
       <BreakdownNavigatorV1
