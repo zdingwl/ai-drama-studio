@@ -1,0 +1,18 @@
+{
+  "reviewer": null,
+  "scores": {
+    "asr_dialogue": null,
+    "asr_timing": null,
+    "ocr_text": null,
+    "vlm_scene": null,
+    "vlm_subjects": null,
+    "vlm_actions": null,
+    "vlm_props": null,
+    "fusion_completeness": null,
+    "fusion_timing": null,
+    "fusion_conflict_handling": null
+  },
+  "not_applicable": [],
+  "blocking_issues": [],
+  "notes": null
+}
