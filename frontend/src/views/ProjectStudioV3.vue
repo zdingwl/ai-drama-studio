@@ -2,9 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AssetStageV4 from '../components/AssetStageV4.vue'
+import BreakdownStageV1 from '../components/BreakdownStageV1.vue'
 import EpisodeManagerV3 from '../components/EpisodeManagerV3.vue'
-import ShotCacheManagerV51 from '../components/ShotCacheManagerV51.vue'
-import ShotWorkbenchV4 from '../components/ShotWorkbenchV4.vue'
 import { api } from '../api/client'
 import type { BackgroundTask, Project } from '../types/studio'
 
@@ -19,7 +18,7 @@ const shotRefreshToken = ref(0)
 
 const stages = [
   { id: 1, title: '剧集管理', subtitle: '批量导入 / 排序 / 替换' },
-  { id: 2, title: '拉片', subtitle: '自动切镜 / 必要时人工修正' },
+  { id: 2, title: '拉片', subtitle: '镜头边界 / AI Structured Draft' },
   { id: 3, title: '资产', subtitle: '人物 / 场景 / 道具 + Shot 绑定' },
   { id: 4, title: '内容剧本', subtitle: '对白 / Speaker / 动作 / 结构化剧本' },
   { id: 5, title: '重制设计', subtitle: '角色 / 场景 / 本土化 / Shot Spec' },
@@ -91,10 +90,13 @@ onUnmounted(() => {
 
     <main :class="['studio-main', { 'shot-stage-main': activeStage === 2, 'asset-stage-main': activeStage === 3 }]">
       <EpisodeManagerV3 v-if="activeStage === 1" :project="project" @refresh="refreshProject" />
-      <template v-else-if="activeStage === 2">
-        <ShotCacheManagerV51 :project-id="project.id" :episodes="project.episodes" />
-        <ShotWorkbenchV4 :key="shotRefreshToken" :project-id="project.id" :episodes="project.episodes" @refresh-project="refreshProject" />
-      </template>
+      <BreakdownStageV1
+        v-else-if="activeStage === 2"
+        :project-id="project.id"
+        :episodes="project.episodes"
+        :refresh-token="shotRefreshToken"
+        @refresh-project="refreshProject"
+      />
       <AssetStageV4 v-else-if="activeStage === 3" :project-id="project.id" :episodes="project.episodes" />
 
       <section v-else class="workspace-panel planned-panel">
