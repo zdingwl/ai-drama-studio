@@ -59,23 +59,26 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
       <div class="breakdown-stage-tabs" role="tablist" aria-label="拉片子工作区">
         <button :class="{ active: mode === 'shots' }" type="button" @click="mode = 'shots'">
           <b>镜头管理</b>
-          <small>检查切镜 / 拆分 / 合并 / 参考片段</small>
+          <small>检查与修正切点</small>
         </button>
         <button :class="{ active: mode === 'draft' }" type="button" @click="mode = 'draft'">
           <b>拉片结果</b>
-          <small>场景 / 人物 / 对白 / 动作 / 道具</small>
+          <small>查看镜头内容</small>
         </button>
       </div>
     </div>
 
     <template v-if="mode === 'shots'">
-      <ShotCacheManagerV51 :project-id="projectId" :episodes="episodes" />
       <ShotWorkbenchV4
         :key="refreshToken"
         :project-id="projectId"
         :episodes="episodes"
         @refresh-project="emit('refresh-project')"
       />
+      <details class="shot-stage-advanced">
+        <summary>高级设置与缓存</summary>
+        <ShotCacheManagerV51 :project-id="projectId" :episodes="episodes" />
+      </details>
     </template>
 
     <div v-else class="draft-mode-stack">
@@ -96,21 +99,49 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
 </template>
 
 <style scoped>
-.breakdown-stage-v1, .draft-mode-stack { display: grid; gap: 10px; min-height: 0; }
-.breakdown-stage-switcher { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 14px; align-items: center; border: 1px solid #dce3ec; border-radius: 13px; padding: 10px 12px; background: #fff; box-shadow: 0 5px 20px rgba(38, 51, 76, .04); }
-.stage-switcher-title { display: grid; gap: 3px; }
-.stage-switcher-title span { color: #7e8ca1; font-size: 10px; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
-.stage-switcher-title strong { color: #31435f; font-size: 15px; }
-.breakdown-stage-tabs { display: flex; gap: 7px; justify-content: flex-end; }
-.breakdown-stage-tabs button { min-width: 240px; min-height: 46px; display: grid; gap: 2px; border: 1px solid #e0e5ed; border-radius: 9px; padding: 7px 11px; background: #f8fafc; color: #68758a; cursor: pointer; text-align: left; }
-.breakdown-stage-tabs button.active { border-color: #86a2e3; background: #eef4ff; box-shadow: inset 3px 0 0 #547ad0; color: #405b92; }
-.breakdown-stage-tabs b { font-size: 13px; }
-.breakdown-stage-tabs small { color: #8895a8; font-size: 10px; }
-@media (max-width: 900px) {
-  .breakdown-stage-switcher { grid-template-columns: 1fr; }
+.breakdown-stage-v1,
+.draft-mode-stack { display: grid; gap: 10px; min-height: 0; }
+.breakdown-stage-switcher {
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid #dce3ec;
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: #fff;
+  box-shadow: 0 5px 18px rgba(38, 51, 76, .035);
+}
+.stage-switcher-title { flex: none; display: flex; gap: 9px; align-items: baseline; }
+.stage-switcher-title span { color: #8591a4; font-size: 10px; font-weight: 850; letter-spacing: .04em; }
+.stage-switcher-title strong { color: #31435f; font-size: 14px; }
+.breakdown-stage-tabs { display: flex; gap: 6px; justify-content: flex-end; }
+.breakdown-stage-tabs button {
+  min-width: 150px;
+  min-height: 38px;
+  display: grid;
+  gap: 1px;
+  border: 1px solid #e0e5ed;
+  border-radius: 8px;
+  padding: 5px 10px;
+  background: #f8fafc;
+  color: #68758a;
+  cursor: pointer;
+  text-align: left;
+}
+.breakdown-stage-tabs button.active { border-color: #8da9e6; background: #eef4ff; box-shadow: inset 3px 0 0 #547ad0; color: #405b92; }
+.breakdown-stage-tabs b { font-size: 12px; }
+.breakdown-stage-tabs small { color: #8b97a9; font-size: 9px; }
+.shot-stage-advanced { border: 1px solid #dfe5ef; border-radius: 10px; background: #fff; overflow: hidden; }
+.shot-stage-advanced > summary { padding: 9px 12px; color: #7c899d; font-size: 10px; font-weight: 800; cursor: pointer; }
+.shot-stage-advanced[open] > summary { border-bottom: 1px solid #edf0f5; background: #fbfcfe; }
+.shot-stage-advanced :deep(.shot-cache-v51) { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+@media (max-width: 760px) {
+  .breakdown-stage-switcher { align-items: stretch; flex-direction: column; }
   .breakdown-stage-tabs { justify-content: flex-start; }
 }
-@media (max-width: 620px) {
+@media (max-width: 520px) {
   .breakdown-stage-tabs { display: grid; grid-template-columns: 1fr 1fr; }
   .breakdown-stage-tabs button { min-width: 0; }
 }
