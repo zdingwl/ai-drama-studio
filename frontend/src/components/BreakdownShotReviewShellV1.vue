@@ -2,7 +2,7 @@
 import type { BreakdownSceneSegment, BreakdownShotDraft, BreakdownTimelineEvent } from '../types/breakdown'
 import BreakdownShotWorkspaceV1 from './BreakdownShotWorkspaceV1.vue'
 
-const props = defineProps<{
+defineProps<{
   segment: BreakdownSceneSegment | null
   shot: BreakdownShotDraft | null
   selectedEventId: string
