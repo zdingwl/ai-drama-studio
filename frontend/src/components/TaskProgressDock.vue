@@ -115,10 +115,15 @@ function itemProgressLabel(task: BackgroundTask): string {
   return ''
 }
 
-function dismissTask(taskId: string): void {
-  if (!dismissedTaskIds.value.includes(taskId)) {
-    replaceDismissedTaskIds([...dismissedTaskIds.value, taskId])
-  }
+/**
+ * 关闭当前已经存在的失败/警告提示，而不是删除任务。
+ * 这样同一批历史失败不会一条接一条重新顶上来；未来新 Task 使用新 ID，仍会正常提示。
+ */
+function dismissAttentionTasks(): void {
+  const ids = tasks.value
+    .filter((task) => task.status === 'FAILED' || task.status === 'READY_WITH_WARNINGS')
+    .map((task) => task.id)
+  if (ids.length) replaceDismissedTaskIds([...dismissedTaskIds.value, ...ids])
   expanded.value = false
 }
 
@@ -268,8 +273,8 @@ onUnmounted(() => {
       <button
         v-if="!currentTask && attentionTask"
         class="task-dock-dismiss"
-        title="关闭这条任务提示（刷新后保持关闭）"
-        @click="dismissTask(attentionTask.id)"
+        title="关闭当前错误/警告提示（刷新后保持关闭，新任务仍会提示）"
+        @click="dismissAttentionTasks"
       >×</button>
     </div>
 
