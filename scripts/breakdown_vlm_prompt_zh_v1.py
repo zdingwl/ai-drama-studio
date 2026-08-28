@@ -34,6 +34,14 @@ def build_prompt(source_language: str) -> str:
 4. scene.time_of_day 优先使用稳定中文词：白天、夜晚、清晨、黄昏；无法判断时写“未知”或留空。
 5. subjects[].screen_position 优先使用稳定中文词：左侧、中央、右侧、前景、背景；无法判断时写“未知”或留空。
 
+【用于 Fusion 的稳定措辞规则】
+1. scene.location_hint 必须是简短、通用、稳定的地点类别，不要写长句，不要凭想象加具体店名/酒店名/房间号。例如只看得出走廊就写“走廊”，只看得出客厅就写“客厅”。
+2. 同类可见场景尽量使用同一个中文地点词，避免“走廊 / 室内走廊 / 酒店走廊”这类无证据的措辞漂移。
+3. subjects[].appearance_summary 使用稳定顺序描述最有区分度的可见特征：发型/头部特征 → 上衣颜色与款式 → 下装 → 显著配饰或手持物。保持客观、简洁，不用修辞，不写动作。
+4. subjects[].activity_summary 只写当前动作，不重复外观信息。
+5. props[].label 使用简短稳定的中文名词，例如“黑色塑料袋”“手机”“蓝色玫瑰”，不要写成完整句子。
+6. shot_type_hint 和 camera_motion_hint 使用短中文术语，例如“特写 / 中景 / 全景”“静止 / 推近 / 拉远 / 跟拍”，不要写解释性长句。
+
 【视觉事实边界】
 1. 不要猜测真实姓名、全局身份、Character ID、Scene ID、Prop ID 或任何业务/数据库 ID。
 2. 人物只在当前镜头内匿名编号，按稳定视觉顺序使用 subject_A、subject_B、subject_C……。
@@ -47,7 +55,7 @@ def build_prompt(source_language: str) -> str:
 JSON schema:
 {{
   "scene": {{
-    "location_hint": "简体中文地点短语或空字符串",
+    "location_hint": "简体中文稳定地点短语或空字符串",
     "interior_exterior": "INT|EXT|MIXED|UNKNOWN",
     "time_of_day": "简体中文时间提示或空字符串",
     "environment_description": "简体中文环境描述或空字符串"
@@ -55,16 +63,16 @@ JSON schema:
   "shot": {{
     "summary": "简体中文镜头核心内容摘要",
     "visual_description": "简体中文可见构图与动作描述",
-    "shot_type_hint": "简体中文景别提示或空字符串",
-    "camera_motion_hint": "简体中文运镜提示或空字符串",
+    "shot_type_hint": "简体中文短景别术语或空字符串",
+    "camera_motion_hint": "简体中文短运镜术语或空字符串",
     "narrative_function_hint": "简体中文叙事功能提示或空字符串",
     "composition_hint": "简体中文构图提示或空字符串"
   }},
   "subjects": [
     {{
       "label": "subject_A",
-      "appearance_summary": "简体中文可见外观描述",
-      "activity_summary": "简体中文可见动作描述",
+      "appearance_summary": "按稳定特征顺序编写的简体中文可见外观描述",
+      "activity_summary": "简体中文当前可见动作描述",
       "screen_position": "简体中文画面位置或空字符串",
       "visibility": "FULL|PARTIAL|OCCLUDED|UNKNOWN",
       "speaking_state": "LIKELY_SPEAKING|NOT_SPEAKING|UNKNOWN"
@@ -81,7 +89,7 @@ JSON schema:
   ],
   "props": [
     {{
-      "label": "简体中文剧情相关道具名称",
+      "label": "简体中文稳定道具名词",
       "importance": "LOW|MEDIUM|HIGH",
       "narrative_reason": "简体中文说明它为何与当前可见剧情/互动相关",
       "subject_labels": ["subject_A"]
