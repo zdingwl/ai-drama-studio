@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import type { BreakdownRunSummary } from '../types/breakdown'
 import type { BackgroundTask, Episode } from '../types/studio'
-import BreakdownDraftV2 from './BreakdownDraftV2.vue'
+import BreakdownResultsV1 from './BreakdownResultsV1.vue'
 import BreakdownTaskBarV1 from './BreakdownTaskBarV1.vue'
 import ShotCacheManagerV51 from './ShotCacheManagerV51.vue'
 import ShotWorkbenchV4 from './ShotWorkbenchV4.vue'
@@ -53,20 +53,19 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
   <section class="breakdown-stage-v1">
     <div class="breakdown-stage-switcher">
       <div class="stage-switcher-title">
-        <span>02 拉片工作区</span>
-        <strong>{{ mode === 'shots' ? '镜头边界' : '结构化草稿' }}</strong>
+        <span>02 拉片</span>
+        <strong>{{ mode === 'shots' ? '镜头管理' : '拉片结果' }}</strong>
       </div>
       <div class="breakdown-stage-tabs" role="tablist" aria-label="拉片子工作区">
         <button :class="{ active: mode === 'shots' }" type="button" @click="mode = 'shots'">
-          <b>镜头边界</b>
-          <small>镜头 / 版本 / 参考片段</small>
+          <b>镜头管理</b>
+          <small>检查切镜 / 拆分 / 合并 / 参考片段</small>
         </button>
         <button :class="{ active: mode === 'draft' }" type="button" @click="mode = 'draft'">
-          <b>结构化草稿</b>
-          <small>场景 / 镜头 / 人物 / 对白 / 动作</small>
+          <b>拉片结果</b>
+          <small>场景 / 人物 / 对白 / 动作 / 道具</small>
         </button>
       </div>
-      <div class="breakdown-stage-boundary">AI 草稿 · 不等同最终资产</div>
     </div>
 
     <template v-if="mode === 'shots'">
@@ -86,7 +85,7 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
         :episodes="episodes"
         :run="currentDraftRun"
       />
-      <BreakdownDraftV2
+      <BreakdownResultsV1
         :key="draftRefreshToken"
         :episodes="episodes"
         :selected-episode-id="selectedEpisodeId"
@@ -97,23 +96,21 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
 </template>
 
 <style scoped>
-.breakdown-stage-v1, .draft-mode-stack { display: grid; gap: 12px; min-height: 0; }
-.breakdown-stage-switcher { display: grid; grid-template-columns: 190px minmax(0, 1fr) auto; gap: 14px; align-items: center; border: 1px solid #dce3ec; border-radius: 13px; padding: 10px 12px; background: #fff; box-shadow: 0 5px 20px rgba(38, 51, 76, .04); }
+.breakdown-stage-v1, .draft-mode-stack { display: grid; gap: 10px; min-height: 0; }
+.breakdown-stage-switcher { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 14px; align-items: center; border: 1px solid #dce3ec; border-radius: 13px; padding: 10px 12px; background: #fff; box-shadow: 0 5px 20px rgba(38, 51, 76, .04); }
 .stage-switcher-title { display: grid; gap: 3px; }
-.stage-switcher-title span { color: #7e8ca1; font-size: 11px; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
-.stage-switcher-title strong { color: #31435f; font-size: 14px; }
-.breakdown-stage-tabs { display: flex; gap: 7px; justify-content: center; }
-.breakdown-stage-tabs button { min-width: 215px; min-height: 44px; display: grid; gap: 2px; border: 1px solid #e0e5ed; border-radius: 9px; padding: 7px 11px; background: #f8fafc; color: #68758a; cursor: pointer; text-align: left; }
+.stage-switcher-title span { color: #7e8ca1; font-size: 10px; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
+.stage-switcher-title strong { color: #31435f; font-size: 15px; }
+.breakdown-stage-tabs { display: flex; gap: 7px; justify-content: flex-end; }
+.breakdown-stage-tabs button { min-width: 240px; min-height: 46px; display: grid; gap: 2px; border: 1px solid #e0e5ed; border-radius: 9px; padding: 7px 11px; background: #f8fafc; color: #68758a; cursor: pointer; text-align: left; }
 .breakdown-stage-tabs button.active { border-color: #86a2e3; background: #eef4ff; box-shadow: inset 3px 0 0 #547ad0; color: #405b92; }
 .breakdown-stage-tabs b { font-size: 13px; }
-.breakdown-stage-tabs small { color: #8895a8; font-size: 11px; }
-.breakdown-stage-boundary { border-radius: 999px; padding: 6px 9px; background: #f2f4f7; color: #778294; font-size: 11px; white-space: nowrap; }
-@media (max-width: 1100px) {
+.breakdown-stage-tabs small { color: #8895a8; font-size: 10px; }
+@media (max-width: 900px) {
   .breakdown-stage-switcher { grid-template-columns: 1fr; }
   .breakdown-stage-tabs { justify-content: flex-start; }
-  .breakdown-stage-boundary { justify-self: start; }
 }
-@media (max-width: 680px) {
+@media (max-width: 620px) {
   .breakdown-stage-tabs { display: grid; grid-template-columns: 1fr 1fr; }
   .breakdown-stage-tabs button { min-width: 0; }
 }
