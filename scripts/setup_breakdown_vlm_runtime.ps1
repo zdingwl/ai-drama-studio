@@ -7,13 +7,14 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $InferenceRoot = Join-Path $RepoRoot '.runtime\TransVLM\inference'
 $PythonExe = Join-Path $InferenceRoot '.venv\Scripts\python.exe'
 $ModelDir = Join-Path $InferenceRoot 'pretrained\Qwen3-VL-4B-Instruct'
-$Runner = Join-Path $RepoRoot 'scripts\run_breakdown_vlm_qwen3_diagnostic.py'
+$Runner = Join-Path $RepoRoot 'scripts\run_breakdown_vlm_qwen3_strict_reader.py'
+$IsWindowsPlatform = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 
 if (-not (Test-Path $PythonExe)) {
     throw 'Isolated TransVLM/Qwen runtime is missing. Run scripts/setup_transvlm_runtime.ps1 first.'
 }
 if (-not (Test-Path $Runner)) {
-    throw "Missing P2.4 diagnostic runner: $Runner"
+    throw "Missing P2.4 strict diagnostic runner: $Runner"
 }
 
 Write-Host '[Breakdown VLM] Verifying isolated Qwen3-VL runtime.'
@@ -38,10 +39,22 @@ if (-not (Test-Path (Join-Path $ModelDir 'config.json'))) {
     Write-Host '[Breakdown VLM] Qwen3-VL-4B-Instruct checkpoint already exists.'
 }
 
-Write-Host '[Breakdown VLM] Running production diagnostic runner CLI self-check.'
-& $PythonExe $Runner --help | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw 'P2.4 Qwen3-VL diagnostic runner self-check failed.'
+Write-Host '[Breakdown VLM] Running production strict-reader runner CLI self-check.'
+$PreviousReader = $env:FORCE_QWENVL_VIDEO_READER
+try {
+    if ($IsWindowsPlatform) {
+        $env:FORCE_QWENVL_VIDEO_READER = 'decord'
+    }
+    & $PythonExe $Runner --help | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'P2.4 Qwen3-VL strict-reader runner self-check failed.'
+    }
+} finally {
+    if ($null -eq $PreviousReader) {
+        Remove-Item Env:FORCE_QWENVL_VIDEO_READER -ErrorAction SilentlyContinue
+    } else {
+        $env:FORCE_QWENVL_VIDEO_READER = $PreviousReader
+    }
 }
 
 Write-Host ''
@@ -49,7 +62,7 @@ Write-Host '[Breakdown VLM] READY' -ForegroundColor Green
 Write-Host "  Python: $PythonExe"
 Write-Host "  Model:  $ModelDir"
 Write-Host '  Provider: qwen3-vl'
-if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
-    Write-Host '  Video reader: decord (Windows compatibility profile)'
+if ($IsWindowsPlatform) {
+    Write-Host '  Video reader: decord (strict; torchvision fallback disabled)'
 }
 Write-Host '  Production inference is offline; model download occurs only in setup.'
