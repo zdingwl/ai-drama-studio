@@ -402,12 +402,45 @@ def _subject_display_label(ordinal: int) -> str:
     return f"人物{letters}"
 
 
-def _appearance_key(subject: Mapping[str, Any], shot: p2.P2ShotInput, label: str) -> str:
+def _appearance_key(
+    subject: Mapping[str, Any],
+    shot: p2.P2ShotInput,
+    label: str,
+    ambiguous_appearances: set[str] | None = None,
+) -> str:
     appearance = _normalized_text(subject.get("appearance_summary"))
-    if len(appearance) >= 4:
+    if len(appearance) >= 4 and appearance not in (ambiguous_appearances or set()):
         return f"appearance:{appearance}"
-    # VLM label 只在单 Shot 内有效；没有足够外观文本时禁止拿相同 subject_A 跨 Shot 合并。
+    # VLM label 只在单 Shot 内有效。没有足够外观文本，或同一外观在同镜头出现多人时，
+    # 都必须退回 Shot-local key，防止语义 Draft 制造伪身份合并。
     return f"shot:{shot.revision_item_id}:{label}"
+
+
+def _ambiguous_subject_appearances(segment_plan: _SegmentPlan) -> set[str]:
+    """返回本 Segment 内不能用于跨 Shot 合并的外观签名。
+
+    只要某个 normalized appearance 在任一 Shot 同时出现两次以上，就说明仅靠这段
+    appearance_summary 无法区分当时的两个人。此时整个 Segment 都禁用该 appearance
+    的跨 Shot 合并；宁可多建匿名 LocalSubject，也不能把同镜头两个人合成一个人。
+    """
+
+    ambiguous: set[str] = set()
+    for semantic in segment_plan.semantics:
+        if not isinstance(semantic, Mapping):
+            continue
+        raw_subjects = semantic.get("subjects")
+        if not isinstance(raw_subjects, list):
+            continue
+        counts: dict[str, int] = {}
+        for raw_subject in raw_subjects:
+            if not isinstance(raw_subject, Mapping):
+                continue
+            appearance = _normalized_text(raw_subject.get("appearance_summary"))
+            if len(appearance) < 4:
+                continue
+            counts[appearance] = counts.get(appearance, 0) + 1
+        ambiguous.update(appearance for appearance, count in counts.items() if count > 1)
+    return ambiguous
 
 
 def _speaking_summary(states: Sequence[str]) -> str:
@@ -801,6 +834,7 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
         # 2) Segment-scoped LocalSubject + per-Shot presence.
         for segment_plan in segment_plans:
             segment = segment_by_shot_item[segment_plan.shots[0].revision_item_id]
+            ambiguous_appearances = _ambiguous_subject_appearances(segment_plan)
             subject_plans: dict[str, _SubjectPlan] = {}
             presences: list[tuple[p2.P2ShotInput, str, Mapping[str, Any], _SubjectPlan, p2.P2EvidenceRecord]] = []
             for shot, semantic in zip(segment_plan.shots, segment_plan.semantics):
@@ -816,7 +850,7 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                     label = str(raw_subject.get("label") or "").strip()
                     if not label:
                         continue
-                    key = _appearance_key(raw_subject, shot, label)
+                    key = _appearance_key(raw_subject, shot, label, ambiguous_appearances)
                     plan = subject_plans.get(key)
                     if plan is None:
                         plan = _SubjectPlan(
@@ -845,7 +879,8 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                     appearance_json=_json_text({
                         "fusion_profile": FUSION_PROFILE,
                         "source_labels": sorted(plan.source_labels),
-                        "link_policy": "exact-normalized-appearance-within-segment-v1",
+                        "link_policy": "exact-normalized-appearance-with-same-shot-cannot-link-v2",
+                        "ambiguous_appearance": plan.key.startswith("shot:"),
                     }),
                     first_seen_us=int(plan.first_seen_us if plan.first_seen_us is not None else segment.source_start_us),
                     last_seen_us=int(plan.last_seen_us if plan.last_seen_us is not None else segment.source_end_us),
@@ -1258,7 +1293,7 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
             "profile": FUSION_PROFILE,
             "version": FUSION_VERSION,
             "scene_segmentation_policy": "consecutive-exact-scene-signature-v1",
-            "subject_link_policy": "exact-normalized-appearance-within-segment-v1",
+            "subject_link_policy": "exact-normalized-appearance-with-same-shot-cannot-link-v2",
             "asr_policy": "exact-shot-boundary-word-timestamp-split-v1",
             "ocr_policy": "text-time-geometry-stitch-v1",
             "vlm_event_time_policy": "shot-relative-ratio-to-source-us-v1",
