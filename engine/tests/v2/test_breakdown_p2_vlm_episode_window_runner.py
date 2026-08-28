@@ -62,13 +62,14 @@ def compact_result(target_shots: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-def test_generation_budget_grows_for_rapid_cut_windows_and_is_bounded() -> None:
+def test_generation_budget_is_bounded_for_structured_output() -> None:
     assert runner._generation_budget(4096, 3, compact=False) == 4096
     assert runner._generation_budget(4096, 10, compact=False) > 4096
     assert runner._generation_budget(4096, 100, compact=False) == runner._MAX_GENERATION_TOKENS
+    assert runner._MAX_GENERATION_TOKENS <= 6144
 
 
-def test_invalid_full_window_json_falls_back_to_compact_batches(monkeypatch) -> None:
+def test_rapid_cut_window_skips_giant_json_and_uses_compact_batches(monkeypatch) -> None:
     shots = [shot(index) for index in range(1, 14)]
     window = {
         "window_id": "window-0001",
@@ -81,11 +82,10 @@ def test_invalid_full_window_json_falls_back_to_compact_batches(monkeypatch) -> 
         target_shots = tuple(kwargs["target_shots"])
         compact = bool(kwargs["compact"])
         calls.append((len(target_shots), compact))
-        if not compact:
-            raise ValueError("model output JSON object is invalid")
         return compact_result(target_shots)
 
     monkeypatch.setattr(runner, "_generate_once", fake_generate_once)
+    monkeypatch.setattr(runner, "_cleanup_cuda", lambda: None)
 
     result = runner._analyze_window(
         model=object(),
@@ -97,7 +97,47 @@ def test_invalid_full_window_json_falls_back_to_compact_batches(monkeypatch) -> 
         max_pixels=524288,
     )
 
-    assert calls == [(13, False), (6, True), (6, True), (1, True)]
+    assert calls == [(6, True), (6, True), (1, True)]
+    assert [item["revision_item_id"] for item in result["shots"]] == [
+        item["revision_item_id"] for item in shots
+    ]
+    runner._validate_output(result, window)
+
+
+def test_compact_batch_recursively_splits_on_structured_failure(monkeypatch) -> None:
+    shots = [shot(index) for index in range(1, 7)]
+    window = {
+        "window_id": "window-0001",
+        "video_path": "unused-by-monkeypatch.mp4",
+        "shots": shots,
+    }
+    calls: list[tuple[int, bool]] = []
+
+    def fake_generate_once(**kwargs):
+        target_shots = tuple(kwargs["target_shots"])
+        compact = bool(kwargs["compact"])
+        calls.append((len(target_shots), compact))
+        if not compact or len(target_shots) > 2:
+            raise ValueError("fixture structured failure")
+        return compact_result(target_shots)
+
+    monkeypatch.setattr(runner, "_generate_once", fake_generate_once)
+    monkeypatch.setattr(runner, "_cleanup_cuda", lambda: None)
+
+    result = runner._analyze_window(
+        model=object(),
+        processor=object(),
+        window=window,
+        source_language="zh-CN",
+        fps=2.0,
+        max_new_tokens=4096,
+        max_pixels=524288,
+    )
+
+    assert calls[0] == (6, False)
+    assert (6, True) in calls
+    assert all(size <= 6 for size, _compact in calls)
+    assert any(size == 1 and compact for size, compact in calls)
     assert [item["revision_item_id"] for item in result["shots"]] == [
         item["revision_item_id"] for item in shots
     ]
