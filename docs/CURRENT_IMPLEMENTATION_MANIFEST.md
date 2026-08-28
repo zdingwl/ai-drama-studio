@@ -1,7 +1,7 @@
 # AI Drama Studio — Current Implementation Manifest
 
 > Purpose: compact **code-aligned CURRENT manifest**.  
-> Last synchronized: **2026-08-28 12:12 +08:00**
+> Last synchronized: **2026-08-28 16:03 +08:00**
 
 ## Repository baseline
 
@@ -13,7 +13,8 @@ FastAPI app version: 2.4.1
 Formal Character runtime: Character V10.1
 P1/P2 implementation acceptance: CONDITIONAL PASS
 P2.6 Windows / real-model acceptance: NOT PASSED
-P3 Structured Draft UI: IMPLEMENTED ON MAIN / UI ACCEPTANCE IN PROGRESS
+P3 Structured Draft UI: IMPLEMENTED / UI ACCEPTANCE IN PROGRESS
+P4 Draft-guided Scene/Prop: IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 ```
 
 ## Product flow
@@ -95,10 +96,21 @@ P2.1 engine/app/breakdown_p2_sidecar_v1.py
 P2.2 engine/app/breakdown_p2_asr_v1.py
 P2.3 engine/app/breakdown_p2_ocr_v1.py
 P2.4 engine/app/breakdown_p2_vlm_v1.py
+P2.4 runtime compatibility engine/app/breakdown_p2_vlm_runtime_v1.py
 P2.5 engine/app/breakdown_p2_fusion_v1.py
 P2.6 engine/app/breakdown_p2_pipeline_v1.py
 P2.6 engine/app/breakdown_p2_acceptance_v1.py
 ```
+
+P2.4 production natural-language semantics now use:
+
+```text
+scripts/breakdown_vlm_prompt_zh_v1.py
+prompt_profile = breakdown-p2-vlm-zh-draft-v1
+draft_text_language = zh-CN
+```
+
+Scene/Shot/subject/event/prop VLM prose is generated in Simplified Chinese at source and guarded before READY. ASR/OCR raw source text remains untranslated. Machine JSON/enums remain stable.
 
 Formal APIs:
 
@@ -122,17 +134,17 @@ P1/P2 implementation acceptance = CONDITIONAL PASS
 P2.6 Windows / real-model acceptance:
 
 ```text
-status                         = NOT PASSED
-OCR runtime/model provisioning = INCOMPLETE
-Qwen3-VL model provisioning    = INCOMPLETE
-real short-drama full chain    = NOT COMPLETED
-human acceptance PASS          = NOT AVAILABLE
+status                      = NOT PASSED
+real short-drama full chain = acceptance evidence incomplete
+human acceptance PASS       = NOT AVAILABLE
 ```
+
+OCR/Qwen compatibility and provisioning helpers are implemented, but implementation/runtime readiness is not equivalent to real-model quality PASS.
 
 Required close gate:
 
 ```text
-provision OCR + Qwen
+strict preflight
 → real short-drama sample
 → ASR → OCR → VLM → Fusion → P1 validator
 → P2 acceptance report
@@ -140,11 +152,7 @@ provision OCR + Qwen
 → no blocking issues
 ```
 
-Do not translate `IMPLEMENTED` into `ACCEPTED`. P2.6 remains failed/not-passed until the real Windows/model gate succeeds.
-
 ## P3 current executable UI
-
-P3 is **not NEXT anymore**. The first Structured Draft workbench is on `main`.
 
 Important frontend modules:
 
@@ -178,12 +186,65 @@ Current UI behavior:
 P3 status:
 
 ```text
-implementation = IMPLEMENTED ON MAIN
+implementation = IMPLEMENTED
 browser/UI acceptance = IN PROGRESS
 fully accepted/closed = NO
 ```
 
-The Stage 02 Shot Boundary scrolling regression was fixed in main merge commit `1cb8624b885850935e902cb6c9ac2273c490d2b3`.
+## P4 current executable backend
+
+P4 reuses the existing asset Evidence containers and Final Asset workflow; it does not create parallel Scene/Prop tables.
+
+```text
+engine/app/breakdown_asset_guidance_v1.py
+profile = breakdown-asset-guidance-p4-v1
+
+engine/app/asset_semantics_p4_v1.py
+engine/app/asset_routes_v3.py -> P4 semantic entrypoint
+```
+
+Guidance gate:
+
+```text
+BreakdownRun is_current=true
+status READY / READY_WITH_WARNINGS
+source_shot_revision_id == current ShotRevision
+exact ShotRevisionItem anchor
+current original_shot_id still exists
+```
+
+No stale/history ordinal/timestamp guessing is permitted.
+
+Scene flow:
+
+```text
+SceneSegmentDraft soft hint
+→ current Shot image verification
+→ scene MATCH / CONFLICT / UNKNOWN
+→ existing SceneCandidate / ShotSceneEvidence
+→ provenance in evidence_json
+```
+
+Prop flow:
+
+```text
+DraftPropOccurrence target
+→ current Shot image verification
+→ observed=false => reject hint
+→ observed=true + confidence >= 0.45 => PropCandidate Evidence
+→ unprompted discovery requires confidence >= 0.68
+→ valid localization may write xyxy_norm ShotPropEvidence.bbox_json
+```
+
+If no current revision-safe Draft exists, P4 falls back to `asset_semantics_v3` unchanged.
+
+P4 status:
+
+```text
+implementation = IMPLEMENTED
+local/model acceptance = PENDING
+model-quality PASS = NO
+```
 
 ## Formal Character V10.1 baseline — unchanged
 
@@ -199,11 +260,7 @@ explicit Shot × known-Character Assignment
 Final Character Gate
 ```
 
-Draft/VLM/ASR context cannot override Character V10.1 hard evidence gates.
-
-## Scene / Prop boundary
-
-P2 scene/prop output is semantic hint only. Existing SceneCandidate/ShotSceneEvidence and PropCandidate/ShotPropEvidence remain asset-side evidence. Draft-guided asset extraction begins in P4.
+Draft/VLM/ASR context cannot override Character V10.1 hard evidence gates. P4 does not modify Character code.
 
 ## Validation / CI reality
 
@@ -211,6 +268,8 @@ P2 scene/prop output is semantic hint only. Existing SceneCandidate/ShotSceneEvi
 GitHub hosted Actions = intentionally not used
 historical CI = historical only
 P2.6 real Windows/model acceptance = NOT PASSED
+P3 UI acceptance = IN PROGRESS
+P4 local/model acceptance = PENDING
 ```
 
 ## Phase pointer
@@ -221,10 +280,10 @@ P1 implementation CONDITIONAL PASS
 P2 implementation CONDITIONAL PASS
 P2.6 Windows / real-model acceptance NOT PASSED
 P3 Structured Draft UI IMPLEMENTED / UI ACCEPTANCE IN PROGRESS
-P4 Draft-guided Scene/Prop PLANNED
+P4 Draft-guided Scene/Prop IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character safe integration PLANNED
 P6 Final fill-back/renderers PLANNED
 P7 remake integration PLANNED
 ```
 
-Next acceptance work is to provision OCR + Qwen and run the real short-drama P2.6 chain, while continuing P3 browser/UI verification.
+Next safe work is P2.6/P3/P4 local acceptance. After P4 behavior is accepted, P5 is the next implementation phase.
