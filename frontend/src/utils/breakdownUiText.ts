@@ -1,4 +1,5 @@
 const normalize = (value: string | null | undefined) => String(value ?? '').trim().toUpperCase()
+const enumKey = (value: string | null | undefined) => normalize(value).replace(/[\s-]+/g, '_')
 
 export function runStatusLabel(status: string): string {
   const labels: Record<string, string> = {
@@ -9,7 +10,7 @@ export function runStatusLabel(status: string): string {
     STALE: '历史 · 已过期',
     CANCELLED: '已取消',
   }
-  return labels[normalize(status)] || status || '未知状态'
+  return labels[enumKey(status)] || status || '未知状态'
 }
 
 export function componentStatusLabel(status: string): string {
@@ -22,7 +23,7 @@ export function componentStatusLabel(status: string): string {
     NO_EVIDENCE: '无证据',
     CANCELLED: '已取消',
   }
-  return labels[normalize(status)] || status || '—'
+  return labels[enumKey(status)] || status || '—'
 }
 
 export function sceneSpaceLabel(value: string | null | undefined): string {
@@ -33,7 +34,7 @@ export function sceneSpaceLabel(value: string | null | undefined): string {
     EXT: '外景',
     UNKNOWN: '未知',
   }
-  return labels[normalize(value)] || value || ''
+  return labels[enumKey(value)] || value || ''
 }
 
 export function timeOfDayLabel(value: string | null | undefined): string {
@@ -47,7 +48,7 @@ export function timeOfDayLabel(value: string | null | undefined): string {
     DUSK: '黄昏',
     UNKNOWN: '未知',
   }
-  return labels[normalize(value)] || value || ''
+  return labels[enumKey(value)] || value || ''
 }
 
 export function visibilityLabel(value: string | null | undefined): string {
@@ -59,7 +60,7 @@ export function visibilityLabel(value: string | null | undefined): string {
     OFFSCREEN: '画外',
     UNKNOWN: '未知',
   }
-  return labels[normalize(value)] || value || '未知'
+  return labels[enumKey(value)] || value || '未知'
 }
 
 export function speakingStateLabel(value: string | null | undefined): string {
@@ -70,7 +71,7 @@ export function speakingStateLabel(value: string | null | undefined): string {
     SILENT: '未说话',
     UNKNOWN: '未知',
   }
-  return labels[normalize(value)] || value || '未知'
+  return labels[enumKey(value)] || value || '未知'
 }
 
 export function screenPositionLabel(value: string | null | undefined): string {
@@ -87,7 +88,7 @@ export function screenPositionLabel(value: string | null | undefined): string {
     LOWER_RIGHT: '右下',
     UNKNOWN: '未知',
   }
-  return labels[normalize(value)] || value || '未知'
+  return labels[enumKey(value)] || value || '未知'
 }
 
 export function propImportanceLabel(value: string | null | undefined): string {
@@ -98,7 +99,7 @@ export function propImportanceLabel(value: string | null | undefined): string {
     BACKGROUND: '背景',
     UNKNOWN: '未知',
   }
-  return labels[normalize(value)] || value || '未标注'
+  return labels[enumKey(value)] || value || '未标注'
 }
 
 export function participantRoleLabel(value: string | null | undefined): string {
@@ -110,43 +111,48 @@ export function participantRoleLabel(value: string | null | undefined): string {
     OBSERVER: '观察者',
     UNKNOWN: '未知角色',
   }
-  return labels[normalize(value)] || value || '未标注角色'
+  return labels[enumKey(value)] || value || '未标注角色'
 }
 
 export function shotTypeLabel(value: string | null | undefined): string {
   const labels: Record<string, string> = {
     STATIC: '静态',
     CLOSE_UP: '特写',
-    'CLOSE-UP': '特写',
     MEDIUM: '中景',
     MEDIUM_SHOT: '中景',
     WIDE: '全景',
     WIDE_SHOT: '全景',
     LONG_SHOT: '远景',
     EXTREME_CLOSE_UP: '大特写',
+    OVER_THE_SHOULDER: '过肩镜头',
+    TWO_SHOT: '双人镜头',
+    POV: '主观镜头',
     UNKNOWN: '未知',
   }
-  return labels[normalize(value)] || value || ''
+  return labels[enumKey(value)] || value || ''
 }
 
 export function cameraMotionLabel(value: string | null | undefined): string {
   const labels: Record<string, string> = {
     STATIC: '静止',
     ZOOM_IN: '推近',
-    'ZOOM-IN': '推近',
     SLOW_ZOOM_IN: '缓慢推近',
-    'SLOW ZOOM-IN': '缓慢推近',
     ZOOM_OUT: '拉远',
-    'ZOOM-OUT': '拉远',
+    SLOW_ZOOM_OUT: '缓慢拉远',
     PAN_LEFT: '向左摇摄',
     PAN_RIGHT: '向右摇摄',
     TILT_UP: '向上俯仰',
     TILT_DOWN: '向下俯仰',
     TRACKING: '跟拍',
+    TRACK_IN: '向前跟进',
+    TRACK_OUT: '向后跟退',
+    DOLLY_IN: '轨道推近',
+    DOLLY_OUT: '轨道拉远',
     HANDHELD: '手持',
+    CRANE: '升降镜头',
     UNKNOWN: '未知',
   }
-  return labels[normalize(value).replace(/\s+/g, '_')] || value || ''
+  return labels[enumKey(value)] || value || ''
 }
 
 export function eventOriginLabel(value: string | null | undefined): string {
@@ -166,11 +172,10 @@ export function evidenceRoleLabel(value: string | null | undefined): string {
     DERIVED: '派生证据',
     CONTEXT: '上下文证据',
   }
-  return labels[normalize(value)] || value || '证据'
+  return labels[enumKey(value)] || value || '证据'
 }
 
 export function evidenceSourceTypeLabel(value: string | null | undefined): string {
-  const type = normalize(value)
   const labels: Record<string, string> = {
     OCR_OBSERVATION: 'OCR 文字识别',
     VLM_OUTPUT: 'VLM 画面理解',
@@ -179,7 +184,7 @@ export function evidenceSourceTypeLabel(value: string | null | undefined): strin
     AUDIO_OBSERVATION: '音频识别',
     SHOT_REFERENCE: '镜头参考片段',
   }
-  return labels[type] || value || '未知证据来源'
+  return labels[enumKey(value)] || value || '未知证据来源'
 }
 
 export function eventTypeLabel(type: string): string {
@@ -190,5 +195,5 @@ export function eventTypeLabel(type: string): string {
     VISUAL: '画面',
     AUDIO_EVENT: '声音',
   }
-  return labels[normalize(type)] || type
+  return labels[enumKey(type)] || type
 }
