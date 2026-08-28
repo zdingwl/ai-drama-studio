@@ -62,6 +62,9 @@ Write-Host '[Breakdown VLM] READY' -ForegroundColor Green
 Write-Host "  Python: $PythonExe"
 Write-Host "  Model:  $ModelDir"
 Write-Host '  Provider: qwen3-vl'
+Write-Host '  Draft 文案: 简体中文 (zh-CN)'
+Write-Host '  Prompt Profile: breakdown-p2-vlm-zh-draft-v1'
+Write-Host '  ASR / OCR: 保留原始语言与原始文字，不在 VLM 中翻译'
 if ($IsWindowsPlatform) {
     Write-Host '  Video reader: decord (strict; torchvision fallback disabled)'
 }
