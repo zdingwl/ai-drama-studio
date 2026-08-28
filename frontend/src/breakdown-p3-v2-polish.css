@@ -1,0 +1,159 @@
+/* P3 Structured Draft Workbench V2 readability polish.
+   Visual-only acceptance layer: no Draft semantics, data flow, timeline timing or asset behavior. */
+
+/* Top task / context bar */
+.breakdown-stage-v1 .breakdown-task-bar-v2 .episode-context > span,
+.breakdown-stage-v1 .breakdown-task-bar-v2 .run-context > span,
+.breakdown-stage-v1 .breakdown-task-bar-v2 .revision-context > span,
+.breakdown-stage-v1 .breakdown-task-bar-v2 .pipeline-label {
+  font-size: 12px !important;
+}
+.breakdown-stage-v1 .breakdown-task-bar-v2 .run-context i,
+.breakdown-stage-v1 .breakdown-task-bar-v2 .viewing-mode,
+.breakdown-stage-v1 .breakdown-task-bar-v2 .pipeline-chip,
+.breakdown-stage-v1 .breakdown-task-bar-v2 .pipeline-chip b,
+.breakdown-stage-v1 .breakdown-task-bar-v2 .pipeline-chip i,
+.breakdown-stage-v1 .breakdown-task-bar-v2 .task-meta span {
+  font-size: 11px !important;
+}
+.breakdown-stage-v1 .breakdown-task-bar-v2 .task-notice {
+  font-size: 12px !important;
+  line-height: 1.5;
+}
+
+/* Episode / Run summary */
+.breakdown-stage-v1 .breakdown-draft-v2 .draft-summary-bar {
+  padding: 11px 13px !important;
+}
+.breakdown-stage-v1 .breakdown-draft-v2 .draft-summary-context > strong {
+  max-width: 420px !important;
+  font-size: 14px !important;
+}
+.breakdown-stage-v1 .breakdown-draft-v2 .draft-summary-context > span,
+.breakdown-stage-v1 .breakdown-draft-v2 .draft-summary-stats > span,
+.breakdown-stage-v1 .breakdown-draft-v2 .draft-summary-stats > button,
+.breakdown-stage-v1 .breakdown-draft-v2 .draft-summary-stats b {
+  font-size: 12px !important;
+}
+.breakdown-stage-v1 .breakdown-draft-v2 .draft-warning-panel {
+  font-size: 12px !important;
+}
+.breakdown-stage-v1 .breakdown-draft-v2 .draft-warning-panel strong {
+  font-size: 13px !important;
+}
+
+/* Scene / Shot navigator */
+.breakdown-stage-v1 .draft-navigator-v1 .scene-search input,
+.breakdown-stage-v1 .draft-navigator-v1 .scene-index,
+.breakdown-stage-v1 .draft-navigator-v1 .scene-copy small,
+.breakdown-stage-v1 .draft-navigator-v1 .scene-count,
+.breakdown-stage-v1 .draft-navigator-v1 .shot-tree-row b,
+.breakdown-stage-v1 .draft-navigator-v1 .shot-tree-row small,
+.breakdown-stage-v1 .draft-navigator-v1 .shot-tree-row i,
+.breakdown-stage-v1 .draft-navigator-v1 .history-main small,
+.breakdown-stage-v1 .draft-navigator-v1 .history-state small {
+  font-size: 12px !important;
+}
+.breakdown-stage-v1 .draft-navigator-v1 .scene-copy b,
+.breakdown-stage-v1 .draft-navigator-v1 .history-main b {
+  font-size: 13px !important;
+}
+.breakdown-stage-v1 .draft-navigator-v1 .history-state i,
+.breakdown-stage-v1 .draft-navigator-v1 .history-more,
+.breakdown-stage-v1 .draft-navigator-v1 .draft-boundary-card p {
+  font-size: 12px !important;
+}
+
+/* Main Scene / Shot workspace */
+.breakdown-stage-v1 .shot-workspace-v1 .context-title > span,
+.breakdown-stage-v1 .shot-workspace-v1 .context-title small,
+.breakdown-stage-v1 .shot-workspace-v1 .context-confidence,
+.breakdown-stage-v1 .shot-workspace-v1 .scene-description-grid > div > span,
+.breakdown-stage-v1 .shot-workspace-v1 .group-label,
+.breakdown-stage-v1 .shot-workspace-v1 .muted-inline,
+.breakdown-stage-v1 .shot-workspace-v1 .subject-chip small,
+.breakdown-stage-v1 .shot-workspace-v1 .prop-chip small,
+.breakdown-stage-v1 .shot-workspace-v1 .shot-detail-head span,
+.breakdown-stage-v1 .shot-workspace-v1 .shot-hint-badges span,
+.breakdown-stage-v1 .shot-workspace-v1 .shot-copy > span,
+.breakdown-stage-v1 .shot-workspace-v1 .panel-kicker,
+.breakdown-stage-v1 .shot-workspace-v1 .shot-subject-item small,
+.breakdown-stage-v1 .shot-workspace-v1 .shot-prop-box > span,
+.breakdown-stage-v1 .shot-workspace-v1 .shot-prop-item small,
+.breakdown-stage-v1 .shot-workspace-v1 .timeline-head span,
+.breakdown-stage-v1 .shot-workspace-v1 .timeline-filters button,
+.breakdown-stage-v1 .shot-workspace-v1 .timeline-time,
+.breakdown-stage-v1 .shot-workspace-v1 .timeline-badge,
+.breakdown-stage-v1 .shot-workspace-v1 .timeline-speaker,
+.breakdown-stage-v1 .shot-workspace-v1 .timeline-origin {
+  font-size: 12px !important;
+}
+.breakdown-stage-v1 .shot-workspace-v1 .context-title strong,
+.breakdown-stage-v1 .shot-workspace-v1 .shot-detail-head strong,
+.breakdown-stage-v1 .shot-workspace-v1 .timeline-head strong {
+  font-size: 15px !important;
+}
+.breakdown-stage-v1 .shot-workspace-v1 .scene-description-grid p,
+.breakdown-stage-v1 .shot-workspace-v1 .shot-copy p,
+.breakdown-stage-v1 .shot-workspace-v1 .shot-subject-item p,
+.breakdown-stage-v1 .shot-workspace-v1 .timeline-copy {
+  font-size: 13px !important;
+  line-height: 1.55 !important;
+}
+.breakdown-stage-v1 .shot-workspace-v1 .shot-copy strong {
+  font-size: 14px !important;
+  line-height: 1.55;
+}
+.breakdown-stage-v1 .shot-workspace-v1 .subject-chip b,
+.breakdown-stage-v1 .shot-workspace-v1 .prop-chip b,
+.breakdown-stage-v1 .shot-workspace-v1 .shot-subject-item b,
+.breakdown-stage-v1 .shot-workspace-v1 .shot-prop-item b {
+  font-size: 13px !important;
+}
+.breakdown-stage-v1 .shot-workspace-v1 .timeline-row {
+  min-height: 44px;
+}
+
+/* Reference / Evidence inspector */
+.breakdown-stage-v1 .breakdown-inspector-v1 .reference-head span,
+.breakdown-stage-v1 .breakdown-inspector-v1 .inspector-card-title span,
+.breakdown-stage-v1 .breakdown-inspector-v1 .reference-meta,
+.breakdown-stage-v1 .breakdown-inspector-v1 .event-detail-grid span,
+.breakdown-stage-v1 .breakdown-inspector-v1 .event-detail-grid b,
+.breakdown-stage-v1 .breakdown-inspector-v1 .event-content-box > span,
+.breakdown-stage-v1 .breakdown-inspector-v1 .event-participants span,
+.breakdown-stage-v1 .breakdown-inspector-v1 .event-content-box small,
+.breakdown-stage-v1 .breakdown-inspector-v1 .scene-mini-context span,
+.breakdown-stage-v1 .breakdown-inspector-v1 .scene-mini-context small,
+.breakdown-stage-v1 .breakdown-inspector-v1 .provenance-card summary,
+.breakdown-stage-v1 .breakdown-inspector-v1 .provenance-row span,
+.breakdown-stage-v1 .breakdown-inspector-v1 .provenance-row small,
+.breakdown-stage-v1 .breakdown-inspector-v1 .unassigned-card summary {
+  font-size: 12px !important;
+}
+.breakdown-stage-v1 .breakdown-inspector-v1 .reference-head strong,
+.breakdown-stage-v1 .breakdown-inspector-v1 .inspector-card-title strong {
+  font-size: 15px !important;
+}
+.breakdown-stage-v1 .breakdown-inspector-v1 .reference-head i,
+.breakdown-stage-v1 .breakdown-inspector-v1 .inspector-card-title i {
+  font-size: 11px !important;
+}
+.breakdown-stage-v1 .breakdown-inspector-v1 .event-content-box p,
+.breakdown-stage-v1 .breakdown-inspector-v1 .scene-mini-context b {
+  font-size: 13px !important;
+  line-height: 1.55 !important;
+}
+.breakdown-stage-v1 .breakdown-inspector-v1 .quick-stats-grid b {
+  font-size: 16px !important;
+}
+.breakdown-stage-v1 .breakdown-inspector-v1 .quick-stats-grid span,
+.breakdown-stage-v1 .breakdown-inspector-v1 .provenance-row strong {
+  font-size: 12px !important;
+}
+
+@media (max-width: 1450px) {
+  .breakdown-stage-v1 .breakdown-draft-v2 .draft-summary-context > strong {
+    max-width: 300px !important;
+  }
+}
