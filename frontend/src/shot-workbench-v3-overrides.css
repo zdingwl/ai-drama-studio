@@ -1,7 +1,8 @@
 .studio-main.shot-stage-main {
   height: 100vh;
   padding: 20px 22px 18px;
-  overflow: hidden;
+  /* Keep the P3 Structured Draft reachable when its scene list exceeds one viewport.
+     The base stage rule supplies vertical scrolling and horizontal clipping. */
 }
 
 .studio-main.shot-stage-main .shot-v3 {
