@@ -1,163 +1,30 @@
-"""P2.4 Qwen3-VL runtime diagnostics and production prompt compatibility layer.
+"""Production Qwen3-VL runtime compatibility entry.
 
-The frozen provider contract intentionally fail-closes on unusable VLM semantics. This
-wrapper keeps that behaviour while preserving short, non-secret diagnostics emitted by
-the isolated runner so local Windows acceptance can distinguish the actual failure.
-
-On Windows the Qwen utility stack can fall back from TorchCodec/decord to torchvision
-when a Reference Clip cannot be opened. torchvision's legacy video metadata path may
-then raise ``KeyError('video_fps')``, masking the real decode issue. The production
-compatibility profile therefore prefers decord and launches Qwen through a strict-reader
-shim that prevents qwen-vl-utils from silently switching back to torchvision.
-
-The same production launcher installs ``breakdown-p2-vlm-zh-draft-v1``: VLM-generated
-natural-language Draft semantics use Simplified Chinese while machine enums/JSON keys
-stay unchanged and ASR/OCR raw evidence remains untranslated.
+P2-E2 is now the production visual semantics provider. This module intentionally remains the
+stable import path used by the pipeline/CLI while re-exporting the Episode-window provider.
+The legacy single-Reference-Clip provider remains available in ``breakdown_p2_vlm_v1`` for
+historical contract tests and old immutable BreakdownRuns.
 """
-from __future__ import annotations
-
-import os
-from pathlib import Path
-import subprocess
-from typing import Any, Mapping, Sequence
-
-from engine.app import breakdown_p2_sidecar_v1 as p2
-from engine.app.breakdown_p2_vlm_v1 import (
-    Qwen3VLSemanticProvider as _BaseQwen3VLSemanticProvider,
-    VLMRuntimeConfig,
+from engine.app.breakdown_p2_vlm_episode_v2 import (
+    DEFAULT_WINDOW_OVERLAP_RATIO,
+    DEFAULT_WINDOW_SECONDS,
+    Qwen3VLSemanticProvider,
+    VLM_DRAFT_TEXT_LANGUAGE,
+    VLM_EPISODE_WINDOW_PROFILE,
+    VLM_PROMPT_PROFILE,
+    VLM_WINDOW_SCHEMA,
+    run_qwen3_vl_episode_window_semantics,
 )
+from engine.app.breakdown_p2_vlm_v1 import VLMRuntimeConfig
 
-_ALLOWED_VIDEO_READERS = frozenset({"decord", "torchcodec", "torchvision"})
-VLM_PROMPT_PROFILE = "breakdown-p2-vlm-zh-draft-v1"
-VLM_DRAFT_TEXT_LANGUAGE = "zh-CN"
-
-
-class Qwen3VLSemanticProvider(_BaseQwen3VLSemanticProvider):
-    """Production Qwen3-VL provider with Chinese Draft semantics and diagnostics."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        if kwargs.get("runner_script") is None:
-            repo_root = Path(__file__).resolve().parents[2]
-            kwargs["runner_script"] = str(repo_root / "scripts" / "run_breakdown_vlm_qwen3_strict_reader.py")
-        self._runtime_failure_details: tuple[str, ...] = ()
-        self._subprocess_failure_detail: str | None = None
-        super().__init__(*args, **kwargs)
-
-    @staticmethod
-    def _clean_failure_detail(record: Mapping[str, Any], *, max_len: int = 900) -> str | None:
-        error_type = " ".join(str(record.get("error_type") or "").strip().split())
-        detail = " ".join(str(record.get("error_detail") or "").strip().split())
-        if not error_type and not detail:
-            return None
-        if detail and error_type and not detail.startswith(error_type):
-            text = f"{error_type}: {detail}"
-        else:
-            text = detail or error_type
-        return text[:max_len]
-
-    @staticmethod
-    def _clean_subprocess_output(value: Any, *, max_len: int = 1200) -> str | None:
-        text = str(value or "").strip()
-        if not text:
-            return None
-        lines = [" ".join(line.strip().split()) for line in text.splitlines() if line.strip()]
-        if not lines:
-            return None
-        return " | ".join(lines[-4:])[:max_len]
-
-    @staticmethod
-    def _subprocess_env(config: VLMRuntimeConfig) -> dict[str, str]:
-        env = _BaseQwen3VLSemanticProvider._subprocess_env(config)
-        configured = (
-            env.get("AI_DRAMA_P2_VLM_VIDEO_READER")
-            or env.get("FORCE_QWENVL_VIDEO_READER")
-            or ("decord" if os.name == "nt" else "")
-        ).strip().lower()
-        if configured:
-            if configured not in _ALLOWED_VIDEO_READERS:
-                raise ValueError(
-                    "P2 VLM video reader 只允许 decord/torchcodec/torchvision"
-                )
-            env["FORCE_QWENVL_VIDEO_READER"] = configured
-        return env
-
-    def _run_subprocess(
-        self,
-        config: VLMRuntimeConfig,
-        shots: Sequence[p2.P2ShotInput],
-    ) -> Sequence[Mapping[str, Any]]:
-        try:
-            records = tuple(super()._run_subprocess(config, shots))
-        except subprocess.CalledProcessError as exc:
-            self._subprocess_failure_detail = self._clean_subprocess_output(exc.stdout or exc.output)
-            raise
-
-        details: list[str] = []
-        for record in records:
-            if str(record.get("status") or "READY").strip().upper() == "READY":
-                continue
-            ordinal = int(record.get("ordinal") or 0)
-            detail = self._clean_failure_detail(record)
-            if detail:
-                prefix = f"Shot {ordinal} " if ordinal > 0 else ""
-                details.append(prefix + detail)
-        self._runtime_failure_details = tuple(details[:12])
-        return records
-
-    def analyze(self, context: p2.P2RunContext) -> p2.P2ProviderResult:
-        self._runtime_failure_details = ()
-        self._subprocess_failure_detail = None
-        result = super().analyze(context)
-
-        # Prompt/output-language policy is provenance, not a frontend translation.
-        # Record it for every Provider status so a historical sidecar can explain
-        # which generation policy was requested even when inference fails.
-        warnings = list(result.warnings)
-        metadata = dict(result.metadata)
-        metadata["prompt_profile"] = VLM_PROMPT_PROFILE
-        metadata["draft_text_language"] = VLM_DRAFT_TEXT_LANGUAGE
-        metadata["vlm_natural_language_policy"] = "simplified-chinese"
-        metadata["asr_ocr_translation_policy"] = "preserve-raw-source-text"
-
-        if result.status == "FAILED" and self._runtime_failure_details:
-            metadata["shot_failure_details"] = list(self._runtime_failure_details)
-            enriched: list[str] = []
-            detail_by_ordinal: dict[int, str] = {}
-            for item in self._runtime_failure_details:
-                if item.startswith("Shot "):
-                    parts = item.split(" ", 2)
-                    try:
-                        ordinal = int(parts[1])
-                    except (IndexError, ValueError):
-                        continue
-                    detail_by_ordinal[ordinal] = parts[2] if len(parts) > 2 else item
-            for warning in warnings:
-                replacement = warning
-                if warning.startswith("Shot ") and warning.endswith(" VLM inference failed"):
-                    parts = warning.split(" ", 2)
-                    try:
-                        ordinal = int(parts[1])
-                    except (IndexError, ValueError):
-                        ordinal = 0
-                    detail = detail_by_ordinal.get(ordinal)
-                    if detail:
-                        replacement = f"Shot {ordinal} VLM inference failed: {detail}"
-                enriched.append(replacement)
-            warnings = enriched
-            for item in self._runtime_failure_details:
-                if not any(item in warning for warning in warnings):
-                    warnings.append(item)
-
-        if result.status == "FAILED" and self._subprocess_failure_detail:
-            metadata["subprocess_failure_detail"] = self._subprocess_failure_detail
-            warnings.append(f"Qwen3-VL subprocess failed: {self._subprocess_failure_detail}")
-
-        return p2.P2ProviderResult(
-            component=result.component,
-            provider=result.provider,
-            model=result.model,
-            status=result.status,
-            evidence=result.evidence,
-            metadata=metadata,
-            warnings=tuple(dict.fromkeys(warnings)),
-        )
+__all__ = [
+    "DEFAULT_WINDOW_OVERLAP_RATIO",
+    "DEFAULT_WINDOW_SECONDS",
+    "Qwen3VLSemanticProvider",
+    "VLM_DRAFT_TEXT_LANGUAGE",
+    "VLM_EPISODE_WINDOW_PROFILE",
+    "VLM_PROMPT_PROFILE",
+    "VLM_WINDOW_SCHEMA",
+    "VLMRuntimeConfig",
+    "run_qwen3_vl_episode_window_semantics",
+]
