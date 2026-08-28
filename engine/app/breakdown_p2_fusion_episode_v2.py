@@ -442,10 +442,20 @@ def _rewrite_run_metadata(
     run: BreakdownRun,
     warnings: Sequence[Mapping[str, Any]],
 ) -> None:
+    # Dialogue rewrite can add ASR_WORD provenance links after the legacy generated-count snapshot.
+    # Flush first, then make the reported Evidence count match the actual stored rows.
+    session.flush()
+    evidence_link_count = len(session.scalars(
+        select(BreakdownEvidenceLink.id).where(BreakdownEvidenceLink.run_id == run.id)
+    ).all())
+
     statuses = _json_object(run.component_status_json)
     fusion_status = statuses.get("FUSION")
     if not isinstance(fusion_status, dict):
         fusion_status = {}
+    generated_counts = fusion_status.get("generated_counts")
+    if isinstance(generated_counts, dict):
+        generated_counts["evidence_link"] = evidence_link_count
     fusion_status.update({
         "status": "READY_WITH_WARNINGS" if warnings else "READY",
         "profile": FUSION_PROFILE,
