@@ -1,7 +1,7 @@
 # AI Drama Studio — Current Implementation Manifest
 
 > Purpose: compact **code-aligned CURRENT manifest**.  
-> Last synchronized: **2026-08-28 10:17 +08:00**
+> Last synchronized: **2026-08-28 12:12 +08:00**
 
 ## Repository baseline
 
@@ -11,9 +11,9 @@ Branch: main
 Architecture: Reference Video V2
 FastAPI app version: 2.4.1
 Formal Character runtime: Character V10.1
-Breakdown P1: COMPLETE
-Breakdown P2: IMPLEMENTATION CODE COMPLETE / REAL-VIDEO ACCEPTANCE PENDING
-Next code phase: P3 structured 02 拉片 UI
+P1/P2 implementation acceptance: CONDITIONAL PASS
+P2.6 Windows / real-model acceptance: NOT PASSED
+P3 Structured Draft UI: IMPLEMENTED ON MAIN / UI ACCEPTANCE IN PROGRESS
 ```
 
 ## Product flow
@@ -63,24 +63,17 @@ engine/app/breakdown_routes_v1.py
 engine/app/shot_revision_v2.py
 ```
 
-Data domain:
-
-```text
-engine.app.studio_v2.Base
-+ data_v2/studio_v2.sqlite3
-```
-
-P1 lifecycle:
+Lifecycle:
 
 ```text
 PROCESSING / READY / READY_WITH_WARNINGS / FAILED / STALE
 ```
 
-P1 validator is fail closed; successful publish atomically switches Current; historical Runs remain readable.
+P1 implementation is part of the current **CONDITIONAL PASS**. This is not real-model quality acceptance.
 
-## P2 current executable chain
+## P2 executable chain
 
-Formal full production entry:
+Formal production entry:
 
 ```text
 engine/app/breakdown_p2_pipeline_v1.py
@@ -95,82 +88,16 @@ create frozen BreakdownRun
 → publish READY / READY_WITH_WARNINGS
 ```
 
-### P2.1 Evidence sidecar
+Implemented components:
 
 ```text
-engine/app/breakdown_p2_sidecar_v1.py
-schema = breakdown-p2-evidence-v1
-```
-
-Exact frozen ShotRevision context, unified Provider Result/Evidence validation, recursive Final-ID leak guard, fingerprinted immutable JSON sidecars and STALE race protection.
-
-### P2.2 ASR
-
-```text
-engine/app/breakdown_p2_asr_v1.py
-FasterWhisperASRProvider
-faster-whisper==1.2.1
-model = large-v3
-word_timestamps = true
-```
-
-Produces `ASR_SEGMENT + ASR_WORD` in Episode source microseconds. Speaker identity is not mapped to Character.
-
-### P2.3 OCR — frozen baseline
-
-```text
-engine/app/breakdown_p2_ocr_v1.py
-RapidOCROCRProvider
-rapidocr==3.9.2
-PP-OCRv6 small
-ONNX Runtime
-default CPU
-```
-
-Exact historical Reference Clip multi-frame observations, source point time, text/confidence/polygon/bbox. Repeated observations are preserved until Fusion. Do not redo OCR without a concrete regression.
-
-### P2.4 VLM
-
-```text
-engine/app/breakdown_p2_vlm_v1.py
-scripts/run_breakdown_vlm_qwen3.py
-scripts/setup_breakdown_vlm_runtime.ps1
-Qwen3VLSemanticProvider
-model = Qwen/Qwen3-VL-4B-Instruct
-```
-
-Uses a separate base content-semantic checkpoint inside the existing isolated TransVLM Python/CUDA environment. Emits strict anonymous scene/shot/subject/action/prop semantics; no dialogue/OCR transcription role and no Final identity role.
-
-### P2.5 Fusion
-
-```text
-engine/app/breakdown_p2_fusion_v1.py
-```
-
-```text
-immutable sidecar verification
-ASR word-timing cross-Shot split
-OCR temporal stitching/dedupe
-VLM ratios → source microseconds
-conservative SceneSegmentDraft grouping
-full ShotSemanticDraft coverage
-anonymous LocalSubject / ShotLocalSubject
-TimelineEvent / participant rows
-DraftPropHint / occurrences
-precise BreakdownEvidenceLink
-P1 validator/publish
-```
-
-Same-Shot duplicate appearance is an anonymous cannot-link signal: when two simultaneous subjects share the same normalized appearance summary, that appearance cannot be used to merge them across Shots within the segment.
-
-### P2.6 production / acceptance tooling
-
-```text
-engine/app/breakdown_p2_acceptance_v1.py
-scripts/run_breakdown_p2.py
-scripts/run_breakdown_p2_windows.ps1
-scripts/p2_acceptance_review_template.json
-docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
+P2.1 engine/app/breakdown_p2_sidecar_v1.py
+P2.2 engine/app/breakdown_p2_asr_v1.py
+P2.3 engine/app/breakdown_p2_ocr_v1.py
+P2.4 engine/app/breakdown_p2_vlm_v1.py
+P2.5 engine/app/breakdown_p2_fusion_v1.py
+P2.6 engine/app/breakdown_p2_pipeline_v1.py
+P2.6 engine/app/breakdown_p2_acceptance_v1.py
 ```
 
 Formal APIs:
@@ -182,45 +109,81 @@ GET  /api/breakdown/p2/runtime-preflight
 POST /api/breakdown-runs/{run_id}/p2-acceptance
 ```
 
-Batch execution is sequential by `Episode.sort_order` and reuses the existing persistent BackgroundTask infrastructure.
-
-Acceptance states:
-
-```text
-STRUCTURAL_FAIL
-NEEDS_HUMAN_REVIEW
-NEEDS_TUNING
-PASS
-```
-
-`PASS` requires structural success + explicit real-video human review with every required dimension >=4/5 + no blocking issue. Machine checks alone cannot self-certify quality.
+Batch execution is sequential by `Episode.sort_order`; heavy P2 work is globally serialized.
 
 ## P2 status discipline
 
-Implemented now:
+Implementation review:
 
 ```text
-P2.1 sidecar                          IMPLEMENTED
-P2.2 ASR                              IMPLEMENTED
-P2.3 OCR                              IMPLEMENTED
-P2.4 VLM                              IMPLEMENTED
-P2.5 Fusion                           IMPLEMENTED
-P2.6 production orchestrator          IMPLEMENTED
-P2.6 background API / batch           IMPLEMENTED
-P2.6 CLI / Windows runner             IMPLEMENTED
-P2.6 runtime preflight                IMPLEMENTED
-P2.6 acceptance report/comparison     IMPLEMENTED
+P1/P2 implementation acceptance = CONDITIONAL PASS
 ```
 
-Not executed in this development environment:
+P2.6 Windows / real-model acceptance:
 
 ```text
-real short-drama sample inference
-user Windows GPU end-to-end run
-human-scored acceptance PASS
+status                         = NOT PASSED
+OCR runtime/model provisioning = INCOMPLETE
+Qwen3-VL model provisioning    = INCOMPLETE
+real short-drama full chain    = NOT COMPLETED
+human acceptance PASS          = NOT AVAILABLE
 ```
 
-Reason: the repository contains no real short-drama video sample and this execution environment is not the user's Windows GPU machine. Therefore the correct status is **implementation complete / acceptance execution pending**, not “real-video quality accepted”.
+Required close gate:
+
+```text
+provision OCR + Qwen
+→ real short-drama sample
+→ ASR → OCR → VLM → Fusion → P1 validator
+→ P2 acceptance report
+→ human required scores >= 4/5
+→ no blocking issues
+```
+
+Do not translate `IMPLEMENTED` into `ACCEPTED`. P2.6 remains failed/not-passed until the real Windows/model gate succeeds.
+
+## P3 current executable UI
+
+P3 is **not NEXT anymore**. The first Structured Draft workbench is on `main`.
+
+Important frontend modules:
+
+```text
+frontend/src/types/breakdown.ts
+frontend/src/api/breakdown.ts
+frontend/src/components/BreakdownDraftV1.vue
+frontend/src/components/BreakdownTaskBarV1.vue
+frontend/src/components/BreakdownStageV1.vue
+frontend/src/views/ProjectStudioV3.vue
+```
+
+Current UI behavior:
+
+```text
+02 拉片
+├─ 镜头边界
+│  ├─ ShotCacheManagerV51
+│  └─ ShotWorkbenchV4
+└─ Structured Draft
+   ├─ P2 single/batch tasks
+   ├─ Run history / STALE
+   ├─ Scene / Shot Draft
+   ├─ anonymous subjects
+   ├─ dialogue/action/OCR timeline
+   ├─ prop hints
+   ├─ exact historical Reference Clip
+   └─ Evidence provenance
+```
+
+P3 status:
+
+```text
+implementation = IMPLEMENTED ON MAIN
+browser/UI acceptance = IN PROGRESS
+fully accepted/closed = NO
+```
+
+The Stage 02 Shot Boundary scrolling regression was fixed in main merge commit `1cb8624b885850935e902cb6c9ac2273c490d2b3`.
 
 ## Formal Character V10.1 baseline — unchanged
 
@@ -236,47 +199,32 @@ explicit Shot × known-Character Assignment
 Final Character Gate
 ```
 
-Current V10.1 Final ShotCharacterBinding for new Runs comes from explicit `shot_presence_assignments`, not Candidate Track ownership. P2 does not change these rules.
+Draft/VLM/ASR context cannot override Character V10.1 hard evidence gates.
 
-## Current Scene / Prop boundary
+## Scene / Prop boundary
 
 P2 scene/prop output is semantic hint only. Existing SceneCandidate/ShotSceneEvidence and PropCandidate/ShotPropEvidence remain asset-side evidence. Draft-guided asset extraction begins in P4.
 
-## Important modules
+## Validation / CI reality
 
 ```text
-engine/app/breakdown_models_v1.py
-engine/app/breakdown_service_v1.py
-engine/app/breakdown_validator_v1.py
-engine/app/breakdown_serializer_v1.py
-engine/app/breakdown_routes_v1.py
-engine/app/breakdown_p2_sidecar_v1.py
-engine/app/breakdown_p2_asr_v1.py
-engine/app/breakdown_p2_ocr_v1.py
-engine/app/breakdown_p2_vlm_v1.py
-engine/app/breakdown_p2_fusion_v1.py
-engine/app/breakdown_p2_pipeline_v1.py
-engine/app/breakdown_p2_acceptance_v1.py
+GitHub hosted Actions = intentionally not used
+historical CI = historical only
+P2.6 real Windows/model acceptance = NOT PASSED
 ```
-
-## Validation reality
-
-User explicitly requested no GitHub hosted CI usage because quota is unavailable. No new Actions run/check is part of P2.6 closure.
-
-New P2.6 Python sources/tests received local syntax compilation during development. No fresh full-repository pytest result is claimed because this environment does not have a repository checkout. Historical CI results must remain labeled historical.
 
 ## Phase pointer
 
 ```text
 P0 COMPLETE
-P1 COMPLETE
-P2 IMPLEMENTATION CODE COMPLETE
-P2 real-video acceptance execution PENDING
-P3 structured 02 拉片 UI NEXT
+P1 implementation CONDITIONAL PASS
+P2 implementation CONDITIONAL PASS
+P2.6 Windows / real-model acceptance NOT PASSED
+P3 Structured Draft UI IMPLEMENTED / UI ACCEPTANCE IN PROGRESS
 P4 Draft-guided Scene/Prop PLANNED
 P5 Draft ↔ Character safe integration PLANNED
 P6 Final fill-back/renderers PLANNED
 P7 remake integration PLANNED
 ```
 
-Next implementation work should consume the P2 APIs/Draft in P3 rather than duplicate model logic.
+Next acceptance work is to provision OCR + Qwen and run the real short-drama P2.6 chain, while continuing P3 browser/UI verification.
