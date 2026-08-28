@@ -27,6 +27,48 @@ const STALL_WARNING_MS = 120_000
 const ACTIVE_POLL_MS = 1_000
 const IDLE_POLL_MS = 10_000
 const HIDDEN_POLL_MS = 30_000
+const DISMISSED_STORAGE_PREFIX = 'ai-drama-studio:task-dock-dismissed:v1:'
+const MAX_DISMISSED_TASK_IDS = 100
+
+function dismissedStorageKey(targetProjectId: string): string {
+  return `${DISMISSED_STORAGE_PREFIX}${encodeURIComponent(targetProjectId)}`
+}
+
+/**
+ * 职责：恢复用户已经主动关闭过的失败/警告提示。
+ * 边界：这里只保存“提示已读”状态，不删除 BackgroundTask，也不修改后端任务状态。
+ */
+function loadDismissedTaskIds(targetProjectId: string): string[] {
+  if (!targetProjectId) return []
+  try {
+    const raw = window.localStorage.getItem(dismissedStorageKey(targetProjectId))
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return Array.from(new Set(
+      parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0),
+    )).slice(-MAX_DISMISSED_TASK_IDS)
+  } catch {
+    return []
+  }
+}
+
+function persistDismissedTaskIds(targetProjectId: string, taskIds: string[]): void {
+  if (!targetProjectId) return
+  try {
+    const normalized = Array.from(new Set(taskIds)).slice(-MAX_DISMISSED_TASK_IDS)
+    const key = dismissedStorageKey(targetProjectId)
+    if (normalized.length) window.localStorage.setItem(key, JSON.stringify(normalized))
+    else window.localStorage.removeItem(key)
+  } catch {
+    // localStorage 不可用时退化为当前页面内隐藏，不影响任务轮询和业务结果。
+  }
+}
+
+function replaceDismissedTaskIds(taskIds: string[]): void {
+  dismissedTaskIds.value = Array.from(new Set(taskIds)).slice(-MAX_DISMISSED_TASK_IDS)
+  persistDismissedTaskIds(projectId.value, dismissedTaskIds.value)
+}
 
 function isFinished(task: BackgroundTask) {
   return ['READY', 'READY_WITH_WARNINGS', 'FAILED', 'CANCELLED'].includes(task.status)
@@ -75,7 +117,7 @@ function itemProgressLabel(task: BackgroundTask): string {
 
 function dismissTask(taskId: string): void {
   if (!dismissedTaskIds.value.includes(taskId)) {
-    dismissedTaskIds.value = [...dismissedTaskIds.value, taskId]
+    replaceDismissedTaskIds([...dismissedTaskIds.value, taskId])
   }
   expanded.value = false
 }
@@ -147,11 +189,11 @@ async function pollOnce(): Promise<void> {
   }
 }
 
-/** Project 切换时清理旧状态并立即读取新 Project Task。 */
+/** Project 切换时清理旧运行态，并恢复这个 Project 已经关闭过的任务提示。 */
 function restartPolling(): void {
   clearTimer()
   tasks.value = []
-  dismissedTaskIds.value = []
+  dismissedTaskIds.value = loadDismissedTaskIds(projectId.value)
   expanded.value = false
   if (!projectId.value) return
   schedulePoll(true)
@@ -164,7 +206,9 @@ function restartPolling(): void {
 function onTaskCreated(event: Event): void {
   const task = (event as CustomEvent<BackgroundTask>).detail
   if (!task || task.project_id !== projectId.value) return
-  dismissedTaskIds.value = dismissedTaskIds.value.filter((id) => id !== task.id)
+  if (dismissedTaskIds.value.includes(task.id)) {
+    replaceDismissedTaskIds(dismissedTaskIds.value.filter((id) => id !== task.id))
+  }
   tasks.value = [task, ...tasks.value.filter((item) => item.id !== task.id)]
   error.value = ''
   expanded.value = false
@@ -224,7 +268,7 @@ onUnmounted(() => {
       <button
         v-if="!currentTask && attentionTask"
         class="task-dock-dismiss"
-        title="关闭这条任务提示"
+        title="关闭这条任务提示（刷新后保持关闭）"
         @click="dismissTask(attentionTask.id)"
       >×</button>
     </div>
