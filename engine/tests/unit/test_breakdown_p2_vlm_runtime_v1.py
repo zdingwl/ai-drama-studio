@@ -4,12 +4,21 @@ from pathlib import Path
 
 import pytest
 
-from engine.app.breakdown_p2_vlm_runtime_v1 import Qwen3VLSemanticProvider
+from engine.app.breakdown_p2_vlm_runtime_v1 import (
+    Qwen3VLSemanticProvider,
+    VLM_DRAFT_TEXT_LANGUAGE,
+    VLM_PROMPT_PROFILE,
+)
 
 
 def test_default_runner_uses_strict_diagnostic_transport() -> None:
     provider = Qwen3VLSemanticProvider(inference_runner=lambda config, shots: ())
     assert provider.runner_script.name == "run_breakdown_vlm_qwen3_strict_reader.py"
+
+
+def test_production_prompt_provenance_is_chinese_draft_v1() -> None:
+    assert VLM_PROMPT_PROFILE == "breakdown-p2-vlm-zh-draft-v1"
+    assert VLM_DRAFT_TEXT_LANGUAGE == "zh-CN"
 
 
 def test_strict_runner_disables_qwen_torchvision_fallback() -> None:
@@ -19,6 +28,7 @@ def test_strict_runner_disables_qwen_torchvision_fallback() -> None:
     )
     assert 'vision_process.VIDEO_READER_BACKENDS["torchvision"] = backend' in source
     assert 'FORCE_QWENVL_VIDEO_READER' in source
+    assert '_install_draft_prompt()' in source
 
 
 def test_failure_detail_combines_type_and_message() -> None:
