@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from engine.app import breakdown_p2_refinement_v1 as e3
 from engine.app import breakdown_p2_sidecar_v1 as p2
 from engine.app import breakdown_p2_vlm_episode_v2 as e2
 from engine.app import breakdown_p2_vlm_runtime_v1 as runtime
@@ -210,6 +211,7 @@ def test_missing_episode_video_fails_before_window_runner() -> None:
     assert called is False
 
 
-def test_stable_runtime_import_points_to_episode_window_provider() -> None:
-    assert runtime.Qwen3VLSemanticProvider is e2.Qwen3VLSemanticProvider
+def test_stable_runtime_is_composite_e2_plus_e3_provider() -> None:
+    assert issubclass(runtime.Qwen3VLSemanticProvider, e2.Qwen3VLSemanticProvider)
     assert runtime.VLM_EPISODE_WINDOW_PROFILE == e2.VLM_EPISODE_WINDOW_PROFILE
+    assert runtime.VLM_CONTEXTUAL_REFINEMENT_PROFILE == e3.REFINEMENT_PROFILE
