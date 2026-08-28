@@ -1,12 +1,12 @@
 # AI Drama Studio — Project State
 
-> **Last synchronized:** 2026-08-28 16:03 +08:00  
+> **Last synchronized:** 2026-08-28 18:12 +08:00  
 > **Repository:** `zdingwl/ai-drama-studio`  
 > **Branch:** `main`  
 > **Architecture:** Reference Video V2  
 > **FastAPI app version:** `2.4.1`  
 > **Formal Character runtime:** Character V10.1  
-> **Breakdown-first:** **P1/P2 IMPLEMENTATION CONDITIONAL PASS / P2.6 REAL-MODEL ACCEPTANCE NOT PASSED / P3 UI IMPLEMENTED, ACCEPTANCE IN PROGRESS / P4 IMPLEMENTED, LOCAL ACCEPTANCE PENDING**
+> **Breakdown-first:** **P1/P2 IMPLEMENTATION CONDITIONAL PASS / P2-E1 EPISODE-CONTEXT FUSION IMPLEMENTED, LOCAL-REAL ACCEPTANCE PENDING / P2.6 REAL-MODEL ACCEPTANCE NOT PASSED / P3 UI ACCEPTANCE IN PROGRESS / P4 LOCAL ACCEPTANCE PENDING**
 
 ## 1. Current-state source of truth
 
@@ -17,33 +17,46 @@ AGENTS.md
 → SKILL.md
 → docs/PROJECT_STATE.md
 → docs/CURRENT_IMPLEMENTATION_MANIFEST.md
+→ docs/BREAKDOWN_EPISODE_CONTEXT_PLAN.md
 → docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
 → docs/BREAKDOWN_DRAFT_DATA_CONTRACT.md
 → docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
 → docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
 → docs/ASSET_CHARACTER_RECOGNITION_V10_1.md when Character is involved
-→ latest docs/sessions/* Breakdown/P4 handoff
+→ latest docs/sessions/* handoff
 → current code/tests
 ```
 
 Truth split:
 
 ```text
-PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + code/tests = executable CURRENT
-BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN = accepted product/phase plan
+PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests = executable CURRENT
+BREAKDOWN_EPISODE_CONTEXT_PLAN = accepted current Breakdown migration target
+BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN = wider Breakdown-first / asset phase plan
 BREAKDOWN_DRAFT_DATA_CONTRACT = frozen P1 Draft contract
-BREAKDOWN_P2_SIDECAR_CONTRACT = frozen P2 Evidence/Fusion contract
-BREAKDOWN_P2_LOCAL_ACCEPTANCE = P2 production/Windows/real-video acceptance procedure + current gate
+BREAKDOWN_P2_SIDECAR_CONTRACT = immutable P2 Evidence contract
+BREAKDOWN_P2_LOCAL_ACCEPTANCE = real runtime / quality acceptance gate
 ```
 
-## 2. Accepted product flow
+## 2. Accepted product principle
+
+Core principle remains:
+
+> **先看懂，再识别，再回填。**
+
+The Breakdown semantic principle is now explicit:
+
+> **Shot 是拉片结果的最小展示单位，不是 AI 理解内容的上下文边界。**
+
+Accepted flow:
 
 ```text
-Original Video
+Original Episode
 → Preprocess
-→ Shot Detection
-→ Shot + Reference Clip
-→ ASR / OCR / Video Understanding
+→ Shot Detection + ShotRevision
+→ Episode ASR / OCR
+→ continuous / contextual Video Understanding
+→ Episode-context Fusion
 → anonymous structured Breakdown Draft
 → Draft-guided Character / Scene / Prop evidence extraction
 → Global Asset Resolution + Final Shot Bindings
@@ -52,22 +65,19 @@ Original Video
 → remake
 ```
 
-Core principle:
-
-> **先看懂，再识别，再回填。**
-
-Semantic boundary:
+Semantic boundary is unchanged:
 
 ```text
 人物A / LocalSubject != Character
 SceneSegmentDraft != Final Scene
 DraftPropHint != Final Prop
 raw Evidence / Draft != Final binding truth
+ASR speaker != Character
 ```
 
-## 3. Reference Video V2 baseline
+## 3. Reference Video V2 baseline — unchanged
 
-Formal media chain remains:
+Formal media chain:
 
 ```text
 Project / Episode
@@ -78,51 +88,72 @@ Project / Episode
 → per-Shot Reference Clip / thumbnail / keyframes
 ```
 
-Historical semantic data anchors to exact ShotRevision/ShotRevisionItem. Current `Shot.id` is not a permanent cross-revision historical anchor. Heavy media/model work remains sequential by default.
+Shot boundaries remain authoritative timing/edit boundaries. They no longer imply the maximum semantic context for Breakdown analysis.
 
-## 4. P1 — implementation accepted conditionally
+Historical Breakdown always anchors to the exact frozen ShotRevision/ShotRevisionItem. `Shot.id` is not a permanent historical anchor. Heavy media/model jobs remain sequential by default.
 
-Formal modules:
+## 4. P1 Draft contract — unchanged
+
+Formal tables remain:
 
 ```text
-engine/app/breakdown_models_v1.py
-engine/app/breakdown_service_v1.py
-engine/app/breakdown_validator_v1.py
-engine/app/breakdown_serializer_v1.py
-engine/app/breakdown_routes_v1.py
-engine/app/shot_revision_v2.py
+BreakdownRun
+SceneSegmentDraft
+ShotSemanticDraft
+LocalSubject
+ShotLocalSubject
+TimelineEvent
+TimelineEventSubject
+DraftPropHint
+DraftPropOccurrence
+BreakdownEvidenceLink
 ```
 
-Run lifecycle:
+Lifecycle:
 
 ```text
 PROCESSING / READY / READY_WITH_WARNINGS / FAILED / STALE
 ```
 
-P1 implementation, lifecycle, history anchoring and validator behavior are accepted as part of the current **P1/P2 implementation CONDITIONAL PASS**. This is an implementation acceptance, not a real-model quality certification.
+Important: `SceneSegmentDraft` already supports an Episode-time range spanning multiple Shots. E1 therefore changes the derived Fusion policy rather than replacing the P1 schema.
 
-## 5. P2 — implementation accepted conditionally
+P1 remains part of the **P1/P2 implementation CONDITIONAL PASS**; this is not real-model quality certification.
 
-Implemented production chain:
+## 5. P2 current production chain
 
-```text
-P2.1 immutable Provider/raw Evidence sidecar
-P2.2 faster-whisper ASR
-P2.3 RapidOCR / PP-OCRv6 OCR
-P2.4 Qwen3-VL anonymous visual semantics
-P2.5 deterministic Fusion
-P2.6 production orchestrator / API / Windows runner / preflight / acceptance report
-```
-
-Formal production profile:
+Production entry:
 
 ```text
 engine/app/breakdown_p2_pipeline_v1.py
-profile = breakdown-p2-full-v1
-ASR → OCR → VLM → Fusion → P1 validator
+pipeline profile = breakdown-p2-full-v1
 ```
 
-Formal endpoints:
+Execution now is:
+
+```text
+create frozen PROCESSING BreakdownRun
+→ Episode ASR
+→ OCR
+→ current Qwen3-VL visual semantics
+→ P2-E1 Episode-context Fusion
+→ P1 validator
+→ READY / READY_WITH_WARNINGS
+```
+
+Providers / components:
+
+```text
+P2.1 engine/app/breakdown_p2_sidecar_v1.py
+P2.2 engine/app/breakdown_p2_asr_v1.py
+P2.3 engine/app/breakdown_p2_ocr_runtime_v1.py
+P2.4 engine/app/breakdown_p2_vlm_runtime_v1.py
+legacy Fusion baseline engine/app/breakdown_p2_fusion_v1.py
+production E1 Fusion engine/app/breakdown_p2_fusion_episode_v2.py
+P2.6 orchestrator engine/app/breakdown_p2_pipeline_v1.py
+P2.6 acceptance engine/app/breakdown_p2_acceptance_v1.py
+```
+
+Formal endpoints remain unchanged:
 
 ```text
 POST /api/episodes/{episode_id}/tasks/breakdown
@@ -131,32 +162,131 @@ GET  /api/breakdown/p2/runtime-preflight
 POST /api/breakdown-runs/{run_id}/p2-acceptance
 ```
 
-Batch Breakdown remains strictly sequential by `Episode.sort_order`, globally serialized for heavy P2 work.
+Batch Breakdown remains sequential by `Episode.sort_order`; heavy P2 execution is globally serialized.
 
-### P2.4 Chinese Draft generation
+## 6. P2-E1 — Episode-context Fusion implemented
 
-Production Qwen3-VL now uses:
+Current production Fusion profile:
+
+```text
+breakdown-p2-fusion-episode-context-e1-v2
+```
+
+Status:
+
+```text
+implementation = IMPLEMENTED ON MAIN
+unit coverage  = ADDED
+local-real short-drama acceptance = PENDING
+```
+
+### 6.1 Scene continuity
+
+Old behavior could split a Scene whenever a Shot had no usable location signature. E1 changes this to conservative continuity:
+
+```text
+strong scene/location evidence establishes current Scene
+
+UNKNOWN / missing / generic “室内/房间” / background-poor closeup
+→ inherit current Scene
+
+compatible specificity
+病房 → 医院病房
+客厅 → 家中客厅
+→ remain same Scene; prefer the more specific anchor
+
+strong location contradiction
+or clear INT ↔ EXT contradiction
+→ new Scene Segment
+```
+
+The rule is intentionally:
+
+```text
+看不出来 != 换场
+```
+
+### 6.2 Cross-Shot dialogue
+
+Raw ASR is already Episode-level. E1 makes that Episode truth survive Fusion:
+
+```text
+ASR_SEGMENT = dialogue text truth
+Shot-local DIALOGUE TimelineEvent = time projection of that dialogue
+```
+
+A sentence crossing a cut is no longer rewritten into partial sentence text. Each overlapping Shot projection keeps the full ASR segment text and shares:
+
+```text
+dialogue_group_id = asr_segment_id
+dialogue_source_start_us / dialogue_source_end_us
+projection_start_us / projection_end_us
+projection_index / projection_count
+continues_from_previous_shot / continues_to_next_shot
+```
+
+ASR_WORD evidence remains immutable and is attached to the appropriate projection as SUPPORT provenance/confidence evidence.
+
+No historical sidecar is rewritten.
+
+### 6.3 Compatibility strategy
+
+P1 `TimelineEvent` is still Shot-local. E1 does not perform a destructive DB migration; cross-Shot dialogue grouping is represented through stable metadata while preserving all existing P1/P3/P4 readers.
+
+The top-level pipeline profile remains `breakdown-p2-full-v1`; the exact Fusion sub-profile is stored in provenance.
+
+## 7. P2-E2 / E3 / E4 — not yet implemented
+
+The accepted target is documented in:
+
+```text
+docs/BREAKDOWN_EPISODE_CONTEXT_PLAN.md
+```
+
+Current limitation that must remain explicit:
+
+```text
+P2.4 Qwen3-VL still analyzes one historical Reference Clip at a time.
+```
+
+Therefore E1 is **not** full continuous Episode VLM yet.
+
+Planned order:
+
+```text
+P2-E2 overlapping continuous-window Qwen3-VL
+→ P2-E3 Scene/prev/current/next + ASR/OCR contextual Shot refinement
+→ P2-E4 final Episode-context Fusion using window evidence
+```
+
+The long-term rule is:
+
+```text
+Shot boundary != dialogue sentence boundary
+Shot boundary != scene boundary
+Shot boundary != maximum semantic context
+```
+
+## 8. P2.4 Chinese Draft policy — unchanged
+
+Production Qwen3-VL natural-language Draft policy remains:
 
 ```text
 prompt_profile = breakdown-p2-vlm-zh-draft-v1
 draft_text_language = zh-CN
 ```
 
-VLM-generated Scene / Shot / anonymous-subject / action-event / prop prose is generated as Simplified Chinese at P2.4 source. Machine JSON/enums remain stable English tokens; ASR dialogue and OCR observations preserve raw source text. A language gate fails closed when high-value VLM prose is clearly not Chinese. Historical Runs remain immutable; only new BreakdownRuns receive this policy.
+VLM Scene / Shot / anonymous-subject / action / prop prose is generated in Simplified Chinese. Machine JSON/enums remain stable English tokens. ASR dialogue and OCR observations preserve raw source text.
 
-### Current P2 acceptance status
+## 9. P2 acceptance status — still NOT PASSED for real models
 
-User implementation review result:
+User implementation review remains:
 
 ```text
 P1/P2 implementation acceptance = CONDITIONAL PASS
 ```
 
-This means architecture/contracts/persistence/orchestration are conditionally accepted. It does **not** mean P2.6 real-video quality passed.
-
-## 6. P2.6 Windows / real-model acceptance — NOT PASSED
-
-Current authoritative gate remains:
+P2-E1 code status does not change the real-model gate:
 
 ```text
 P2.6 Windows / real-model acceptance = NOT PASSED
@@ -164,55 +294,52 @@ real short-drama acceptance evidence = INCOMPLETE
 human acceptance PASS report         = NOT AVAILABLE
 ```
 
-Runtime compatibility/provisioning fixes have been implemented for OCR and Qwen3-VL, including Windows diagnostics and the Chinese Draft profile, but they do not by themselves constitute a real-model acceptance PASS.
-
-Required close gate:
+Required close gate now includes E1 behavior:
 
 ```text
 1. provision/verify OCR runtime + model
 2. provision/verify Qwen3-VL runtime + model
-3. use a real short-drama sample
-4. run ASR → OCR → VLM → Fusion → P1 validator
-5. generate P2 acceptance report
-6. complete explicit human review
-7. required scores >= 4/5 and no blocking issues
+3. run a real short-drama Episode
+4. ASR → OCR → VLM → Episode-context E1 Fusion → P1 validator
+5. verify cross-Shot dialogue remains whole
+6. verify same-scene closeup/blurred shots inherit Scene
+7. verify genuine scene changes still split
+8. generate acceptance report + human review
+9. required scores >=4/5 and no blocking issues
 ```
 
-Only then may P2.6 become `PASS`. Until that happens, do not write `P2 ACCEPTED`, `P2 CLOSED`, or claim that full multimodal quality has passed real-video acceptance.
+Only then may P2.6 become `PASS`.
 
-## 7. P3 — Structured Draft UI is implemented on main
+## 10. P3 — 02 拉片 UI
 
-Current `02 拉片` contains:
+Current user-facing split is:
 
 ```text
-镜头边界
-→ ShotCacheManagerV51
-→ ShotWorkbenchV4
-
-Structured Draft
-→ single/batch P2 Breakdown task controls
-→ Breakdown Run history / STALE state
-→ SceneSegmentDraft
-→ ShotSemanticDraft + exact historical Reference Clip
-→ anonymous LocalSubject / ShotLocalSubject
-→ dialogue / action / OCR / visual / audio timeline
-→ DraftPropHint / occurrences
-→ Evidence provenance
+02 拉片
+├─ 镜头管理
+│  └─ simplified Shot review/edit workbench
+└─ 拉片结果
+   ├─ Scene / Shot results
+   ├─人物 / anonymous subject semantics
+   ├─ dialogue
+   ├─ action
+   ├─ prop hints
+   └─ original Reference Clip
 ```
 
-P3 consumes formal P2 APIs and does not duplicate ASR/OCR/VLM/Fusion in Vue.
+Technical Evidence/provenance remains stored but is not the primary normal-user presentation.
 
-Current P3 status:
+Status:
 
 ```text
-implementation on main       = IMPLEMENTED
-browser/local UI acceptance  = IN PROGRESS
-fully accepted/closed        = NO
+implementation on main      = IMPLEMENTED
+browser/local UI acceptance = IN PROGRESS
+fully accepted/closed       = NO
 ```
 
-The Stage 02 Shot Boundary overflow regression was fixed on main. P3 visual/localization fixes continue to be accepted through browser testing; do not mark P3 CLOSED until the user explicitly accepts it.
+P3 should later use E1 `dialogue_group_id` / continuation metadata to present a cross-Shot sentence as “对白继续” rather than visually treating each projection as an unrelated duplicate.
 
-## 8. Formal Character V10.1 — unchanged
+## 11. Formal Character V10.1 — unchanged/protected
 
 ```text
 YOLOX Person Detection
@@ -222,13 +349,12 @@ YOLOX Person Detection
 → RESOLVED / UNRESOLVED
 → explicit Shot × known-Character Assignment
 → Final Character Gate
-→ Character + ShotCharacterBinding
 ```
 
 Protected invariants remain:
 
 ```text
-new identity requires >=3 independent Shots / >=3 model-usable images
+new identity requires >=3 independent Shots / >=3 usable images
 same-sample cannot-link
 high-quality Face hard conflicts
 explicit Shot Assignment is current Final binding source
@@ -236,107 +362,99 @@ VLM/Draft cannot create Character
 ASR speaker cannot create Character
 ```
 
-P4 does not modify any Character V10.1 resolver, threshold, tracking, identity or Final Gate code.
+P2-E1 changes no Character code, identity threshold, resolver or Final Gate.
 
-## 9. P4 — Draft-guided Scene / Prop Evidence implemented
+## 12. P4 — Draft-guided Scene / Prop Evidence
 
-P4 backend first implementation is now present:
+P4 remains implemented:
 
 ```text
 engine/app/breakdown_asset_guidance_v1.py
 profile = breakdown-asset-guidance-p4-v1
-
 engine/app/asset_semantics_p4_v1.py
-engine/app/asset_routes_v3.py -> P4 semantic entrypoint
 ```
 
-Formal flow:
+Safety gates remain:
 
 ```text
-current READY BreakdownRun
-+ exact current ShotRevision
-→ Shot-level SceneSearchGuide / PropSearchGuide
-→ current Shot thumbnail re-verification
-→ existing SceneCandidate / ShotSceneEvidence
-→ existing PropCandidate / ShotPropEvidence
-```
-
-Safety gates:
-
-```text
+only current revision-safe READY Draft may guide
 STALE/history/FAILED/PROCESSING Draft = never guidance
-no ordinal/timestamp history guessing
 Draft Scene/Prop = hypothesis only
-Draft prop must be visually observed again before candidate evidence
-observed=false = no PropCandidate from that hint
-verified prop threshold >= 0.45
-unguided discovered key prop threshold >= 0.68
-valid Qwen localization can be stored as xyxy_norm bbox Evidence
+visual re-verification is mandatory
+observed=false Draft prop = no PropCandidate
+verified prop threshold >=0.45
+unguided new prop threshold >=0.68
 ```
-
-No-Draft projects fall back to the existing unguided `asset_semantics_v3` path.
 
 P4 status:
 
 ```text
-implementation                 = IMPLEMENTED
-local/model acceptance         = PENDING
-Final Scene/Prop quality PASS  = NO
+implementation = IMPLEMENTED
+local/model acceptance = PENDING
+Final Scene/Prop quality PASS = NO
 ```
 
-The existing Final Asset/Revision workflow remains unchanged. P4 does not create a direct `Draft -> Final Scene/Prop` path.
+P5 Draft ↔ Character safe integration is paused until the new Episode-context Breakdown semantic baseline is locally accepted. This avoids building identity-context integration on top of known Shot-centric semantic errors.
 
-## 10. Current phase pointer
+## 13. Current phase pointer
 
 ```text
 P0 planning/contracts                          = COMPLETE
 P1 implementation                              = CONDITIONAL PASS
 P2 implementation                              = CONDITIONAL PASS
   P2.1 sidecar                                 = IMPLEMENTED
-  P2.2 ASR                                     = IMPLEMENTED
+  P2.2 Episode ASR                             = IMPLEMENTED
   P2.3 OCR                                     = IMPLEMENTED; real acceptance pending
-  P2.4 VLM                                     = IMPLEMENTED; Chinese Draft source policy added
-  P2.5 Fusion                                  = IMPLEMENTED
+  P2.4 single-Reference-Clip VLM               = IMPLEMENTED; limitation acknowledged
+  P2-E1 Episode-context Fusion                 = IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
+  P2-E2 continuous-window VLM                  = PLANNED
+  P2-E3 contextual Shot refinement             = PLANNED
+  P2-E4 final Episode-context Fusion           = PLANNED
   P2.6 orchestration/acceptance tooling        = IMPLEMENTED
 P2.6 Windows/real-model acceptance             = NOT PASSED
-P3 02 拉片 Structured Draft UI                 = IMPLEMENTED / UI ACCEPTANCE IN PROGRESS
-P4 Draft-guided Scene / Prop evidence          = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-P5 Draft ↔ Character safe integration          = PLANNED
+P3 02 拉片 UI                                  = IMPLEMENTED / UI ACCEPTANCE IN PROGRESS
+P4 Draft-guided Scene/Prop evidence            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
+P5 Draft ↔ Character safe integration          = PLANNED / PAUSED
 P6 Final fill-back + renderers                 = PLANNED
 P7 downstream remake integration               = PLANNED
 ```
 
-P2/P3/P4 remain forbidden from treating Draft prose as Final identity truth. P4 may write asset-side Scene/Prop Evidence through existing Candidate tables but cannot let Draft bypass visual verification.
+## 14. Validation / CI truth
 
-## 11. Validation / CI truth
+Hosted GitHub Actions are intentionally not used for this work. Historical CI remains historical.
 
-GitHub hosted Actions are intentionally not used for this work because hosted CI quota should not be consumed. Do not report historical CI as fresh acceptance.
-
-Current outstanding real gates are concrete:
+New E1 tests are present at:
 
 ```text
-P2.6 real short-drama full-chain + human acceptance
-P3 browser/local UI acceptance
-P4 local asset-model acceptance on a project with current Structured Draft
+engine/tests/v2/test_breakdown_p2_fusion_episode_v2.py
 ```
 
-## 12. Next safe work
+They cover the E1 rules, but this session does not claim a fresh locally executed pytest PASS because the user runtime was not available through this connector session.
 
-Three acceptance tracks are active:
+Outstanding real gates:
 
 ```text
-A. P2.6 runtime/quality acceptance
-   → strict preflight
-   → real short-drama full chain
-   → acceptance report + human review
-
-B. P3 UI acceptance
-   → continue browser verification of 02 拉片 Structured Draft / 镜头边界
-
-C. P4 local acceptance
-   → current READY Structured Draft
-   → 03 资产 / 资产提取
-   → verify Draft-guided Scene/Prop results + provenance + rejected false hints
+P2-E1 real Episode behavior
+P2.6 full Windows/model acceptance
+P3 browser/UI acceptance
+P4 local/model acceptance
 ```
 
-After P4 local behavior is accepted, the next planned implementation is P5 Draft ↔ Character safe integration. Do not advance project truth to P2.6 PASS, P3 CLOSED, P4 quality PASS or P5 IMPLEMENTED without the corresponding evidence/code.
+## 15. Next safe work
+
+Immediate order:
+
+```text
+A. run/re-run AI 拉片 on one real short-drama Episode with current main
+   → inspect a dialogue that crosses a cut
+   → inspect a Scene with wide shot + closeups/inserts/blurred backgrounds
+   → confirm genuine scene changes still split
+
+B. after E1 local behavior is accepted
+   → implement P2-E2 overlapping continuous-window Qwen3-VL
+
+C. keep P3/P4 acceptance active
+   → do not mark P2.6/P3/P4 PASS without real evidence
+```
+
+Do not advance P5 until the Episode-context semantic baseline has stopped producing the known cross-Shot dialogue and same-scene fragmentation errors.
