@@ -3,6 +3,13 @@
 The main app materializes shot-aligned Episode windows and passes an exact Shot boundary
 manifest. This runner loads Qwen once, analyzes windows sequentially, and returns one JSONL
 record per window. It performs no ASR/OCR and never produces Final asset IDs.
+
+Real short-drama windows may contain many rapid cuts. A single strict JSON object for every
+Shot can therefore hit the generation limit before the closing brace. The runner first uses a
+shot-count-aware token budget; if strict JSON/contract validation still fails, it retries the
+same continuous video as compact target-Shot batches. Every retry still sees the whole window
+and all Shot boundaries, so batching limits output size without turning visual understanding
+back into isolated per-Shot clips.
 """
 from __future__ import annotations
 
@@ -11,13 +18,18 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import breakdown_vlm_prompt_zh_v1 as shot_language_profile
 import run_breakdown_vlm_qwen3 as base
 
 VLM_WINDOW_SCHEMA = "breakdown-p2-vlm-episode-window-v1"
 _ALLOWED_STRICT_READERS = frozenset({"decord", "torchcodec", "torchvision"})
+_FALLBACK_TARGET_BATCH_SHOTS = 6
+_MIN_GENERATION_TOKENS = 2048
+_MAX_GENERATION_TOKENS = 12288
+_BASE_WINDOW_TOKENS = 1024
+_TOKENS_PER_TARGET_SHOT = 420
 
 
 def _safe_error(exc: BaseException, *, max_len: int = 900) -> str:
@@ -78,14 +90,16 @@ def _validate_forced_reader(path: Path) -> None:
         raise RuntimeError(f"decord Episode window FPS is invalid: {fps}")
 
 
+def _window_shots(window: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    raw = window.get("shots")
+    if not isinstance(raw, list):
+        return ()
+    return tuple(item for item in raw if isinstance(item, Mapping))
+
+
 def _shot_boundary_text(window: Mapping[str, Any]) -> str:
     lines: list[str] = []
-    shots = window.get("shots")
-    if not isinstance(shots, list):
-        return ""
-    for shot in shots:
-        if not isinstance(shot, Mapping):
-            continue
+    for shot in _window_shots(window):
         lines.append(
             "- Shot {ordinal}: revision_item_id={item}; window {start:.3f}s → {end:.3f}s".format(
                 ordinal=int(shot.get("ordinal") or 0),
@@ -97,26 +111,73 @@ def _shot_boundary_text(window: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _prompt(source_language: str, window: Mapping[str, Any]) -> str:
+def _target_shot_text(target_shots: Sequence[Mapping[str, Any]]) -> str:
+    return "\n".join(
+        "- Shot {ordinal}: revision_item_id={item}".format(
+            ordinal=int(shot.get("ordinal") or 0),
+            item=str(shot.get("revision_item_id") or ""),
+        )
+        for shot in target_shots
+    )
+
+
+def _generation_budget(requested: int, target_shot_count: int, *, compact: bool) -> int:
+    """Treat configured max_new_tokens as a floor for multi-Shot structured output.
+
+    E2 originally used a fixed 4096-token cap. A 20-40s short-drama window can contain enough
+    rapid cuts that valid JSON is deterministically truncated. This budget grows with the number
+    of requested Shot objects while keeping a hard ceiling so a bad generation cannot run away.
+    Compact retries need less prose but still receive at least the configured floor.
+    """
+
+    requested = max(_MIN_GENERATION_TOKENS, int(requested))
+    per_shot = 300 if compact else _TOKENS_PER_TARGET_SHOT
+    estimated = _BASE_WINDOW_TOKENS + max(1, int(target_shot_count)) * per_shot
+    return min(_MAX_GENERATION_TOKENS, max(requested, estimated))
+
+
+def _prompt(
+    source_language: str,
+    window: Mapping[str, Any],
+    *,
+    target_shots: Sequence[Mapping[str, Any]] | None = None,
+    compact: bool = False,
+) -> str:
     language = (source_language or "und").strip() or "und"
+    all_shots = _window_shots(window)
+    targets = tuple(target_shots) if target_shots is not None else all_shots
     boundaries = _shot_boundary_text(window)
+    target_text = _target_shot_text(targets)
+    compact_rules = """
+【紧凑输出规则】
+- 这是 JSON 完整性重试。必须优先保证 JSON 闭合和目标 Shot 全覆盖。
+- window_summary/context_note/summary/visual_description/environment_description 每项尽量不超过 40 个汉字。
+- 每个 Shot 最多 3 个 subjects、2 个 events、3 个 props；没有就输出 []。
+- 不重复同一句描述，不输出 Markdown，不输出解释，不输出 null 占位说明。
+""" if compact else """
+
     return f"""你是一名专业的短剧连续视频拉片分析师。你现在看到的是同一集短剧中连续的一段视频窗口，而不是一个孤立镜头。
 项目原始语言是 {language}。所有由你生成的自然语言描述必须使用简体中文；JSON key、revision_item_id、subject_A 等匿名标签和指定英文枚举保持原样。
 
-【这个窗口内的已知 Shot 边界】
+【整个连续窗口的已知 Shot 边界】
 {boundaries}
 
+【本次必须写入 shots[] 的目标 Shot】
+{target_text}
+
+目标 Shot 之外的其它 Shot 仍然是连续视觉上下文，可以帮助判断场景、人物和道具连续性，但不要把它们写入 shots[]。
+
 【核心任务】
-1. 先理解整个连续窗口的场景、人物出入画、动作和关键道具连续性，再分别描述每一个 Shot。
+1. 先理解整个连续窗口的场景、人物出入画、动作和关键道具连续性，再分别描述本次目标 Shot。
 2. Shot 边界只是展示坐标，不等于场景边界、人物上下文边界或对白断句点。
 3. 特写、背影、插入镜头、虚化背景如果自身看不清环境，可以利用窗口前后画面判断它是否延续同一场景；但没有连续性证据时必须写 UNCERTAIN，不得想象。
 4. 只有明确地点变化、明显 INT/EXT 变化或其他强视觉证据才给出 NEW_SCENE。普通切镜不能自动判为换场。
-5. 人物仍然是匿名视觉主体。每个 Shot 内用 subject_A、subject_B...；不要猜真实姓名、Character ID 或跨项目身份。
+5. 人物仍然是匿名视觉主体。每个目标 Shot 内用 subject_A、subject_B...；不要猜真实姓名、Character ID 或跨项目身份。
 6. 不要转录对白、字幕、招牌、手机屏幕或文件文字。ASR/OCR 是独立 Provider。
 7. 只保留剧情相关道具，不罗列背景杂物。
-8. 每个 Shot 必须严格使用清单中的 revision_item_id；不要遗漏、重复或发明 Shot。
-9. 只返回一个 JSON object，JSON 外不要输出解释。
-
+8. shots[] 必须严格且仅使用“本次目标 Shot”清单中的 revision_item_id；不要遗漏、重复或发明 Shot。
+9. 只返回一个严格合法、完整闭合的 JSON object，JSON 外不要输出解释或 Markdown 代码块。
+{compact_rules}
 【稳定中文规则】
 - location_hint 使用简短稳定地点词，例如“客厅”“医院病房”“走廊”；不要无证据加具体店名或房间号。
 - appearance_summary 按发型/头部特征 → 上衣 → 下装 → 显著配饰/手持物，客观简洁。
@@ -139,11 +200,11 @@ JSON schema:
   ],
   "shots": [
     {{
-      "revision_item_id": "必须原样复制清单中的 ID",
+      "revision_item_id": "必须原样复制目标清单中的 ID",
       "ordinal": 1,
       "scene_continuity": "SAME|NEW_SCENE|UNCERTAIN",
       "scene_basis": "DIRECT|CONTEXT|MIXED|UNCERTAIN",
-      "context_note": "简体中文说明当前镜头如何借连续窗口消除或保留不确定性",
+      "context_note": "简体中文连续上下文依据",
       "semantic": {{
         "scene": {{
           "location_hint": "简体中文稳定地点短语或空字符串",
@@ -193,11 +254,17 @@ JSON schema:
 """
 
 
-def _validate_output(value: Mapping[str, Any], window: Mapping[str, Any]) -> None:
+def _validate_output(
+    value: Mapping[str, Any],
+    window: Mapping[str, Any],
+    *,
+    target_shots: Sequence[Mapping[str, Any]] | None = None,
+) -> None:
+    target = tuple(target_shots) if target_shots is not None else _window_shots(window)
     expected = {
         str(item.get("revision_item_id") or "")
-        for item in window.get("shots", [])
-        if isinstance(item, Mapping) and str(item.get("revision_item_id") or "")
+        for item in target
+        if str(item.get("revision_item_id") or "")
     }
     shots = value.get("shots")
     if not isinstance(shots, list):
@@ -215,18 +282,20 @@ def _validate_output(value: Mapping[str, Any], window: Mapping[str, Any]) -> Non
             raise ValueError(f"{item_id} semantic must be an object")
         shot_language_profile.validate_semantic_language(semantic)
     if seen != expected:
-        raise ValueError("window output does not cover every Shot in the manifest")
+        raise ValueError("window output does not cover every target Shot")
 
 
-def _analyze_window(
+def _generate_once(
     *,
     model: Any,
     processor: Any,
     window: Mapping[str, Any],
+    target_shots: Sequence[Mapping[str, Any]],
     source_language: str,
     fps: float,
     max_new_tokens: int,
     max_pixels: int,
+    compact: bool,
 ) -> Mapping[str, Any]:
     from qwen_vl_utils import process_vision_info
 
@@ -243,7 +312,15 @@ def _analyze_window(
                 "fps": fps,
                 "max_pixels": max_pixels,
             },
-            {"type": "text", "text": _prompt(source_language, window)},
+            {
+                "type": "text",
+                "text": _prompt(
+                    source_language,
+                    window,
+                    target_shots=target_shots,
+                    compact=compact,
+                ),
+            },
         ],
     }]
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -271,7 +348,8 @@ def _analyze_window(
         **video_kwargs,
     )
     inputs = inputs.to(model.device)
-    generated_ids = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+    budget = _generation_budget(max_new_tokens, len(target_shots), compact=compact)
+    generated_ids = model.generate(**inputs, max_new_tokens=budget, do_sample=False)
     trimmed = [
         output_ids[len(input_ids):]
         for input_ids, output_ids in zip(inputs.input_ids, generated_ids)
@@ -281,9 +359,122 @@ def _analyze_window(
         skip_special_tokens=True,
         clean_up_tokenization_spaces=False,
     )[0]
-    semantic = base._first_json_object(output_text)
-    _validate_output(semantic, window)
+    try:
+        semantic = base._first_json_object(output_text)
+    except ValueError as exc:
+        raise ValueError(
+            f"model output JSON object is invalid or truncated "
+            f"(targets={len(target_shots)}, budget={budget}, chars={len(output_text)})"
+        ) from exc
+    _validate_output(semantic, window, target_shots=target_shots)
     return semantic
+
+
+def _append_unique_rows(target: list[Any], source: Any) -> None:
+    if not isinstance(source, list):
+        return
+    known = {
+        json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        for item in target
+    }
+    for item in source:
+        if not isinstance(item, Mapping):
+            continue
+        marker = json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if marker not in known:
+            known.add(marker)
+            target.append(dict(item))
+
+
+def _merge_compact_batches(
+    results: Sequence[Mapping[str, Any]],
+    window: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    merged: dict[str, Any] = {
+        "window_summary": "",
+        "scene_change_candidates": [],
+        "subject_continuity_hints": [],
+        "prop_continuity_hints": [],
+        "shots": [],
+    }
+    for result in results:
+        if not merged["window_summary"]:
+            summary = str(result.get("window_summary") or "").strip()
+            if summary:
+                merged["window_summary"] = summary
+        _append_unique_rows(merged["scene_change_candidates"], result.get("scene_change_candidates"))
+        _append_unique_rows(merged["subject_continuity_hints"], result.get("subject_continuity_hints"))
+        _append_unique_rows(merged["prop_continuity_hints"], result.get("prop_continuity_hints"))
+        shots = result.get("shots")
+        if isinstance(shots, list):
+            merged["shots"].extend(dict(item) for item in shots if isinstance(item, Mapping))
+
+    order = {
+        str(shot.get("revision_item_id") or ""): index
+        for index, shot in enumerate(_window_shots(window))
+    }
+    merged["shots"].sort(
+        key=lambda item: order.get(str(item.get("revision_item_id") or ""), len(order))
+    )
+    _validate_output(merged, window)
+    return merged
+
+
+def _analyze_window(
+    *,
+    model: Any,
+    processor: Any,
+    window: Mapping[str, Any],
+    source_language: str,
+    fps: float,
+    max_new_tokens: int,
+    max_pixels: int,
+) -> Mapping[str, Any]:
+    shots = _window_shots(window)
+    if not shots:
+        raise ValueError("Episode window contains no Shot manifest rows")
+
+    try:
+        return _generate_once(
+            model=model,
+            processor=processor,
+            window=window,
+            target_shots=shots,
+            source_language=source_language,
+            fps=fps,
+            max_new_tokens=max_new_tokens,
+            max_pixels=max_pixels,
+            compact=False,
+        )
+    except ValueError as first_error:
+        # Strict JSON/coverage/language failures are usually output-shape failures, not video
+        # decoding/model-runtime failures. Retry compactly while preserving the full video window.
+        batches = [
+            shots[index:index + _FALLBACK_TARGET_BATCH_SHOTS]
+            for index in range(0, len(shots), _FALLBACK_TARGET_BATCH_SHOTS)
+        ]
+        compact_results: list[Mapping[str, Any]] = []
+        for batch_index, batch in enumerate(batches, start=1):
+            try:
+                compact_results.append(_generate_once(
+                    model=model,
+                    processor=processor,
+                    window=window,
+                    target_shots=batch,
+                    source_language=source_language,
+                    fps=fps,
+                    max_new_tokens=max_new_tokens,
+                    max_pixels=max_pixels,
+                    compact=True,
+                ))
+            except Exception as retry_error:
+                raise ValueError(
+                    "full-window structured output failed and compact retry failed: "
+                    f"batch={batch_index}/{len(batches)}, "
+                    f"first={_safe_error(first_error, max_len=350)}, "
+                    f"retry={_safe_error(retry_error, max_len=350)}"
+                ) from retry_error
+        return _merge_compact_batches(compact_results, window)
 
 
 def main() -> int:
