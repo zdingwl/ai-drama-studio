@@ -1,12 +1,12 @@
 # AI Drama Studio — Project State
 
-> **Last synchronized:** 2026-08-27 21:48 +08:00  
+> **Last synchronized:** 2026-08-28 09:18 +08:00  
 > **Repository:** `zdingwl/ai-drama-studio`  
 > **Branch:** `main`  
 > **Architecture:** Reference Video V2  
 > **FastAPI app version:** `2.4.1`  
 > **Formal Character runtime:** Character V10.1  
-> **Breakdown-first phase:** P2 IN PROGRESS / P2.1 + P2.2 + P2.3 COMPLETE / P2.4 NEXT
+> **Breakdown-first phase:** P2 IN PROGRESS / P2.1 + P2.2 + P2.3 + P2.4 COMPLETE / P2.5 NEXT
 
 ## 1. Current-state source of truth
 
@@ -36,7 +36,7 @@ BREAKDOWN_DRAFT_DATA_CONTRACT = frozen P1 semantic/data contract
 BREAKDOWN_P2_SIDECAR_CONTRACT = P2 Provider/raw-Evidence contract + implemented subphase status
 ```
 
-Do not mark P2.4+ as implemented because ASR/OCR now exist. Do not mark P2 complete until VLM/Fusion/real-video closure are complete.
+Do not mark P2.5+ as implemented because ASR/OCR/VLM raw Evidence now exists. Do not mark P2 complete until Fusion and real-video closure are complete.
 
 ## 2. Accepted Breakdown-first product direction
 
@@ -58,7 +58,7 @@ Core principle:
 
 > **先看懂，再识别，再回填。**
 
-Current distinction after P2.3:
+Current distinction after P2.4:
 
 ```text
 P1 implemented
@@ -71,16 +71,19 @@ P2.2 implemented
 = formal local ASR Provider emits ASR_SEGMENT + ASR_WORD with source microsecond timing
 
 P2.3 implemented
-= formal local OCR Provider samples exact historical Reference Clips and emits shot-bound OCR_OBSERVATION with text/confidence/geometry/source timing
+= formal local OCR Provider samples exact historical Reference Clips and emits shot-bound OCR_OBSERVATION
 
-P2.4–P2.5 not implemented
-= VLM semantic Provider and ASR/OCR/VLM Fusion into complete P1 Draft are absent
+P2.4 implemented
+= formal local Qwen3-VL Provider analyzes exact historical Reference Clips and emits strict anonymous shot-bound VLM_OUTPUT semantic JSON
+
+P2.5 not implemented
+= ASR/OCR/VLM Fusion into complete P1 Draft is absent
 
 P3 not implemented
 = 02 拉片 does not yet expose final structured Draft workbench
 ```
 
-`transvlm_runtime_v51.py` remains a Qwen3-VL transition-detection/caching route. It is not the P2.4 semantic Breakdown VLM engine.
+`transvlm_runtime_v51.py` remains the transition-detection/caching route using a transition-finetuned checkpoint. P2.4 is a separate semantic provider using the base `Qwen/Qwen3-VL-4B-Instruct` checkpoint; only the isolated Python/CUDA runtime environment is reused.
 
 ## 3. Product workspaces
 
@@ -183,8 +186,6 @@ READY requires the real P1 validator. Failed Runs never replace old Current. Suc
 
 Any new Current ShotRevision automatically marks active old-revision Breakdown Runs STALE in the same DB transaction. STALE never deletes historical Draft/Revision/Reference Clips and no ordinal/time heuristic migrates old Draft.
 
-P1 Windows compatibility gate remains durable and covers fresh/pre-P1 DBs, Unicode/space paths, idempotent ADD-only init, legacy Reference Clip readability, lifecycle/validator/history/STALE.
-
 ## 6. Formal Character V10.1 baseline — unchanged by Breakdown P1/P2
 
 ```text
@@ -217,7 +218,7 @@ Reference Clip / Shot
 → Character + ShotCharacterBinding
 ```
 
-P1/P2.1/P2.2/P2.3 did not change Character thresholds, same-sample cannot-link, Face hard conflict, identity creation gates or explicit Shot assignment. New V10.1 Final bindings remain explicit `shot_presence_assignments` only; historical Runs without assignment version retain compatibility fallback.
+P1/P2.1/P2.2/P2.3/P2.4 do not change Character thresholds, same-sample cannot-link, Face hard conflict, identity creation gates or explicit Shot assignment. New V10.1 Final bindings remain explicit `shot_presence_assignments` only; historical Runs without assignment version retain compatibility fallback.
 
 ## 7. Current Scene / Prop reality
 
@@ -228,7 +229,7 @@ SceneCandidate / ShotSceneEvidence
 PropCandidate / ShotPropEvidence
 ```
 
-Current Scene logic is still lightweight, not target semantic Scene resolver. Prop remains fail-closed when reliable detector/VLM is not configured. P1 SceneSegmentDraft/DraftPropHint and P2 OCR text are anonymous evidence layers, not Final Scene/Prop.
+Current Scene logic is still lightweight, not target semantic Scene resolver. Prop remains fail-closed when reliable detection is not configured. P1 SceneSegmentDraft/DraftPropHint and P2 OCR/VLM semantics are anonymous Evidence layers, not Final Scene/Prop truth.
 
 ## 8. Breakdown P2 — IN PROGRESS
 
@@ -273,87 +274,130 @@ word_timestamps=true
 config: AI_DRAMA_P2_ASR_*
 ```
 
-Outputs only anonymous `ASR_SEGMENT + ASR_WORD`, converted to Episode source integer microseconds.
+Outputs only anonymous `ASR_SEGMENT + ASR_WORD`, converted to Episode source integer microseconds. Dialogue can cross cuts, so P2.2 intentionally keeps `shot_revision_item_id = NULL`; P2.5 performs exact Shot assignment/splitting.
 
-Crucial boundary:
-
-```text
-P2.2 ASR Evidence shot_revision_item_id = NULL
-```
-
-Dialogue can cross cuts, so P2.5 Fusion splits/assigns against exact ShotRevisionItem. P2.2 does not write `studio_v2.Dialogue`, does not diarize speaker→Character, and does not publish BreakdownRun.
-
-Device policy: auto CTranslate2 CUDA detection; only auto-selected CUDA may visibly fall back CPU; explicit cuda failure is FAILED. Missing audio → NOT_AVAILABLE; no speech → NO_EVIDENCE.
+P2.2 does not write `studio_v2.Dialogue`, does not map speaker→Character, and does not publish BreakdownRun.
 
 ### 8.3 P2.3 formal OCR Observation Provider — IMPLEMENTED
 
 Formal module: `engine/app/breakdown_p2_ocr_v1.py`.
 
-Current baseline:
-
 ```text
 rapidocr==3.9.2
 PP-OCRv6 small
 ONNX Runtime
-OpenCV Reference Clip frame decoding
 default device: cpu
 config: AI_DRAMA_P2_OCR_*
-```
-
-P2.3 deliberately does **not** rely on only the middle thumbnail. For every exact historical ShotRevisionItem it samples deterministic frames across the whole historical Reference Clip, with configurable interval and max-frame cap.
-
-Default sampling:
-
-```text
 sample_interval_us = 500000
 max_frames_per_shot = 12
 text_score = 0.5
 ```
 
-Every valid OCR text becomes `OCR_OBSERVATION` with:
+P2.3 samples deterministic frames across every exact historical Reference Clip. Every valid text becomes `OCR_OBSERVATION` with exact `shot_revision_item_id`, source microsecond point time, confidence, polygon/bbox/normalized geometry and frame provenance.
+
+Repeated text remains repeated raw Evidence. P2.5 owns temporal dedupe/stitching/duration inference. P2.3 does not create TimelineEvent or Final Scene/Prop.
+
+### 8.4 P2.4 formal VLM anonymous Shot semantics Provider — IMPLEMENTED
+
+Formal implementation:
 
 ```text
-exact shot_revision_item_id
-Episode source integer-microsecond point time
-text
-recognition confidence
-polygon_px / bbox_px / polygon_norm
-frame dimensions + sample provenance
+engine/app/breakdown_p2_vlm_v1.py
+scripts/run_breakdown_vlm_qwen3.py
+scripts/setup_breakdown_vlm_runtime.ps1
+engine/tests/v2/test_breakdown_p2_vlm_v1.py
 ```
 
-The 1µs interval represents a sampled frame point, not subtitle duration. Repeated subtitle/text observations across frames remain raw; P2.5 Fusion performs temporal dedupe/stitching/duration inference.
-
-Status/device behavior:
+Formal baseline:
 
 ```text
-no historical Reference Clip → NOT_AVAILABLE
-RapidOCR/OpenCV missing → NOT_AVAILABLE
-engine init failure → FAILED
-partial frame failures → warnings + continue
-all frames unanalyzable → FAILED
-frames analyzed but no text → NO_EVIDENCE
-valid observations → READY
-
-default cpu
-auto may use CUDAExecutionProvider
-auto-selected CUDA init failure → visible CPU fallback
-explicit cuda unavailable/failure → FAILED, no silent fallback
+provider: qwen3-vl
+model: Qwen/Qwen3-VL-4B-Instruct
+license: Apache-2.0
+semantic schema: breakdown-p2-vlm-shot-semantics-v1
+default device: cuda
+video sampling request: 2 fps
+max_new_tokens: 1536
+max_pixels: 524288
+config: AI_DRAMA_P2_VLM_*
 ```
 
-P2.3 does not create TimelineEvent, does not materialize Scene/Prop from OCR text, and writes no Final Asset/Binding.
+Runtime rule:
 
-### 8.4 P2.4–P2.5 — NOT IMPLEMENTED
+```text
+reuse isolated .runtime/TransVLM/inference Python/CUDA environment
+!= reuse TransVLM transition checkpoint
+
+P2.4 checkpoint:
+.runtime/TransVLM/inference/pretrained/Qwen3-VL-4B-Instruct
+```
+
+Production loads the base Qwen3-VL model once per provider subprocess and analyzes exact historical Reference Clips sequentially. Model download is setup-only; production inference sets Hugging Face/Transformers offline mode.
+
+Every usable Shot produces exactly one shot-bound `VLM_OUTPUT` over the historical Shot source interval. The payload is normalized through a strict anonymous whitelist:
+
+```text
+scene:
+  location_hint / INT|EXT|MIXED|UNKNOWN / time_of_day / environment_description
+
+shot:
+  summary / visual_description / shot_type_hint / camera_motion_hint
+  narrative_function_hint / composition_hint
+
+subjects:
+  subject_A / subject_B / ...
+  appearance_summary / activity_summary / screen_position
+  FULL|PARTIAL|OCCLUDED|UNKNOWN
+  LIKELY_SPEAKING|NOT_SPEAKING|UNKNOWN
+
+events:
+  VISUAL|ACTION
+  start_ratio / end_ratio
+  anonymous subject labels
+
+props:
+  plot-relevant label hint
+  LOW|MEDIUM|HIGH
+  narrative reason
+  anonymous subject labels
+```
+
+P2.4 deliberately does **not** ask the VLM to transcribe dialogue/subtitles/signs/phone text; P2.2 ASR and P2.3 OCR remain authoritative raw sources for those modalities. `speaking_state` is only a visual hint.
+
+The adapter drops unknown model keys before persistence, including any attempted `character_id / scene_id / prop_id` or arbitrary raw model fields. The P2.1 recursive Final-ID guard remains a second fail-closed boundary.
+
+Generative VLM confidence is not treated as calibrated probability; `VLM_OUTPUT.confidence = NULL` and provenance records `confidence_policy = provider-output-unscored`.
+
+Status behavior:
+
+```text
+no historical Reference Clips → NOT_AVAILABLE
+isolated runtime/checkpoint missing → NOT_AVAILABLE
+provider process failure → FAILED
+partial per-Shot failure + usable outputs → READY with warnings
+all Shot outputs unusable/failed → FAILED
+```
+
+P2.4 does not create `SceneSegmentDraft`, `ShotSemanticDraft`, `LocalSubject`, `TimelineEvent`, `DraftPropHint`, Character, Scene, Prop, AssetRevision or Final Bindings. These boundaries remain for P2.5+.
+
+### 8.5 P2.5 — NEXT / NOT IMPLEMENTED
 
 Still missing:
 
 ```text
-P2.4 VLM anonymous Shot semantics Provider
-P2.5 ASR/OCR/VLM Fusion → complete P1 Draft → validator/publish
+P2.5 load immutable ASR/OCR/VLM sidecars
+→ align ASR across exact ShotRevisionItem boundaries
+→ OCR temporal stitching/deduping
+→ VLM + ASR + OCR evidence fusion
+→ SceneSegmentDraft / ShotSemanticDraft / LocalSubject / TimelineEvent / DraftPropHint
+→ BreakdownEvidenceLink provenance
+→ P1 validator
+→ publish READY / READY_WITH_WARNINGS
 ```
 
-Historical ASR/Speaker helpers remain compatibility code; direct Speaker → CharacterCandidate is not the P2 identity path.
+P2.5 must not create Final Character/Scene/Prop or Final Shot Bindings. Historical ASR/Speaker helpers remain compatibility code; direct Speaker → CharacterCandidate is not the P2 identity path.
 
-`large-v3` and RapidOCR PP-OCRv6 small are current stable baselines, not real-material accuracy winners. P2.6 must benchmark actual short-drama quality, speed, VRAM and alternatives.
+P2.6 still owns real short-drama benchmark/Windows real-model quality closure. Contract/fake-runner CI is not proof that Qwen3-VL-4B, faster-whisper large-v3 or PP-OCRv6 small is the permanent quality winner.
 
 ## 9. Current implementation status
 
@@ -372,7 +416,7 @@ Historical ASR/Speaker helpers remain compatibility code; direct Speaker → Cha
   P2.1 Provider/raw Evidence sidecar: IMPLEMENTED
   P2.2 ASR Provider + segment/word timing: IMPLEMENTED
   P2.3 OCR Observation Provider: IMPLEMENTED
-  P2.4 VLM anonymous semantics Provider: NOT IMPLEMENTED
+  P2.4 VLM anonymous semantics Provider: IMPLEMENTED
   P2.5 Fusion → complete anonymous Draft publish: NOT IMPLEMENTED
   P2.6 real-video benchmark/closure: NOT IMPLEMENTED
   P3 structured Draft UI: NOT IMPLEMENTED
@@ -386,11 +430,6 @@ Historical ASR/Speaker helpers remain compatibility code; direct Speaker → Cha
   Draft-guided Character integration: NOT IMPLEMENTED
   target semantic Scene resolver: NOT IMPLEMENTED
   targeted Prop evidence pipeline: NOT IMPLEMENTED
-  separate Windows real-video Character SHOT 0001–0009 acceptance: pending
-
-04 内容剧本: PLANNED / partial compatibility code exists
-05 重制设计: PLANNED
-06 生成 / 导出: PLANNED
 ```
 
 ## 10. Phase status / next safe step
@@ -402,8 +441,8 @@ P2 ASR/OCR/VLM anonymous Draft sidecar           = IN PROGRESS
   P2.1 Provider/Evidence sidecar                  = COMPLETE
   P2.2 ASR Provider + segment/word timing         = COMPLETE
   P2.3 OCR Observation Provider                   = COMPLETE
-  P2.4 VLM anonymous semantics                    = NEXT
-  P2.5 Fusion / P1 Draft publish                  = PLANNED
+  P2.4 VLM anonymous Shot semantics               = COMPLETE
+  P2.5 Fusion / P1 Draft publish                  = NEXT
   P2.6 real-video/Windows/docs closure            = PLANNED
 P3 02 拉片 structured Draft UI                   = PLANNED
 P4 Draft-guided Scene / Prop evidence            = PLANNED
@@ -411,8 +450,6 @@ P5 Draft ↔ Character safe integration            = PLANNED
 P6 Final fill-back + renderers                    = PLANNED
 P7 downstream remake integration                 = PLANNED
 ```
-
-**Do not start P3/P4/P5 while pretending P2 already exists.** P2 consumes the P1 Contract rather than inventing a parallel semantic Draft schema.
 
 P2 remains forbidden from writing:
 
@@ -428,22 +465,21 @@ AssetRevision
 
 ## 11. Current CI reality
 
-P2.3 implementation acceptance:
+P2.4 implementation acceptance at commit `4872333e4833eb421850509d860e11f58b1687a0`:
 
 ```text
 Ubuntu backend compile: PASS
 FastAPI import/version: PASS (2.4.1)
-Ubuntu full pytest: 28 failed, 237 passed, 1 skipped
-Windows Breakdown P2 provider suite: 31/31 PASS
-Windows Breakdown P1 regression gate: PASS
+Ubuntu full pytest: 28 failed, 243 passed, 1 skipped
+Windows Breakdown P2 provider suite: 37/37 PASS
 Frontend: existing vue-tsc / TypeScript build failure
 ```
 
-The 7 additional Ubuntu passes over P2.2 are exactly the seven new P2.3 OCR focused tests. The same historical 28 backend failure categories remain; no new OCR failure category was introduced.
+The six additional Ubuntu passes over P2.3 are exactly the six new P2.4 VLM focused tests. The same historical 28 backend failure categories remain; no new P2.4 backend failure category was introduced.
 
 Known historical categories include missing lightweight-CI `cv2`, missing `trackers`, FFmpeg assumptions, obsolete V6-era assertions and historical Final Gate/workspace expectations.
 
-Do not claim the whole repository is green. Do not claim contract/fake-provider tests are real-video OCR accuracy acceptance.
+Do not claim the whole repository is green. Do not claim contract/fake-provider tests are real-video VLM quality acceptance.
 
 ## 12. Documentation / phase-completion rule
 
@@ -461,4 +497,4 @@ latest session handoff
 
 For the next conversation, verify `main` SHA before relying on a handoff commit SHA.
 
-P1 is closed. P2.1–P2.3 are complete. The next safe implementation step is **P2.4 VLM anonymous Shot semantics Provider**.
+P1 is closed. P2.1–P2.4 are complete. The next safe implementation step is **P2.5 ASR/OCR/VLM Fusion → complete P1 Draft → validator/publish**.
