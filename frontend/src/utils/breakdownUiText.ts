@@ -73,6 +73,23 @@ export function speakingStateLabel(value: string | null | undefined): string {
   return labels[normalize(value)] || value || '未知'
 }
 
+export function screenPositionLabel(value: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    LEFT: '左侧',
+    RIGHT: '右侧',
+    CENTER: '中央',
+    CENTRE: '中央',
+    FOREGROUND: '前景',
+    BACKGROUND: '背景',
+    UPPER_LEFT: '左上',
+    UPPER_RIGHT: '右上',
+    LOWER_LEFT: '左下',
+    LOWER_RIGHT: '右下',
+    UNKNOWN: '未知',
+  }
+  return labels[normalize(value)] || value || '未知'
+}
+
 export function propImportanceLabel(value: string | null | undefined): string {
   const labels: Record<string, string> = {
     KEY: '关键',
@@ -94,6 +111,42 @@ export function participantRoleLabel(value: string | null | undefined): string {
     UNKNOWN: '未知角色',
   }
   return labels[normalize(value)] || value || '未标注角色'
+}
+
+export function shotTypeLabel(value: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    STATIC: '静态',
+    CLOSE_UP: '特写',
+    'CLOSE-UP': '特写',
+    MEDIUM: '中景',
+    MEDIUM_SHOT: '中景',
+    WIDE: '全景',
+    WIDE_SHOT: '全景',
+    LONG_SHOT: '远景',
+    EXTREME_CLOSE_UP: '大特写',
+    UNKNOWN: '未知',
+  }
+  return labels[normalize(value)] || value || ''
+}
+
+export function cameraMotionLabel(value: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    STATIC: '静止',
+    ZOOM_IN: '推近',
+    'ZOOM-IN': '推近',
+    SLOW_ZOOM_IN: '缓慢推近',
+    'SLOW ZOOM-IN': '缓慢推近',
+    ZOOM_OUT: '拉远',
+    'ZOOM-OUT': '拉远',
+    PAN_LEFT: '向左摇摄',
+    PAN_RIGHT: '向右摇摄',
+    TILT_UP: '向上俯仰',
+    TILT_DOWN: '向下俯仰',
+    TRACKING: '跟拍',
+    HANDHELD: '手持',
+    UNKNOWN: '未知',
+  }
+  return labels[normalize(value).replace(/\s+/g, '_')] || value || ''
 }
 
 export function eventOriginLabel(value: string | null | undefined): string {
