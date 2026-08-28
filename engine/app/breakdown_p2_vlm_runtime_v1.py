@@ -1,4 +1,4 @@
-"""P2.4 Qwen3-VL runtime diagnostics compatibility layer.
+"""P2.4 Qwen3-VL runtime diagnostics and production prompt compatibility layer.
 
 The frozen provider contract intentionally fail-closes on unusable VLM semantics. This
 wrapper keeps that behaviour while preserving short, non-secret diagnostics emitted by
@@ -9,6 +9,10 @@ when a Reference Clip cannot be opened. torchvision's legacy video metadata path
 then raise ``KeyError('video_fps')``, masking the real decode issue. The production
 compatibility profile therefore prefers decord and launches Qwen through a strict-reader
 shim that prevents qwen-vl-utils from silently switching back to torchvision.
+
+The same production launcher installs ``breakdown-p2-vlm-zh-draft-v1``: VLM-generated
+natural-language Draft semantics use Simplified Chinese while machine enums/JSON keys
+stay unchanged and ASR/OCR raw evidence remains untranslated.
 """
 from __future__ import annotations
 
@@ -24,10 +28,12 @@ from engine.app.breakdown_p2_vlm_v1 import (
 )
 
 _ALLOWED_VIDEO_READERS = frozenset({"decord", "torchcodec", "torchvision"})
+VLM_PROMPT_PROFILE = "breakdown-p2-vlm-zh-draft-v1"
+VLM_DRAFT_TEXT_LANGUAGE = "zh-CN"
 
 
 class Qwen3VLSemanticProvider(_BaseQwen3VLSemanticProvider):
-    """Production Qwen3-VL provider with actionable Shot/subprocess diagnostics."""
+    """Production Qwen3-VL provider with Chinese Draft semantics and diagnostics."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         if kwargs.get("runner_script") is None:
@@ -103,14 +109,17 @@ class Qwen3VLSemanticProvider(_BaseQwen3VLSemanticProvider):
         self._subprocess_failure_detail = None
         result = super().analyze(context)
 
-        if result.status != "FAILED":
-            return result
-
+        # Prompt/output-language policy is provenance, not a frontend translation.
+        # Record it for every Provider status so a historical sidecar can explain
+        # which generation policy was requested even when inference fails.
         warnings = list(result.warnings)
         metadata = dict(result.metadata)
-        changed = False
+        metadata["prompt_profile"] = VLM_PROMPT_PROFILE
+        metadata["draft_text_language"] = VLM_DRAFT_TEXT_LANGUAGE
+        metadata["vlm_natural_language_policy"] = "simplified-chinese"
+        metadata["asr_ocr_translation_policy"] = "preserve-raw-source-text"
 
-        if self._runtime_failure_details:
+        if result.status == "FAILED" and self._runtime_failure_details:
             metadata["shot_failure_details"] = list(self._runtime_failure_details)
             enriched: list[str] = []
             detail_by_ordinal: dict[int, str] = {}
@@ -138,15 +147,10 @@ class Qwen3VLSemanticProvider(_BaseQwen3VLSemanticProvider):
             for item in self._runtime_failure_details:
                 if not any(item in warning for warning in warnings):
                     warnings.append(item)
-            changed = True
 
-        if self._subprocess_failure_detail:
+        if result.status == "FAILED" and self._subprocess_failure_detail:
             metadata["subprocess_failure_detail"] = self._subprocess_failure_detail
             warnings.append(f"Qwen3-VL subprocess failed: {self._subprocess_failure_detail}")
-            changed = True
-
-        if not changed:
-            return result
 
         return p2.P2ProviderResult(
             component=result.component,
