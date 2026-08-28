@@ -13,7 +13,7 @@ import json
 import time
 from typing import Any, Callable, Mapping, Sequence
 
-from engine.app import breakdown_p2_fusion_v1 as fusion
+from engine.app import breakdown_p2_fusion_episode_v2 as fusion
 from engine.app import breakdown_p2_sidecar_v1 as p2
 from engine.app import breakdown_service_v1, studio_v2
 from engine.app.breakdown_models_v1 import BreakdownRun
@@ -215,7 +215,7 @@ def run_breakdown_p2_run(
     providers: Sequence[p2.BreakdownP2Provider] | None = None,
     progress: ProgressCallback | None = None,
 ) -> BreakdownRun:
-    """Execute ASR -> OCR -> VLM -> Fusion for an existing PROCESSING BreakdownRun."""
+    """Execute ASR -> OCR -> VLM -> Episode-context Fusion for an existing PROCESSING BreakdownRun."""
 
     provider_by_component = _provider_map(providers)
     executions: list[ProviderExecution] = []
@@ -264,7 +264,7 @@ def run_breakdown_p2_run(
             stage="fusion",
             executions=executions,
         )
-        _report(progress, 90.0, "breakdown_fusion", "融合 ASR / OCR / VLM，生成结构化匿名 Draft")
+        _report(progress, 90.0, "breakdown_fusion", "按整集上下文融合 ASR / OCR / VLM，生成结构化匿名 Draft")
         published = fusion.fuse_breakdown_run(run_id)
         _report(progress, 100.0, "breakdown_ready", "匿名结构化拉片完成")
         return published
@@ -295,6 +295,7 @@ def run_episode_breakdown_p2(
             "profile": P2_PIPELINE_PROFILE,
             "version": P2_PIPELINE_VERSION,
             "provider_order": list(P2_PROVIDER_ORDER),
+            "fusion_profile": fusion.FUSION_PROFILE,
         }
     }
     run = breakdown_service_v1.create_breakdown_run(
