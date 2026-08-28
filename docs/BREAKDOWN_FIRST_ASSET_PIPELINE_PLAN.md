@@ -1,10 +1,10 @@
 # AI Drama Studio — 拉片先行 / Breakdown-first 资产识别改造地图
 
-> **Status:** ACCEPTED TARGET PLAN / P1 COMPLETE / **P2 IMPLEMENTATION COMPLETE** / REAL-VIDEO ACCEPTANCE PENDING / **P3 NEXT**  
+> **Status:** ACCEPTED TARGET PLAN / **P1-P2 IMPLEMENTATION CONDITIONAL PASS** / **P2.6 REAL-MODEL ACCEPTANCE NOT PASSED** / **P3 IMPLEMENTED, UI ACCEPTANCE IN PROGRESS**  
 > **Created:** 2026-08-27  
-> **Last synchronized:** 2026-08-28 10:17 +08:00  
+> **Last synchronized:** 2026-08-28 12:12 +08:00  
 > **Repository:** `zdingwl/ai-drama-studio`  
-> **Current executable baseline:** Reference Video V2 / FastAPI 2.4.1 / Character V10.1 / Breakdown P1 + P2
+> **Current executable baseline:** Reference Video V2 / FastAPI 2.4.1 / Character V10.1 / Breakdown P1 + P2 + P3 first UI
 
 ## 0. 产品定义
 
@@ -43,12 +43,6 @@ Shot + Reference Clip + ShotRevision history
 ASR / OCR / VLM 看懂内容
 ↓
 匿名结构化 Breakdown Draft
-  SceneSegmentDraft
-  ShotSemanticDraft
-  LocalSubject / ShotLocalSubject
-  TimelineEvent
-  DraftPropHint
-  EvidenceLink
 ↓
 Draft 指导 Character / Scene / Prop Evidence 搜索
 ↓
@@ -92,29 +86,7 @@ Draft is a soft semantic prior/search hint. Reliable measurable Evidence and lat
 
 ### 2.3 Character V10.1 hard gates remain authoritative
 
-P2/P3/P4 may not:
-
-```text
-relax >=3 independent Shot / >=3 usable image identity gate
-bypass same-sample cannot-link
-ignore high-quality Face hard conflict
-let VLM create Character
-let ASR speaker create Character
-let Draft prose write ShotCharacterBinding
-restore Candidate Track ownership as current Final binding truth
-```
-
-Current Character chain remains:
-
-```text
-YOLOX Person
-→ capture-first Person Evidence
-→ mature MOT
-→ YoutuReID project-level identity
-→ RESOLVED / UNRESOLVED
-→ explicit Shot × known-Character Assignment
-→ Final Character Gate
-```
+P2/P3/P4 may not relax Character V10.1 identity gates, bypass same-sample cannot-link, ignore Face hard conflicts, let VLM/ASR create Character, or write Final Shot bindings from Draft prose.
 
 ### 2.4 Raw Evidence and Draft are separate
 
@@ -132,59 +104,48 @@ Batch video/model work follows `Episode.sort_order` with `concurrency = 1` unles
 | FFmpeg/FFprobe preprocess | IMPLEMENTED | keep |
 | Shot/Reference Clip | IMPLEMENTED | keep |
 | ShotRevision/manual edit/history | IMPLEMENTED | keep |
-| P1 anonymous Draft storage/lifecycle | IMPLEMENTED | P3 consume |
-| P2 raw Evidence sidecar | IMPLEMENTED | keep |
-| P2 ASR | IMPLEMENTED | real-video tune only if evidence requires |
-| P2 OCR | IMPLEMENTED / frozen baseline | do not redo without concrete regression |
-| P2 VLM | IMPLEMENTED | real-video tune only if evidence requires |
-| P2 Fusion | IMPLEMENTED | P3 display |
-| P2 full production orchestrator | IMPLEMENTED | P3 trigger |
-| P2 sequential batch task | IMPLEMENTED | P3 trigger |
-| P2 Windows/runtime preflight | IMPLEMENTED | execute on user machine |
-| P2 acceptance reports | IMPLEMENTED | execute with real video |
-| 02 拉片 structured UI | NOT IMPLEMENTED | **P3 NEXT** |
+| P1 anonymous Draft storage/lifecycle | CONDITIONAL PASS | keep |
+| P2 raw Evidence sidecar | CONDITIONAL PASS | real-video verify |
+| P2 ASR | IMPLEMENTED | real-video verify/tune only if needed |
+| P2 OCR | IMPLEMENTED; runtime/model provisioning incomplete | provision + real-video verify |
+| P2 VLM | IMPLEMENTED; Qwen model provisioning incomplete | provision + real-video verify |
+| P2 Fusion | IMPLEMENTED | real-video verify |
+| P2 full production orchestrator | IMPLEMENTED | real-video verify |
+| P2 sequential batch task | IMPLEMENTED | real-video verify |
+| P2 Windows/runtime preflight | IMPLEMENTED | rerun after model provisioning |
+| P2 acceptance reports | IMPLEMENTED | produce real PASS report |
+| 02 拉片 Structured Draft UI | IMPLEMENTED ON MAIN | finish browser/UI acceptance |
 | Draft-guided Scene/Prop evidence | NOT IMPLEMENTED | P4 |
 | Draft ↔ Character safe mapping | NOT IMPLEMENTED | P5 |
 | Final fill-back/renderers | NOT IMPLEMENTED | P6 |
 | downstream remake integration | PARTIAL/PLANNED | P7 |
 
-## 4. P1 — COMPLETE
+## 4. P1 / P2 implementation acceptance
 
-P1 formal entities:
-
-```text
-BreakdownRun
-SceneSegmentDraft
-ShotSemanticDraft
-LocalSubject
-ShotLocalSubject
-TimelineEvent
-TimelineEventSubject
-DraftPropHint
-DraftPropOccurrence
-BreakdownEvidenceLink
-```
-
-Lifecycle:
+Current user review result:
 
 ```text
-PROCESSING / READY / READY_WITH_WARNINGS / FAILED / STALE
+P1/P2 implementation acceptance = CONDITIONAL PASS
 ```
 
-P1 real validator is mandatory for publish. New ShotRevision makes incompatible active Breakdown Runs STALE while preserving history.
+Meaning:
 
-## 5. P2 — IMPLEMENTATION COMPLETE
+- data contracts, lifecycle, persistence and provenance direction are accepted;
+- P2 Provider/Fusion/orchestration implementation is accepted conditionally;
+- P3 may consume these contracts/APIs;
+- this result is **not** a real-model quality PASS.
+
+## 5. P2 formal implementation
 
 ### P2.1 raw Evidence sidecar
 
 ```text
 PROCESSING BreakdownRun
 → exact source ShotRevision / ShotRevisionItems
-→ Reference Clip / thumbnail / keyframes + Episode audio + source language
-→ unified Provider Contract
+→ Provider Contract
 → validated raw Evidence
 → fingerprinted immutable sidecar
-→ BreakdownRun provenance
+→ provenance
 ```
 
 ### P2.2 ASR
@@ -197,20 +158,17 @@ ASR_SEGMENT + ASR_WORD
 Episode source integer microseconds
 ```
 
-Cross-Shot dialogue is not prematurely assigned; Fusion performs exact splitting.
-
 ### P2.3 OCR
 
 ```text
 rapidocr==3.9.2
 PP-OCRv6 small
 ONNX Runtime
-default CPU
-deterministic multi-frame exact Reference Clip sampling
+multi-frame historical Reference Clip sampling
 OCR_OBSERVATION + geometry + source point time
 ```
 
-OCR Provider keeps repeated observations raw. Fusion owns dedupe/duration inference. This baseline is frozen unless a concrete regression justifies a minimal change.
+Provider implementation remains the accepted baseline. Current problem is not a redesign request: **the Windows acceptance environment still needs the OCR runtime/model provisioned before the real full chain can pass.**
 
 ### P2.4 VLM
 
@@ -218,21 +176,19 @@ OCR Provider keeps repeated observations raw. Fusion owns dedupe/duration infere
 Qwen/Qwen3-VL-4B-Instruct
 exact historical Reference Clip
 strict anonymous shot-semantic JSON
-scene / shot / subjects / VISUAL|ACTION events / prop hints
-confidence = NULL
 ```
 
-P2.4 uses a separate base content-semantic checkpoint in the isolated TransVLM runtime. It does not reuse the transition-finetuned checkpoint and does not duplicate ASR/OCR transcription responsibilities.
+Provider implementation remains the baseline. Current Windows acceptance is blocked because the required Qwen3-VL model/runtime is not fully provisioned.
 
 ### P2.5 Fusion
 
 ```text
 immutable sidecar validation
-→ ASR exact cross-Shot word-timing split
-→ OCR text/time/geometry stitch
+→ ASR exact cross-Shot split
+→ OCR stitch/dedupe
 → VLM ratio → source-us
 → SceneSegmentDraft
-→ one ShotSemanticDraft per source ShotRevisionItem
+→ ShotSemanticDraft full coverage
 → LocalSubject / ShotLocalSubject
 → TimelineEvent
 → DraftPropHint / occurrences
@@ -240,21 +196,13 @@ immutable sidecar validation
 → P1 validator/publish
 ```
 
-Anonymous subject grouping is conservative. If one appearance signature refers to multiple simultaneous people in any Shot, that signature is forbidden as a cross-Shot merge key for that segment.
-
 ### P2.6 production + local acceptance tooling
 
 Formal production profile:
 
 ```text
 breakdown-p2-full-v1
-```
-
-Production module:
-
-```text
-engine/app/breakdown_p2_pipeline_v1.py
-ASR → OCR → VLM → Fusion
+ASR → OCR → VLM → Fusion → P1 validator
 ```
 
 Background APIs:
@@ -262,13 +210,6 @@ Background APIs:
 ```text
 POST /api/episodes/{episode_id}/tasks/breakdown
 POST /api/projects/{project_id}/tasks/breakdown-batch
-```
-
-Batch uses strict `Episode.sort_order`, one episode at a time.
-
-Runtime/acceptance APIs:
-
-```text
 GET  /api/breakdown/p2/runtime-preflight
 POST /api/breakdown-runs/{run_id}/p2-acceptance
 ```
@@ -282,91 +223,88 @@ scripts/p2_acceptance_review_template.json
 docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
 ```
 
-Acceptance deliberately separates machine structure from human visual/audio quality review:
+## 6. P2.6 real-model acceptance status
+
+Current result is no longer the vague phrase “not executed yet”. The user has performed the acceptance review and the result is:
 
 ```text
-STRUCTURAL_FAIL
-NEEDS_HUMAN_REVIEW
-NEEDS_TUNING
-PASS
+P2.6 Windows / real-model acceptance = NOT PASSED
 ```
 
-Machine checks cannot self-award `PASS`.
-
-## 6. P2 status terminology
-
-Engineering implementation is complete:
+Blocking conditions:
 
 ```text
-P2.1 COMPLETE
-P2.2 COMPLETE
-P2.3 COMPLETE
-P2.4 COMPLETE
-P2.5 COMPLETE
-P2.6 production orchestration COMPLETE
-P2.6 Windows/preflight tooling COMPLETE
-P2.6 acceptance/report/comparison tooling COMPLETE
+OCR runtime/model is not fully provisioned
+Qwen3-VL model/runtime is not fully provisioned
+therefore a complete real short-drama chain has not been completed
 ```
 
-Real-video acceptance execution is still pending because this repository contains no real short-drama video sample and this development environment is not the user's Windows GPU host.
-
-Therefore use:
+Required retest:
 
 ```text
-P2 IMPLEMENTATION = COMPLETE
-P2 REAL-VIDEO ACCEPTANCE = PENDING
+provision OCR
++ provision Qwen3-VL
++ choose real short-drama Episode
++ run ASR → OCR → VLM → Fusion → P1 validator
++ generate acceptance report
++ human review required scores >= 4/5
++ no blocking issues
+= P2.6 PASS
 ```
 
-Do not use `P2 ACCEPTED/CLOSED` until a real sample produces a human-reviewed PASS report.
-
-## 7. Real-video acceptance procedure
-
-See `docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md`.
-
-A true PASS requires:
+Until that evidence exists, forbidden wording includes:
 
 ```text
-Run READY / READY_WITH_WARNINGS
-ASR/OCR/VLM sidecars + fingerprints valid
-VLM READY
-Fusion READY / READY_WITH_WARNINGS
-full frozen Shot coverage
-required human scores >= 4/5
-no blocking issues
+P2 ACCEPTED
+P2 CLOSED
+P2.6 PASS
+real-model quality accepted
 ```
 
-Provider/parameter candidates may be compared using separate Runs and acceptance JSON reports. Comparison never reruns models implicitly.
+## 7. P3 — implemented on main
 
-## 8. Formal Phase order from here
+P3 is no longer `NEXT`.
 
-```text
-P0 Planning / Contract                              COMPLETE
-P1 Draft data/runtime/history                       COMPLETE
-P2 Anonymous Breakdown backend implementation       COMPLETE
-P2 real-video acceptance execution                  PENDING
-P3 02 拉片 structured Draft UI                      NEXT
-P4 Draft-guided Scene / Prop evidence               PLANNED
-P5 Draft ↔ Character safe integration               PLANNED
-P6 Final identity/asset fill-back + renderers        PLANNED
-P7 downstream remake integration                    PLANNED
-```
-
-### P3 — next
-
-P3 should provide a human-readable workbench for:
+Current workbench provides:
 
 ```text
 Scene Segment
-Shot + Reference Clip
-人物A/B
-Timeline dialogue/action/OCR
+Shot + exact historical Reference Clip
+人物A/B anonymous subjects
+Timeline dialogue/action/OCR/visual/audio
 scene/prop hints
 Evidence provenance
 Run history / STALE state
-single/batch AI Breakdown task progress
+single/batch AI Breakdown task controls
 ```
 
-P3 must call the P2 production endpoint instead of duplicating Provider/Fusion logic in the frontend.
+It calls the formal P2 endpoints and does not duplicate Provider/Fusion logic in the frontend.
+
+Status:
+
+```text
+P3 implementation = IMPLEMENTED ON MAIN
+P3 browser/UI acceptance = IN PROGRESS
+P3 accepted/closed = NO
+```
+
+The Stage 02 Shot Boundary overflow regression discovered during acceptance was fixed in main merge commit `1cb8624b885850935e902cb6c9ac2273c490d2b3`.
+
+## 8. Formal phase order from here
+
+```text
+P0 Planning / Contract                         COMPLETE
+P1 implementation                              CONDITIONAL PASS
+P2 implementation                              CONDITIONAL PASS
+P2.6 Windows / real-model acceptance           NOT PASSED
+P3 02 拉片 Structured Draft UI                 IMPLEMENTED / UI ACCEPTANCE IN PROGRESS
+P4 Draft-guided Scene / Prop evidence          PLANNED
+P5 Draft ↔ Character safe integration          PLANNED
+P6 Final identity/asset fill-back + renderers   PLANNED
+P7 downstream remake integration               PLANNED
+```
+
+The immediate acceptance work is **not** to redesign P2.3/P2.4. It is to provision the missing OCR/Qwen runtime assets and run the real full chain. P3 browser acceptance can continue in parallel.
 
 ## 9. Forbidden shortcuts
 
@@ -377,11 +315,10 @@ VLM subject_A → Character                                forbidden
 ASR speaker → Character                                  forbidden
 SceneSegmentDraft == Final Scene                         forbidden
 DraftPropHint == Final Prop                              forbidden
-OCR point observation == inferred full subtitle duration forbidden
 Fusion deletes raw Evidence                              forbidden
 semantic context overrides Face/cannot-link              forbidden
 P2 writes Final asset/binding                            forbidden
-real-video not run but docs claim quality accepted       forbidden
+missing real models but docs claim acceptance PASS       forbidden
 ```
 
 ## 10. User-facing simplified flow
@@ -396,4 +333,4 @@ real-video not run but docs claim quality accepted       forbidden
 ⑦ 重制
 ```
 
-P2 now implements the backend for step ③. P3 is the user-facing structured workbench for viewing/operating that result.
+P2 implements the backend for step ③. P3 now implements the first user-facing Structured Draft workbench for viewing and operating that result.
