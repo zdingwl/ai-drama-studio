@@ -27,6 +27,8 @@ def test_prompt_forces_simplified_chinese_natural_language_fields() -> None:
     assert "subjects[].activity_summary" in prompt
     assert "events[].content" in prompt
     assert "props[].narrative_reason" in prompt
+    assert "scene.location_hint 必须是简短、通用、稳定的地点类别" in prompt
+    assert "appearance_summary 使用稳定顺序" in prompt
 
 
 def test_prompt_keeps_machine_contract_tokens_and_provider_boundaries() -> None:
@@ -49,7 +51,7 @@ def test_production_strict_runner_installs_prompt_before_diagnostic_runner() -> 
         encoding="utf-8"
     )
 
-    install_index = source.index("_install_draft_prompt()")
+    install_index = source.index("\n    _install_draft_prompt()\n")
     diagnostic_index = source.index("import run_breakdown_vlm_qwen3_diagnostic as diagnostic")
     assert install_index < diagnostic_index
     assert "breakdown_vlm_prompt_zh_v1" in source
