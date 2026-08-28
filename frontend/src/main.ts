@@ -15,5 +15,6 @@ import './asset-review-matrix-v4-overrides.css'
 import './asset-image-lightbox.css'
 import './asset-image-lightbox'
 import './task-progress.css'
+import './breakdown-p3-acceptance.css'
 
 createApp(App).use(router).mount('#app')
