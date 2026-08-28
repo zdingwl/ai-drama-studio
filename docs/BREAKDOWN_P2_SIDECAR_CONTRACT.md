@@ -1,62 +1,61 @@
-# AI Drama Studio — Breakdown P2 Evidence Sidecar + Fusion Contract
+# AI Drama Studio — Breakdown P2 Evidence / Fusion / Production Contract
 
-> **Status:** P2.1 + P2.2 + P2.3 + P2.4 + P2.5 IMPLEMENTED / P2 IN PROGRESS / P2.6 NEXT  
+> **Status:** **P2 IMPLEMENTATION COMPLETE / REAL-VIDEO ACCEPTANCE PENDING**  
 > **Contract date:** 2026-08-27  
-> **Last synchronized:** 2026-08-28  
+> **Last synchronized:** 2026-08-28 10:17 +08:00  
 > **Parent:** `docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md`  
 > **P1 schema:** `breakdown-draft-v1`  
-> **P2 sidecar schema:** `breakdown-p2-evidence-v1`
+> **P2 sidecar schema:** `breakdown-p2-evidence-v1`  
+> **P2 production profile:** `breakdown-p2-full-v1`  
+> **P2 acceptance schema:** `breakdown-p2-acceptance-v1`
 
-## 0. 目标
+## 0. P2 purpose
 
-P2 不创建第二套拉片数据，而是把真实 ASR / OCR / VLM 原始 Evidence 送入已经完成的 P1 Breakdown Contract：
+P2 does not create a second Breakdown database schema. It turns real multimodal observations into the already-frozen P1 anonymous Draft contract:
 
 ```text
-Current ShotRevision
-+ ShotRevisionItems / Reference Clips / keyframes
+Current frozen ShotRevision
++ exact ShotRevisionItems / Reference Clips / keyframes
 + Episode audio
         ↓
-ASR / OCR / VLM Provider Adapter
+ASR / OCR / VLM Provider Adapters
         ↓
-raw Evidence sidecar（P2.1-P2.4）
+validated immutable raw Evidence sidecars
         ↓
-deterministic Fusion（P2.5）
+deterministic Fusion
         ↓
-P1 SceneSegmentDraft / ShotSemanticDraft / LocalSubject / TimelineEvent / PropHint
+P1 SceneSegmentDraft / ShotSemanticDraft / LocalSubject / TimelineEvent / DraftPropHint
         ↓
-BreakdownEvidenceLink provenance
+precise BreakdownEvidenceLink provenance
         ↓
 P1 validator
         ↓
 BreakdownRun READY / READY_WITH_WARNINGS
 ```
 
-核心原则：
+Core rule:
 
-> 原始模型 Evidence 和融合后的匿名 Draft 必须分层保存；不能只剩一段模型文案。
+> Raw model Evidence and fused anonymous Draft must remain separate and traceable.
 
-P2.5 完成后，ASR/OCR/VLM raw Evidence 已能自动融合为完整匿名 P1 Draft。P2 仍未整体关闭，因为 P2.6 还要验证真实短剧效果、模型组合、Windows/local GPU 和运行成本。
-
----
-
-## 1. P2 阶段拆分
+## 1. P2 subphases
 
 ```text
-P2.1 统一 Evidence/Provider Contract + local sidecar persistence      COMPLETE
-P2.2 ASR Provider + segment/word timing                               COMPLETE
-P2.3 OCR Observation Provider                                         COMPLETE
-P2.4 VLM anonymous Shot semantics Provider                            COMPLETE
-P2.5 ASR/OCR/VLM Fusion → 完整 P1 Draft → validator/publish          COMPLETE
-P2.6 真实短剧 benchmark + Windows/local-model acceptance + closure    NEXT
+P2.1 unified Provider/Evidence + immutable sidecar                COMPLETE
+P2.2 ASR Provider + segment/word timing                           COMPLETE
+P2.3 OCR Observation Provider                                     COMPLETE
+P2.4 anonymous Shot VLM semantics                                 COMPLETE
+P2.5 deterministic ASR/OCR/VLM Fusion → P1 Draft/publish         COMPLETE
+P2.6 production orchestration/background API                     COMPLETE
+P2.6 runtime preflight/Windows runner                             COMPLETE
+P2.6 real-video acceptance report/scoring/comparison tooling     COMPLETE
+P2.6 real-video acceptance execution                             PENDING
 ```
 
-P2.1–P2.5 完成不代表“当前模型组合已经是效果冠军”。真实素材准确率、速度、显存和候选模型对比仍属于 P2.6。
+Implementation completion and real-video acceptance are different facts. Code may be complete while a real Windows GPU sample run is still pending.
 
----
+## 2. Provider input contract
 
-## 2. P2 Provider 输入 Contract
-
-P2 Provider 的正式输入来自一个已经创建的 `PROCESSING BreakdownRun`。
+Every Provider starts from an already-created `PROCESSING BreakdownRun` and its frozen source revision:
 
 ```text
 BreakdownRun
@@ -78,37 +77,15 @@ Project
 → source_language
 ```
 
-禁止 Provider 重新从 Current `v2_shots` 猜测历史输入。
+Providers are forbidden from reconstructing historical input by reading Current `v2_shots` and guessing old Shots.
 
-### 2.1 Run 状态
+### 2.1 Run state / STALE
 
-只允许 `PROCESSING`。如果 P1.6 已把 Run 标为 `STALE`，P2 Provider/Fusion 必须停止，不能继续把旧 Revision 的结果登记或发布成活动 Draft。
+Provider/Fusion active writes only target `PROCESSING` Runs. If the Episode Current ShotRevision changes, the Run becomes STALE and must not be published as Current.
 
-### 2.2 ShotRevision 竞态
+Long-running work rechecks revision status around model execution/persistence boundaries. Historical sidecars/Draft are never deleted just because a new revision exists.
 
-Provider 推理可能耗时，因此至少三处保护：
-
-```text
-推理前：Run source revision == Episode Current revision
-推理后写 sidecar 前：再次检查
-登记 component artifact 前：再次检查
-```
-
-P2.5 也必须在：
-
-```text
-读取 sidecar 前
-写 Draft rows 前
-validator/publish 前
-```
-
-确认 Run 仍绑定 Current Revision。Revision 已变化时 fail closed。
-
----
-
-## 3. Provider Contract
-
-统一接口：
+## 3. Unified Provider contract
 
 ```python
 class BreakdownP2Provider(Protocol):
@@ -118,15 +95,15 @@ class BreakdownP2Provider(Protocol):
         ...
 ```
 
-组件：`ASR / OCR / VLM`。
+Formal components:
 
-业务/Fusion 层只能依赖统一 Result，具体模型 SDK / raw status / tensor 对象必须在 Adapter 内消化。
+```text
+ASR
+OCR
+VLM
+```
 
----
-
-## 4. Provider Result Contract
-
-`P2ProviderResult`：
+Formal Result fields:
 
 ```text
 component
@@ -138,7 +115,7 @@ metadata
 warnings
 ```
 
-同步本地 Provider 状态：
+Allowed statuses:
 
 ```text
 READY
@@ -148,20 +125,16 @@ NOT_AVAILABLE
 FAILED
 ```
 
-规则：
+Rule:
 
 ```text
-READY → 至少一条 Evidence
-非 READY → 不携带可消费 Evidence
+READY      → at least one consumable Evidence
+non-READY  → no consumable Evidence
 ```
 
-未来外部异步/计费 Provider 不允许把 submit/poll 生命周期硬塞进这些同步状态；必须先实现持久化 Job Contract。
+## 4. Raw Evidence contract
 
----
-
-## 5. 原始 Evidence Contract
-
-统一 `P2EvidenceRecord`：
+Formal `P2EvidenceRecord`:
 
 ```text
 source_type
@@ -175,7 +148,7 @@ confidence
 payload
 ```
 
-正式 source type：
+Supported source types:
 
 ```text
 ASR_SEGMENT
@@ -187,7 +160,7 @@ AUDIO_RANGE
 RULE
 ```
 
-### 5.1 组件允许的 Evidence
+Component source permissions:
 
 ```text
 ASR → ASR_SEGMENT / ASR_WORD / AUDIO_RANGE / RULE
@@ -195,25 +168,33 @@ OCR → OCR_OBSERVATION / FRAME / RULE
 VLM → VLM_OUTPUT / FRAME / AUDIO_RANGE / RULE
 ```
 
-### 5.2 时间
+## 5. Time contract
 
-正式时间为 integer microseconds。
+Formal production time is integer microseconds.
 
-如果 Evidence 已绑定 `shot_revision_item_id`，`source_start_us/source_end_us` 必须完全落入该 `ShotRevisionItem`。
+When an Evidence record is Shot-bound, its absolute source range must fit inside the exact historical `ShotRevisionItem`.
 
-#### ASR
+### 5.1 ASR
 
-P2.2 的 segment/word 保留 Episode source 绝对时间并保持 `shot_revision_item_id = NULL`。对白可能跨镜头切点；P2.5 才按 exact ShotRevisionItem source interval 拆成 Shot 内 `TimelineEvent`。
+ASR keeps Episode source absolute time and leaves `shot_revision_item_id = NULL` because speech can cross a video cut.
 
-#### OCR
+Fusion performs exact Shot assignment/splitting. If word timestamps exist, they are authoritative for split content/timing; segment-text overlap fallback is warning-bearing degradation only.
 
-P2.3 `OCR_OBSERVATION` 绑定 exact historical `ShotRevisionItem`。`source_start_us` 是采样帧恢复到 Episode source 的绝对时间，`source_end_us = source_start_us + 1µs` 表示**点观测**，不是字幕持续区间。
+### 5.2 OCR
 
-P2.5 基于同 Shot 内连续重复 Evidence、normalized text、时间间隔和 geometry compatibility 做保守 stitching/duration inference；推断出的 duration 不能越 Shot 边界。
+OCR observations are exact sampled-frame point observations:
 
-#### VLM
+```text
+source_start_us = sampled frame source time
+source_end_us   = source_start_us + 1µs
+shot_revision_item_id = exact historical item
+```
 
-P2.4 每个可用 Shot 最多一个主 `VLM_OUTPUT`：
+A single OCR frame must not pretend to define subtitle duration. Temporal duration may only be inferred during Fusion from repeated text/time/geometry observations.
+
+### 5.3 VLM
+
+One main `VLM_OUTPUT` may explain one usable historical Shot:
 
 ```text
 source_start_us = ShotRevisionItem.start_us
@@ -221,30 +202,34 @@ source_end_us   = ShotRevisionItem.end_us
 shot_revision_item_id = exact historical item
 ```
 
-`events[].start_ratio / end_ratio` 只是该 Shot 内 normalized hint。P2.5 用对应 Shot source interval 映射为正式 integer microseconds。
+Internal `events[].start_ratio/end_ratio` are normalized Shot-relative hints. Fusion maps them to exact source microseconds using that Shot's frozen source interval.
 
-### 5.3 Confidence
+## 6. Confidence contract
 
 ```text
 0 <= confidence <= 1
-或 NULL
+or NULL
 ```
 
-- `ASR_WORD.confidence` 可保存 provider word probability；
-- `OCR_OBSERVATION.confidence` 保存 OCR recognition score；
-- `VLM_OUTPUT.confidence = NULL`。
-
-生成式 VLM 不被伪装成统一校准概率：
+Examples:
 
 ```text
-metadata.confidence_policy = provider-output-unscored
+ASR_WORD.confidence = provider word probability when available
+OCR_OBSERVATION.confidence = recognition score
+VLM_OUTPUT.confidence = NULL
 ```
 
-P2.5 不得人为伪造统一 VLM probability。
+Generative VLM text is not treated as calibrated probability. VLM provenance records:
 
-### 5.4 匿名边界
+```text
+confidence_policy = provider-output-unscored
+```
 
-P2 raw Evidence 不允许业务 Final ID：
+Fusion does not invent a fake shared probability to make heterogeneous model outputs look comparable.
+
+## 7. Anonymous / Final-ID boundary
+
+Raw P2 Evidence and fused Draft may not contain Final business identity fields such as:
 
 ```text
 character_id
@@ -257,222 +242,87 @@ shot_scene_binding_id
 shot_prop_binding_id
 ```
 
-P2.4 先执行严格白名单 normalization，P2.1 再递归检查 Final-ID leakage。
+P2.4 normalizes VLM output through a strict anonymous whitelist before P2.1 recursive Final-ID validation.
 
-P2.5 只写匿名 P1 Draft，不会把 VLM/ASR/OCR 内容升级成 Final identity/asset truth。
-
----
-
-## 6. Raw Evidence sidecar 文件 Contract
-
-P2 不新增平行数据库 Evidence 表。原始 Provider 输出保存为 workspace sidecar：
+Semantic mapping rules:
 
 ```text
-workspace/
-└─ <project_id>/
-   └─ episodes/
-      └─ <episode_id>/
-         └─ breakdown/
-            └─ <run_id>/
-               └─ evidence/
-                  ├─ asr/<sha256-fingerprint>.json
-                  ├─ ocr/<sha256-fingerprint>.json
-                  └─ vlm/<sha256-fingerprint>.json
+subject_A / 人物A / LocalSubject != Character
+SceneSegmentDraft != Final Scene
+DraftPropHint != Final Prop
+ASR speaker != Character
 ```
 
-Fingerprint 基于标准化 JSON 内容计算 SHA-256；相同标准化结果复用相同 artifact path，不同结果生成新 artifact，不覆盖历史。写入必须 `.tmp → os.replace → final`。
+## 8. Immutable sidecar persistence
 
-`BreakdownRun.component_status_json` 只保存快速状态/provenance 摘要，不复制全部模型输出。
-
-P2.5 必须读取 Run 已登记的 immutable sidecar，不能为了 Fusion 悄悄重新跑模型并产生不可追溯的新事实。
-
-### 6.1 P2.5 sidecar 验证
-
-每个 component 在消费前必须验证：
+Provider output is persisted under the Run workspace:
 
 ```text
-artifact_uri 是本地 file://
-artifact 文件存在
-sha256(serialized JSON) == Run 登记 fingerprint
-schema_version == breakdown-p2-evidence-v1
-run_id / project_id / episode_id / source_shot_revision_id / component 匹配
-status / provider / model / evidence_count 与 Run component provenance 匹配
-P2 ProviderResult Contract 再次通过 validate_provider_result()
+workspace/<project>/episodes/<episode>/breakdown/<run>/evidence/
+  asr/<sha256>.json
+  ocr/<sha256>.json
+  vlm/<sha256>.json
 ```
 
-任一不匹配 fail closed。
+Fingerprint = SHA-256 of normalized serialized JSON. Writes use temp-file → atomic replace → final. Identical normalized output reuses the same artifact path; different output does not overwrite history.
 
----
+`BreakdownRun.component_status_json` stores a compact component/provenance summary, not full model output.
 
-## 7. BreakdownRun metadata
+## 9. EvidenceLink timing
 
-Provider sidecar 完成后：
+Provider stages P2.1–P2.4 do not invent fake Run-level links because no Draft owner exists yet.
 
-```text
-component_status_json[ASR/OCR/VLM]
-→ status / provider / model / artifact_uri / fingerprint / evidence_count / warnings
-
-provider_metadata_json.p2_sidecar[ASR/OCR/VLM]
-→ provider/model/non-secret metadata
-```
-
-P2.5 完成后增加：
+P2.5 creates `BreakdownEvidenceLink` only after Draft owners exist:
 
 ```text
-component_status_json[FUSION]
-→ READY | READY_WITH_WARNINGS
-→ profile / version / warnings / generated_counts
-
-provider_metadata_json.p2_fusion
-→ deterministic Fusion policies/version
-```
-
-### 7.1 ASR metadata
-
-可记录：device / compute / language / duration / segment / word counts。
-
-### 7.2 OCR metadata
-
-可记录：
-
-```text
-engine = onnxruntime
-ocr_version = PP-OCRv6
-model_type = small|medium
-recognition_language
-device_requested / device
-sample_interval_us
-max_frames_per_shot
-text_score
-shot_count / available_reference_clip_count / missing_reference_clip_count
-frames_requested / frames_decoded / frames_analyzed
-shot_decode_failures / frame_ocr_failures
-observation_count
-```
-
-### 7.3 VLM metadata
-
-可记录：
-
-```text
-semantic_schema = breakdown-p2-vlm-shot-semantics-v1
-model_family = Qwen3-VL
-device_requested
-video_fps
-max_new_tokens
-max_pixels
-shot_count
-available_reference_clip_count
-missing_reference_clip_count
-shots_analyzed
-semantic_output_count
-shot_failure_count
-confidence_policy = provider-output-unscored
-source_language
-runtime_isolated = true
-```
-
-错误 metadata 只记录非敏感 error type/状态，不把 API secret、模型异常正文、stdout/stderr 或不受控原文写入 provenance。
-
----
-
-## 8. P1 `BreakdownEvidenceLink`
-
-`v2_breakdown_evidence_links`：
-
-```text
-Draft owner → raw Evidence/artifact
-```
-
-P2.1–P2.4 Provider 层没有最终 Draft owner，因此不伪造 Run-level owner。
-
-P2.5 创建真实 Draft owner：
-
-```text
-SCENE_SEGMENT
 SHOT_DRAFT
+SCENE_SEGMENT
 LOCAL_SUBJECT
 TIMELINE_EVENT
 PROP_HINT
 ```
 
-之后只为**实际消费过的** raw Evidence 创建 `BreakdownEvidenceLink`。
+Each owner links only to Evidence actually consumed for that owner. Bulk-linking every sidecar record to every Draft entity is forbidden.
 
-禁止把所有 sidecar Evidence 无差别链接到所有 Draft owner。
+## 10. ASR Provider baseline
 
----
-
-## 9. 与旧 F05 ASR/Speaker helper 的关系
-
-历史 `content_analysis_v2.py` 仍保留 `_run_asr / _run_diarization / _attach_speakers / _map_speaker_to_character` 兼容逻辑，但不是 P2 正式 Contract。
-
-P2.2 正式 ASR：
+Formal module:
 
 ```text
-breakdown_p2_asr_v1.py
-→ FasterWhisperASRProvider
-→ P2ProviderResult
-→ P2.1 run_local_provider()
-→ immutable ASR sidecar
-```
-
-它不写 `studio_v2.Dialogue`，也不执行 speaker→Character。
-
-P2.4 VLM 的视觉 `speaking_state` 也不能替代 diarization / active-speaker Evidence，更不能直接写 Character。
-
----
-
-## 10. P2.2 ASR Provider Contract
-
-```text
-provider: faster-whisper
-pinned package: faster-whisper==1.2.1
-default model: large-v3
-formal module: engine/app/breakdown_p2_asr_v1.py
+engine/app/breakdown_p2_asr_v1.py
+FasterWhisperASRProvider
+faster-whisper==1.2.1
+default model = large-v3
 beam_size = 5
 vad_filter = true
 word_timestamps = true
 ```
 
-配置：
+Outputs:
 
 ```text
-AI_DRAMA_P2_ASR_MODEL
-AI_DRAMA_P2_ASR_DEVICE        # auto / cpu / cuda
-AI_DRAMA_P2_ASR_COMPUTE_TYPE
-AI_DRAMA_P2_ASR_MODEL_CACHE
+ASR_SEGMENT
+ASR_WORD
 ```
 
-`device=auto` 可在自动选择 CUDA 后加载失败时显式 warning 并降级 CPU；显式 `device=cuda` 失败必须 FAILED。缺音频为 NOT_AVAILABLE，无可用语音为 NO_EVIDENCE。
+Device contract supports auto/cpu/cuda. Auto-selected CUDA load failure may visibly fall back to CPU; explicitly requested CUDA failure must fail closed.
 
-`large-v3` 是当前正式基线，不是永久效果冠军；其它候选留给 P2.6。
+P2 ASR does not write `studio_v2.Dialogue` and never maps a speaker directly to Character.
 
----
+## 11. OCR Provider baseline — frozen
 
-## 11. P2.3 OCR Observation Provider Contract
+Formal module:
 
 ```text
-provider: rapidocr
-pinned package: rapidocr==3.9.2
-OCR version: PP-OCRv6
-formal module: engine/app/breakdown_p2_ocr_v1.py
-default model type: small
-default engine: ONNX Runtime
-default device: cpu
+engine/app/breakdown_p2_ocr_v1.py
+RapidOCROCRProvider
+rapidocr==3.9.2
+PP-OCRv6 small
+ONNX Runtime
+default device = cpu
 ```
 
-配置：
-
-```text
-AI_DRAMA_P2_OCR_MODEL_TYPE             # small / medium
-AI_DRAMA_P2_OCR_DEVICE                 # cpu / auto / cuda
-AI_DRAMA_P2_OCR_SAMPLE_INTERVAL_US
-AI_DRAMA_P2_OCR_MAX_FRAMES_PER_SHOT
-AI_DRAMA_P2_OCR_TEXT_SCORE
-AI_DRAMA_P2_OCR_MODEL_CACHE
-```
-
-默认：
+Default sampling:
 
 ```text
 sample_interval_us = 500000
@@ -480,491 +330,373 @@ max_frames_per_shot = 12
 text_score = 0.5
 ```
 
-P2.3 对每个 exact historical `ShotRevisionItem.reference_clip_path` 做 deterministic whole-Shot sampling，而不是只扫中间缩略图。
-
-每条有效文字：
+Every valid `OCR_OBSERVATION` keeps:
 
 ```text
-OCR_OBSERVATION
-source_start_us / source_end_us       # 1µs point observation
-shot_revision_item_id                 # exact historical item
+exact historical ShotRevisionItem
+source point time
 text
-language
-confidence
-payload:
-  shot_ordinal
-  frame_sample_index
-  frame_relative_us
-  image_width / image_height
-  polygon_px
-  bbox_px
-  polygon_norm
-  recognition_language
+recognition confidence
+polygon/bbox/normalized geometry
+frame sample provenance
 ```
 
-OCR 层不做跨帧字幕去重/拼接。
+Repeated frame text remains raw Evidence. P2.5 Fusion owns text/time/geometry stitching and duration inference.
 
-状态：
+Do not redo this OCR implementation without a concrete regression requiring a minimal fix.
 
-```text
-default cpu
-auto-selected CUDA 初始化失败 → visible CPU fallback
-显式 cuda 不可用/初始化失败 → FAILED
-无任何历史 Reference Clip → NOT_AVAILABLE
-所有帧都无法实际分析 → FAILED
-帧可分析但无文字 → NO_EVIDENCE
-有有效 OCR Observation → READY
-```
+## 12. VLM Provider baseline
 
-P2.3 不创建 TimelineEvent，不把 OCR 文本直接物化 Scene/Prop，不写 Final Asset/Binding。
-
----
-
-## 12. P2.4 VLM anonymous Shot semantics Provider Contract
-
-```text
-provider: qwen3-vl
-model: Qwen/Qwen3-VL-4B-Instruct
-semantic schema: breakdown-p2-vlm-shot-semantics-v1
-formal module: engine/app/breakdown_p2_vlm_v1.py
-isolated runner: scripts/run_breakdown_vlm_qwen3.py
-setup: scripts/setup_breakdown_vlm_runtime.ps1
-default device: cuda
-video fps request: 2.0
-max_new_tokens: 1536
-max_pixels: 524288
-```
-
-配置：
-
-```text
-AI_DRAMA_P2_VLM_MODEL
-AI_DRAMA_P2_VLM_MODEL_PATH
-AI_DRAMA_P2_VLM_PYTHON
-AI_DRAMA_P2_VLM_RUNNER
-AI_DRAMA_P2_VLM_DEVICE             # auto / cpu / cuda
-AI_DRAMA_P2_VLM_FPS
-AI_DRAMA_P2_VLM_MAX_NEW_TOKENS
-AI_DRAMA_P2_VLM_MAX_PIXELS
-AI_DRAMA_P2_VLM_FFMPEG_BIN
-```
-
-### 12.1 Runtime 隔离
+Formal implementation:
 
 ```text
 engine/app/breakdown_p2_vlm_v1.py
-→ subprocess
-→ .runtime/TransVLM/inference/.venv Python 3.12
-→ scripts/run_breakdown_vlm_qwen3.py
-→ .runtime/TransVLM/inference/pretrained/Qwen3-VL-4B-Instruct
+scripts/run_breakdown_vlm_qwen3.py
+scripts/setup_breakdown_vlm_runtime.ps1
+Qwen3VLSemanticProvider
+provider = qwen3-vl
+model = Qwen/Qwen3-VL-4B-Instruct
+semantic schema = breakdown-p2-vlm-shot-semantics-v1
+default device = cuda
+video fps request = 2.0
+max_new_tokens = 1536
+max_pixels = 524288
 ```
 
-只复用 TransVLM 的隔离 Python/CUDA 环境，**不复用**转场任务 checkpoint `HeyGenAI/TransVLM-Qwen3-VL-4B-Instruct` 做内容语义。
-
-P2.4 使用独立 base `Qwen/Qwen3-VL-4B-Instruct`。模型下载只在 setup 阶段发生；正式推理默认 offline。
-
-### 12.2 输入/执行
+Runtime:
 
 ```text
-PROCESSING BreakdownRun
-→ exact source ShotRevision
-→ exact historical ShotRevisionItems
-→ existing historical Reference Clips
-→ one isolated runner
-→ model loads once
-→ sequential Shot inference
+main Python 3.11 app
+→ isolated .runtime/TransVLM/inference Python/CUDA environment
+→ separate base Qwen3-VL-4B-Instruct content checkpoint
 ```
 
-### 12.3 Prompt 分工
+The transition-finetuned TransVLM checkpoint is not used as the content-semantic model.
 
-VLM 只分析视觉可支持内容：
+VLM responsibility whitelist:
 
 ```text
-场景 hint
-镜头 summary / visual description
-shot type / camera motion / composition hint
-匿名 subject_A / subject_B ...
-人物外观/动作/屏幕位置/可见性
-视觉 speaking_state hint
-VISUAL / ACTION event
-剧情关键 prop hint
+scene location/interior/time/environment hints
+shot summary/visual description/type/camera/composition/narrative hint
+anonymous subject labels + appearance/activity/screen position/visibility/visual speaking state
+VISUAL/ACTION events + normalized ratios
+plot-relevant prop hints
 ```
 
-明确不要求：对白/字幕/路牌/手机/文档 transcription、真实人物姓名/全局身份、Final Character/Scene/Prop。
+VLM deliberately does not own dialogue/subtitle/sign/phone/document transcription; those are ASR/OCR responsibilities.
 
-### 12.4 VLM_OUTPUT 白名单
+## 13. Deterministic Fusion contract
 
-```text
-VLM_OUTPUT
-source_start_us = historical Shot start
-source_end_us   = historical Shot end
-shot_revision_item_id = exact historical item
-text = normalized shot summary 或 NULL
-language = project source language
-confidence = NULL
-payload:
-  shot_ordinal
-  semantic:
-    schema_version
-    scene
-    shot
-    subjects[]
-    events[]
-    props[]
-```
-
-白名单：
-
-```text
-scene:
-  location_hint
-  interior_exterior = INT|EXT|MIXED|UNKNOWN
-  time_of_day
-  environment_description
-
-shot:
-  summary
-  visual_description
-  shot_type_hint
-  camera_motion_hint
-  narrative_function_hint
-  composition_hint
-
-subjects[]:
-  label = subject_*
-  appearance_summary
-  activity_summary
-  screen_position
-  visibility = FULL|PARTIAL|OCCLUDED|UNKNOWN
-  speaking_state = LIKELY_SPEAKING|NOT_SPEAKING|UNKNOWN
-
-events[]:
-  event_type = VISUAL|ACTION
-  start_ratio / end_ratio in 0..1
-  content
-  subject_labels[] limited to declared anonymous subjects
-
-props[]:
-  label
-  importance = LOW|MEDIUM|HIGH
-  narrative_reason
-  subject_labels[] limited to declared anonymous subjects
-```
-
-未知模型字段在 Adapter 边界丢弃。P2.1 recursive Final-ID validation 是第二重保护。
-
-### 12.5 状态
-
-```text
-没有历史 Reference Clip → NOT_AVAILABLE
-隔离 Python/runner/checkpoint 缺失 → NOT_AVAILABLE
-runner/subprocess 整体失败 → FAILED
-部分 Shot 失败 + 仍有合法 semantics → READY + warnings
-全部 Shot 输出失败/不可用 → FAILED
-有至少一个合法 VLM_OUTPUT → READY
-```
-
-P2.4 不创建 P1 Draft rows / Final Asset / Final Bindings。
-
----
-
-## 13. P2.5 Fusion Contract — IMPLEMENTED
-
-正式实现：
+Formal module:
 
 ```text
 engine/app/breakdown_p2_fusion_v1.py
-engine/tests/v2/test_breakdown_p2_fusion_v1.py
 profile = breakdown-p2-fusion-v1
 ```
 
-### 13.1 输入与组件门槛
+Fusion never implicitly reruns ASR/OCR/VLM. It requires the Run's already-registered ASR/OCR/VLM sidecars and validates:
 
 ```text
-BreakdownRun component provenance
-→ load ASR/OCR/VLM immutable sidecars
-→ verify file/fingerprint/schema/component/run/source revision/provider metadata
+file URI
+SHA-256 fingerprint
+sidecar schema
+run/project/episode IDs
+source ShotRevision
+component/provider/model/status/evidence_count
+P2 provider result contract
 ```
 
-组件状态：
+All three sidecars are required. ASR/OCR may be degraded (`NO_EVIDENCE / NOT_AVAILABLE`) with warnings; VLM must be READY.
+
+### 13.1 Scene segments
+
+Consecutive exact VLM scene signatures:
 
 ```text
-VLM READY = required
-VLM non-READY = hard fail
-ASR/OCR READY = consume
-ASR/OCR NO_EVIDENCE / NOT_AVAILABLE = allowed with warnings
-FAILED / NOT_CONFIGURED = hard fail
+location_hint + interior_exterior + time_of_day
 ```
 
-### 13.2 SceneSegmentDraft
+may group into one SceneSegmentDraft. Missing/unknown location is conservative and does not trigger speculative merge.
 
-Scene Segment 只能由连续历史 Shot 组成。
+### 13.2 Shot Draft coverage
 
-相邻 Shot 只有在以下 normalized signature 完全一致时才合并：
+Every frozen source ShotRevisionItem must receive exactly one ShotSemanticDraft with exact source bounds/snapshot. Missing per-Shot VLM semantics yields a conservative blank semantic Draft + warning rather than silently removing the Shot.
+
+### 13.3 Anonymous LocalSubject grouping
+
+Normal cross-Shot grouping is conservative semantic grouping, not identity resolution.
+
+If an exact normalized appearance appears for >=2 simultaneous subjects in any Shot within the segment:
 
 ```text
-location_hint
-interior_exterior
-time_of_day
+appearance is ambiguous
+→ appearance cannot be used as cross-Shot merge key in that segment
+→ fall back to shot-local anonymous keys
 ```
 
-缺少 location 时保守切新 Segment，避免无依据地把不同场景粘在一起。
+This acts as a Draft-level cannot-link. The system prefers extra anonymous subjects over a false identity merge.
 
-### 13.3 ShotSemanticDraft
+### 13.4 ASR events
 
-每个 source `ShotRevisionItem` 必须恰好一个 `ShotSemanticDraft`：
+Cross-cut ASR segments are intersected against exact frozen Shot boundaries. When word records exist, exact per-Shot text/timing is reconstructed from the word timestamps. Segment-text fallback is warning-bearing degradation only.
+
+### 13.5 OCR events
+
+Fusion groups OCR observations only when normalized text, temporal gap and geometry are compatible. Repeated observations may infer a duration through the last observation + sample interval clipped to Shot end. A single observation remains a 1µs point event.
+
+### 13.6 VLM events
+
+Normalized VLM ratios map to exact Shot source microseconds, clipped to valid positive intervals. VISUAL/ACTION participants reference only declared anonymous LocalSubjects in that Shot.
+
+### 13.7 Props
+
+Plot-relevant VLM prop hints become segment-scoped DraftPropHint with per-Shot DraftPropOccurrence. They remain hints, never Final Prop assets.
+
+### 13.8 Publish
+
+Fusion writes the Draft graph transactionally, records exact Evidence provenance, then calls the real P1 validator/publish gate. Validator hard error fails the Run. STALE state is preserved and never overwritten by generic failure closure.
+
+## 14. Full P2 production orchestration
+
+Formal module:
 
 ```text
-source_shot_revision_item_id = exact historical item
-source_shot_id_snapshot      = item.original_shot_id
-shot_ordinal_snapshot        = item.ordinal
-source_start_us/end_us       = exact item interval
+engine/app/breakdown_p2_pipeline_v1.py
+profile = breakdown-p2-full-v1
+provider order = ASR → OCR → VLM
 ```
 
-缺少某 Shot VLM_OUTPUT 时仍保守生成该 ShotDraft，并把缺失写入 warning/metadata，保证 P1 cardinality/coverage Contract。
+Purpose: there is one production path instead of separate callers inventing their own provider order/lifecycle.
 
-### 13.4 LocalSubject + same-Shot cannot-link
-
-LocalSubject 只在 Scene Segment 内有效，不是 Character。
-
-正常弱连续性：
+Single Episode:
 
 ```text
-exact normalized appearance_summary
-→ 可作为同一 Segment 内跨 Shot 的 anonymous continuity key
+create fresh frozen PROCESSING BreakdownRun
+→ ASR Provider through P2.1 sidecar boundary
+→ OCR Provider through P2.1 sidecar boundary
+→ VLM Provider through P2.1 sidecar boundary
+→ P2.5 Fusion
+→ P1 validator/publish
 ```
 
-硬保护：
+Continuation policy:
 
 ```text
-如果某 appearance signature 在任一同一个 Shot 内同时出现在 2+ 个 subject：
-→ 该 appearance 在整个 Segment 内不得继续作为跨 Shot merge key
-→ 相关 occurrence 使用 shot-local key
-→ 同 Shot 两个人必须生成不同 LocalSubject / ShotLocalSubject
+ASR READY / NO_EVIDENCE / NOT_AVAILABLE allowed
+OCR READY / NO_EVIDENCE / NOT_AVAILABLE allowed
+VLM READY required
+FAILED / NOT_CONFIGURED fail closed
 ```
 
-这条规则防止“两个都穿黑衣的年轻女性”被语义层误合并。它只是 Draft cannot-link，不创建/确认 Character identity。
+Pipeline failure provenance stored in immutable Run metadata uses only safe error type, not uncontrolled Provider exception text.
 
-VLM `subject_A / subject_B` 只用于同 Shot 语义引用，不作为跨 Shot 全局 ID。
+## 15. Background execution contract
 
-### 13.5 VLM TimelineEvent
-
-只消费 `VISUAL / ACTION`：
+Formal APIs:
 
 ```text
-source_start = Shot.start + duration * start_ratio
-source_end   = Shot.start + duration * end_ratio
+POST /api/episodes/{episode_id}/tasks/breakdown
+POST /api/projects/{project_id}/tasks/breakdown-batch
 ```
 
-结果 clamp 在对应 Shot 内，并同时写严格一致的 shot-relative time。
+They reuse the existing persistent BackgroundTask infrastructure.
 
-### 13.6 ASR TimelineEvent
-
-`ASR_SEGMENT` 与每个 exact historical Shot 求时间交集。
-
-若有 `ASR_WORD`：
+Batch rule:
 
 ```text
-只取与当前 Shot 相交的 word
-→ 用 word source timing 决定事件 start/end
-→ 优先用 raw_word/word text 重建本 Shot dialogue text
+Episode.sort_order
+→ one episode at a time
+→ concurrency = 1
 ```
 
-若跨 Shot segment 没有可用 word timing，只能把 segment text 作为 warning-visible fallback，不能假装精确切词。
+A failed Episode is recorded and batch execution continues with later Episodes; aggregate task status becomes `READY_WITH_WARNINGS` when any episode failed or completed with warnings.
 
-### 13.7 OCR TimelineEvent
+## 16. P2.6 runtime preflight
 
-P2.5 按同 Shot 内：
+Formal API/CLI:
 
 ```text
-normalized text
-+ temporal gap
-+ normalized bbox IoU / center distance compatibility
+GET /api/breakdown/p2/runtime-preflight
+python scripts/run_breakdown_p2.py preflight --strict
 ```
 
-做 conservative cluster。
-
-单帧仍是 point observation；连续重复 Observation 才推断持续区间。所有 duration clamp 在 Shot 内。
-
-### 13.8 DraftPropHint
-
-VLM plot-relevant prop hint → Segment-scoped `DraftPropHint` + per-Shot `DraftPropOccurrence`。
-
-同 Segment 相同 normalized label 可聚合为一个 hint；importance 保留更高等级。仍不是 Final Prop。
-
-### 13.9 EvidenceLink
-
-Fusion 创建实际 Draft owner 后，再精确链接消费过的：
+Preflight checks local presence only:
 
 ```text
-VLM_OUTPUT
-ASR_SEGMENT / ASR_WORD
-OCR_OBSERVATION
+main Python
+faster-whisper
+RapidOCR
+OpenCV
+FFmpeg/FFprobe
+isolated VLM Python/runner/model path
+isolated torch/transformers/qwen_vl_utils imports
+CUDA when explicitly required
+nvidia-smi GPU/VRAM/driver metadata
 ```
 
-`source_id + source_uri` 保留到 immutable sidecar provenance。
+Preflight performs no video inference, no model download and no BreakdownRun mutation.
 
-### 13.10 生命周期/失败
+## 17. Real-video acceptance contract
 
-完整 Draft graph 写入后调用真实 P1 validator/publish。
+Formal module:
 
 ```text
-validator pass → READY / READY_WITH_WARNINGS
-validator hard fail → FAILED
-source revision stale → refuse publish / preserve STALE truth
-Fusion exception while still PROCESSING → safe fail Run
-older Current READY Run never被失败新 Run 替换
+engine/app/breakdown_p2_acceptance_v1.py
+schema = breakdown-p2-acceptance-v1
 ```
 
-P2.5 仍禁止写 Final Character/Scene/Prop/AssetRevision/Final Shot Bindings，也不修改 Character V10.1 硬 Gate。
-
----
-
-## 14. Provider 选择 / P2.6 benchmark 规则
-
-每个 Provider 至少评估：
+API:
 
 ```text
-真实短剧准确率/可读性
-中文/多语言能力
-word/box/structured timing 或坐标能力
-Windows 支持
-CPU/GPU fallback
-显存/速度
-模型下载与离线缓存
-权重/代码商业授权
-Provider 可替换性
+POST /api/breakdown-runs/{run_id}/p2-acceptance
 ```
 
-P2.6 至少比较：
+HTTP reports are always written into that Run's own workspace acceptance directory; the API does not accept arbitrary server output paths.
+
+CLI may explicitly select an output path for local operator workflows.
+
+### 17.1 Structural checks
+
+At minimum:
 
 ```text
-ASR:
-  dialogue recall/error
-  word timing
-  cross-cut behavior
-  large-v3 vs viable alternatives
-
-OCR:
-  subtitle recall/precision
-  phone/sign/small text
-  PP-OCRv6 small vs medium
-  sampling interval
-  CPU/GPU
-
-VLM:
-  subject/action/scene/plot-relevant prop semantics
-  anonymous-subject consistency within Shot
-  2fps/max_pixels sensitivity
-  VRAM/speed
-  short/long Shot behavior
-  Windows/local GPU stability
-  Qwen3-VL-4B vs viable licensed alternatives if needed
-
-Fusion:
-  final anonymous Breakdown completeness
-  event timing
-  OCR dedupe
-  same-Shot subject cannot-link
-  conflict handling
-  provenance correctness
+Run READY / READY_WITH_WARNINGS
+ASR/OCR/VLM component sidecars registered
+all sidecar fingerprints are SHA-256-shaped provenance
+VLM READY
+FUSION READY / READY_WITH_WARNINGS
+ShotSemanticDraft count == frozen source ShotRevisionItem count
 ```
 
-Contract/fake-engine/fake-runner tests不等于真实短剧效果冠军证明。
+Structural failure → `STRUCTURAL_FAIL`.
 
----
+### 17.2 Human review
 
-## 15. P2 全阶段禁止写
+0–5 review keys:
+
+```text
+asr_dialogue
+asr_timing
+ocr_text
+vlm_scene
+vlm_subjects
+vlm_actions
+vlm_props
+fusion_completeness
+fusion_timing
+fusion_conflict_handling
+```
+
+OCR can be explicitly `not_applicable` only when the reviewed material genuinely has no reviewable text.
+
+Acceptance states:
+
+```text
+STRUCTURAL_FAIL
+NEEDS_HUMAN_REVIEW
+NEEDS_TUNING
+PASS
+```
+
+PASS requires:
+
+```text
+structural checks passed
+all required review dimensions scored
+minimum required score >= 4.0 / 5.0
+no blocking issues
+```
+
+Machine metrics cannot automatically self-certify real-video quality.
+
+### 17.3 Comparison
+
+Existing acceptance JSON reports can be ranked without model reruns:
+
+```text
+python scripts/run_breakdown_p2.py compare <report-a> <report-b> ...
+```
+
+Provider/model/parameter candidates must use separate Runs so Evidence remains traceable.
+
+## 18. Windows local runner
+
+```text
+scripts/run_breakdown_p2_windows.ps1
+```
+
+Default behavior:
+
+```text
+strict runtime preflight
+→ full Episode P2 run
+→ acceptance report
+```
+
+Optional human review template:
+
+```text
+scripts/p2_acceptance_review_template.json
+```
+
+No GitHub hosted CI is required for this local acceptance flow.
+
+## 19. P2 all-stage forbidden writes
+
+P2 must not create/update:
 
 ```text
 Character
 Scene
 Prop
+AssetRevision
 ShotCharacterBinding
 ShotSceneBinding
 ShotPropBinding
-AssetRevision
 ```
 
-也禁止修改 Character V10.1 identity thresholds、same-sample cannot-link、Face hard conflict、explicit Shot Character Assignment、Final Character Gate。
+P2 also must not change Character V10.1 identity thresholds, same-sample cannot-link, high-quality Face conflict behavior, explicit Shot Assignment authority or Final Character Gate.
 
----
+## 20. Stable implementation gate
 
-## 16. Stable Gate
-
-### P2.1 已满足
+Implemented artifacts now include:
 
 ```text
-[x] exact ShotRevision Provider context
-[x] unified Provider/Result/Evidence Contract
-[x] raw Evidence validation + Final ID leakage fail closed
-[x] fingerprinted atomic sidecar
-[x] STALE race protection
+[x] exact frozen ShotRevision Provider context
+[x] unified Provider/Result/Evidence contract
+[x] immutable fingerprinted sidecars
+[x] ASR segment/word timing
+[x] OCR exact historical multi-frame observations
+[x] strict anonymous VLM Shot semantics
+[x] deterministic Fusion
+[x] exact EvidenceLink provenance
+[x] real P1 validator/publish
+[x] conservative same-Shot anonymous cannot-link
+[x] full production ASR→OCR→VLM→Fusion orchestrator
+[x] single Episode background task
+[x] sequential batch Breakdown task
+[x] runtime preflight
+[x] Windows local runner
+[x] acceptance JSON report and scoring contract
+[x] acceptance comparison tool
+[x] focused tests for production orchestration and acceptance scoring added
 ```
 
-### P2.2 已满足
+Not truthfully checked in this environment:
 
 ```text
-[x] faster-whisper Provider + segment/word timing
-[x] cross-shot ASR remains unbound until Fusion
-[x] auto CUDA fallback visible; explicit CUDA fail closed
-[x] no Dialogue/Final write
-[x] focused tests exist
+[ ] real short-drama end-to-end model inference
+[ ] user Windows GPU runtime execution
+[ ] human-reviewed PASS acceptance report
 ```
 
-### P2.3 已满足
+Reason: the repository contains no real short-drama video sample and this development session does not run on the user's Windows GPU host.
+
+Therefore the formal status is:
 
 ```text
-[x] RapidOCR 3.9.2 + PP-OCRv6 small formal Provider
-[x] exact historical Reference Clip multi-frame sampling
-[x] deterministic whole-Shot sampling with max frame cap
-[x] OCR source time → Episode integer microseconds
-[x] every OCR Observation binds exact ShotRevisionItem
-[x] polygon/bbox/normalized geometry + recognition confidence provenance
-[x] repeated text remains raw observations; no early subtitle-duration inference
-[x] default CPU + configurable auto/cuda
-[x] no TimelineEvent / Character / Scene / Prop / Final Binding write
-[x] focused tests exist
+P2 IMPLEMENTATION CODE = COMPLETE
+P2 REAL-VIDEO ACCEPTANCE EXECUTION = PENDING
 ```
 
-### P2.4 已满足
-
-```text
-[x] independent Qwen3VLSemanticProvider through P2.1 Contract
-[x] separate base Qwen/Qwen3-VL-4B-Instruct content-semantic checkpoint
-[x] isolated Python 3.12/CUDA runtime; main Python 3.11 dependency boundary preserved
-[x] exact historical Reference Clip input / exact ShotRevisionItem output anchor
-[x] sequential model use; one model load per runner process
-[x] strict anonymous semantic JSON whitelist
-[x] ASR/OCR responsibility separation
-[x] VLM_OUTPUT uses full historical Shot source interval
-[x] event ratios remain hints for P2.5, not fake absolute timing
-[x] provider-output-unscored / confidence NULL
-[x] unknown model keys and attempted business IDs do not persist
-[x] no P1 Draft rows / Final Asset / Final Binding write
-[x] 6 VLM focused tests
-```
-
-### P2.5 已满足
-
-```text
-[x] immutable registered ASR/OCR/VLM sidecars only; no implicit rerun
-[x] fingerprint/schema/run/revision/component/provider provenance validation
-[x] VLM READY hard requirement; ASR/OCR degraded warning policy
-[x] exact consecutive SceneSegment generation
-[x] exactly one ShotSemanticDraft per source ShotRevisionItem
-[x] Segment-scoped anonymous LocalSubject
-[x] same-Shot identical-appearance subject cannot-link
-[x] VLM ratio → exact Shot source/relative time
-[x] ASR cross-Shot split with word-timing preference
-[x] OCR text/time/geometry stitching without crossing Shot boundary
-[x] DraftPropHint + occurrence
-[x] precise BreakdownEvidenceLink provenance
-[x] real P1 validator + publish lifecycle reused
-[x] no Final Asset/Binding write
-[x] focused test suite exists
-```
-
-P2.5 初始 hosted run 在 `942f9f524d0ccd1f11c911d60b9b148b18d9396d` 为 5/6 focused pass；唯一新失败是 same-Shot identical appearance merge。修复链结束于 `b59309d305a15dfa80e9a6af0f961f93fcac5bf9`，并做了本地纯逻辑验证。按用户要求，因 GitHub Actions 无可用额度，修复后**没有主动重跑 hosted CI**，因此不能宣称新的 hosted 6/6。
-
-P2.1–P2.5 已关闭。下一步唯一安全子阶段是 **P2.6：真实短剧 / real-model benchmark + Windows/local runtime closure**。
+See `docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md` for the exact local acceptance procedure.
