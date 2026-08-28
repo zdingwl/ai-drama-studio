@@ -144,9 +144,11 @@ def _safe_fail_processing(run_id: str, exc: BaseException, executions: Sequence[
             run = session.get(BreakdownRun, run_id)
             should_fail = run is not None and run.status == "PROCESSING"
         if should_fail:
+            # Run provenance intentionally stores only the exception type. Provider exception text may
+            # contain environment paths/runtime detail and belongs in the execution Task, not immutable Draft truth.
             breakdown_service_v1.fail_breakdown_run(
                 run_id,
-                f"P2 pipeline failed: {type(exc).__name__}: {exc}",
+                f"P2 pipeline failed: {type(exc).__name__}",
             )
     except Exception:
         return
