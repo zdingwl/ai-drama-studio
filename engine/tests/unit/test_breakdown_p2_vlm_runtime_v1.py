@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from engine.app.breakdown_p2_vlm_runtime_v1 import Qwen3VLSemanticProvider
 
 
-def test_default_runner_uses_diagnostic_transport() -> None:
+def test_default_runner_uses_strict_diagnostic_transport() -> None:
     provider = Qwen3VLSemanticProvider(inference_runner=lambda config, shots: ())
-    assert provider.runner_script.name == "run_breakdown_vlm_qwen3_diagnostic.py"
+    assert provider.runner_script.name == "run_breakdown_vlm_qwen3_strict_reader.py"
+
+
+def test_strict_runner_disables_qwen_torchvision_fallback() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    source = (repo_root / "scripts" / "run_breakdown_vlm_qwen3_strict_reader.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'vision_process.VIDEO_READER_BACKENDS["torchvision"] = backend' in source
+    assert 'FORCE_QWENVL_VIDEO_READER' in source
 
 
 def test_failure_detail_combines_type_and_message() -> None:
