@@ -1,14 +1,14 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.7.0
-description: AI Drama Studio Reference Video 驱动的本地短剧重制工作台开发规则；Character V10.1 为正式人物基线；Breakdown P1 + P2.1-P2.5 已实现，P2.6 real-video/local-model closure 下一步。
+version: 3.8.0
+description: AI Drama Studio Reference Video 驱动的本地短剧重制工作台开发规则；Character V10.1 为正式人物基线；Breakdown P1/P2 后台实现已完成，真实视频验收待用户 Windows 执行，P3 structured 02 拉片 UI 下一步。
 ---
 
 # AI Drama Studio — Reference Video V2 / Breakdown-first / Character V10.1
 
 ## 0. 恢复项目上下文
 
-项目事实必须来自 GitHub 当前 `main`，不能只依赖旧聊天。
+必须先读取 GitHub 当前仓库事实：
 
 ```text
 AGENTS.md
@@ -18,35 +18,35 @@ AGENTS.md
 → docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
 → docs/BREAKDOWN_DRAFT_DATA_CONTRACT.md
 → docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
-→ docs/ASSET_CHARACTER_RECOGNITION_V10_1.md（涉及人物时）
+→ docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
+→ docs/ASSET_CHARACTER_RECOGNITION_V10_1.md when Character is involved
 → current code/tests
 → latest docs/sessions/*.md handoff
 ```
 
-事实纪律：
+Truth discipline:
 
 ```text
-PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + code/tests
-= CURRENT
-
-BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN
-= TARGET + phase order
+PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + code/tests = CURRENT
+BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN = accepted TARGET / phase order
 ```
 
-旧 Feature/Frozen 文档或旧聊天与当前 wiring 冲突时，以当前代码和 CURRENT docs 为准。
+Old Frozen/Feature docs or old chat do not override current wiring.
 
-## 1. 当前基线
+## 1. Current baseline
 
 ```text
 Architecture: Reference Video V2
 FastAPI: 2.4.1
 Default branch: main
 Formal Character runtime: Character V10.1
-Breakdown: P1 + P2.1-P2.5 COMPLETE
-Next: P2.6 real-video / real-model / Windows-local runtime closure
+P1: COMPLETE
+P2 backend implementation: COMPLETE
+P2 real-video acceptance execution: PENDING
+P3 structured 02 拉片 UI: NEXT
 ```
 
-正式用户工作区：
+Formal user workspaces:
 
 ```text
 01 剧集管理
@@ -57,31 +57,56 @@ Next: P2.6 real-video / real-model / Windows-local runtime closure
 06 生成 / 导出
 ```
 
-核心产品原则：
+Core product principle:
 
-```text
-先看懂，再识别，再回填
-```
+> **先看懂，再识别，再回填。**
 
-## 2. Breakdown-first 当前已实现链
+## 2. Breakdown-first product flow
 
 ```text
 Original Video
 → Preprocess
 → Shot Detection
-→ ShotRevision / ShotRevisionItem
-→ Reference Clip / thumbnail / keyframes
+→ Shot + Reference Clip
 → ASR / OCR / VLM
-→ immutable raw Evidence sidecars
-→ deterministic P2.5 Fusion
-→ anonymous structured P1 Draft
-→ P1 validator
-→ READY / READY_WITH_WARNINGS BreakdownRun
+→ anonymous structured Breakdown Draft
+→ Draft-guided Character / Scene / Prop evidence
+→ Global Asset Resolution + Final Shot Bindings
+→ identity/asset fill-back
+→ Final Breakdown
+→ remake
 ```
 
-当前正式 P1 Draft 实体已经存在并由 P2.5 自动填充：
+Anonymous Draft semantics are not Final truth:
 
 ```text
+LocalSubject / 人物A != Character
+SceneSegmentDraft != Final Scene
+DraftPropHint != Final Prop
+```
+
+## 3. Reference Video V2 invariants
+
+Keep:
+
+```text
+FFprobe authoritative media facts
+FFmpeg preprocess/proxy/audio
+integer microseconds
+TransNetV2 Shot boundaries
+ShotRevision / ShotRevisionItem history
+per-Shot Reference Clip / thumbnail / keyframes
+manual edit / split / merge / rerun / restore
+```
+
+Historical Breakdown always anchors to exact frozen ShotRevision/ShotRevisionItem. Do not migrate Draft between revisions by guessed ordinal/time similarity.
+
+## 4. P1 Draft contract
+
+P1 formal entities:
+
+```text
+BreakdownRun
 SceneSegmentDraft
 ShotSemanticDraft
 LocalSubject
@@ -93,62 +118,194 @@ DraftPropOccurrence
 BreakdownEvidenceLink
 ```
 
-这些是当前数据库正式实体，不再只是 Target 概念。
-
-仍未实现：
+Lifecycle:
 
 ```text
-P2.6 real-video/model quality closure
-P3 structured 02 拉片 UI
-P4 Draft-guided Scene / Prop evidence
-P5 Draft ↔ Character safe resolution
-P6 Final fill-back / renderers
-P7 downstream remake integration
+PROCESSING / READY / READY_WITH_WARNINGS / FAILED / STALE
 ```
 
-## 3. Shot / Revision Contract
+Real validator is mandatory. Successful publish switches Current atomically; FAILED/STALE runs never replace the prior valid Current.
 
-Shot 是核心生产单元，Reference Clip 是 Shot 一级正式资产。
+## 5. P2 formal production chain
 
-正式时间：integer microseconds。
+Formal orchestrator:
 
 ```text
-BreakdownRun.source_shot_revision_id
-→ exact ShotRevision
-
-ShotSemanticDraft.source_shot_revision_item_id
-→ exact historical ShotRevisionItem
+engine/app/breakdown_p2_pipeline_v1.py
+profile = breakdown-p2-full-v1
 ```
 
-`Shot.id` 不是跨 Revision 永久历史锚点。
-
-Provider/Fusion 必须消费 Run 冻结的 exact historical input，禁止重新从 Current `v2_shots` 猜历史数据。
-
-任何产生新 Current ShotRevision 的 edit/split/merge/auto-rerun/restore 都必须让旧 active Breakdown STALE。旧历史 Draft/Revision/Reference Clip 保留可读。
-
-## 4. Evidence / Draft / Final Asset 分离
+Execution:
 
 ```text
-P2 raw Evidence
-→ immutable model facts/observations
-
-P1 anonymous Draft
-→ soft semantic interpretation/search prior
-
-Character / Scene / Prop + Final Shot Bindings
-→ editable Final truth
+create frozen PROCESSING BreakdownRun
+→ ASR
+→ OCR
+→ VLM
+→ immutable sidecars
+→ deterministic Fusion
+→ P1 validator
+→ READY / READY_WITH_WARNINGS
 ```
 
-永远保持：
+Formal components:
 
 ```text
-LocalSubject != Character
-SceneSegmentDraft != Scene
-DraftPropHint != Prop
-BreakdownEvidenceLink != Final Binding
+P2.1 engine/app/breakdown_p2_sidecar_v1.py
+P2.2 engine/app/breakdown_p2_asr_v1.py
+P2.3 engine/app/breakdown_p2_ocr_v1.py
+P2.4 engine/app/breakdown_p2_vlm_v1.py
+P2.5 engine/app/breakdown_p2_fusion_v1.py
+P2.6 engine/app/breakdown_p2_pipeline_v1.py
+P2.6 engine/app/breakdown_p2_acceptance_v1.py
 ```
 
-P2 不允许直接创建：
+## 6. ASR / OCR / VLM responsibilities
+
+### ASR
+
+```text
+FasterWhisperASRProvider
+faster-whisper==1.2.1
+large-v3
+word timestamps
+```
+
+Produces anonymous ASR segment/word Evidence. Dialogue may cross cuts; Fusion handles exact Shot splitting. Speaker label never directly creates/maps Character.
+
+### OCR — frozen baseline
+
+```text
+RapidOCROCRProvider
+rapidocr==3.9.2
+PP-OCRv6 small
+ONNX Runtime
+default CPU
+```
+
+Samples exact historical Reference Clips across Shots and stores point observations with text/confidence/geometry/source time. Fusion owns temporal stitch/dedupe.
+
+**Do not redo OCR** unless a concrete regression requires a minimal fix.
+
+### VLM
+
+```text
+Qwen3VLSemanticProvider
+Qwen/Qwen3-VL-4B-Instruct
+strict anonymous shot semantics
+```
+
+VLM returns scene hints, shot description, anonymous subjects, actions and plot-relevant prop hints. It does not own dialogue/subtitle/sign/phone transcription. It uses an isolated runtime and a separate base semantic checkpoint, not the transition-finetuned TransVLM checkpoint.
+
+## 7. Fusion rules
+
+Fusion consumes registered immutable ASR/OCR/VLM sidecars and never implicitly reruns Providers.
+
+Core transformations:
+
+```text
+ASR cross-Shot word-timing split
+OCR text/time/geometry stitching
+VLM ratios → source-us
+SceneSegmentDraft
+one ShotSemanticDraft per frozen source Shot
+LocalSubject / ShotLocalSubject
+TimelineEvent / participants
+DraftPropHint / occurrences
+precise BreakdownEvidenceLink
+P1 validator/publish
+```
+
+Same-Shot anonymous cannot-link:
+
+```text
+same normalized appearance used by >=2 simultaneous subjects
+→ appearance is ambiguous for the segment
+→ cannot cross-Shot merge by that appearance
+→ use shot-local anonymous keys
+```
+
+Prefer duplicate anonymous subjects to false identity merging.
+
+## 8. Background tasks / batch
+
+Formal APIs:
+
+```text
+POST /api/episodes/{episode_id}/tasks/breakdown
+POST /api/projects/{project_id}/tasks/breakdown-batch
+```
+
+Batch must follow:
+
+```text
+Episode.sort_order
+concurrency = 1
+```
+
+Use the existing persistent BackgroundTask infrastructure; do not invent a second job system for P2/P3.
+
+## 9. P2 runtime / acceptance
+
+Formal local tools:
+
+```text
+scripts/run_breakdown_p2.py
+scripts/run_breakdown_p2_windows.ps1
+scripts/p2_acceptance_review_template.json
+docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
+```
+
+APIs:
+
+```text
+GET  /api/breakdown/p2/runtime-preflight
+POST /api/breakdown-runs/{run_id}/p2-acceptance
+```
+
+Acceptance states:
+
+```text
+STRUCTURAL_FAIL
+NEEDS_HUMAN_REVIEW
+NEEDS_TUNING
+PASS
+```
+
+`PASS` requires structural success + explicit real-video human scores >=4/5 for all required dimensions + no blocking issue. Machine checks cannot award PASS on their own.
+
+Repository currently has no real short-drama sample, so do not claim real-model quality acceptance has run.
+
+## 10. Character V10.1 protected baseline
+
+Formal chain:
+
+```text
+YOLOX Person Detection
+→ capture-first Person Evidence
+→ mature MOT
+→ YoutuReID project-level identity
+→ RESOLVED / UNRESOLVED
+→ explicit Shot × known-Character Assignment
+→ Final Character Gate
+```
+
+Hard invariants:
+
+```text
+new identity >=3 independent Shots
+new identity >=3 model-usable images
+same-sample cannot-link
+high-quality Face hard conflict
+ambiguous winner stays unresolved/unassigned
+current Final ShotCharacterBinding = explicit shot_presence_assignments for current V10.1 Runs
+```
+
+Draft semantic context cannot override these rules.
+
+## 11. P2 forbidden writes
+
+P2 cannot create/update:
 
 ```text
 Character
@@ -160,336 +317,37 @@ ShotSceneBinding
 ShotPropBinding
 ```
 
-## 5. P2.1 raw Evidence sidecar
+Do not let VLM/ASR/OCR write Final identity/asset truth.
 
-正式模块：
+## 12. Testing / CI discipline
 
-```text
-engine/app/breakdown_p2_sidecar_v1.py
-```
-
-统一 Provider components：
+User explicitly requested not to consume GitHub Actions quota. For current P2.6 work:
 
 ```text
-ASR / OCR / VLM
+GitHub hosted CI: do not run/check
+use [skip ci] for remote development commits
+local syntax/focused verification is preferred
+real Windows short-drama acceptance is the final external gate
 ```
 
-统一 Evidence types：
+Do not describe historical CI results as fresh current results.
+
+## 13. Git workflow
+
+Read current main before writes. Keep changes isolated. Follow the GitHub connector safety workflow. Do not force-update main. Do not create a PR unless requested.
+
+## 14. Phase pointer
 
 ```text
-ASR_SEGMENT
-ASR_WORD
-OCR_OBSERVATION
-VLM_OUTPUT
-FRAME
-AUDIO_RANGE
-RULE
+P0 COMPLETE
+P1 COMPLETE
+P2 IMPLEMENTATION COMPLETE
+P2 REAL-VIDEO ACCEPTANCE PENDING
+P3 structured 02 拉片 UI NEXT
+P4 Draft-guided Scene/Prop PLANNED
+P5 Draft ↔ Character safe integration PLANNED
+P6 Final fill-back/renderers PLANNED
+P7 downstream remake integration PLANNED
 ```
 
-Raw Evidence 保存为 fingerprinted immutable JSON：
-
-```text
-workspace/<project>/episodes/<episode>/breakdown/<run>/evidence/<component>/<sha256>.json
-```
-
-必须：
-
-- JSON 可稳定序列化；
-- Final Asset/Binding ID leakage 递归 fail closed；
-- 写前/写后确认 Run + source revision 仍可写；
-- Fusion 只消费已登记 sidecar，不隐式重跑 Provider。
-
-## 6. P2.2 ASR baseline
-
-```text
-engine/app/breakdown_p2_asr_v1.py
-faster-whisper==1.2.1
-default model = large-v3
-beam_size = 5
-vad_filter = true
-word_timestamps = true
-```
-
-正式输出：`ASR_SEGMENT + ASR_WORD`，Episode source integer microseconds。
-
-Dialogue 可以跨 Shot，因此 raw ASR 不提前绑定单个 `ShotRevisionItem`。P2.5 才按 exact Shot boundaries 拆分；有 word timing 时优先用 word timing 重建每个 Shot 的文本/时间。
-
-ASR 不直接写 `studio_v2.Dialogue`，不把 speaker label 绑定 Character。
-
-## 7. P2.3 OCR baseline — 保持稳定
-
-```text
-engine/app/breakdown_p2_ocr_v1.py
-rapidocr==3.9.2
-PP-OCRv6 small
-ONNX Runtime
-default device = cpu
-```
-
-每条 OCR Observation：
-
-```text
-exact historical ShotRevisionItem
-+ sampled frame source microseconds
-+ text/confidence
-+ polygon/bbox/normalized geometry
-```
-
-单帧 OCR 是 point observation，不是字幕 duration。重复文字保留 raw observations；P2.5 才做 stitching。
-
-除非有明确 regression，**不要重新设计或重写 P2.3 OCR**。
-
-## 8. P2.4 VLM baseline
-
-正式实现：
-
-```text
-engine/app/breakdown_p2_vlm_v1.py
-scripts/run_breakdown_vlm_qwen3.py
-scripts/setup_breakdown_vlm_runtime.ps1
-```
-
-当前 baseline：
-
-```text
-provider = qwen3-vl
-model = Qwen/Qwen3-VL-4B-Instruct
-semantic schema = breakdown-p2-vlm-shot-semantics-v1
-default device = cuda
-video fps request = 2.0
-```
-
-VLM 只产匿名视觉语义：
-
-```text
-scene hints
-shot summary / visual description / shot language hints
-subject_A / subject_B appearance/activity/screen position/visibility
-visual speaking_state hint
-VISUAL / ACTION ratio events
-plot-relevant prop hints
-```
-
-不让 VLM 重做 ASR/OCR transcription，不让它识别真实人物身份。
-
-特别注意：
-
-```text
-transvlm_runtime_v51.py / HeyGenAI TransVLM checkpoint
-= transition detection
-
-P2.4 base Qwen3-VL checkpoint
-= content semantics
-```
-
-只能复用隔离 Python/CUDA runtime，不能把转场微调权重当内容语义模型。
-
-## 9. P2.5 Fusion baseline
-
-正式模块：
-
-```text
-engine/app/breakdown_p2_fusion_v1.py
-profile = breakdown-p2-fusion-v1
-```
-
-入口只消费已登记 immutable sidecars，并验证：
-
-```text
-file:// artifact
-sha256 fingerprint
-sidecar schema
-run/project/episode/source revision/component
-provider/model/status/evidence_count
-current revision
-```
-
-组件门槛：
-
-```text
-VLM READY required
-ASR/OCR NO_EVIDENCE or NOT_AVAILABLE → warning-degraded
-FAILED / NOT_CONFIGURED → fail closed
-```
-
-Fusion 策略：
-
-```text
-Scene:
-  only consecutive Shots
-  merge only exact normalized location + interior/exterior + time-of-day signature
-
-Shot:
-  exactly one ShotSemanticDraft per source ShotRevisionItem
-
-ASR:
-  intersect exact Shot source ranges
-  word timestamps preferred
-
-OCR:
-  stitch same text by Shot + time + geometry
-  inferred duration cannot cross Shot
-
-VLM events:
-  start_ratio/end_ratio → exact Shot source microseconds
-
-Props:
-  DraftPropHint + per-Shot occurrence only
-
-Provenance:
-  EvidenceLink only for actually consumed raw Evidence
-```
-
-## 10. Anonymous LocalSubject cannot-link
-
-`appearance_summary` 是弱连续性，不是身份 embedding。
-
-允许：
-
-```text
-同一 Segment 内 exact normalized appearance
-→ 保守跨 Shot reuse LocalSubject
-```
-
-禁止：
-
-```text
-同一个 Shot 中两个人 appearance 一样
-→ 合并成一个 LocalSubject
-```
-
-正式 P2.5 规则：只要一个 appearance signature 在同一 Shot 同时出现 2+ 次，这个 appearance 在整个 Segment 内禁用跨 Shot merge；相关 occurrence 使用 shot-local key。
-
-宁可匿名人物暂时拆多，也不要在语义层误合并。
-
-## 11. Character V10.1 正式链
-
-```text
-Shot / Reference Clip
-→ Person Instance / Person Evidence
-→ YoutuReID primary identity signal
-→ mature MOT for Shot-local temporal organization
-→ project-level identity classification
-→ RESOLVED / UNRESOLVED
-→ independent Shot × known-Character Assignment
-→ Final Character Gate
-→ Character + ShotCharacterBinding
-```
-
-正式 profile：
-
-```text
-runtime: character-v10.1-capture-first-model-classification
-asset: f05-assets-v10.1-person-evidence-model-classification
-resolver: person-evidence-model-classifier-v10.1
-shot assignment: v10.1-shot-character-assignment-1
-```
-
-新人硬门槛保持：
-
-```text
->= 3 independent Shots
->= 3 model-usable Person Images
-stable cross-Shot Person-ReID
-unique winner
-same-sample cannot-link satisfied
-no high-quality Face hard conflict
-```
-
-Face 是 optional support / known presence / conflict，不是新人创建必需条件。
-
-带 `shot_assignment_version` 的当前 V10.1 Run：
-
-```text
-ShotCharacterBinding = explicit shot_presence_assignments ONLY
-```
-
-显式空 assignment 不允许 fallback 到 Candidate Track membership。
-
-P2.1–P2.5 不改变人物阈值、same-sample cannot-link、Face conflict、identity Gate、explicit assignment 或 Final Gate。
-
-## 12. Scene / Prop / Speaker 后续边界
-
-当前：
-
-```text
-SceneSegmentDraft + scene semantic hints
-DraftPropHint + occurrences
-```
-
-不是 Final Scene/Prop。
-
-P4 才做 Draft-guided Scene/Prop evidence；P5/P6 才做 resolution/fill-back。
-
-未来 Speaker 也必须先是匿名音频 Evidence，再安全映射 LocalSubject/Character；禁止 speaker label 直接变 Character。
-
-## 13. Run / batch / runtime
-
-- 新 Run 完整成功后才能切 Current；
-- failed Run 不替换旧 Current；
-- READY AI Evidence/Draft 保留不可变历史；
-- MANUAL / RESTORE revision 默认保护；
-- `Episode.sort_order` 是批量顺序；
-- GPU/重模型默认 sequential，`concurrency = 1`；
-- Reference Clip 是正式资产；
-- 正式时间统一 integer microseconds。
-
-## 14. 测试 / 验收现实
-
-不要声称整仓 CI 全绿。
-
-P2.5 初始 hosted focused result：
-
-```text
-5 passed / 1 failed
-```
-
-唯一新增失败是同 Shot identical-appearance subjects 被误合并。已做窄范围 same-Shot cannot-link 修复，并完成本地纯逻辑验证。
-
-用户已经明确：**GitHub Actions 没有额度，不要主动运行、重跑或依赖 hosted CI。**
-
-因此：
-
-- 不声称修复后有新的 hosted 6/6；
-- 不为“看绿灯”消耗 GitHub quota；
-- P2.6 以用户本地 Windows / real-model / real short-drama 验收为核心。
-
-Contract/fake-provider tests 不能证明 Qwen3-VL / faster-whisper / PP-OCRv6 是真实短剧永久最佳组合。
-
-## 15. Git / 文档规则
-
-默认分支 `main`。修改前确认当前 SHA；遵守当前 GitHub 工具安全规则，避免覆盖别人更新。
-
-当前用户要求避免触发 GitHub Actions。同步 `main` 时不要主动运行或重跑 hosted workflow。
-
-正式流程/Contract 修改结束前检查：
-
-```text
-AGENTS.md
-SKILL.md
-docs/PROJECT_STATE.md
-docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
-docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
-docs/BREAKDOWN_DRAFT_DATA_CONTRACT.md if schema semantics changed
-docs/ASSET_CHARACTER_RECOGNITION_V10_1.md if Character changed
-latest docs/sessions/*.md handoff
-```
-
-P2.5 没有修改 P1 schema，因此 `BREAKDOWN_DRAFT_DATA_CONTRACT.md` 保持冻结；其 P1-close 时写下的旧 P2 status 不应覆盖当前 `PROJECT_STATE`。
-
-## 16. 下一步唯一安全阶段
-
-```text
-P2.6
-→ real short-drama clips
-→ actual faster-whisper / RapidOCR / Qwen3-VL
-→ inspect fused anonymous Draft
-→ ASR timing/error analysis
-→ OCR subtitle/phone/sign analysis
-→ VLM subject/action/scene/prop analysis
-→ Fusion conflict/timing/provenance analysis
-→ Windows/local GPU/CPU/cache/offline runtime closure
-```
-
-P2.6 完成前不跳到 P3，不开始 Final Asset resolution，不把匿名 Draft 当最终资产真值。
+P3 must consume the P2 production/read/task APIs instead of duplicating model/Fusion logic in the frontend.
