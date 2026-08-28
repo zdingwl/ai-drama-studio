@@ -1,0 +1,134 @@
+/* P3 Structured Draft Workbench V2 viewport/layout acceptance.
+   Goal: one normal page scroll for the main review content; side navigation/inspector may stay sticky.
+   Do not change Draft semantics or data behavior here. */
+
+.breakdown-stage-v1 .draft-v2-grid {
+  grid-template-columns: 250px minmax(0, 1fr) 330px !important;
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  align-items: start !important;
+}
+
+.breakdown-stage-v1 .draft-v2-grid .shot-workspace-v1 {
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  align-self: start;
+}
+
+.breakdown-stage-v1 .draft-v2-grid .draft-navigator-v1,
+.breakdown-stage-v1 .draft-v2-grid .breakdown-inspector-v1 {
+  position: sticky;
+  top: 12px;
+  align-self: start;
+  height: auto !important;
+  max-height: calc(100vh - 24px);
+  overflow: auto !important;
+  overscroll-behavior: contain;
+}
+
+/* The project sidebar consumes a large part of the viewport, so the V2 workbench
+   must become compact earlier than the component-local 1180px breakpoint. */
+@media (max-width: 1450px) {
+  .breakdown-stage-v1 .breakdown-stage-switcher {
+    grid-template-columns: 1fr !important;
+    align-items: stretch;
+  }
+  .breakdown-stage-v1 .breakdown-stage-tabs {
+    justify-content: flex-start !important;
+    flex-wrap: wrap;
+  }
+  .breakdown-stage-v1 .breakdown-stage-boundary {
+    justify-self: start;
+  }
+
+  .breakdown-stage-v1 .task-context-row {
+    grid-template-columns: minmax(240px, 1fr) minmax(150px, .55fr) !important;
+    align-items: end;
+  }
+  .breakdown-stage-v1 .task-actions {
+    justify-content: flex-start !important;
+  }
+  .breakdown-stage-v1 .pipeline-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .breakdown-stage-v1 .task-meta {
+    width: 100%;
+    margin-left: 0 !important;
+    justify-content: flex-start !important;
+  }
+
+  .breakdown-stage-v1 .draft-v2-grid {
+    grid-template-columns: 220px minmax(0, 1fr) 290px !important;
+    gap: 10px !important;
+  }
+}
+
+/* On medium desktop widths the right inspector moves below the main review area.
+   This prevents the project sidebar + three internal columns from clipping the right edge. */
+@media (max-width: 1320px) {
+  .breakdown-stage-v1 .draft-v2-grid {
+    grid-template-columns: 220px minmax(0, 1fr) !important;
+  }
+
+  .breakdown-stage-v1 .draft-v2-grid .breakdown-inspector-v1 {
+    position: static;
+    grid-column: 1 / -1;
+    width: 100%;
+    max-height: none;
+    overflow: visible !important;
+    grid-template-columns: minmax(300px, .8fr) minmax(340px, 1.2fr);
+    align-items: start;
+  }
+
+  .breakdown-stage-v1 .draft-v2-grid .reference-card {
+    grid-row: span 2;
+  }
+}
+
+@media (max-width: 980px) {
+  .breakdown-stage-v1 .task-context-row {
+    grid-template-columns: 1fr !important;
+  }
+  .breakdown-stage-v1 .task-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .breakdown-stage-v1 .draft-v2-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .breakdown-stage-v1 .draft-v2-grid .draft-navigator-v1,
+  .breakdown-stage-v1 .draft-v2-grid .breakdown-inspector-v1 {
+    position: static;
+    grid-column: auto;
+    max-height: none;
+    overflow: visible !important;
+  }
+
+  .breakdown-stage-v1 .draft-v2-grid .breakdown-inspector-v1 {
+    grid-template-columns: 1fr;
+  }
+
+  .breakdown-stage-v1 .draft-v2-grid .reference-card {
+    grid-row: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .breakdown-stage-v1 .breakdown-stage-tabs {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    width: 100%;
+  }
+  .breakdown-stage-v1 .breakdown-stage-tabs button {
+    width: 100%;
+    min-width: 0 !important;
+  }
+  .breakdown-stage-v1 .task-actions {
+    grid-template-columns: 1fr;
+  }
+}
