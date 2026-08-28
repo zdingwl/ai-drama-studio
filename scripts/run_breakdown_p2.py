@@ -22,7 +22,7 @@ from engine.app.breakdown_p2_acceptance_v1 import (
 from engine.app.breakdown_p2_asr_v1 import FasterWhisperASRProvider
 from engine.app.breakdown_p2_ocr_runtime_v1 import RapidOCROCRProvider
 from engine.app.breakdown_p2_pipeline_v1 import run_episode_breakdown_p2
-from engine.app.breakdown_p2_vlm_v1 import Qwen3VLSemanticProvider
+from engine.app.breakdown_p2_vlm_runtime_v1 import Qwen3VLSemanticProvider
 
 
 def _read_json(path: str | None) -> dict[str, Any] | None:
