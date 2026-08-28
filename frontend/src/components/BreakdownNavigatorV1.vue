@@ -18,9 +18,31 @@ const emit = defineEmits<{
 
 const expandedSceneIds = ref<string[]>([])
 const showAllHistory = ref(false)
+const searchQuery = ref('')
 
 const visibleRuns = computed(() => showAllHistory.value ? props.runs : props.runs.slice(0, 4))
 const totalShots = computed(() => props.segments.reduce((sum, segment) => sum + segment.shots.length, 0))
+const filteredSegments = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  if (!query) return props.segments
+  return props.segments.filter((segment) => {
+    const sceneText = [
+      `scene ${segment.ordinal}`,
+      segment.location_hint,
+      segment.interior_exterior,
+      segment.time_of_day,
+      segment.summary,
+      segment.environment_description,
+    ].filter(Boolean).join(' ').toLowerCase()
+    if (sceneText.includes(query)) return true
+    return segment.shots.some((shot) => [
+      `shot ${shot.shot_ordinal_snapshot}`,
+      String(shot.shot_ordinal_snapshot).padStart(4, '0'),
+      shot.summary,
+      shot.visual_description,
+    ].filter(Boolean).join(' ').toLowerCase().includes(query))
+  })
+})
 
 watch(
   () => [props.selectedSceneId, props.segments.map((item) => item.id).join('|')],
@@ -32,6 +54,11 @@ watch(
   },
   { immediate: true },
 )
+
+watch(searchQuery, (value) => {
+  if (!value.trim()) return
+  expandedSceneIds.value = Array.from(new Set([...expandedSceneIds.value, ...filteredSegments.value.map((item) => item.id)]))
+})
 
 function toggleScene(segment: BreakdownSceneSegment): void {
   const next = new Set(expandedSceneIds.value)
@@ -105,8 +132,13 @@ function runStatusClass(status: string): string {
         <small>{{ segments.length }} Scene · {{ totalShots }} Shots</small>
       </header>
 
-      <div v-if="segments.length" class="scene-tree">
-        <div v-for="segment in segments" :key="segment.id" class="scene-tree-item">
+      <label class="scene-search">
+        <span>⌕</span>
+        <input v-model="searchQuery" type="search" placeholder="搜索 Scene / Shot / 内容" />
+      </label>
+
+      <div v-if="filteredSegments.length" class="scene-tree">
+        <div v-for="segment in filteredSegments" :key="segment.id" class="scene-tree-item">
           <button
             type="button"
             :class="['scene-tree-head', { active: segment.id === selectedSceneId }]"
@@ -138,7 +170,7 @@ function runStatusClass(status: string): string {
           </div>
         </div>
       </div>
-      <div v-else class="nav-empty">这个 Run 没有可导航的 Scene Segment。</div>
+      <div v-else class="nav-empty">{{ segments.length ? '没有匹配的 Scene / Shot。' : '这个 Run 没有可导航的 Scene Segment。' }}</div>
     </section>
 
     <section class="nav-card history-card">
@@ -189,12 +221,16 @@ function runStatusClass(status: string): string {
 <style scoped>
 .draft-navigator-v1 { min-width: 0; display: grid; grid-template-rows: minmax(340px, 1fr) auto auto; gap: 12px; height: 100%; min-height: 0; }
 .nav-card { min-height: 0; border: 1px solid #dfe5ef; border-radius: 14px; background: #fff; box-shadow: 0 8px 28px rgba(45, 62, 94, .045); overflow: hidden; }
-.scene-nav-card { display: grid; grid-template-rows: auto 1fr; }
+.scene-nav-card { display: grid; grid-template-rows: auto auto 1fr; }
 .nav-card-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 14px 14px 11px; border-bottom: 1px solid #edf0f5; }
 .nav-card-title > div { display: grid; gap: 2px; min-width: 0; }
 .nav-card-title strong { color: #263652; font-size: 14px; }
 .nav-card-title span { color: #8a96a9; font-size: 12px; }
 .nav-card-title > small { flex: none; color: #71809a; font-size: 12px; }
+.scene-search { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 5px; align-items: center; margin: 9px 9px 2px; border: 1px solid #dfe5ee; border-radius: 9px; padding: 0 9px; background: #f9fbfd; }
+.scene-search > span { color: #8a97aa; font-size: 14px; text-align: center; }
+.scene-search input { min-width: 0; height: 36px; border: 0; outline: 0; background: transparent; color: #40516a; font-size: 12px; }
+.scene-search input::placeholder { color: #9aa5b5; }
 .scene-tree { min-height: 0; overflow: auto; padding: 8px; }
 .scene-tree-item + .scene-tree-item { margin-top: 3px; }
 .scene-tree-head { width: 100%; display: grid; grid-template-columns: 18px auto minmax(0, 1fr) 24px; gap: 7px; align-items: center; border: 1px solid transparent; border-radius: 9px; padding: 9px 8px; background: transparent; color: #40506a; cursor: pointer; text-align: left; }
