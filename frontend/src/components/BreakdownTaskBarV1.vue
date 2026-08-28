@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { breakdownApi } from '../api/breakdown'
 import type { BreakdownRunSummary } from '../types/breakdown'
 import type { Episode } from '../types/studio'
+import { componentStatusLabel, runStatusLabel } from '../utils/breakdownUiText'
 
 const props = defineProps<{
   projectId: string
@@ -21,10 +22,10 @@ const notice = ref('')
 
 const selectedEpisode = computed(() => props.episodes.find((item) => item.id === props.selectedEpisodeId) ?? null)
 const pipelineComponents = [
-  { key: 'ASR', label: 'ASR' },
-  { key: 'OCR', label: 'OCR' },
-  { key: 'VLM', label: 'VLM' },
-  { key: 'FUSION', label: 'Fusion' },
+  { key: 'ASR', label: 'ASR 语音识别' },
+  { key: 'OCR', label: 'OCR 文字识别' },
+  { key: 'VLM', label: 'VLM 画面理解' },
+  { key: 'FUSION', label: '融合' },
 ]
 
 function onEpisodeChange(event: Event): void {
@@ -33,17 +34,6 @@ function onEpisodeChange(event: Event): void {
 
 function revisionLabel(run: BreakdownRunSummary | null): string {
   return run?.source_shot_revision ? `R${run.source_shot_revision.revision}` : 'R?'
-}
-
-function runStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    READY: '可用 Draft',
-    READY_WITH_WARNINGS: '可用 · 有提示',
-    PROCESSING: '处理中',
-    FAILED: '失败',
-    STALE: '历史 · STALE',
-  }
-  return labels[status] || status
 }
 
 function runStatusClass(status: string | undefined): string {
@@ -64,7 +54,7 @@ function componentStatus(key: string): string {
       if (typeof record[field] === 'string') return String(record[field]).toUpperCase()
     }
   }
-  return props.run ? '—' : '—'
+  return '—'
 }
 
 function componentStatusClass(status: string): string {
@@ -113,23 +103,23 @@ async function startBatch(): Promise<void> {
         <span>当前剧集</span>
         <select :value="selectedEpisodeId" :disabled="starting || !episodes.length" @change="onEpisodeChange">
           <option v-for="episode in episodes" :key="episode.id" :value="episode.id">
-            E{{ String(episode.sort_order).padStart(2, '0') }} · {{ episode.title }} · {{ episode.shot_count }} Shots
+            E{{ String(episode.sort_order).padStart(2, '0') }} · {{ episode.title }} · {{ episode.shot_count }} 个镜头
           </option>
         </select>
       </label>
 
       <div class="run-context">
-        <span>当前 Draft</span>
+        <span>当前草稿</span>
         <div v-if="run">
           <strong>{{ revisionLabel(run) }}</strong>
           <i :class="runStatusClass(run.status)">{{ runStatusLabel(run.status) }}</i>
         </div>
-        <b v-else>尚无 Draft</b>
+        <b v-else>尚无草稿</b>
       </div>
 
       <div class="revision-context">
-        <span>ShotRevision</span>
-        <strong v-if="run">{{ revisionLabel(run) }} · {{ run.source_shot_revision?.is_current ? 'CURRENT' : 'HISTORY' }}</strong>
+        <span>镜头版本</span>
+        <strong v-if="run">{{ revisionLabel(run) }} · {{ run.source_shot_revision?.is_current ? '当前版本' : '历史版本' }}</strong>
         <strong v-else>—</strong>
       </div>
 
@@ -145,7 +135,7 @@ async function startBatch(): Promise<void> {
     </div>
 
     <div class="pipeline-row">
-      <span class="pipeline-label">Pipeline</span>
+      <span class="pipeline-label">处理链</span>
       <div class="pipeline-components">
         <span
           v-for="component in pipelineComponents"
@@ -153,14 +143,14 @@ async function startBatch(): Promise<void> {
           :class="['pipeline-chip', componentStatusClass(componentStatus(component.key))]"
         >
           <b>{{ component.label }}</b>
-          <i>{{ componentStatus(component.key) }}</i>
+          <i>{{ componentStatusLabel(componentStatus(component.key)) }}</i>
         </span>
       </div>
 
       <div class="task-meta">
         <span v-if="run">{{ run.pipeline_profile || run.schema_version }}</span>
         <span v-if="run">{{ run.schema_version }}</span>
-        <span>AI Draft · 不等同 Final Asset</span>
+        <span>AI 草稿 · 不等同最终资产</span>
       </div>
     </div>
 
@@ -191,7 +181,7 @@ async function startBatch(): Promise<void> {
 .task-actions button.primary { border-color: #4f7ee0; background: #4f7ee0; color: #fff; box-shadow: 0 5px 13px rgba(79, 126, 224, .18); }
 .task-actions button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 .pipeline-row { display: flex; gap: 10px; align-items: center; min-width: 0; border-top: 1px solid #edf0f5; padding: 9px 13px; background: #fbfcfe; }
-.pipeline-label { color: #6e7d94; font-size: 11px; font-weight: 850; text-transform: uppercase; }
+.pipeline-label { color: #6e7d94; font-size: 11px; font-weight: 850; }
 .pipeline-components { display: flex; flex-wrap: wrap; gap: 5px; }
 .pipeline-chip { display: inline-flex; gap: 4px; align-items: center; border-radius: 999px; padding: 5px 8px; background: #eef1f5; color: #6e7b8d; font-size: 10px; }
 .pipeline-chip b { font-size: 10px; }
