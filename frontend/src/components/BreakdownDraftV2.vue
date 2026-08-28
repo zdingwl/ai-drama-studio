@@ -10,6 +10,7 @@ import type {
   BreakdownTimelineEvent,
 } from '../types/breakdown'
 import type { Episode } from '../types/studio'
+import { runStatusLabel } from '../utils/breakdownUiText'
 import BreakdownInspectorV1 from './BreakdownInspectorV1.vue'
 import BreakdownNavigatorV1 from './BreakdownNavigatorV1.vue'
 import BreakdownShotWorkspaceV1 from './BreakdownShotWorkspaceV1.vue'
@@ -107,17 +108,6 @@ function flattenWarnings(value: unknown, prefix = ''): string[] {
   return [prefix ? `${prefix}: ${String(value)}` : String(value)]
 }
 
-function runStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    READY: '可用 Draft',
-    READY_WITH_WARNINGS: '可用 · 有提示',
-    PROCESSING: '处理中',
-    FAILED: '失败历史',
-    STALE: '历史 · 已过期',
-  }
-  return labels[status] || status
-}
-
 function runStatusClass(status: string): string {
   if (status === 'READY') return 'ready'
   if (status === 'READY_WITH_WARNINGS') return 'warning'
@@ -192,7 +182,7 @@ async function loadEpisode(episodeId: string): Promise<void> {
     applyDraft(null)
   } catch (err) {
     if (serial !== requestSerial) return
-    error.value = err instanceof Error ? err.message : 'Structured Draft 读取失败'
+    error.value = err instanceof Error ? err.message : '结构化草稿读取失败'
     runs.value = []
     applyDraft(null)
   } finally {
@@ -211,7 +201,7 @@ async function chooseRun(runId: string): Promise<void> {
     applyDraft(payload)
   } catch (err) {
     if (serial !== requestSerial) return
-    error.value = err instanceof Error ? err.message : 'Breakdown Run 读取失败'
+    error.value = err instanceof Error ? err.message : '拉片运行记录读取失败'
   } finally {
     if (serial === requestSerial) loading.value = false
   }
@@ -259,43 +249,43 @@ watch(
 <template>
   <section class="breakdown-draft-v2">
     <div v-if="error" class="draft-v2-alert danger">{{ error }}</div>
-    <div v-if="loading" class="draft-v2-loading"><span></span>正在读取 Structured Draft…</div>
+    <div v-if="loading" class="draft-v2-loading"><span></span>正在读取结构化草稿…</div>
 
     <template v-if="draft">
       <div class="draft-summary-bar">
         <div class="draft-summary-context">
-          <strong>{{ currentEpisode ? `E${String(currentEpisode.sort_order).padStart(2, '0')} · ${currentEpisode.title}` : 'Structured Draft' }}</strong>
+          <strong>{{ currentEpisode ? `E${String(currentEpisode.sort_order).padStart(2, '0')} · ${currentEpisode.title}` : '结构化草稿' }}</strong>
           <span :class="['run-state', runStatusClass(draft.run.status)]">{{ revisionLabel(draft.run) }} · {{ runStatusLabel(draft.run.status) }}</span>
-          <span>{{ draft.run.source_shot_revision?.is_current ? 'CURRENT REVISION' : 'HISTORICAL REVISION' }}</span>
-          <span>{{ draft.run.is_current ? 'Episode Current Draft' : '只读历史 Draft' }}</span>
+          <span>{{ draft.run.source_shot_revision?.is_current ? '当前镜头版本' : '历史镜头版本' }}</span>
+          <span>{{ draft.run.is_current ? '当前剧集草稿' : '只读历史草稿' }}</span>
         </div>
 
         <div class="draft-summary-stats">
-          <span>Scene <b>{{ stats.segments }}</b></span>
-          <span>Shots <b>{{ stats.shots }}</b></span>
-          <span>Subjects <b>{{ stats.subjects }}</b></span>
-          <span>Events <b>{{ stats.events }}</b></span>
-          <span>Props <b>{{ stats.props }}</b></span>
+          <span>场景 <b>{{ stats.segments }}</b></span>
+          <span>镜头 <b>{{ stats.shots }}</b></span>
+          <span>匿名人物 <b>{{ stats.subjects }}</b></span>
+          <span>事件 <b>{{ stats.events }}</b></span>
+          <span>道具提示 <b>{{ stats.props }}</b></span>
           <button v-if="warningLines.length" type="button" @click="showWarnings = !showWarnings">⚠ {{ warningLines.length }} 条提示</button>
-          <span v-if="unassignedCount" class="unassigned-pill">Unassigned {{ unassignedCount }}</span>
+          <span v-if="unassignedCount" class="unassigned-pill">未归属 {{ unassignedCount }}</span>
         </div>
       </div>
 
       <div v-if="showWarnings && warningLines.length" class="draft-warning-panel">
-        <strong>Run 提示</strong>
+        <strong>运行提示</strong>
         <span v-for="line in warningLines.slice(0, 8)" :key="line">{{ line }}</span>
         <span v-if="warningLines.length > 8">还有 {{ warningLines.length - 8 }} 条提示</span>
       </div>
 
       <div v-if="draft.run.error_message" class="draft-v2-alert danger">
-        <strong>Run 错误</strong>
+        <strong>运行错误</strong>
         <span>{{ draft.run.error_message }}</span>
       </div>
     </template>
 
     <div v-if="!draft && !loading" class="draft-v2-empty">
-      <strong>暂无可读取的 Structured Draft</strong>
-      <p>选择的剧集还没有 Breakdown Run。P3 不会伪造结果，也不会在读取时自动运行模型。</p>
+      <strong>暂无可读取的结构化草稿</strong>
+      <p>选择的剧集还没有拉片运行记录。P3 不会伪造结果，也不会在读取时自动运行模型。</p>
     </div>
 
     <div v-else-if="draft" class="draft-v2-grid">
