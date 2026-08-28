@@ -38,14 +38,14 @@ import onnxruntime as ort
 from engine.app.breakdown_p2_ocr_runtime_v1 import RapidOCROCRProvider
 
 print("rapidocr=" + metadata.version("rapidocr"))
-print("onnxruntime=" + metadata.version("onnxruntime-gpu") if "onnxruntime-gpu" in {d.metadata["Name"] for d in metadata.distributions()} else "onnxruntime=" + metadata.version("onnxruntime"))
+print("onnxruntime=" + ort.__version__)
 print("opencv=" + cv2.__version__)
 print("onnx_providers=" + json.dumps(ort.get_available_providers()))
 
 provider = RapidOCROCRProvider(device=os.environ.get("AI_DRAMA_P2_OCR_SETUP_DEVICE", "cpu"))
 engine, actual_device, warnings = provider._load_engine("ch")
 
-# Instantiating the engine ensures the PP-OCRv6 small model cache exists.  A tiny
+# Instantiating the engine ensures the PP-OCRv6 small model cache exists. A tiny
 # blank-frame call verifies that ONNX Runtime can actually execute the model.
 image = np.full((128, 512, 3), 255, dtype=np.uint8)
 result = engine(image)
