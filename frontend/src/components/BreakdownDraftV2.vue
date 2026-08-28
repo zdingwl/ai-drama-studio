@@ -14,7 +14,7 @@ import { runStatusLabel } from '../utils/breakdownUiText'
 import BreakdownInspectorV1 from './BreakdownInspectorV1.vue'
 import BreakdownNavigatorV1 from './BreakdownNavigatorV1.vue'
 import BreakdownRunStatePanelV1 from './BreakdownRunStatePanelV1.vue'
-import BreakdownShotWorkspaceV1 from './BreakdownShotWorkspaceV1.vue'
+import BreakdownShotReviewShellV1 from './BreakdownShotReviewShellV1.vue'
 
 const props = defineProps<{
   episodes: Episode[]
@@ -28,6 +28,7 @@ const emit = defineEmits<{
 const runs = ref<BreakdownRunSummary[]>([])
 const draft = ref<BreakdownDraftPayload | null>(null)
 const selectedRunId = ref('')
+const currentRunId = ref('')
 const selectedSceneId = ref('')
 const selectedShotId = ref('')
 const selectedEventId = ref('')
@@ -48,6 +49,10 @@ const selectedSegment = computed(() => {
     ?? null
 })
 const selectedShot = computed(() => allShots.value.find((shot) => shot.id === selectedShotId.value) ?? null)
+const selectedShotIndex = computed(() => allShots.value.findIndex((shot) => shot.id === selectedShotId.value))
+const selectedShotPosition = computed(() => selectedShotIndex.value >= 0 ? selectedShotIndex.value + 1 : 0)
+const hasPreviousShot = computed(() => selectedShotIndex.value > 0)
+const hasNextShot = computed(() => selectedShotIndex.value >= 0 && selectedShotIndex.value < allShots.value.length - 1)
 const selectedEvent = computed(() => selectedShot.value?.events.find((event) => event.id === selectedEventId.value) ?? null)
 const stats = computed(() => {
   const payload = draft.value
@@ -156,6 +161,7 @@ function applyDraft(payload: BreakdownDraftPayload | null): void {
 async function loadEpisode(episodeId: string): Promise<void> {
   if (!episodeId) {
     runs.value = []
+    currentRunId.value = ''
     applyDraft(null)
     return
   }
@@ -170,6 +176,7 @@ async function loadEpisode(episodeId: string): Promise<void> {
     ])
     if (serial !== requestSerial) return
     runs.value = history
+    currentRunId.value = current?.run.id ?? ''
     if (current) {
       applyDraft(current)
       return
@@ -185,6 +192,7 @@ async function loadEpisode(episodeId: string): Promise<void> {
     if (serial !== requestSerial) return
     error.value = err instanceof Error ? err.message : '结构化草稿读取失败'
     runs.value = []
+    currentRunId.value = ''
     applyDraft(null)
   } finally {
     if (serial === requestSerial) loading.value = false
@@ -225,6 +233,13 @@ function selectShot(shot: BreakdownShotDraft): void {
   seekToken.value += 1
 }
 
+function selectAdjacentShot(offset: number): void {
+  const index = selectedShotIndex.value
+  if (index < 0) return
+  const next = allShots.value[index + offset]
+  if (next) selectShot(next)
+}
+
 function selectEvent(event: BreakdownTimelineEvent): void {
   const shot = selectedShot.value
   if (!shot) return
@@ -240,6 +255,7 @@ watch(
   () => props.selectedEpisodeId,
   async (episodeId) => {
     runs.value = []
+    currentRunId.value = ''
     applyDraft(null)
     await loadEpisode(episodeId)
   },
@@ -259,6 +275,12 @@ watch(
           <span :class="['run-state', runStatusClass(draft.run.status)]">{{ revisionLabel(draft.run) }} · {{ runStatusLabel(draft.run.status) }}</span>
           <span>{{ draft.run.source_shot_revision?.is_current ? '当前镜头版本' : '历史镜头版本' }}</span>
           <span>{{ draft.run.is_current ? '当前剧集草稿' : '只读历史草稿' }}</span>
+          <button
+            v-if="currentRunId && selectedRunId !== currentRunId"
+            type="button"
+            class="return-current-button"
+            @click="chooseRun(currentRunId)"
+          >返回当前采用草稿</button>
         </div>
 
         <div class="draft-summary-stats">
@@ -307,11 +329,17 @@ watch(
         @select-shot="selectShot"
       />
 
-      <BreakdownShotWorkspaceV1
+      <BreakdownShotReviewShellV1
         :segment="selectedSegment"
         :shot="selectedShot"
         :selected-event-id="selectedEventId"
+        :shot-position="selectedShotPosition"
+        :shot-total="allShots.length"
+        :has-previous-shot="hasPreviousShot"
+        :has-next-shot="hasNextShot"
         @select-event="selectEvent"
+        @previous-shot="selectAdjacentShot(-1)"
+        @next-shot="selectAdjacentShot(1)"
       />
 
       <BreakdownInspectorV1
@@ -335,6 +363,7 @@ watch(
 .draft-summary-context > strong { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #31435f; font-size: 12px; }
 .draft-summary-context > span { border-radius: 999px; padding: 4px 7px; background: #f2f5f9; color: #728097; font-size: 10px; white-space: nowrap; }
 .draft-summary-context .run-state { font-weight: 850; }
+.return-current-button { min-height: 30px; border: 1px solid #bcd0f7; border-radius: 8px; padding: 0 9px; background: #f1f6ff; color: #3c68ba; cursor: pointer; font-size: 11px; font-weight: 850; white-space: nowrap; }
 .run-state.ready { background: #e8f7ef; color: #14804e; }
 .run-state.warning { background: #fff4da; color: #91620e; }
 .run-state.danger { background: #ffe8e8; color: #b54242; }
