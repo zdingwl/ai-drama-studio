@@ -7,8 +7,11 @@ ASR dialogue and OCR text remain separate raw evidence and are never translated 
 """
 from __future__ import annotations
 
+from typing import Any, Mapping
+
 PROMPT_PROFILE = "breakdown-p2-vlm-zh-draft-v1"
 DRAFT_TEXT_LANGUAGE = "zh-CN"
+MIN_CHINESE_FIELD_RATIO = 0.60
 
 
 def build_prompt(source_language: str) -> str:
@@ -97,6 +100,102 @@ JSON schema:
   ]
 }}
 """
+
+
+def _text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _contains_han(value: Any) -> bool:
+    return any("\u3400" <= char <= "\u9fff" for char in _text(value))
+
+
+def _natural_language_fields(semantic: Mapping[str, Any]) -> list[str]:
+    values: list[str] = []
+    scene = semantic.get("scene")
+    if isinstance(scene, Mapping):
+        for key in ("location_hint", "time_of_day", "environment_description"):
+            text = _text(scene.get(key))
+            if text:
+                values.append(text)
+
+    shot = semantic.get("shot")
+    if isinstance(shot, Mapping):
+        for key in (
+            "summary",
+            "visual_description",
+            "shot_type_hint",
+            "camera_motion_hint",
+            "narrative_function_hint",
+            "composition_hint",
+        ):
+            text = _text(shot.get(key))
+            if text:
+                values.append(text)
+
+    subjects = semantic.get("subjects")
+    if isinstance(subjects, list):
+        for subject in subjects:
+            if not isinstance(subject, Mapping):
+                continue
+            for key in ("appearance_summary", "activity_summary", "screen_position"):
+                text = _text(subject.get(key))
+                if text:
+                    values.append(text)
+
+    events = semantic.get("events")
+    if isinstance(events, list):
+        for event in events:
+            if isinstance(event, Mapping):
+                text = _text(event.get("content"))
+                if text:
+                    values.append(text)
+
+    props = semantic.get("props")
+    if isinstance(props, list):
+        for prop in props:
+            if not isinstance(prop, Mapping):
+                continue
+            for key in ("label", "narrative_reason"):
+                text = _text(prop.get(key))
+                if text:
+                    values.append(text)
+    return values
+
+
+def validate_semantic_language(semantic: Mapping[str, Any]) -> dict[str, float | int | str]:
+    """Fail closed when Qwen ignores the Simplified-Chinese Draft policy.
+
+    High-value Shot prose is required to contain Han characters whenever present.
+    Across all non-empty natural-language fields, at least 60% must contain Han
+    characters once there are three or more fields. This tolerates unavoidable
+    Latin brand names while preventing an English Draft from reaching Fusion.
+    """
+
+    shot = semantic.get("shot")
+    if isinstance(shot, Mapping):
+        for key in ("summary", "visual_description"):
+            text = _text(shot.get(key))
+            if text and not _contains_han(text):
+                raise ValueError(
+                    f"VLM Draft language validation failed: shot.{key} is not Simplified Chinese"
+                )
+
+    fields = _natural_language_fields(semantic)
+    chinese_fields = sum(1 for value in fields if _contains_han(value))
+    ratio = chinese_fields / len(fields) if fields else 1.0
+    if len(fields) >= 3 and ratio < MIN_CHINESE_FIELD_RATIO:
+        raise ValueError(
+            "VLM Draft language validation failed: "
+            f"Chinese field ratio {ratio:.2f} < {MIN_CHINESE_FIELD_RATIO:.2f}"
+        )
+    return {
+        "prompt_profile": PROMPT_PROFILE,
+        "draft_text_language": DRAFT_TEXT_LANGUAGE,
+        "natural_language_field_count": len(fields),
+        "chinese_field_count": chinese_fields,
+        "chinese_field_ratio": round(ratio, 4),
+    }
 
 
 def install() -> None:
