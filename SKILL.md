@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.8.0
-description: AI Drama Studio Reference Video 驱动的本地短剧重制工作台开发规则；Character V10.1 为正式人物基线；Breakdown P1/P2 后台实现已完成，真实视频验收待用户 Windows 执行，P3 structured 02 拉片 UI 下一步。
+version: 3.8.1
+description: AI Drama Studio Reference Video 驱动的本地短剧重制工作台开发规则；Character V10.1 为正式人物基线；P1/P2 实现验收条件通过，P2.6 Windows 真实模型验收未通过，需补 OCR 与 Qwen；P3 Structured Draft UI 已在 main，UI 验收进行中。
 ---
 
 # AI Drama Studio — Reference Video V2 / Breakdown-first / Character V10.1
@@ -40,10 +40,9 @@ Architecture: Reference Video V2
 FastAPI: 2.4.1
 Default branch: main
 Formal Character runtime: Character V10.1
-P1: COMPLETE
-P2 backend implementation: COMPLETE
-P2 real-video acceptance execution: PENDING
-P3 structured 02 拉片 UI: NEXT
+P1/P2 implementation acceptance: CONDITIONAL PASS
+P2.6 Windows / real-model acceptance: NOT PASSED
+P3 Structured 02 拉片 UI: IMPLEMENTED ON MAIN / UI ACCEPTANCE IN PROGRESS
 ```
 
 Formal user workspaces:
@@ -99,11 +98,11 @@ per-Shot Reference Clip / thumbnail / keyframes
 manual edit / split / merge / rerun / restore
 ```
 
-Historical Breakdown always anchors to exact frozen ShotRevision/ShotRevisionItem. Do not migrate Draft between revisions by guessed ordinal/time similarity.
+Historical Breakdown always anchors to exact frozen ShotRevision/ShotRevisionItem.
 
 ## 4. P1 Draft contract
 
-P1 formal entities:
+Formal entities:
 
 ```text
 BreakdownRun
@@ -124,7 +123,7 @@ Lifecycle:
 PROCESSING / READY / READY_WITH_WARNINGS / FAILED / STALE
 ```
 
-Real validator is mandatory. Successful publish switches Current atomically; FAILED/STALE runs never replace the prior valid Current.
+P1 validator remains mandatory. P1 is included in the current **implementation CONDITIONAL PASS**; that does not certify model quality.
 
 ## 5. P2 formal production chain
 
@@ -171,21 +170,18 @@ large-v3
 word timestamps
 ```
 
-Produces anonymous ASR segment/word Evidence. Dialogue may cross cuts; Fusion handles exact Shot splitting. Speaker label never directly creates/maps Character.
+Speaker labels never directly create/map Character.
 
-### OCR — frozen baseline
+### OCR
 
 ```text
 RapidOCROCRProvider
 rapidocr==3.9.2
 PP-OCRv6 small
 ONNX Runtime
-default CPU
 ```
 
-Samples exact historical Reference Clips across Shots and stores point observations with text/confidence/geometry/source time. Fusion owns temporal stitch/dedupe.
-
-**Do not redo OCR** unless a concrete regression requires a minimal fix.
+Current implementation remains the baseline. The current P2.6 acceptance blocker is **missing/incomplete OCR runtime/model provisioning**, not a reason to redesign the OCR contract.
 
 ### VLM
 
@@ -195,37 +191,13 @@ Qwen/Qwen3-VL-4B-Instruct
 strict anonymous shot semantics
 ```
 
-VLM returns scene hints, shot description, anonymous subjects, actions and plot-relevant prop hints. It does not own dialogue/subtitle/sign/phone transcription. It uses an isolated runtime and a separate base semantic checkpoint, not the transition-finetuned TransVLM checkpoint.
+Current implementation remains the baseline. The current P2.6 acceptance blocker is **missing/incomplete Qwen3-VL model/runtime provisioning**.
 
 ## 7. Fusion rules
 
 Fusion consumes registered immutable ASR/OCR/VLM sidecars and never implicitly reruns Providers.
 
-Core transformations:
-
-```text
-ASR cross-Shot word-timing split
-OCR text/time/geometry stitching
-VLM ratios → source-us
-SceneSegmentDraft
-one ShotSemanticDraft per frozen source Shot
-LocalSubject / ShotLocalSubject
-TimelineEvent / participants
-DraftPropHint / occurrences
-precise BreakdownEvidenceLink
-P1 validator/publish
-```
-
-Same-Shot anonymous cannot-link:
-
-```text
-same normalized appearance used by >=2 simultaneous subjects
-→ appearance is ambiguous for the segment
-→ cannot cross-Shot merge by that appearance
-→ use shot-local anonymous keys
-```
-
-Prefer duplicate anonymous subjects to false identity merging.
+Same-Shot anonymous cannot-link remains mandatory: if one normalized appearance is used by multiple simultaneous subjects, it cannot be used as a cross-Shot merge key in that Scene Segment.
 
 ## 8. Background tasks / batch
 
@@ -234,36 +206,33 @@ Formal APIs:
 ```text
 POST /api/episodes/{episode_id}/tasks/breakdown
 POST /api/projects/{project_id}/tasks/breakdown-batch
-```
-
-Batch must follow:
-
-```text
-Episode.sort_order
-concurrency = 1
-```
-
-Use the existing persistent BackgroundTask infrastructure; do not invent a second job system for P2/P3.
-
-## 9. P2 runtime / acceptance
-
-Formal local tools:
-
-```text
-scripts/run_breakdown_p2.py
-scripts/run_breakdown_p2_windows.ps1
-scripts/p2_acceptance_review_template.json
-docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
-```
-
-APIs:
-
-```text
 GET  /api/breakdown/p2/runtime-preflight
 POST /api/breakdown-runs/{run_id}/p2-acceptance
 ```
 
-Acceptance states:
+Batch must follow `Episode.sort_order` and heavy P2 execution remains globally serialized.
+
+## 9. P2.6 runtime / acceptance
+
+Current status:
+
+```text
+P1/P2 implementation acceptance = CONDITIONAL PASS
+P2.6 Windows / real-model acceptance = NOT PASSED
+```
+
+Before retrying final acceptance:
+
+```text
+1. complete OCR runtime/model provisioning
+2. complete Qwen3-VL model/runtime provisioning
+3. run strict preflight
+4. run a real short-drama Episode through ASR → OCR → VLM → Fusion → P1 validator
+5. generate acceptance report
+6. complete human review
+```
+
+Formal states:
 
 ```text
 STRUCTURAL_FAIL
@@ -272,9 +241,9 @@ NEEDS_TUNING
 PASS
 ```
 
-`PASS` requires structural success + explicit real-video human scores >=4/5 for all required dimensions + no blocking issue. Machine checks cannot award PASS on their own.
+`PASS` requires structural success + all required human scores >=4/5 + no blocking issue. Machine checks cannot award PASS on their own.
 
-Repository currently has no real short-drama sample, so do not claim real-model quality acceptance has run.
+Until then, never write `P2 ACCEPTED`, `P2 CLOSED`, `P2.6 PASS`, or equivalent quality claims.
 
 ## 10. Character V10.1 protected baseline
 
@@ -298,56 +267,62 @@ new identity >=3 model-usable images
 same-sample cannot-link
 high-quality Face hard conflict
 ambiguous winner stays unresolved/unassigned
-current Final ShotCharacterBinding = explicit shot_presence_assignments for current V10.1 Runs
+current Final ShotCharacterBinding = explicit shot_presence_assignments
 ```
 
 Draft semantic context cannot override these rules.
 
-## 11. P2 forbidden writes
+## 11. P3 current UI
 
-P2 cannot create/update:
+P3 is no longer `NEXT`.
 
-```text
-Character
-Scene
-Prop
-AssetRevision
-ShotCharacterBinding
-ShotSceneBinding
-ShotPropBinding
-```
-
-Do not let VLM/ASR/OCR write Final identity/asset truth.
-
-## 12. Testing / CI discipline
-
-User explicitly requested not to consume GitHub Actions quota. For current P2.6 work:
+Current main contains:
 
 ```text
-GitHub hosted CI: do not run/check
-use [skip ci] for remote development commits
-local syntax/focused verification is preferred
-real Windows short-drama acceptance is the final external gate
+02 拉片
+├─ 镜头边界
+│  ├─ ShotCacheManagerV51
+│  └─ ShotWorkbenchV4
+└─ Structured Draft
+   ├─ P2 single/batch task controls
+   ├─ Run history / STALE state
+   ├─ SceneSegmentDraft / ShotSemanticDraft
+   ├─ anonymous subjects
+   ├─ dialogue/action/OCR timeline
+   ├─ prop hints
+   ├─ exact historical Reference Clip
+   └─ Evidence provenance
 ```
 
-Do not describe historical CI results as fresh current results.
+P3 implementation is on `main`; browser/UI acceptance is still in progress. The Shot Boundary overflow issue was fixed in main merge commit `1cb8624b885850935e902cb6c9ac2273c490d2b3`.
 
-## 13. Git workflow
+## 12. P2 forbidden writes
 
-Read current main before writes. Keep changes isolated. Follow the GitHub connector safety workflow. Do not force-update main. Do not create a PR unless requested.
+P2 cannot create/update Final Character/Scene/Prop assets or Final Shot bindings. VLM/ASR/OCR cannot write Final identity truth.
+
+## 13. Testing / CI discipline
+
+User does not want hosted GitHub Actions quota consumed. Use `[skip ci]` for current remote development/documentation commits and prefer local verification. Historical CI results must remain historical.
 
 ## 14. Phase pointer
 
 ```text
 P0 COMPLETE
-P1 COMPLETE
-P2 IMPLEMENTATION COMPLETE
-P2 REAL-VIDEO ACCEPTANCE PENDING
-P3 structured 02 拉片 UI NEXT
+P1 implementation CONDITIONAL PASS
+P2 implementation CONDITIONAL PASS
+P2.6 Windows / real-model acceptance NOT PASSED
+P3 Structured 02 拉片 UI IMPLEMENTED / UI ACCEPTANCE IN PROGRESS
 P4 Draft-guided Scene/Prop PLANNED
 P5 Draft ↔ Character safe integration PLANNED
 P6 Final fill-back/renderers PLANNED
 P7 downstream remake integration PLANNED
 ```
 
-P3 must consume the P2 production/read/task APIs instead of duplicating model/Fusion logic in the frontend.
+Immediate safe work:
+
+```text
+A. provision OCR + Qwen and rerun P2.6 real short-drama acceptance
+B. continue P3 browser/UI acceptance
+```
+
+Do not upgrade acceptance status without evidence.
