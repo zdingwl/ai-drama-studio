@@ -17,5 +17,6 @@ import './asset-image-lightbox'
 import './task-progress.css'
 import './breakdown-p3-acceptance.css'
 import './breakdown-p3-v2-layout-fix.css'
+import './breakdown-p3-v2-polish.css'
 
 createApp(App).use(router).mount('#app')
