@@ -19,7 +19,7 @@ from engine.app import breakdown_service_v1, studio_v2
 from engine.app.breakdown_models_v1 import BreakdownRun
 from engine.app.breakdown_p2_asr_v1 import FasterWhisperASRProvider
 from engine.app.breakdown_p2_ocr_runtime_v1 import RapidOCROCRProvider
-from engine.app.breakdown_p2_vlm_v1 import Qwen3VLSemanticProvider
+from engine.app.breakdown_p2_vlm_runtime_v1 import Qwen3VLSemanticProvider
 
 P2_PIPELINE_PROFILE = "breakdown-p2-full-v1"
 P2_PIPELINE_VERSION = "1"
