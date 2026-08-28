@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
+import type { BreakdownRunSummary } from '../types/breakdown'
 import type { BackgroundTask, Episode } from '../types/studio'
-import BreakdownDraftV1 from './BreakdownDraftV1.vue'
+import BreakdownDraftV2 from './BreakdownDraftV2.vue'
 import BreakdownTaskBarV1 from './BreakdownTaskBarV1.vue'
 import ShotCacheManagerV51 from './ShotCacheManagerV51.vue'
 import ShotWorkbenchV4 from './ShotWorkbenchV4.vue'
@@ -18,11 +19,28 @@ const emit = defineEmits<{
 
 const mode = ref<'shots' | 'draft'>(props.episodes.some((episode) => episode.shot_count > 0) ? 'draft' : 'shots')
 const draftRefreshToken = ref(0)
+const selectedEpisodeId = ref('')
+const currentDraftRun = ref<BreakdownRunSummary | null>(null)
+
+watch(
+  () => props.episodes.map((item) => `${item.id}:${item.shot_count}`).join('|'),
+  () => {
+    if (props.episodes.some((item) => item.id === selectedEpisodeId.value)) return
+    selectedEpisodeId.value = props.episodes.find((item) => item.shot_count > 0)?.id ?? props.episodes[0]?.id ?? ''
+    currentDraftRun.value = null
+  },
+  { immediate: true },
+)
+
+watch(selectedEpisodeId, () => {
+  currentDraftRun.value = null
+})
 
 function onTaskFinished(event: Event): void {
   const task = (event as CustomEvent<BackgroundTask>).detail
   if (!task || task.project_id !== props.projectId) return
   if (task.task_type === 'EPISODE_BREAKDOWN_P2' || task.task_type === 'BATCH_BREAKDOWN_P2') {
+    currentDraftRun.value = null
     draftRefreshToken.value += 1
   }
 }
@@ -34,21 +52,21 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
 <template>
   <section class="breakdown-stage-v1">
     <div class="breakdown-stage-switcher">
-      <div>
+      <div class="stage-switcher-title">
         <span>02 拉片工作区</span>
         <strong>{{ mode === 'shots' ? '镜头边界' : 'Structured Draft' }}</strong>
       </div>
       <div class="breakdown-stage-tabs" role="tablist" aria-label="拉片子工作区">
         <button :class="{ active: mode === 'shots' }" type="button" @click="mode = 'shots'">
           <b>镜头边界</b>
-          <small>切镜 / Revision / Reference Clip</small>
+          <small>Shot / Revision / Reference Clip</small>
         </button>
         <button :class="{ active: mode === 'draft' }" type="button" @click="mode = 'draft'">
           <b>Structured Draft</b>
-          <small>Scene / 人物A-B / 对白 / 动作</small>
+          <small>Scene / Shot / 人物 / 对白 / 动作</small>
         </button>
       </div>
-      <div class="breakdown-stage-boundary">AI Draft 只读 · 不等同 Final Asset</div>
+      <div class="breakdown-stage-boundary">AI Draft · 不等同 Final Asset</div>
     </div>
 
     <template v-if="mode === 'shots'">
@@ -62,30 +80,40 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
     </template>
 
     <div v-else class="draft-mode-stack">
-      <BreakdownTaskBarV1 :project-id="projectId" :episodes="episodes" />
-      <BreakdownDraftV1 :key="draftRefreshToken" :episodes="episodes" />
+      <BreakdownTaskBarV1
+        v-model:selected-episode-id="selectedEpisodeId"
+        :project-id="projectId"
+        :episodes="episodes"
+        :run="currentDraftRun"
+      />
+      <BreakdownDraftV2
+        :key="draftRefreshToken"
+        :episodes="episodes"
+        :selected-episode-id="selectedEpisodeId"
+        @run-context="currentDraftRun = $event"
+      />
     </div>
   </section>
 </template>
 
 <style scoped>
 .breakdown-stage-v1, .draft-mode-stack { display: grid; gap: 12px; min-height: 0; }
-.breakdown-stage-switcher { display: grid; grid-template-columns: 170px minmax(0, 1fr) auto; gap: 12px; align-items: center; border: 1px solid #dce3ec; border-radius: 12px; padding: 9px 11px; background: #fff; box-shadow: 0 4px 18px rgba(38, 51, 76, .035); }
-.breakdown-stage-switcher > div:first-child { display: grid; gap: 2px; }
-.breakdown-stage-switcher > div:first-child span { color: #8b96a6; font-size: 9px; font-weight: 850; letter-spacing: .05em; text-transform: uppercase; }
-.breakdown-stage-switcher > div:first-child strong { color: #38465d; font-size: 12px; }
-.breakdown-stage-tabs { display: flex; gap: 5px; justify-content: center; }
-.breakdown-stage-tabs button { min-width: 190px; display: grid; gap: 2px; border: 1px solid #e0e5ed; border-radius: 8px; padding: 6px 10px; background: #f8fafc; color: #68758a; cursor: pointer; text-align: left; }
+.breakdown-stage-switcher { display: grid; grid-template-columns: 190px minmax(0, 1fr) auto; gap: 14px; align-items: center; border: 1px solid #dce3ec; border-radius: 13px; padding: 10px 12px; background: #fff; box-shadow: 0 5px 20px rgba(38, 51, 76, .04); }
+.stage-switcher-title { display: grid; gap: 3px; }
+.stage-switcher-title span { color: #7e8ca1; font-size: 11px; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
+.stage-switcher-title strong { color: #31435f; font-size: 14px; }
+.breakdown-stage-tabs { display: flex; gap: 7px; justify-content: center; }
+.breakdown-stage-tabs button { min-width: 215px; min-height: 44px; display: grid; gap: 2px; border: 1px solid #e0e5ed; border-radius: 9px; padding: 7px 11px; background: #f8fafc; color: #68758a; cursor: pointer; text-align: left; }
 .breakdown-stage-tabs button.active { border-color: #86a2e3; background: #eef4ff; box-shadow: inset 3px 0 0 #547ad0; color: #405b92; }
-.breakdown-stage-tabs b { font-size: 10px; }
-.breakdown-stage-tabs small { color: #8d97a7; font-size: 8px; }
-.breakdown-stage-boundary { border-radius: 999px; padding: 5px 8px; background: #f2f4f7; color: #778294; font-size: 8px; white-space: nowrap; }
-@media (max-width: 1050px) {
+.breakdown-stage-tabs b { font-size: 13px; }
+.breakdown-stage-tabs small { color: #8895a8; font-size: 11px; }
+.breakdown-stage-boundary { border-radius: 999px; padding: 6px 9px; background: #f2f4f7; color: #778294; font-size: 11px; white-space: nowrap; }
+@media (max-width: 1100px) {
   .breakdown-stage-switcher { grid-template-columns: 1fr; }
   .breakdown-stage-tabs { justify-content: flex-start; }
   .breakdown-stage-boundary { justify-self: start; }
 }
-@media (max-width: 620px) {
+@media (max-width: 680px) {
   .breakdown-stage-tabs { display: grid; grid-template-columns: 1fr 1fr; }
   .breakdown-stage-tabs button { min-width: 0; }
 }
