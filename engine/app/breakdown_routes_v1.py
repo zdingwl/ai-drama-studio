@@ -49,7 +49,6 @@ _STAGE_LABELS = {
 class P2AcceptanceRequest(BaseModel):
     human_review: dict[str, Any] | None = None
     include_preflight: bool = True
-    output_path: str | None = None
 
 
 def _not_found(message: str) -> HTTPException:
@@ -278,7 +277,7 @@ def api_p2_runtime_preflight() -> dict[str, Any]:
 
 @router.post("/breakdown-runs/{run_id}/p2-acceptance")
 def api_build_p2_acceptance(run_id: str, payload: P2AcceptanceRequest) -> dict[str, Any]:
-    """为已完成 Run 生成 P2.6 真实素材验收报告；不会隐式重跑模型。"""
+    """为已完成 Run 生成 P2.6 真实素材验收报告；报告固定写入该 Run workspace。"""
 
     try:
         report = build_acceptance_report(
@@ -286,7 +285,7 @@ def api_build_p2_acceptance(run_id: str, payload: P2AcceptanceRequest) -> dict[s
             human_review=payload.human_review,
             include_preflight=payload.include_preflight,
         )
-        path = write_acceptance_report(report, output_path=payload.output_path)
+        path = write_acceptance_report(report)
         return {"report_path": str(path), "report": report}
     except LookupError as exc:
         raise _not_found(str(exc)) from exc
