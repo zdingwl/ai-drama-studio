@@ -18,7 +18,7 @@ from engine.app import breakdown_p2_sidecar_v1 as p2
 from engine.app import breakdown_service_v1, studio_v2
 from engine.app.breakdown_models_v1 import BreakdownRun
 from engine.app.breakdown_p2_asr_v1 import FasterWhisperASRProvider
-from engine.app.breakdown_p2_ocr_v1 import RapidOCROCRProvider
+from engine.app.breakdown_p2_ocr_runtime_v1 import RapidOCROCRProvider
 from engine.app.breakdown_p2_vlm_v1 import Qwen3VLSemanticProvider
 
 P2_PIPELINE_PROFILE = "breakdown-p2-full-v1"
@@ -178,15 +178,35 @@ def _execute_provider(run_id: str, provider: p2.BreakdownP2Provider) -> Provider
     )
 
 
+def _provider_failure_detail(execution: ProviderExecution) -> str:
+    for warning in execution.warnings:
+        text = " ".join(str(warning).strip().split())
+        if text:
+            return text[:700]
+    return ""
+
+
 def _assert_component_can_continue(execution: ProviderExecution) -> None:
     status = execution.status
     component = execution.component
     if status in {"FAILED", "NOT_CONFIGURED"}:
-        raise BreakdownP2PipelineError(f"{component} Provider status={status}，P2 pipeline fail closed")
+        detail = _provider_failure_detail(execution)
+        suffix = f"；{detail}" if detail else ""
+        raise BreakdownP2PipelineError(
+            f"{component} Provider status={status}，P2 pipeline fail closed{suffix}"
+        )
     if component == "VLM" and status != "READY":
-        raise BreakdownP2PipelineError(f"VLM Provider status={status}；完整匿名 Draft 要求 READY VLM semantics")
+        detail = _provider_failure_detail(execution)
+        suffix = f"；{detail}" if detail else ""
+        raise BreakdownP2PipelineError(
+            f"VLM Provider status={status}；完整匿名 Draft 要求 READY VLM semantics{suffix}"
+        )
     if component in {"ASR", "OCR"} and status not in ({"READY"} | _ALLOWED_DEGRADED):
-        raise BreakdownP2PipelineError(f"{component} Provider status={status} 不允许继续 Fusion")
+        detail = _provider_failure_detail(execution)
+        suffix = f"；{detail}" if detail else ""
+        raise BreakdownP2PipelineError(
+            f"{component} Provider status={status} 不允许继续 Fusion{suffix}"
+        )
 
 
 def run_breakdown_p2_run(
