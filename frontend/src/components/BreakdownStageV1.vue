@@ -54,19 +54,19 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
     <div class="breakdown-stage-switcher">
       <div class="stage-switcher-title">
         <span>02 拉片工作区</span>
-        <strong>{{ mode === 'shots' ? '镜头边界' : 'Structured Draft' }}</strong>
+        <strong>{{ mode === 'shots' ? '镜头边界' : '结构化草稿' }}</strong>
       </div>
       <div class="breakdown-stage-tabs" role="tablist" aria-label="拉片子工作区">
         <button :class="{ active: mode === 'shots' }" type="button" @click="mode = 'shots'">
           <b>镜头边界</b>
-          <small>Shot / Revision / Reference Clip</small>
+          <small>镜头 / 版本 / 参考片段</small>
         </button>
         <button :class="{ active: mode === 'draft' }" type="button" @click="mode = 'draft'">
-          <b>Structured Draft</b>
-          <small>Scene / Shot / 人物 / 对白 / 动作</small>
+          <b>结构化草稿</b>
+          <small>场景 / 镜头 / 人物 / 对白 / 动作</small>
         </button>
       </div>
-      <div class="breakdown-stage-boundary">AI Draft · 不等同 Final Asset</div>
+      <div class="breakdown-stage-boundary">AI 草稿 · 不等同最终资产</div>
     </div>
 
     <template v-if="mode === 'shots'">
