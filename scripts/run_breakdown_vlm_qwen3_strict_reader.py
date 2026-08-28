@@ -7,9 +7,10 @@ can mask the real decoder error with torchvision's KeyError('video_fps').
 
 This launcher runs inside the isolated Qwen runtime and, when a non-torchvision
 backend is explicitly forced, redirects qwen-vl-utils' torchvision fallback to
-the same forced backend. The provider remains fail-closed; if decord/torchcodec
-fails, that real decoder error escapes to the diagnostic transport instead of
-being replaced by an unrelated torchvision metadata failure.
+the same forced backend. It also installs the production Simplified-Chinese
+Draft prompt profile before the diagnostic runner imports the shared base runner.
+The provider remains fail-closed; decoder/model errors still escape through the
+diagnostic transport instead of being hidden or converted into partial Drafts.
 """
 from __future__ import annotations
 
@@ -49,11 +50,19 @@ def _install_strict_reader() -> str | None:
     return forced
 
 
+def _install_draft_prompt() -> str:
+    import breakdown_vlm_prompt_zh_v1 as prompt_profile
+
+    prompt_profile.install()
+    return prompt_profile.PROMPT_PROFILE
+
+
 def main() -> int:
     _install_strict_reader()
+    _install_draft_prompt()
 
-    # Import after installing the qwen-vl-utils compatibility patch so the
-    # diagnostic runner and its base helpers all observe the same module state.
+    # Import after installing both compatibility layers so the diagnostic
+    # runner and its base helpers observe the strict reader + Chinese prompt.
     import run_breakdown_vlm_qwen3_diagnostic as diagnostic
 
     return int(diagnostic.main())
