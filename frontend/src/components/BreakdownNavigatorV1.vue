@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { BreakdownRunSummary, BreakdownSceneSegment, BreakdownShotDraft } from '../types/breakdown'
+import { runStatusLabel, sceneSpaceLabel, timeOfDayLabel } from '../utils/breakdownUiText'
 
 const props = defineProps<{
   segments: BreakdownSceneSegment[]
@@ -28,15 +29,19 @@ const filteredSegments = computed(() => {
   return props.segments.filter((segment) => {
     const sceneText = [
       `scene ${segment.ordinal}`,
+      `场景 ${segment.ordinal}`,
       segment.location_hint,
       segment.interior_exterior,
+      sceneSpaceLabel(segment.interior_exterior),
       segment.time_of_day,
+      timeOfDayLabel(segment.time_of_day),
       segment.summary,
       segment.environment_description,
     ].filter(Boolean).join(' ').toLowerCase()
     if (sceneText.includes(query)) return true
     return segment.shots.some((shot) => [
       `shot ${shot.shot_ordinal_snapshot}`,
+      `镜头 ${shot.shot_ordinal_snapshot}`,
       String(shot.shot_ordinal_snapshot).padStart(4, '0'),
       shot.summary,
       shot.visual_description,
@@ -81,7 +86,7 @@ function sceneLabel(segment: BreakdownSceneSegment): string {
 }
 
 function sceneMeta(segment: BreakdownSceneSegment): string {
-  return [segment.interior_exterior, segment.time_of_day].filter(Boolean).join(' · ') || '语义待补充'
+  return [sceneSpaceLabel(segment.interior_exterior), timeOfDayLabel(segment.time_of_day)].filter(Boolean).join(' · ') || '语义待补充'
 }
 
 function timecode(us: number): string {
@@ -93,22 +98,11 @@ function timecode(us: number): string {
 }
 
 function durationText(shot: BreakdownShotDraft): string {
-  return `${Math.max(0, (shot.source_end_us - shot.source_start_us) / 1_000_000).toFixed(2)}s`
+  return `${Math.max(0, (shot.source_end_us - shot.source_start_us) / 1_000_000).toFixed(2)} 秒`
 }
 
 function revisionLabel(run: BreakdownRunSummary): string {
   return run.source_shot_revision ? `R${run.source_shot_revision.revision}` : 'R?'
-}
-
-function runStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    READY: '可用 Draft',
-    READY_WITH_WARNINGS: '可用 · 有提示',
-    PROCESSING: '处理中',
-    FAILED: '失败',
-    STALE: '历史 · STALE',
-  }
-  return labels[status] || status
 }
 
 function runStatusClass(status: string): string {
@@ -127,14 +121,14 @@ function runStatusClass(status: string): string {
       <header class="nav-card-title">
         <div>
           <strong>场景 / 镜头导航</strong>
-          <span>快速定位当前 Draft</span>
+          <span>快速定位当前草稿</span>
         </div>
-        <small>{{ segments.length }} Scene · {{ totalShots }} Shots</small>
+        <small>{{ segments.length }} 个场景 · {{ totalShots }} 个镜头</small>
       </header>
 
       <label class="scene-search">
         <span>⌕</span>
-        <input v-model="searchQuery" type="search" placeholder="搜索 Scene / Shot / 内容" />
+        <input v-model="searchQuery" type="search" placeholder="搜索场景 / 镜头 / 内容" />
       </label>
 
       <div v-if="filteredSegments.length" class="scene-tree">
@@ -145,7 +139,7 @@ function runStatusClass(status: string): string {
             @click="chooseScene(segment)"
           >
             <span class="scene-toggle" @click.stop="toggleScene(segment)">{{ isExpanded(segment.id) ? '⌄' : '›' }}</span>
-            <span class="scene-index">SCENE {{ String(segment.ordinal).padStart(2, '0') }}</span>
+            <span class="scene-index">场景 {{ String(segment.ordinal).padStart(2, '0') }}</span>
             <span class="scene-copy">
               <b>{{ sceneLabel(segment) }}</b>
               <small>{{ sceneMeta(segment) }}</small>
@@ -162,22 +156,22 @@ function runStatusClass(status: string): string {
               @click="emit('select-shot', shot)"
             >
               <span class="shot-dot"></span>
-              <b>SHOT {{ String(shot.shot_ordinal_snapshot).padStart(4, '0') }}</b>
+              <b>镜头 {{ String(shot.shot_ordinal_snapshot).padStart(4, '0') }}</b>
               <small>{{ timecode(shot.source_start_us) }} → {{ timecode(shot.source_end_us) }}</small>
               <i>{{ durationText(shot) }}</i>
             </button>
-            <div v-if="!segment.shots.length" class="nav-empty compact">当前 Scene 没有 Shot Draft。</div>
+            <div v-if="!segment.shots.length" class="nav-empty compact">当前场景没有镜头草稿。</div>
           </div>
         </div>
       </div>
-      <div v-else class="nav-empty">{{ segments.length ? '没有匹配的 Scene / Shot。' : '这个 Run 没有可导航的 Scene Segment。' }}</div>
+      <div v-else class="nav-empty">{{ segments.length ? '没有匹配的场景 / 镜头。' : '这次运行没有可导航的场景分段。' }}</div>
     </section>
 
     <section class="nav-card history-card">
       <header class="nav-card-title">
         <div>
-          <strong>Draft 历史</strong>
-          <span>历史 Run 永久可读</span>
+          <strong>草稿历史</strong>
+          <span>历史运行记录永久可读</span>
         </div>
         <small>{{ runs.length }}</small>
       </header>
@@ -197,11 +191,11 @@ function runStatusClass(status: string): string {
           </span>
           <span class="history-state">
             <i :class="runStatusClass(run.status)">{{ runStatusLabel(run.status) }}</i>
-            <small>{{ run.source_shot_revision?.is_current ? 'Current ShotRevision' : 'Historical ShotRevision' }}</small>
+            <small>{{ run.source_shot_revision?.is_current ? '当前镜头版本' : '历史镜头版本' }}</small>
           </span>
         </button>
       </div>
-      <div v-else class="nav-empty compact">当前剧集还没有 Breakdown Run。</div>
+      <div v-else class="nav-empty compact">当前剧集还没有拉片运行记录。</div>
 
       <button
         v-if="runs.length > 4"
@@ -212,8 +206,8 @@ function runStatusClass(status: string): string {
     </section>
 
     <div class="draft-boundary-card">
-      <strong>Draft 边界</strong>
-      <p>人物A/B、Scene Draft、道具提示都不是 Final Asset。P3 只负责查看、定位、回看与追溯。</p>
+      <strong>草稿边界</strong>
+      <p>人物A/B、场景草稿、道具提示都不是最终资产。P3 只负责查看、定位、回看与追溯。</p>
     </div>
   </aside>
 </template>
