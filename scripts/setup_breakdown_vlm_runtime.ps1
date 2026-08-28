@@ -7,19 +7,19 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $InferenceRoot = Join-Path $RepoRoot '.runtime\TransVLM\inference'
 $PythonExe = Join-Path $InferenceRoot '.venv\Scripts\python.exe'
 $ModelDir = Join-Path $InferenceRoot 'pretrained\Qwen3-VL-4B-Instruct'
-$Runner = Join-Path $RepoRoot 'scripts\run_breakdown_vlm_qwen3.py'
+$Runner = Join-Path $RepoRoot 'scripts\run_breakdown_vlm_qwen3_diagnostic.py'
 
 if (-not (Test-Path $PythonExe)) {
     throw 'Isolated TransVLM/Qwen runtime is missing. Run scripts/setup_transvlm_runtime.ps1 first.'
 }
 if (-not (Test-Path $Runner)) {
-    throw "Missing P2.4 runner: $Runner"
+    throw "Missing P2.4 diagnostic runner: $Runner"
 }
 
 Write-Host '[Breakdown VLM] Verifying isolated Qwen3-VL runtime.'
-& $PythonExe -c "import torch, transformers, qwen_vl_utils, huggingface_hub; from transformers import Qwen3VLForConditionalGeneration, AutoProcessor; print('runtime=OK'); print('torch=' + torch.__version__); print('transformers=' + transformers.__version__)"
+& $PythonExe -c "import importlib.metadata as m; from packaging.version import Version; import torch, transformers, qwen_vl_utils, huggingface_hub, decord; from transformers import Qwen3VLForConditionalGeneration, AutoProcessor; qv=m.version('qwen-vl-utils'); assert Version(qv) >= Version('0.0.14'), 'qwen-vl-utils>=0.0.14 required'; print('runtime=OK'); print('torch=' + torch.__version__); print('transformers=' + transformers.__version__); print('qwen-vl-utils=' + qv); print('decord=' + getattr(decord, '__version__', 'unknown'))"
 if ($LASTEXITCODE -ne 0) {
-    throw 'The isolated runtime does not contain the Qwen3-VL dependencies required by P2.4.'
+    throw 'The isolated runtime is missing the current Qwen3-VL/decord dependencies. Run scripts/setup_transvlm_runtime.ps1 again, then retry this setup.'
 }
 
 if (-not (Test-Path (Join-Path $ModelDir 'config.json'))) {
@@ -38,10 +38,10 @@ if (-not (Test-Path (Join-Path $ModelDir 'config.json'))) {
     Write-Host '[Breakdown VLM] Qwen3-VL-4B-Instruct checkpoint already exists.'
 }
 
-Write-Host '[Breakdown VLM] Running runner CLI self-check.'
+Write-Host '[Breakdown VLM] Running production diagnostic runner CLI self-check.'
 & $PythonExe $Runner --help | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    throw 'P2.4 Qwen3-VL runner self-check failed.'
+    throw 'P2.4 Qwen3-VL diagnostic runner self-check failed.'
 }
 
 Write-Host ''
@@ -49,4 +49,7 @@ Write-Host '[Breakdown VLM] READY' -ForegroundColor Green
 Write-Host "  Python: $PythonExe"
 Write-Host "  Model:  $ModelDir"
 Write-Host '  Provider: qwen3-vl'
+if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+    Write-Host '  Video reader: decord (Windows compatibility profile)'
+}
 Write-Host '  Production inference is offline; model download occurs only in setup.'
