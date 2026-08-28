@@ -59,6 +59,8 @@ def _providers(args: argparse.Namespace) -> tuple[Any, ...]:
             video_fps=args.vlm_fps,
             max_new_tokens=args.vlm_max_new_tokens,
             max_pixels=args.vlm_max_pixels,
+            window_duration_seconds=args.vlm_window_seconds,
+            window_overlap_ratio=args.vlm_window_overlap_ratio,
         ),
     )
 
@@ -136,6 +138,8 @@ def _add_provider_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--vlm-fps", type=float)
     parser.add_argument("--vlm-max-new-tokens", type=int)
     parser.add_argument("--vlm-max-pixels", type=int)
+    parser.add_argument("--vlm-window-seconds", type=float, help="P2-E2 Episode window target seconds (20..40)")
+    parser.add_argument("--vlm-window-overlap-ratio", type=float, help="P2-E2 overlap ratio (0.10..0.50)")
 
 
 def build_parser() -> argparse.ArgumentParser:
