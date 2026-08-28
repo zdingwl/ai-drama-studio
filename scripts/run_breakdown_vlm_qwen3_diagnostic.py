@@ -1,15 +1,22 @@
 """Diagnostic-preserving Qwen3-VL runner for Breakdown P2.4.
 
-This runner reuses the frozen Qwen3-VL loading/inference implementation from
+This runner reuses the frozen Qwen3-VL model loading/schema helpers from
 ``run_breakdown_vlm_qwen3.py`` but preserves a short per-Shot exception detail in
 its private JSONL transport. The main provider still fail-closes; the detail exists
 only so Windows/local acceptance can distinguish decode, CUDA, processor and model
 failures instead of collapsing everything to ``Shot N VLM inference failed``.
+
+For the Windows production profile the parent Provider selects ``decord``. This runner
+passes a native filesystem path to that backend and validates it before Qwen processing,
+preventing a failed decoder from being masked by qwen-vl-utils' legacy torchvision
+fallback (which may raise ``KeyError('video_fps')`` on Windows).
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -21,6 +28,103 @@ def _safe_error(exc: BaseException, *, max_len: int = 900) -> str:
     if not text:
         text = type(exc).__name__
     return text[:max_len]
+
+
+def _video_reference(video_path: Path) -> str:
+    resolved = video_path.resolve()
+    # decord/TorchCodec are happiest with native Windows paths; file:///D:/ URIs
+    # can trigger a backend failure that qwen-vl-utils then masks via torchvision.
+    if os.name == "nt":
+        return str(resolved)
+    return resolved.as_uri()
+
+
+def _validate_forced_video_reader(video_path: Path) -> None:
+    reader = os.getenv("FORCE_QWENVL_VIDEO_READER", "").strip().lower()
+    if reader != "decord":
+        return
+
+    import decord
+
+    resolved = video_path.resolve()
+    try:
+        vr = decord.VideoReader(str(resolved))
+        frame_count = int(len(vr))
+        raw_fps = float(vr.get_avg_fps())
+    except Exception as exc:
+        raise RuntimeError(f"decord could not open Reference Clip: {_safe_error(exc)}") from exc
+    if frame_count < 2:
+        raise RuntimeError(f"decord Reference Clip has too few frames: {frame_count}")
+    if not math.isfinite(raw_fps) or raw_fps <= 0:
+        raise RuntimeError(f"decord Reference Clip FPS is invalid: {raw_fps}")
+
+
+def _analyze_shot_compat(
+    *,
+    model: Any,
+    processor: Any,
+    video_path: Path,
+    source_language: str,
+    fps: float,
+    max_new_tokens: int,
+    max_pixels: int,
+) -> Mapping[str, Any]:
+    from qwen_vl_utils import process_vision_info
+
+    _validate_forced_video_reader(video_path)
+    messages = [{
+        "role": "user",
+        "content": [
+            {
+                "type": "video",
+                "video": _video_reference(video_path),
+                "fps": fps,
+                "max_pixels": max_pixels,
+            },
+            {"type": "text", "text": base._prompt(source_language)},
+        ],
+    }]
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    image_inputs, video_inputs, video_kwargs = process_vision_info(
+        messages,
+        image_patch_size=16,
+        return_video_kwargs=True,
+        return_video_metadata=True,
+    )
+    if video_inputs is not None:
+        videos, video_metadatas = zip(*video_inputs)
+        videos = list(videos)
+        video_metadatas = list(video_metadatas)
+    else:
+        videos = None
+        video_metadatas = None
+
+    inputs = processor(
+        text=[text],
+        images=image_inputs,
+        videos=videos,
+        video_metadata=video_metadatas,
+        padding=True,
+        return_tensors="pt",
+        do_resize=False,
+        **video_kwargs,
+    )
+    inputs = inputs.to(model.device)
+    generated_ids = model.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens,
+        do_sample=False,
+    )
+    trimmed = [
+        output_ids[len(input_ids):]
+        for input_ids, output_ids in zip(inputs.input_ids, generated_ids)
+    ]
+    output_text = processor.batch_decode(
+        trimmed,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
+    )[0]
+    return base._first_json_object(output_text)
 
 
 def main() -> int:
@@ -51,7 +155,7 @@ def main() -> int:
         try:
             if not clip.is_file():
                 raise FileNotFoundError("Reference Clip is missing")
-            semantic = base._analyze_shot(
+            semantic = _analyze_shot_compat(
                 model=model,
                 processor=processor,
                 video_path=clip,
