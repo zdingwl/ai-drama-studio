@@ -1,7 +1,7 @@
 # AI Drama Studio — Current Implementation Manifest
 
 > Purpose: compact **code-aligned CURRENT manifest** for new conversations.  
-> Last synchronized: **2026-08-28 09:18 +08:00**
+> Last synchronized: **2026-08-28**
 
 ## Repository baseline
 
@@ -12,7 +12,7 @@ Architecture: Reference Video V2
 FastAPI app version: 2.4.1
 Formal Character runtime: Character V10.1
 Breakdown-first infrastructure: P1 COMPLETE
-Breakdown semantic inference: P2 IN PROGRESS / P2.1-P2.4 COMPLETE / P2.5 NEXT
+Breakdown semantic inference: P2 IN PROGRESS / P2.1-P2.5 COMPLETE / P2.6 NEXT
 ```
 
 ## Current vs Target — do not merge them
@@ -46,7 +46,7 @@ Shot + Reference Clip
 → remake
 ```
 
-Current implementation has completed P1 and P2.1–P2.4. This means the Draft contract, raw sidecar, ASR, OCR and anonymous Shot-level VLM semantic producers exist. It does **not** mean ASR/OCR/VLM Fusion, complete Draft rows, structured 02 拉片 UI, speaker identity mapping, asset resolution or Final Breakdown are implemented.
+Current implementation has completed P1 and P2.1–P2.5. The Draft contract, raw sidecar, ASR, OCR, anonymous Shot-level VLM semantics and deterministic multimodal Fusion into complete P1 Draft rows now exist. This still does **not** mean real-model quality closure, structured 02 拉片 UI, speaker identity mapping, asset resolution or Final Breakdown are implemented.
 
 ```text
 P1 storage/lifecycle/validator/read API/history/STALE = IMPLEMENTED
@@ -54,8 +54,8 @@ P2.1 Provider/raw Evidence sidecar                  = IMPLEMENTED
 P2.2 ASR segment + word timing                     = IMPLEMENTED
 P2.3 OCR Observation Provider                      = IMPLEMENTED
 P2.4 VLM anonymous Shot semantics                  = IMPLEMENTED
-P2.5 ASR/OCR/VLM → complete Draft fusion           = NOT IMPLEMENTED / NEXT
-P2.6 real-video benchmark/closure                  = NOT IMPLEMENTED
+P2.5 ASR/OCR/VLM → complete Draft fusion           = IMPLEMENTED
+P2.6 real-video benchmark/closure                  = NOT IMPLEMENTED / NEXT
 P3 structured 02 拉片 UI                           = NOT IMPLEMENTED
 P4+ Draft-guided assets/fill-back/renderers         = NOT IMPLEMENTED
 ```
@@ -282,25 +282,59 @@ all Shot semantics failed/unusable → FAILED
 
 P2.4 does not write `SceneSegmentDraft`, `ShotSemanticDraft`, `LocalSubject`, `TimelineEvent`, `DraftPropHint`, Dialogue, Character, Scene, Prop, AssetRevision or Final Bindings.
 
-## P2.5 — NEXT
+## Breakdown P2.5 — executable deterministic multimodal Fusion
 
-P2.5 must consume the immutable sidecars rather than rerun models implicitly:
+Formal implementation:
 
 ```text
-ASR sidecar
-+ OCR sidecar
-+ VLM sidecar
-→ exact ShotRevisionItem alignment
-→ cross-cut ASR splitting
-→ OCR temporal stitching/dedupe
-→ VLM/ASR/OCR Fusion
-→ P1 SceneSegmentDraft / ShotSemanticDraft / LocalSubject / TimelineEvent / DraftPropHint
-→ BreakdownEvidenceLink provenance
-→ P1 validator
-→ publish READY / READY_WITH_WARNINGS
+engine/app/breakdown_p2_fusion_v1.py
+engine/tests/v2/test_breakdown_p2_fusion_v1.py
+profile = breakdown-p2-fusion-v1
 ```
 
-P2.5 remains anonymous and may not create Final Character/Scene/Prop or Final Shot Bindings.
+P2.5 consumes already persisted ASR/OCR/VLM sidecars; it never reruns Providers implicitly. It verifies the local artifact URI, SHA-256 fingerprint, sidecar schema, Run/Project/Episode/source ShotRevision/component identity and registered Provider metadata before Fusion.
+
+Component policy:
+
+```text
+VLM READY required
+ASR/OCR NO_EVIDENCE or NOT_AVAILABLE allowed with warnings
+FAILED / NOT_CONFIGURED component blocks Fusion
+STALE/non-current source revision blocks Fusion
+```
+
+Fusion behavior:
+
+```text
+SceneSegmentDraft:
+  consecutive exact ShotRevisionItems only
+  conservative adjacent merge on exact normalized scene signature
+
+ShotSemanticDraft:
+  exactly one per historical ShotRevisionItem
+  exact Shot/time/ordinal snapshot
+
+LocalSubject:
+  Segment-scoped anonymous only
+  exact normalized appearance may link across Shots
+  same-Shot duplicate appearance creates a Segment-level cannot-link for that appearance
+  ambiguous occurrences fall back to shot-local keys
+  VLM subject labels never become Character identity
+
+TimelineEvent:
+  VLM VISUAL/ACTION ratio → exact Shot source microseconds
+  ASR segment → exact Shot intersection; ASR_WORD timing preferred for split text/time
+  OCR repeated observations → conservative text/time/geometry stitching
+
+DraftPropHint:
+  VLM plot-relevant hint → Segment-scoped hint + Shot occurrence
+
+BreakdownEvidenceLink:
+  created only after real Draft owners exist
+  preserves source IDs/URIs back to immutable sidecars
+```
+
+The complete Draft graph is validated by the existing P1 validator and published through `publish_breakdown_run()`. P2.5 does not create Final Character/Scene/Prop, AssetRevision or Final Shot Bindings.
 
 ## Formal Character V10.1 baseline — unchanged
 
@@ -315,7 +349,7 @@ Primary identity model: YoutuReID
 Face role: optional support / known presence / hard conflict
 ```
 
-P1/P2.1/P2.2/P2.3/P2.4 do **not** change Character thresholds, same-sample cannot-link, Face hard-conflict behavior, identity creation gates, explicit Shot assignment or Final Character Gate.
+P1/P2.1/P2.2/P2.3/P2.4/P2.5 do **not** change Character thresholds, same-sample cannot-link, Face hard-conflict behavior, identity creation gates, explicit Shot assignment or Final Character Gate.
 
 For current V10.1 Runs with `shot_assignment_version`:
 
@@ -332,7 +366,7 @@ SceneCandidate / ShotSceneEvidence
 PropCandidate / ShotPropEvidence
 ```
 
-Current Scene candidate generation remains lightweight and current Prop can remain fail-closed/`NOT_CONFIGURED`. P2 VLM scene/prop hints are semantic search hints, not Final assets.
+Current Scene candidate generation remains lightweight and current Prop can remain fail-closed/`NOT_CONFIGURED`. P2 VLM/Fusion scene/prop hints are semantic search hints, not Final assets.
 
 `studio_v2.Dialogue` and historical F05 ASR/Speaker helpers remain compatibility code. Historical direct Speaker→CharacterCandidate is not the P2 target path.
 
@@ -348,6 +382,7 @@ engine/app/breakdown_p2_sidecar_v1.py
 engine/app/breakdown_p2_asr_v1.py
 engine/app/breakdown_p2_ocr_v1.py
 engine/app/breakdown_p2_vlm_v1.py
+engine/app/breakdown_p2_fusion_v1.py
 ```
 
 ## Current validation state
@@ -358,8 +393,8 @@ P2.1 Provider/raw Evidence sidecar                   = IMPLEMENTED
 P2.2 ASR segment/word Evidence Provider              = IMPLEMENTED
 P2.3 OCR Observation Provider                        = IMPLEMENTED
 P2.4 VLM anonymous Shot semantics                    = IMPLEMENTED
-P2.5 Fusion → P1 Draft publish                       = NOT IMPLEMENTED / NEXT
-P2.6 real-video benchmark/Windows real-model closure = NOT IMPLEMENTED
+P2.5 Fusion → P1 Draft publish                       = IMPLEMENTED
+P2.6 real-video benchmark/Windows real-model closure = NOT IMPLEMENTED / NEXT
 P3 structured 02 拉片 UI                             = NOT IMPLEMENTED
 P4 Draft-guided Scene/Prop evidence                  = NOT IMPLEMENTED
 P5 Draft ↔ Character safe integration                = NOT IMPLEMENTED
@@ -373,9 +408,9 @@ Historical old-Run fallback                          = PRESERVED
 Whole repository CI                                  = NOT GREEN
 ```
 
-## CI reality at P2.4 close
+## Verification reality at P2.5 close
 
-Acceptance at implementation head `4872333e4833eb421850509d860e11f58b1687a0`:
+P2.4 implementation head `4872333e4833eb421850509d860e11f58b1687a0` had:
 
 ```text
 Ubuntu backend compile: PASS
@@ -385,22 +420,31 @@ Windows Breakdown P2 provider suite: 37/37 PASS
 Frontend build: existing vue-tsc / TypeScript compatibility failure
 ```
 
-The six added passes over P2.3 are exactly the six P2.4 VLM focused tests. Existing 28 backend failures remain the known legacy/runtime/environment categories: lightweight CI missing `cv2`/`trackers`, FFmpeg assumptions, obsolete V6-era assertions and historical Final Gate/workspace expectations.
+P2.5 initial test head `942f9f524d0ccd1f11c911d60b9b148b18d9396d` had:
 
-Do not claim the whole repository is green. Do not claim fake-runner/contract acceptance proves real short-drama Qwen3-VL quality.
+```text
+Ubuntu full pytest: 29 failed, 248 passed, 1 skipped
+P2.5 focused tests: 5 passed / 1 failed
+```
+
+The sole new failure was same-Shot identical-appearance anonymous subjects being merged. The correction ending at `b59309d305a15dfa80e9a6af0f961f93fcac5bf9` adds a conservative Segment-level cannot-link for any appearance signature that co-occurs on multiple subjects in one Shot. A local pure-logic check confirms normal same-appearance cross-Shot linking still shares one key while the same-Shot collision yields distinct shot-local keys.
+
+Per user instruction, no fresh GitHub Actions rerun was performed after the fix because CI quota is unavailable. Do **not** claim a new hosted 6/6 P2.5 run. Existing 28 backend failures remain known legacy/runtime/environment categories: lightweight CI missing `cv2`/`trackers`, FFmpeg assumptions, obsolete V6-era assertions and historical Final Gate/workspace expectations.
+
+Do not claim the whole repository is green. Do not claim fake-runner/contract acceptance proves real short-drama Qwen3-VL/ASR/OCR quality.
 
 ## Accepted Target phase pointer
 
 ```text
 P0 planning/contracts                            = COMPLETE
 P1 Draft data/runtime contract + compatibility   = COMPLETE
-P2 ASR/OCR/VLM anonymous Draft sidecar           = IN PROGRESS
+P2 ASR/OCR/VLM anonymous Draft sidecar/Fusion    = IN PROGRESS
   P2.1 Provider/raw Evidence sidecar              = COMPLETE
   P2.2 ASR + segment/word timing                 = COMPLETE
   P2.3 OCR Observation Provider                  = COMPLETE
   P2.4 VLM anonymous Shot semantics              = COMPLETE
-  P2.5 Fusion / P1 Draft publish                 = NEXT
-  P2.6 real-video/Windows/docs closure            = PLANNED
+  P2.5 Fusion / P1 Draft publish                 = COMPLETE
+  P2.6 real-video/Windows/docs closure            = NEXT
 P3 02 拉片 structured Draft UI                   = PLANNED
 P4 Draft-guided Scene / Prop evidence            = PLANNED
 P5 Draft ↔ Character safe integration            = PLANNED
@@ -419,7 +463,7 @@ Before new Breakdown work:
 4. read BREAKDOWN_DRAFT_DATA_CONTRACT
 5. read BREAKDOWN_P2_SIDECAR_CONTRACT
 6. read latest Breakdown session handoff
-7. read actual P2 sidecar/ASR/OCR/VLM code + focused tests
+7. read actual P2 sidecar/ASR/OCR/VLM/Fusion code + focused tests
 ```
 
-The next safe implementation step is **P2.5 Fusion**, not P3 and not asset resolution.
+The next safe implementation step is **P2.6 real short-drama / real-model benchmark + Windows/local-GPU closure**, not P3 and not asset resolution.
