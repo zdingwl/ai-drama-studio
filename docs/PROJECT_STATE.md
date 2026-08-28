@@ -1,12 +1,12 @@
 # AI Drama Studio — Project State
 
-> **Last synchronized:** 2026-08-28 12:12 +08:00  
+> **Last synchronized:** 2026-08-28 16:03 +08:00  
 > **Repository:** `zdingwl/ai-drama-studio`  
 > **Branch:** `main`  
 > **Architecture:** Reference Video V2  
 > **FastAPI app version:** `2.4.1`  
 > **Formal Character runtime:** Character V10.1  
-> **Breakdown-first:** **P1/P2 IMPLEMENTATION CONDITIONAL PASS / P2.6 REAL-MODEL ACCEPTANCE NOT PASSED / P3 UI IMPLEMENTED, ACCEPTANCE IN PROGRESS**
+> **Breakdown-first:** **P1/P2 IMPLEMENTATION CONDITIONAL PASS / P2.6 REAL-MODEL ACCEPTANCE NOT PASSED / P3 UI IMPLEMENTED, ACCEPTANCE IN PROGRESS / P4 IMPLEMENTED, LOCAL ACCEPTANCE PENDING**
 
 ## 1. Current-state source of truth
 
@@ -22,7 +22,7 @@ AGENTS.md
 → docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
 → docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
 → docs/ASSET_CHARACTER_RECOGNITION_V10_1.md when Character is involved
-→ latest docs/sessions/* Breakdown handoff
+→ latest docs/sessions/* Breakdown/P4 handoff
 → current code/tests
 ```
 
@@ -78,7 +78,7 @@ Project / Episode
 → per-Shot Reference Clip / thumbnail / keyframes
 ```
 
-Historical semantic data anchors to exact `ShotRevision / ShotRevisionItem`. Current `Shot.id` is not a permanent cross-revision historical anchor. Heavy media/model work remains sequential by default.
+Historical semantic data anchors to exact ShotRevision/ShotRevisionItem. Current `Shot.id` is not a permanent cross-revision historical anchor. Heavy media/model work remains sequential by default.
 
 ## 4. P1 — implementation accepted conditionally
 
@@ -133,6 +133,17 @@ POST /api/breakdown-runs/{run_id}/p2-acceptance
 
 Batch Breakdown remains strictly sequential by `Episode.sort_order`, globally serialized for heavy P2 work.
 
+### P2.4 Chinese Draft generation
+
+Production Qwen3-VL now uses:
+
+```text
+prompt_profile = breakdown-p2-vlm-zh-draft-v1
+draft_text_language = zh-CN
+```
+
+VLM-generated Scene / Shot / anonymous-subject / action-event / prop prose is generated as Simplified Chinese at P2.4 source. Machine JSON/enums remain stable English tokens; ASR dialogue and OCR observations preserve raw source text. A language gate fails closed when high-value VLM prose is clearly not Chinese. Historical Runs remain immutable; only new BreakdownRuns receive this policy.
+
 ### Current P2 acceptance status
 
 User implementation review result:
@@ -145,20 +156,21 @@ This means architecture/contracts/persistence/orchestration are conditionally ac
 
 ## 6. P2.6 Windows / real-model acceptance — NOT PASSED
 
-Current factual result from the user's Windows acceptance attempt:
+Current authoritative gate remains:
 
 ```text
 P2.6 Windows / real-model acceptance = NOT PASSED
-blocking runtime/model gap           = OCR + Qwen model/runtime not fully provisioned
-real short-drama full-chain run      = NOT COMPLETED
+real short-drama acceptance evidence = INCOMPLETE
 human acceptance PASS report         = NOT AVAILABLE
 ```
 
-Required next gate:
+Runtime compatibility/provisioning fixes have been implemented for OCR and Qwen3-VL, including Windows diagnostics and the Chinese Draft profile, but they do not by themselves constitute a real-model acceptance PASS.
+
+Required close gate:
 
 ```text
-1. complete OCR runtime/model provisioning
-2. complete Qwen3-VL model provisioning
+1. provision/verify OCR runtime + model
+2. provision/verify Qwen3-VL runtime + model
 3. use a real short-drama sample
 4. run ASR → OCR → VLM → Fusion → P1 validator
 5. generate P2 acceptance report
@@ -166,13 +178,9 @@ Required next gate:
 7. required scores >= 4/5 and no blocking issues
 ```
 
-Only then may P2.6 become `PASS`. Until that happens, do not write `P2 ACCEPTED`, `P2 CLOSED`, or claim that Qwen3-VL / OCR / full multimodal quality has passed real-video acceptance.
-
-The P2.6 code/tooling remains implemented; the **runtime/real-model acceptance gate is what failed**.
+Only then may P2.6 become `PASS`. Until that happens, do not write `P2 ACCEPTED`, `P2 CLOSED`, or claim that full multimodal quality has passed real-video acceptance.
 
 ## 7. P3 — Structured Draft UI is implemented on main
-
-P3 is no longer `NEXT`.
 
 Current `02 拉片` contains:
 
@@ -202,7 +210,7 @@ browser/local UI acceptance  = IN PROGRESS
 fully accepted/closed        = NO
 ```
 
-The Shot Boundary overflow regression was fixed on `main` in merge commit `1cb8624b885850935e902cb6c9ac2273c490d2b3`.
+The Stage 02 Shot Boundary overflow regression was fixed on main. P3 visual/localization fixes continue to be accepted through browser testing; do not mark P3 CLOSED until the user explicitly accepts it.
 
 ## 8. Formal Character V10.1 — unchanged
 
@@ -228,9 +236,55 @@ VLM/Draft cannot create Character
 ASR speaker cannot create Character
 ```
 
-## 9. Scene / Prop reality
+P4 does not modify any Character V10.1 resolver, threshold, tracking, identity or Final Gate code.
 
-P2 produces semantic hints only. Existing asset-side `SceneCandidate / ShotSceneEvidence` and `PropCandidate / ShotPropEvidence` remain separate. Draft-guided Scene/Prop evidence extraction is P4; Draft↔Character safe integration is P5.
+## 9. P4 — Draft-guided Scene / Prop Evidence implemented
+
+P4 backend first implementation is now present:
+
+```text
+engine/app/breakdown_asset_guidance_v1.py
+profile = breakdown-asset-guidance-p4-v1
+
+engine/app/asset_semantics_p4_v1.py
+engine/app/asset_routes_v3.py -> P4 semantic entrypoint
+```
+
+Formal flow:
+
+```text
+current READY BreakdownRun
++ exact current ShotRevision
+→ Shot-level SceneSearchGuide / PropSearchGuide
+→ current Shot thumbnail re-verification
+→ existing SceneCandidate / ShotSceneEvidence
+→ existing PropCandidate / ShotPropEvidence
+```
+
+Safety gates:
+
+```text
+STALE/history/FAILED/PROCESSING Draft = never guidance
+no ordinal/timestamp history guessing
+Draft Scene/Prop = hypothesis only
+Draft prop must be visually observed again before candidate evidence
+observed=false = no PropCandidate from that hint
+verified prop threshold >= 0.45
+unguided discovered key prop threshold >= 0.68
+valid Qwen localization can be stored as xyxy_norm bbox Evidence
+```
+
+No-Draft projects fall back to the existing unguided `asset_semantics_v3` path.
+
+P4 status:
+
+```text
+implementation                 = IMPLEMENTED
+local/model acceptance         = PENDING
+Final Scene/Prop quality PASS  = NO
+```
+
+The existing Final Asset/Revision workflow remains unchanged. P4 does not create a direct `Draft -> Final Scene/Prop` path.
 
 ## 10. Current phase pointer
 
@@ -240,40 +294,49 @@ P1 implementation                              = CONDITIONAL PASS
 P2 implementation                              = CONDITIONAL PASS
   P2.1 sidecar                                 = IMPLEMENTED
   P2.2 ASR                                     = IMPLEMENTED
-  P2.3 OCR                                     = IMPLEMENTED, real runtime/model gate incomplete
-  P2.4 VLM                                     = IMPLEMENTED, Qwen model gate incomplete
+  P2.3 OCR                                     = IMPLEMENTED; real acceptance pending
+  P2.4 VLM                                     = IMPLEMENTED; Chinese Draft source policy added
   P2.5 Fusion                                  = IMPLEMENTED
   P2.6 orchestration/acceptance tooling        = IMPLEMENTED
 P2.6 Windows/real-model acceptance             = NOT PASSED
 P3 02 拉片 Structured Draft UI                 = IMPLEMENTED / UI ACCEPTANCE IN PROGRESS
-P4 Draft-guided Scene / Prop evidence          = PLANNED
+P4 Draft-guided Scene / Prop evidence          = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character safe integration          = PLANNED
 P6 Final fill-back + renderers                 = PLANNED
 P7 downstream remake integration               = PLANNED
 ```
 
-P2 remains forbidden from writing Final Character/Scene/Prop assets or Final Shot bindings.
+P2/P3/P4 remain forbidden from treating Draft prose as Final identity truth. P4 may write asset-side Scene/Prop Evidence through existing Candidate tables but cannot let Draft bypass visual verification.
 
 ## 11. Validation / CI truth
 
 GitHub hosted Actions are intentionally not used for this work because hosted CI quota should not be consumed. Do not report historical CI as fresh acceptance.
 
-The authoritative outstanding release gate is now concrete, not generic:
+Current outstanding real gates are concrete:
 
-> **补齐 OCR 与 Qwen 模型/runtime，然后在用户 Windows 机器用真实短剧跑完整 P2 链并完成人工验收。**
+```text
+P2.6 real short-drama full-chain + human acceptance
+P3 browser/local UI acceptance
+P4 local asset-model acceptance on a project with current Structured Draft
+```
 
 ## 12. Next safe work
 
-Two acceptance tracks remain active:
+Three acceptance tracks are active:
 
 ```text
-A. P2.6 runtime acceptance
-   → provision OCR + Qwen
-   → real short-drama full-chain run
+A. P2.6 runtime/quality acceptance
+   → strict preflight
+   → real short-drama full chain
    → acceptance report + human review
 
 B. P3 UI acceptance
    → continue browser verification of 02 拉片 Structured Draft / 镜头边界
+
+C. P4 local acceptance
+   → current READY Structured Draft
+   → 03 资产 / 资产提取
+   → verify Draft-guided Scene/Prop results + provenance + rejected false hints
 ```
 
-Do not advance project truth to P2.6 PASS or P3 CLOSED until the corresponding acceptance evidence exists.
+After P4 local behavior is accepted, the next planned implementation is P5 Draft ↔ Character safe integration. Do not advance project truth to P2.6 PASS, P3 CLOSED, P4 quality PASS or P5 IMPLEMENTED without the corresponding evidence/code.
