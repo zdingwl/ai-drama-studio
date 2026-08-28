@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from engine.app.breakdown_p2_vlm_runtime_v1 import Qwen3VLSemanticProvider
 
 
@@ -24,3 +26,23 @@ def test_subprocess_output_keeps_only_tail_lines() -> None:
     assert detail is not None
     assert "line1" not in detail
     assert "CUDA out of memory" in detail
+
+
+def test_video_reader_override_reaches_qwen_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_DRAMA_P2_VLM_VIDEO_READER", "decord")
+    monkeypatch.delenv("FORCE_QWENVL_VIDEO_READER", raising=False)
+    provider = Qwen3VLSemanticProvider(inference_runner=lambda config, shots: ())
+    config = provider._runtime_config("en")
+
+    env = provider._subprocess_env(config)
+
+    assert env["FORCE_QWENVL_VIDEO_READER"] == "decord"
+
+
+def test_invalid_video_reader_override_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_DRAMA_P2_VLM_VIDEO_READER", "invalid-reader")
+    provider = Qwen3VLSemanticProvider(inference_runner=lambda config, shots: ())
+    config = provider._runtime_config("en")
+
+    with pytest.raises(ValueError, match="decord/torchcodec/torchvision"):
+        provider._subprocess_env(config)
