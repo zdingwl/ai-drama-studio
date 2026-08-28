@@ -65,6 +65,21 @@ P2.5 deterministic Fusion 不做翻译，直接消费 VLM semantic。
 
 这不会改变 P1/P2 schema、数据库或 Final Asset Contract。
 
+## 中文输出 Gate
+
+只依赖 Prompt 不能保证模型永远服从语言要求，因此正式 diagnostic runner 在 Qwen 返回 JSON 后、Shot 被标记 `READY` 前执行语言校验：
+
+- `shot.summary` 有值时必须包含中文；
+- `shot.visual_description` 有值时必须包含中文；
+- 当自然语言字段达到 3 个以上时，至少 60% 的非空字段必须包含中文字符；
+- 允许 `iPhone` 等少量不可避免的英文品牌/专名存在。
+
+如果明显仍是英文，当前 Shot 会返回类似：
+
+`VLM Draft language validation failed: shot.summary is not Simplified Chinese`
+
+Provider 随后继续按现有规则 fail-closed，禁止英文/混乱 VLM semantic 进入完整 Draft。
+
 ## Provenance
 
 `engine.app.breakdown_p2_vlm_runtime_v1.Qwen3VLSemanticProvider` 会在 VLM sidecar metadata 记录：
@@ -91,7 +106,7 @@ Strict reader 先安装：
 1. Windows decord strict-reader compatibility；
 2. `breakdown-p2-vlm-zh-draft-v1` 中文 Prompt Profile；
 
-再进入真实 Qwen 推理。
+再进入真实 Qwen 推理。Qwen 输出后还必须通过中文输出 Gate，才能成为 `READY` Shot semantic。
 
 fail-closed、Windows decord、诊断 transport 均保持不变。
 
@@ -115,7 +130,8 @@ fail-closed、Windows decord、诊断 transport 均保持不变。
 6. ASR 对白保持源视频原始语言；
 7. OCR 文字保持画面原文；
 8. VLM sidecar metadata 能看到中文 Prompt Profile；
-9. P2.5 Fusion / P1 validator 正常完成。
+9. P2.5 Fusion / P1 validator 正常完成；
+10. 如果 Qwen 偶发输出英文，中文输出 Gate 必须 fail-closed 而不是发布英文 Draft。
 
 ## Acceptance truth
 
