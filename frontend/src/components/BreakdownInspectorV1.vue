@@ -8,6 +8,13 @@ import type {
   BreakdownTimelineEvent,
   BreakdownUnassigned,
 } from '../types/breakdown'
+import {
+  eventOriginLabel,
+  eventTypeLabel,
+  evidenceRoleLabel,
+  evidenceSourceTypeLabel,
+  participantRoleLabel,
+} from '../utils/breakdownUiText'
 
 const props = defineProps<{
   run: BreakdownRunSummary | null
@@ -26,13 +33,13 @@ const unassignedStats = computed(() => {
   const value = props.unassigned
   if (!value) return []
   return [
-    ['Shots', value.shots.length],
-    ['Subjects', value.subjects.length],
-    ['Subject Presences', value.subject_presences.length],
-    ['Events', value.events.length],
-    ['Participants', value.event_participants.length],
-    ['Prop Hints', value.prop_hints.length],
-    ['Prop Occurrences', value.prop_occurrences.length],
+    ['镜头', value.shots.length],
+    ['匿名主体', value.subjects.length],
+    ['人物出现记录', value.subject_presences.length],
+    ['事件', value.events.length],
+    ['事件参与者', value.event_participants.length],
+    ['道具提示', value.prop_hints.length],
+    ['道具出现记录', value.prop_occurrences.length],
   ] as Array<[string, number]>
 })
 const unassignedCount = computed(() => unassignedStats.value.reduce((sum, item) => sum + item[1], 0))
@@ -64,7 +71,7 @@ function timecode(us: number | null | undefined): string {
 }
 
 function durationText(startUs: number, endUs: number): string {
-  return `${Math.max(0, (endUs - startUs) / 1_000_000).toFixed(2)}s`
+  return `${Math.max(0, (endUs - startUs) / 1_000_000).toFixed(2)} 秒`
 }
 
 function confidenceText(value: number | null | undefined): string {
@@ -73,17 +80,6 @@ function confidenceText(value: number | null | undefined): string {
 
 function revisionLabel(run: BreakdownRunSummary | null): string {
   return run?.source_shot_revision ? `R${run.source_shot_revision.revision}` : 'R?'
-}
-
-function eventTypeLabel(type: string): string {
-  const labels: Record<string, string> = {
-    DIALOGUE: '对白',
-    ACTION: '动作',
-    OCR: '画面文字',
-    VISUAL: '画面',
-    AUDIO_EVENT: '声音',
-  }
-  return labels[type] || type
 }
 
 function eventSpeakers(event: BreakdownTimelineEvent): string {
@@ -108,25 +104,25 @@ function eventOriginClass(event: BreakdownTimelineEvent): string {
 }
 
 function evidenceTitle(item: BreakdownEvidenceLink): string {
-  return `${item.source_type} · ${item.role}`
+  return `${evidenceSourceTypeLabel(item.source_type)} · ${evidenceRoleLabel(item.role)}`
 }
 </script>
 
 <template>
   <aside class="breakdown-inspector-v1">
     <div v-if="!run || !shot" class="inspector-empty">
-      <strong>选择一个 Shot</strong>
-      <p>Reference Clip、当前 Evidence 和 provenance 会固定显示在这里。</p>
+      <strong>选择一个镜头</strong>
+      <p>参考片段、当前证据和证据来源追溯会固定显示在这里。</p>
     </div>
 
     <template v-else>
       <section class="inspector-card reference-card">
         <header class="reference-head">
           <div>
-            <span>{{ revisionLabel(run) }} · REFERENCE CLIP</span>
-            <strong>SHOT {{ String(shot.shot_ordinal_snapshot).padStart(4, '0') }}</strong>
+            <span>{{ revisionLabel(run) }} · 参考片段</span>
+            <strong>镜头 {{ String(shot.shot_ordinal_snapshot).padStart(4, '0') }}</strong>
           </div>
-          <i>{{ run.source_shot_revision?.is_current ? 'CURRENT REVISION' : 'HISTORY REVISION' }}</i>
+          <i>{{ run.source_shot_revision?.is_current ? '当前镜头版本' : '历史镜头版本' }}</i>
         </header>
 
         <div class="reference-video">
@@ -139,11 +135,11 @@ function evidenceTitle(item: BreakdownEvidenceLink): string {
             preload="metadata"
             @loadedmetadata="applySeek"
           ></video>
-          <div v-else class="reference-missing">这个历史 ShotRevisionItem 没有可用 Reference Clip。</div>
+          <div v-else class="reference-missing">这个历史镜头版本没有可用参考片段。</div>
         </div>
 
         <div class="reference-meta">
-          <span>Source {{ timecode(shot.source_start_us) }} → {{ timecode(shot.source_end_us) }}</span>
+          <span>原片时间 {{ timecode(shot.source_start_us) }} → {{ timecode(shot.source_end_us) }}</span>
           <b>{{ durationText(shot.source_start_us, shot.source_end_us) }}</b>
         </div>
       </section>
@@ -151,35 +147,35 @@ function evidenceTitle(item: BreakdownEvidenceLink): string {
       <section class="inspector-card selection-card">
         <header class="inspector-card-title">
           <div>
-            <span>{{ event ? '当前选中 Evidence' : '镜头快速信息' }}</span>
-            <strong>{{ event ? eventTypeLabel(event.event_type) : `SHOT ${String(shot.shot_ordinal_snapshot).padStart(4, '0')}` }}</strong>
+            <span>{{ event ? '当前选中证据' : '镜头快速信息' }}</span>
+            <strong>{{ event ? eventTypeLabel(event.event_type) : `镜头 ${String(shot.shot_ordinal_snapshot).padStart(4, '0')}` }}</strong>
           </div>
-          <i v-if="event" :class="eventOriginClass(event)">{{ event.origin }}</i>
+          <i v-if="event" :class="eventOriginClass(event)">{{ eventOriginLabel(event.origin) }}</i>
         </header>
 
         <div v-if="event" class="event-detail-grid">
           <div><span>类型</span><b>{{ eventTypeLabel(event.event_type) }}</b></div>
-          <div><span>Origin</span><b>{{ event.origin }}</b></div>
+          <div><span>来源</span><b>{{ eventOriginLabel(event.origin) }}</b></div>
           <div><span>开始时间</span><b>{{ timecode(event.source_start_us) }}</b></div>
           <div><span>结束时间</span><b>{{ timecode(event.source_end_us) }}</b></div>
-          <div><span>Shot 内时间</span><b>{{ timecode(event.shot_relative_start_us) }}</b></div>
+          <div><span>镜头内时间</span><b>{{ timecode(event.shot_relative_start_us) }}</b></div>
           <div><span>持续时间</span><b>{{ durationText(event.source_start_us, event.source_end_us) }}</b></div>
           <div><span>语言</span><b>{{ event.language || '—' }}</b></div>
-          <div><span>Confidence</span><b>{{ confidenceText(event.confidence) }}</b></div>
+          <div><span>置信度</span><b>{{ confidenceText(event.confidence) }}</b></div>
         </div>
 
         <div v-if="event" class="event-content-box">
-          <span v-if="eventSpeakers(event)">匿名 Speaker Draft · {{ eventSpeakers(event) }}</span>
+          <span v-if="eventSpeakers(event)">匿名说话人草稿 · {{ eventSpeakers(event) }}</span>
           <p>{{ eventContent(event) }}</p>
           <div v-if="event.participants.length" class="event-participants">
             <span v-for="participant in event.participants" :key="participant.id">
-              {{ participant.role }} · {{ participant.subject.display_label || '匿名主体' }} · {{ confidenceText(participant.confidence) }}
+              {{ participantRoleLabel(participant.role) }} · {{ participant.subject.display_label || '匿名主体' }} · {{ confidenceText(participant.confidence) }}
             </span>
           </div>
           <small v-if="event.emotion_hint || event.speaking_style_hint">
-            {{ event.emotion_hint ? `Emotion · ${event.emotion_hint}` : '' }}
+            {{ event.emotion_hint ? `情绪 · ${event.emotion_hint}` : '' }}
             {{ event.emotion_hint && event.speaking_style_hint ? ' · ' : '' }}
-            {{ event.speaking_style_hint ? `Speaking Style · ${event.speaking_style_hint}` : '' }}
+            {{ event.speaking_style_hint ? `说话风格 · ${event.speaking_style_hint}` : '' }}
           </small>
         </div>
 
@@ -187,21 +183,21 @@ function evidenceTitle(item: BreakdownEvidenceLink): string {
           <div><b>{{ shot.subjects.length }}</b><span>匿名人物</span></div>
           <div><b>{{ shot.prop_occurrences.length }}</b><span>道具提示</span></div>
           <div><b>{{ shot.events.length }}</b><span>事件</span></div>
-          <div><b>{{ shot.events.filter((item) => item.event_type === 'OCR').length }}</b><span>OCR</span></div>
+          <div><b>{{ shot.events.filter((item) => item.event_type === 'OCR').length }}</b><span>OCR 文字</span></div>
           <div><b>{{ shot.events.filter((item) => item.event_type === 'DIALOGUE').length }}</b><span>对白</span></div>
-          <div><b>{{ confidenceText(shot.confidence) }}</b><span>AI Confidence</span></div>
+          <div><b>{{ confidenceText(shot.confidence) }}</b><span>AI 置信度</span></div>
         </div>
 
         <div v-if="!event && segment" class="scene-mini-context">
-          <span>所属 Scene</span>
-          <b>SCENE {{ String(segment.ordinal).padStart(2, '0') }} · {{ segment.location_hint || '场景信息待补充' }}</b>
-          <small>在中间“镜头时间轴”点击任意 VLM / 对白 / OCR / 动作事件，可查看完整 Evidence 详情并同步视频时间。</small>
+          <span>所属场景</span>
+          <b>场景 {{ String(segment.ordinal).padStart(2, '0') }} · {{ segment.location_hint || '场景信息待补充' }}</b>
+          <small>在中间“镜头时间轴”点击任意 VLM 画面 / 对白 / OCR 文字 / 动作事件，可查看完整证据详情并同步视频时间。</small>
         </div>
       </section>
 
       <details class="inspector-card provenance-card" open>
         <summary>
-          <span>Evidence Provenance</span>
+          <span>证据来源追溯</span>
           <b>{{ evidenceLinks.length }}</b>
         </summary>
         <div v-if="evidenceLinks.length" class="provenance-list">
@@ -214,12 +210,12 @@ function evidenceTitle(item: BreakdownEvidenceLink): string {
             <b>{{ confidenceText(item.confidence) }}</b>
           </div>
         </div>
-        <p v-else class="provenance-empty">当前选择没有直接 EvidenceLink；这不代表整个 Run 没有 raw Evidence。</p>
+        <p v-else class="provenance-empty">当前选择没有直接证据关联；这不代表整个运行记录没有原始证据。</p>
       </details>
 
       <details v-if="unassignedCount" class="inspector-card unassigned-card">
         <summary>
-          <span>Unassigned 数据</span>
+          <span>未归属数据</span>
           <b>⚠ {{ unassignedCount }}</b>
         </summary>
         <div class="unassigned-grid">
