@@ -1,6 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { BreakdownSceneSegment, BreakdownShotDraft, BreakdownTimelineEvent } from '../types/breakdown'
+import {
+  cameraMotionLabel,
+  eventOriginLabel,
+  eventTypeLabel,
+  propImportanceLabel,
+  sceneSpaceLabel,
+  screenPositionLabel,
+  shotTypeLabel,
+  speakingStateLabel,
+  timeOfDayLabel,
+  visibilityLabel,
+} from '../utils/breakdownUiText'
 
 const props = defineProps<{
   segment: BreakdownSceneSegment | null
@@ -24,9 +36,9 @@ const filterDefinitions = computed(() => {
   const count = (key: string) => events.filter((event) => matchesFilter(event, key)).length
   return [
     { key: 'ALL', label: '全部', count: events.length },
-    { key: 'VLM', label: 'VLM', count: count('VLM') },
+    { key: 'VLM', label: 'VLM 画面', count: count('VLM') },
     { key: 'DIALOGUE', label: '对白', count: count('DIALOGUE') },
-    { key: 'OCR', label: 'OCR', count: count('OCR') },
+    { key: 'OCR', label: 'OCR 文字', count: count('OCR') },
     { key: 'ACTION', label: '动作', count: count('ACTION') },
     { key: 'AUDIO_EVENT', label: '声音', count: count('AUDIO_EVENT') },
   ]
@@ -65,7 +77,7 @@ function timecode(us: number | null | undefined): string {
 }
 
 function durationText(startUs: number, endUs: number): string {
-  return `${Math.max(0, (endUs - startUs) / 1_000_000).toFixed(2)}s`
+  return `${Math.max(0, (endUs - startUs) / 1_000_000).toFixed(2)} 秒`
 }
 
 function confidenceText(value: number | null | undefined): string {
@@ -73,18 +85,7 @@ function confidenceText(value: number | null | undefined): string {
 }
 
 function sceneTitle(segment: BreakdownSceneSegment): string {
-  return [segment.location_hint, segment.interior_exterior, segment.time_of_day].filter(Boolean).join(' · ') || '场景信息待补充'
-}
-
-function eventTypeLabel(type: string): string {
-  const labels: Record<string, string> = {
-    DIALOGUE: '对白',
-    ACTION: '动作',
-    OCR: '画面文字',
-    VISUAL: '画面',
-    AUDIO_EVENT: '声音',
-  }
-  return labels[type] || type
+  return [segment.location_hint, sceneSpaceLabel(segment.interior_exterior), timeOfDayLabel(segment.time_of_day)].filter(Boolean).join(' · ') || '场景信息待补充'
 }
 
 function eventSpeakers(event: BreakdownTimelineEvent): string {
@@ -115,19 +116,19 @@ function originClass(event: BreakdownTimelineEvent): string {
 <template>
   <main class="shot-workspace-v1">
     <div v-if="!segment || !shot" class="workspace-empty">
-      <strong>选择一个 Scene / Shot</strong>
-      <p>左侧选择镜头后，这里会显示该历史 Draft 的 Scene Context、Shot 语义、匿名人物和 Evidence Timeline。</p>
+      <strong>选择一个场景 / 镜头</strong>
+      <p>左侧选择镜头后，这里会显示该历史草稿的场景上下文、镜头语义、匿名人物和证据时间轴。</p>
     </div>
 
     <template v-else>
       <section class="scene-context-card">
         <header class="context-head">
           <div class="context-title">
-            <span>SCENE {{ String(segment.ordinal).padStart(2, '0') }}</span>
+            <span>场景 {{ String(segment.ordinal).padStart(2, '0') }}</span>
             <strong>{{ sceneTitle(segment) }}</strong>
             <small>{{ timecode(segment.source_start_us) }} → {{ timecode(segment.source_end_us) }} · {{ durationText(segment.source_start_us, segment.source_end_us) }}</small>
           </div>
-          <div class="context-confidence">AI Confidence {{ confidenceText(segment.confidence) }}</div>
+          <div class="context-confidence">AI 置信度 {{ confidenceText(segment.confidence) }}</div>
         </header>
 
         <div class="scene-description-grid">
@@ -147,7 +148,7 @@ function originClass(event: BreakdownTimelineEvent): string {
 
         <div class="scene-draft-row">
           <div class="scene-draft-group">
-            <span class="group-label">匿名人物 Draft（本场景）</span>
+            <span class="group-label">匿名人物草稿（本场景）</span>
             <div v-if="segment.subjects.length" class="subject-chips">
               <span v-for="subject in segment.subjects" :key="subject.id" class="subject-chip">
                 <b>{{ subject.display_label }}</b>
@@ -158,11 +159,11 @@ function originClass(event: BreakdownTimelineEvent): string {
           </div>
 
           <div class="scene-draft-group props-group">
-            <span class="group-label">道具提示 Draft（本场景）</span>
+            <span class="group-label">道具提示草稿（本场景）</span>
             <div v-if="segment.prop_hints.length" class="prop-chips">
               <span v-for="prop in segment.prop_hints" :key="prop.id" class="prop-chip">
                 <b>{{ prop.label_hint }}</b>
-                <small v-if="prop.importance">{{ prop.importance }}</small>
+                <small v-if="prop.importance">{{ propImportanceLabel(prop.importance) }}</small>
               </span>
             </div>
             <small v-else class="muted-inline">本场景没有道具提示</small>
@@ -170,17 +171,17 @@ function originClass(event: BreakdownTimelineEvent): string {
         </div>
 
         <details v-if="hasSceneSupplement" class="scene-supplement">
-          <summary>场景人物 / 道具补充信息 <span>展开查看 appearance、说话状态、叙事原因和置信度</span></summary>
+          <summary>场景人物 / 道具补充信息 <span>展开查看外观、说话状态、叙事原因和置信度</span></summary>
           <div class="scene-supplement-grid">
             <div v-for="subject in segment.subjects" :key="`subject-detail-${subject.id}`" class="supplement-item">
               <strong>{{ subject.display_label }}</strong>
               <p>{{ subject.appearance_summary || subject.role_hint || '暂无外观/角色关系补充' }}</p>
-              <small>说话状态 {{ subject.speaking_state_summary || 'UNKNOWN' }} · Confidence {{ confidenceText(subject.confidence) }}</small>
+              <small>说话状态 {{ speakingStateLabel(subject.speaking_state_summary) }} · 置信度 {{ confidenceText(subject.confidence) }}</small>
             </div>
             <div v-for="prop in segment.prop_hints" :key="`prop-detail-${prop.id}`" class="supplement-item prop-detail">
               <strong>{{ prop.label_hint }}</strong>
               <p>{{ prop.narrative_reason || prop.normalized_hint || '暂无叙事原因补充' }}</p>
-              <small>{{ prop.importance || 'importance 未标注' }} · Confidence {{ confidenceText(prop.confidence) }}</small>
+              <small>重要性 {{ propImportanceLabel(prop.importance) }} · 置信度 {{ confidenceText(prop.confidence) }}</small>
             </div>
           </div>
         </details>
@@ -189,53 +190,53 @@ function originClass(event: BreakdownTimelineEvent): string {
       <section class="shot-detail-card">
         <header class="shot-detail-head">
           <div>
-            <strong>SHOT {{ String(shot.shot_ordinal_snapshot).padStart(4, '0') }}</strong>
+            <strong>镜头 {{ String(shot.shot_ordinal_snapshot).padStart(4, '0') }}</strong>
             <span>{{ timecode(shot.source_start_us) }} → {{ timecode(shot.source_end_us) }} · {{ durationText(shot.source_start_us, shot.source_end_us) }}</span>
           </div>
           <div class="shot-hint-badges">
-            <span v-if="shot.shot_type_hint">景别 · {{ shot.shot_type_hint }}</span>
-            <span v-if="shot.camera_motion_hint">运镜 · {{ shot.camera_motion_hint }}</span>
+            <span v-if="shot.shot_type_hint">景别 · {{ shotTypeLabel(shot.shot_type_hint) }}</span>
+            <span v-if="shot.camera_motion_hint">运镜 · {{ cameraMotionLabel(shot.camera_motion_hint) }}</span>
             <span v-if="shot.narrative_function_hint">叙事 · {{ shot.narrative_function_hint }}</span>
-            <span class="shot-confidence">Confidence · {{ confidenceText(shot.confidence) }}</span>
+            <span class="shot-confidence">置信度 · {{ confidenceText(shot.confidence) }}</span>
           </div>
         </header>
 
         <div class="shot-overview-grid">
           <div class="shot-image">
-            <img v-if="shot.source_shot_revision_item?.thumbnail_url" :src="shot.source_shot_revision_item.thumbnail_url" alt="Shot thumbnail" />
-            <div v-else class="shot-image-empty">SHOT</div>
+            <img v-if="shot.source_shot_revision_item?.thumbnail_url" :src="shot.source_shot_revision_item.thumbnail_url" alt="镜头缩略图" />
+            <div v-else class="shot-image-empty">镜头</div>
           </div>
 
           <div class="shot-copy">
-            <span>Shot 摘要</span>
-            <strong>{{ shot.summary || '暂无 Shot 摘要' }}</strong>
+            <span>镜头摘要</span>
+            <strong>{{ shot.summary || '暂无镜头摘要' }}</strong>
             <span>视觉描述</span>
             <p>{{ shot.visual_description || '暂无视觉描述' }}</p>
           </div>
 
           <div class="shot-subject-panel">
-            <span class="panel-kicker">镜头中人物 Draft</span>
+            <span class="panel-kicker">镜头中人物草稿</span>
             <div v-if="shot.subjects.length" class="shot-subject-list">
               <div v-for="presence in shot.subjects" :key="presence.id" class="shot-subject-item">
                 <div>
                   <b>{{ presence.subject.display_label || '匿名主体' }}</b>
-                  <i>{{ presence.visibility || 'UNKNOWN' }}</i>
+                  <i>{{ visibilityLabel(presence.visibility) }}</i>
                 </div>
                 <p>{{ presence.activity_summary || '暂无动作摘要' }}</p>
                 <small>
-                  位置 {{ presence.screen_position || '未知' }} · 说话状态 {{ presence.speaking_state || 'UNKNOWN' }} · Confidence {{ confidenceText(presence.confidence) }}
+                  位置 {{ screenPositionLabel(presence.screen_position) }} · 说话状态 {{ speakingStateLabel(presence.speaking_state) }} · 置信度 {{ confidenceText(presence.confidence) }}
                 </small>
               </div>
             </div>
-            <p v-else class="panel-empty">当前 Shot 没有匿名人物记录。</p>
+            <p v-else class="panel-empty">当前镜头没有匿名人物记录。</p>
 
             <div v-if="shot.prop_occurrences.length" class="shot-prop-box">
-              <span>道具出现 / 交互 Draft</span>
+              <span>道具出现 / 交互草稿</span>
               <div class="shot-prop-list">
                 <div v-for="item in shot.prop_occurrences" :key="item.id" class="shot-prop-item">
                   <b>{{ item.prop_hint.label_hint || '未命名道具' }}</b>
                   <small>{{ item.interaction_summary || '仅检测到出现' }}</small>
-                  <small>位置 {{ item.screen_position_hint || '未知' }} · Confidence {{ confidenceText(item.confidence) }}</small>
+                  <small>位置 {{ screenPositionLabel(item.screen_position_hint) }} · 置信度 {{ confidenceText(item.confidence) }}</small>
                 </div>
               </div>
             </div>
@@ -246,7 +247,7 @@ function originClass(event: BreakdownTimelineEvent): string {
           <header class="timeline-head">
             <div>
               <strong>镜头时间轴</strong>
-              <span>Evidence · 点击事件会同步右侧详情并跳转 Reference Clip</span>
+              <span>证据 · 点击事件会同步右侧详情并跳转参考片段</span>
             </div>
             <div class="timeline-filters">
               <button
@@ -266,19 +267,19 @@ function originClass(event: BreakdownTimelineEvent): string {
               :key="event.id"
               type="button"
               :class="['timeline-row', originClass(event), { active: selectedEventId === event.id }]"
-              :title="`${eventTypeLabel(event.event_type)} · ${eventContent(event)} · Confidence ${confidenceText(event.confidence)}`"
+              :title="`${eventTypeLabel(event.event_type)} · ${eventContent(event)} · 置信度 ${confidenceText(event.confidence)}`"
               @click="emit('select-event', event)"
             >
               <span class="timeline-play">▶</span>
               <span class="timeline-time">{{ timecode(event.source_start_us) }}</span>
               <span class="timeline-badge">{{ eventTypeLabel(event.event_type) }}</span>
-              <span class="timeline-speaker">{{ eventSpeakers(event) || event.origin }}</span>
+              <span class="timeline-speaker">{{ eventSpeakers(event) || eventOriginLabel(event.origin) }}</span>
               <span class="timeline-copy">{{ eventContent(event) }}</span>
-              <span class="timeline-origin">{{ event.origin }}</span>
+              <span class="timeline-origin">{{ eventOriginLabel(event.origin) }}</span>
               <span class="timeline-arrow">›</span>
             </button>
           </div>
-          <div v-else class="timeline-empty">当前筛选没有 Timeline Event。</div>
+          <div v-else class="timeline-empty">当前筛选没有时间轴事件。</div>
         </section>
       </section>
     </template>
