@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from engine.app.asset_analysis_progress_v4 import run_content_analysis_with_progress
 from engine.app.asset_final_gate_v10 import apply_analysis_to_assets
-from engine.app.asset_semantics_v3 import enrich_asset_run, semantic_model_status
+from engine.app.asset_semantics_p4_v1 import enrich_asset_run, semantic_model_status
 from engine.app.asset_workspace_character_v101 import decorate_asset_workspace_character_evidence
 from engine.app.asset_workspace_v3 import (
     AssetWorkspaceError,
@@ -85,11 +85,12 @@ def _workspace_payload(workspace: dict[str, object]) -> dict[str, object]:
 
 
 def _run_full_asset_task(task_id: str, project_id: str) -> None:
-    """完整资产任务：V10.1 Person Evidence → 模型分类 → optional VLM → Final Asset → Shot Binding。
+    """完整资产任务：V10.1 Person Evidence → 模型分类 → P4 Draft-guided Scene/Prop → Final Asset → Shot Binding。
 
-    Character V10.1 负责人物实例采集、全局身份分类和已知身份 Track recovery；Qwen3-VL 是场景/道具
-    语义增强，不是 Character_ID Source of Truth。Qwen 未配置/失败时，人物 Final Asset 仍可正常完成，
-    任务以 READY_WITH_WARNINGS 结束。
+    Character V10.1 负责人物实例采集、全局身份分类和已知身份 Track recovery；P4 只把当前
+    Structured Draft 当作 Scene/Prop 搜索提示，再由资产侧 Qwen3-VL 对当前 Shot 图像重新验证。
+    Draft 不是 Character/Scene/Prop Final Source of Truth。Qwen 未配置/失败时，人物 Final Asset
+    仍可正常完成，任务以 READY_WITH_WARNINGS 结束。
     """
 
     try:
@@ -144,11 +145,11 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
                 progress_mode="determinate",
                 progress_percent=55,
                 stage_key="asset_semantics",
-                stage_label="Qwen3-VL 场景 / 道具",
+                stage_label="Draft 引导场景 / 道具验证",
                 current_item=None,
                 current_index=0,
                 total_items=None,
-                message="正在启动多模态语义分析",
+                message="正在读取当前 Structured Draft，并启动当前 Shot 图像验证",
             )
 
             def semantic_progress(current: int, total: int, message: str) -> None:
@@ -157,7 +158,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
                     progress_mode="determinate",
                     progress_percent=55 + (current / max(1, total)) * 35,
                     stage_key="asset_semantics",
-                    stage_label="Qwen3-VL 场景 / 道具",
+                    stage_label="Draft 引导场景 / 道具验证",
                     current_item=f"Shot {current} / {total}",
                     current_index=current,
                     total_items=total,
@@ -166,6 +167,9 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
 
             try:
                 semantic_result = enrich_asset_run(run_id, project_id, progress=semantic_progress)
+                semantic_warning = str(semantic_result.get("status") or "").upper() in {
+                    "READY_WITH_WARNINGS", "FAILED", "NOT_CONFIGURED"
+                }
             except Exception as exc:
                 semantic_warning = True
                 semantic_result = {"status": "FAILED", "error": str(exc), "shot_count": 0, "prop_count": 0}
@@ -174,9 +178,9 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
                     progress_mode="determinate",
                     progress_percent=90,
                     stage_key="asset_semantics",
-                    stage_label="Qwen3-VL 增强失败",
+                    stage_label="场景 / 道具验证失败",
                     current_item=None,
-                    message="人物 V10.1 Evidence 已保留；场景语义/道具可人工维护或稍后重跑",
+                    message="人物 V10.1 Evidence 已保留；Draft 不会被直接当作 Final 资产，可稍后重跑场景/道具验证",
                 )
         else:
             semantic_warning = True
@@ -209,7 +213,7 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
         else:
             message = f"人物 V10.1：{resolved_characters} Final Character · {unresolved_evidence} 待归属 Evidence"
             if semantic_warning:
-                message += "；Qwen3-VL 语义增强未完成"
+                message += "；场景/道具 Draft 引导验证存在提示"
         finish_task(
             task_id,
             result={
@@ -238,7 +242,7 @@ def api_asset_workspace(project_id: str):
 
 @router.get("/assets/models/status")
 def api_asset_model_status():
-    """Qwen3-VL 语义增强配置状态；人物 V10.1 模型由 /api/models/f05/status 提供。"""
+    """场景/道具语义验证配置状态；人物 V10.1 模型由 /api/models/f05/status 提供。"""
     return semantic_model_status()
 
 
