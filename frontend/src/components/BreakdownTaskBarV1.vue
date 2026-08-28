@@ -109,16 +109,17 @@ async function startBatch(): Promise<void> {
       </label>
 
       <div class="run-context">
-        <span>当前草稿</span>
+        <span>{{ run?.is_current ? '当前采用草稿' : '查看中的草稿' }}</span>
         <div v-if="run">
           <strong>{{ revisionLabel(run) }}</strong>
           <i :class="runStatusClass(run.status)">{{ runStatusLabel(run.status) }}</i>
+          <small :class="['viewing-mode', { history: !run.is_current }]">{{ run.is_current ? '当前采用' : '历史查看' }}</small>
         </div>
         <b v-else>尚无草稿</b>
       </div>
 
       <div class="revision-context">
-        <span>镜头版本</span>
+        <span>来源镜头版本</span>
         <strong v-if="run">{{ revisionLabel(run) }} · {{ run.source_shot_revision?.is_current ? '当前版本' : '历史版本' }}</strong>
         <strong v-else>—</strong>
       </div>
@@ -150,6 +151,7 @@ async function startBatch(): Promise<void> {
       <div class="task-meta">
         <span v-if="run">{{ run.pipeline_profile || run.schema_version }}</span>
         <span v-if="run">{{ run.schema_version }}</span>
+        <span v-if="run && !run.is_current">历史 Run · 只读</span>
         <span>AI 草稿 · 不等同最终资产</span>
       </div>
     </div>
@@ -162,19 +164,21 @@ async function startBatch(): Promise<void> {
 
 <style scoped>
 .breakdown-task-bar-v2 { display: grid; gap: 0; border: 1px solid #dce4ef; border-radius: 13px; background: #fff; box-shadow: 0 6px 22px rgba(42, 59, 90, .04); overflow: hidden; }
-.task-context-row { display: grid; grid-template-columns: minmax(290px, 1.4fr) minmax(150px, .62fr) minmax(170px, .72fr) auto; gap: 14px; align-items: end; padding: 11px 13px; }
+.task-context-row { display: grid; grid-template-columns: minmax(290px, 1.4fr) minmax(170px, .7fr) minmax(170px, .72fr) auto; gap: 14px; align-items: end; padding: 11px 13px; }
 .episode-context, .run-context, .revision-context { min-width: 0; display: grid; gap: 5px; }
 .episode-context > span, .run-context > span, .revision-context > span { color: #8190a5; font-size: 11px; font-weight: 800; }
 .episode-context select { width: 100%; min-width: 0; height: 40px; border: 1px solid #d7e0ed; border-radius: 9px; padding: 0 10px; background: #f9fbfe; color: #344761; font-size: 13px; font-weight: 750; outline: none; }
-.episode-context select:focus { border-color: #8dacE8; box-shadow: 0 0 0 3px rgba(82, 126, 218, .1); }
-.run-context > div { min-height: 40px; display: flex; gap: 7px; align-items: center; }
+.episode-context select:focus { border-color: #8dace8; box-shadow: 0 0 0 3px rgba(82, 126, 218, .1); }
+.run-context > div { min-height: 40px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .run-context strong, .revision-context strong, .run-context > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #2c3f5e; font-size: 13px; }
-.run-context i { border-radius: 999px; padding: 4px 7px; font-size: 10px; font-style: normal; font-weight: 850; white-space: nowrap; }
+.run-context i, .viewing-mode { border-radius: 999px; padding: 4px 7px; font-size: 10px; font-style: normal; font-weight: 850; white-space: nowrap; }
 .run-context i.ready { background: #e7f7ee; color: #13804d; }
 .run-context i.warning { background: #fff3d7; color: #91610d; }
 .run-context i.danger { background: #ffe7e7; color: #b64040; }
 .run-context i.stale { background: #f0edf7; color: #756395; }
 .run-context i.processing { background: #eaf2ff; color: #3569bf; }
+.viewing-mode { background: #eef2f7; color: #67758a; }
+.viewing-mode.history { background: #f0edf7; color: #756395; }
 .revision-context strong { min-height: 40px; display: flex; align-items: center; }
 .task-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .task-actions button { min-height: 40px; border: 1px solid #d3deed; border-radius: 9px; padding: 0 13px; background: #fff; color: #4f617c; cursor: pointer; font-size: 12px; font-weight: 800; white-space: nowrap; }
