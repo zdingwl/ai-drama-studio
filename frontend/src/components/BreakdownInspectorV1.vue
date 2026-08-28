@@ -159,16 +159,23 @@ function evidenceTitle(item: BreakdownEvidenceLink): string {
 
         <div v-if="event" class="event-detail-grid">
           <div><span>类型</span><b>{{ eventTypeLabel(event.event_type) }}</b></div>
-          <div><span>时间</span><b>{{ timecode(event.source_start_us) }}</b></div>
+          <div><span>Origin</span><b>{{ event.origin }}</b></div>
+          <div><span>开始时间</span><b>{{ timecode(event.source_start_us) }}</b></div>
+          <div><span>结束时间</span><b>{{ timecode(event.source_end_us) }}</b></div>
           <div><span>Shot 内时间</span><b>{{ timecode(event.shot_relative_start_us) }}</b></div>
+          <div><span>持续时间</span><b>{{ durationText(event.source_start_us, event.source_end_us) }}</b></div>
           <div><span>语言</span><b>{{ event.language || '—' }}</b></div>
           <div><span>Confidence</span><b>{{ confidenceText(event.confidence) }}</b></div>
-          <div><span>Origin</span><b>{{ event.origin }}</b></div>
         </div>
 
         <div v-if="event" class="event-content-box">
           <span v-if="eventSpeakers(event)">匿名 Speaker Draft · {{ eventSpeakers(event) }}</span>
           <p>{{ eventContent(event) }}</p>
+          <div v-if="event.participants.length" class="event-participants">
+            <span v-for="participant in event.participants" :key="participant.id">
+              {{ participant.role }} · {{ participant.subject.display_label || '匿名主体' }} · {{ confidenceText(participant.confidence) }}
+            </span>
+          </div>
           <small v-if="event.emotion_hint || event.speaking_style_hint">
             {{ event.emotion_hint ? `Emotion · ${event.emotion_hint}` : '' }}
             {{ event.emotion_hint && event.speaking_style_hint ? ' · ' : '' }}
@@ -188,6 +195,7 @@ function evidenceTitle(item: BreakdownEvidenceLink): string {
         <div v-if="!event && segment" class="scene-mini-context">
           <span>所属 Scene</span>
           <b>SCENE {{ String(segment.ordinal).padStart(2, '0') }} · {{ segment.location_hint || '场景信息待补充' }}</b>
+          <small>在中间“镜头时间轴”点击任意 VLM / 对白 / OCR / 动作事件，可查看完整 Evidence 详情并同步视频时间。</small>
         </div>
       </section>
 
@@ -197,10 +205,11 @@ function evidenceTitle(item: BreakdownEvidenceLink): string {
           <b>{{ evidenceLinks.length }}</b>
         </summary>
         <div v-if="evidenceLinks.length" class="provenance-list">
-          <div v-for="item in evidenceLinks" :key="item.id" class="provenance-row">
+          <div v-for="item in evidenceLinks" :key="item.id" class="provenance-row" :title="item.source_uri || item.source_id">
             <div>
               <strong>{{ evidenceTitle(item) }}</strong>
               <span>{{ item.source_id }}</span>
+              <small v-if="item.source_uri">{{ item.source_uri }}</small>
             </div>
             <b>{{ confidenceText(item.confidence) }}</b>
           </div>
@@ -247,13 +256,15 @@ function evidenceTitle(item: BreakdownEvidenceLink): string {
 .inspector-card-title i.action { background: #e8f7f2; color: #1c805f; }
 .inspector-card-title i.other { background: #eef1f5; color: #697589; }
 .event-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #edf0f5; }
-.event-detail-grid > div { min-width: 0; display: grid; gap: 3px; padding: 10px 12px; background: #fff; }
-.event-detail-grid span { color: #8794a7; font-size: 11px; }
-.event-detail-grid b { overflow: hidden; text-overflow: ellipsis; color: #354862; font-size: 12px; }
-.event-content-box { margin: 12px; border-radius: 10px; padding: 11px 12px; background: #f7f9fd; }
-.event-content-box span { color: #5e7090; font-size: 11px; font-weight: 800; }
-.event-content-box p { margin: 5px 0 0; color: #33465f; font-size: 13px; line-height: 1.55; }
-.event-content-box small { display: block; margin-top: 6px; color: #7f8ca0; font-size: 11px; }
+.event-detail-grid > div { min-width: 0; display: grid; gap: 3px; padding: 9px 11px; background: #fff; }
+.event-detail-grid span { color: #8794a7; font-size: 10px; }
+.event-detail-grid b { overflow: hidden; text-overflow: ellipsis; color: #354862; font-size: 11px; }
+.event-content-box { margin: 10px 12px 12px; border-radius: 10px; padding: 10px 11px; background: #f7f9fd; }
+.event-content-box > span { color: #5e7090; font-size: 11px; font-weight: 800; }
+.event-content-box p { margin: 5px 0 0; color: #33465f; font-size: 13px; line-height: 1.5; }
+.event-participants { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.event-participants span { border-radius: 999px; padding: 4px 7px; background: #edf2fb; color: #526887; font-size: 10px; font-weight: 700; }
+.event-content-box small { display: block; margin-top: 7px; color: #7f8ca0; font-size: 10px; }
 .quick-stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #edf0f5; }
 .quick-stats-grid > div { display: grid; gap: 2px; padding: 11px 8px; background: #fff; text-align: center; }
 .quick-stats-grid b { color: #294b7e; font-size: 14px; }
@@ -261,6 +272,7 @@ function evidenceTitle(item: BreakdownEvidenceLink): string {
 .scene-mini-context { display: grid; gap: 3px; border-top: 1px solid #edf0f5; padding: 10px 12px; }
 .scene-mini-context span { color: #8793a5; font-size: 10px; }
 .scene-mini-context b { color: #40516a; font-size: 11px; }
+.scene-mini-context small { color: #8390a3; font-size: 10px; line-height: 1.45; }
 details > summary { list-style: none; cursor: pointer; }
 details > summary::-webkit-details-marker { display: none; }
 .provenance-card summary, .unassigned-card summary { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 12px 13px; color: #3c4f6d; font-size: 12px; font-weight: 850; }
@@ -270,7 +282,7 @@ details > summary::-webkit-details-marker { display: none; }
 .provenance-row { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; border-radius: 9px; padding: 9px 10px; background: #f6f8fc; }
 .provenance-row > div { min-width: 0; display: grid; gap: 3px; }
 .provenance-row strong { color: #394c68; font-size: 11px; }
-.provenance-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8491a4; font-size: 10px; }
+.provenance-row span, .provenance-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8491a4; font-size: 9px; }
 .provenance-row > b { flex: none; color: #607492; font-size: 11px; }
 .provenance-empty { margin: 0; padding: 14px; color: #8793a5; font-size: 11px; line-height: 1.5; }
 .unassigned-card summary b { color: #ad6e12; font-size: 11px; }
