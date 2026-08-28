@@ -6,6 +6,10 @@ its private JSONL transport. The main provider still fail-closes; the detail exi
 only so Windows/local acceptance can distinguish decode, CUDA, processor and model
 failures instead of collapsing everything to ``Shot N VLM inference failed``.
 
+Production Draft prose is generated with the Simplified-Chinese prompt profile and
+validated before a Shot record is marked READY. If Qwen ignores the requested output
+language, the Shot fails closed instead of publishing an English semantic Draft.
+
 For the Windows production profile the parent Provider selects ``decord``. This runner
 passes a native filesystem path to that backend and validates it before Qwen processing,
 preventing a failed decoder from being masked by qwen-vl-utils' legacy torchvision
@@ -20,6 +24,11 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+import breakdown_vlm_prompt_zh_v1 as prompt_profile
+
+# Install before importing/reusing the shared base module. install() imports that
+# module once and replaces only its prompt builder; model/schema helpers stay frozen.
+prompt_profile.install()
 import run_breakdown_vlm_qwen3 as base
 
 
@@ -124,7 +133,9 @@ def _analyze_shot_compat(
         skip_special_tokens=True,
         clean_up_tokenization_spaces=False,
     )[0]
-    return base._first_json_object(output_text)
+    semantic = base._first_json_object(output_text)
+    prompt_profile.validate_semantic_language(semantic)
+    return semantic
 
 
 def main() -> int:
