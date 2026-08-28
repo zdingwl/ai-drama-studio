@@ -1,8 +1,11 @@
 """P2.3 RapidOCR runtime compatibility layer.
 
-RapidOCR 3.9.x PP-OCRv6 small/medium uses one multilingual recognition model.  The
-canonical v6 configuration uses the ``ch`` recognition profile even when the source
-video language is not Chinese; the source language remains preserved on Evidence.
+RapidOCR 3.9.x PP-OCRv6 small/medium uses shared multilingual detection and
+recognition checkpoints.  RapidOCR 3.9.2's model resolver can reject the literal
+``multi`` detector profile with PP-OCRv6 ``small`` even though the v6 model itself
+is multilingual.  The stable compatibility profile therefore pins both detector
+and recognizer ``lang_type`` to ``ch``; the source project language remains
+preserved on Evidence and does not change the selected PP-OCRv6 checkpoint.
 
 This layer also keeps the production fail-closed behaviour while retaining a short,
 non-secret runtime error hint in Provider warnings/metadata so Windows acceptance is
@@ -39,11 +42,35 @@ class RapidOCROCRProvider(_BaseRapidOCROCRProvider):
 
     @staticmethod
     def _recognition_language(source_language: str) -> str:
-        # RapidOCR >=3.9 PP-OCRv6 small/medium is a shared multilingual model.
-        # Using legacy per-language profiles (latin/korean/arabic/...) can make
-        # RapidOCR reject an otherwise valid v6 configuration.  Keep the actual
-        # project language in Evidence metadata; use the canonical v6 profile here.
+        # PP-OCRv6 small/medium uses one multilingual recognition checkpoint.
+        # Keep the actual source language in Evidence metadata; use the stable
+        # RapidOCR 3.9.2 compatibility profile only for model resolution.
         return "ch"
+
+    def _engine_params(self, *, recognition_language: str, use_cuda: bool) -> dict[str, Any]:
+        params = super()._engine_params(recognition_language="ch", use_cuda=use_cuda)
+        # RapidOCR 3.9.2 can reject Det.lang_type=multi for PP-OCRv6 small even
+        # though all PP-OCRv6 detector lang aliases resolve to the same model.
+        params["Det.lang_type"] = "ch"
+        params["Rec.lang_type"] = "ch"
+        return params
+
+    @staticmethod
+    def _production_engine_factory(params: Mapping[str, Any]) -> Any:
+        """Convert stable PP-OCRv6 config without reintroducing LangDet.MULTI."""
+
+        from rapidocr import EngineType, LangDet, LangRec, ModelType, OCRVersion, RapidOCR
+
+        converted = dict(params)
+        converted["Det.engine_type"] = EngineType.ONNXRUNTIME
+        converted["Det.lang_type"] = LangDet.CH
+        converted["Det.model_type"] = ModelType(str(params["Det.model_type"]))
+        converted["Det.ocr_version"] = OCRVersion.PPOCRV6
+        converted["Rec.engine_type"] = EngineType.ONNXRUNTIME
+        converted["Rec.lang_type"] = LangRec.CH
+        converted["Rec.model_type"] = ModelType(str(params["Rec.model_type"]))
+        converted["Rec.ocr_version"] = OCRVersion.PPOCRV6
+        return RapidOCR(params=converted)
 
     @staticmethod
     def _safe_error(exc: BaseException, *, max_len: int = 500) -> str:
