@@ -1,7 +1,7 @@
 # AI Drama Studio — Current Implementation Manifest
 
-> Purpose: compact **code-aligned CURRENT manifest**.  
-> Last synchronized: **2026-08-28 19:39 +08:00**
+> Purpose: code-aligned CURRENT manifest.  
+> Last synchronized: **2026-08-29 +08:00**
 
 ## Repository baseline
 
@@ -12,30 +12,26 @@ Architecture: Reference Video V2
 FastAPI app version: 2.4.1
 Formal Character runtime: Character V10.1
 P1/P2 implementation acceptance: CONDITIONAL PASS
-P2-E1 Episode-context Fusion: IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
+P2-E1 Scene/Dialogue continuity: IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
 P2-E2 continuous-window VLM: IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
-P2-E3 contextual Shot refinement: IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
-P2-E4 final Episode-context Fusion: PLANNED / NEXT
+P2-E3 contextual Shot refinement: IMPLEMENTED / LOCAL-REAL QUALITY NOT ACCEPTED
+P2-E4 final Episode-context Fusion: IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
 P2.6 Windows / real-model acceptance: NOT PASSED
 P3 02 拉片 UI: IMPLEMENTED / UI ACCEPTANCE IN PROGRESS
 P4 Draft-guided Scene/Prop: IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-P5 Draft ↔ Character: PLANNED / PAUSED UNTIL EPISODE-CONTEXT BASELINE
+P5 Draft ↔ Character: PLANNED / PAUSED
 ```
 
-Core rule:
+Latest pre-E4 real run was rejected: 30 Shots produced 21 LocalSubjects; the 19-Shot living-room Scene produced 14 temporary people although the visible cast remained one woman + one man. E3 timed out and fell back to E2 for the complete run.
+
+Core semantic rule:
 
 ```text
 Shot = smallest review/render unit
-Shot != maximum AI semantic context
-```
-
-Semantic boundary remains:
-
-```text
+Shot != maximum semantic context
 LocalSubject != Character
 SceneSegmentDraft != Final Scene
 DraftPropHint != Final Prop
-raw Evidence / Draft != Final binding truth
 ASR speaker != Character
 ```
 
@@ -45,13 +41,13 @@ ASR speaker != Character
 Episode Current ShotRevision
 → frozen PROCESSING BreakdownRun
 → Episode ASR
-→ OCR observations
+→ OCR
 → P2-E2 overlapping Episode-window Qwen3-VL
+→ continuity-preserving VLM wrapper keeps subject/prop window hints
 → P2-E3 contextual Shot refinement
+   └─ E3-only failure -> FALLBACK_E2
 → one immutable exact-Shot VLM_OUTPUT sidecar
-   payload.e2_semantic = preserved E2 visual semantic
-   payload.semantic = E3 refined semantic used by Fusion
-→ P2-E1 Episode-context Fusion
+→ P2-E4 Episode-context Fusion
 → P1 validator
 → READY / READY_WITH_WARNINGS
 ```
@@ -59,128 +55,92 @@ Episode Current ShotRevision
 Production modules:
 
 ```text
-P2.1 engine/app/breakdown_p2_sidecar_v1.py
-P2.2 engine/app/breakdown_p2_asr_v1.py
-P2.3 engine/app/breakdown_p2_ocr_runtime_v1.py
-legacy single-clip VLM engine/app/breakdown_p2_vlm_v1.py
-P2-E2 provider engine/app/breakdown_p2_vlm_episode_v2.py
-P2-E2 runner scripts/run_breakdown_vlm_qwen3_episode_windows.py
-P2-E3 refiner engine/app/breakdown_p2_refinement_v1.py
-P2-E3 runner scripts/run_breakdown_refinement_qwen3.py
-stable composite VLM runtime engine/app/breakdown_p2_vlm_runtime_v1.py
-legacy Fusion engine/app/breakdown_p2_fusion_v1.py
-production E1 Fusion engine/app/breakdown_p2_fusion_episode_v2.py
-orchestrator engine/app/breakdown_p2_pipeline_v1.py
-acceptance engine/app/breakdown_p2_acceptance_v1.py
+P2 sidecar           engine/app/breakdown_p2_sidecar_v1.py
+ASR                  engine/app/breakdown_p2_asr_v1.py
+OCR                  engine/app/breakdown_p2_ocr_runtime_v1.py
+E2 provider          engine/app/breakdown_p2_vlm_episode_v2.py
+E2 runner            scripts/run_breakdown_vlm_qwen3_episode_windows.py
+E3 refiner           engine/app/breakdown_p2_refinement_v1.py
+E3 runner            scripts/run_breakdown_refinement_qwen3.py
+E2+E3 runtime        engine/app/breakdown_p2_vlm_runtime_v1.py
+E4 continuity VLM    engine/app/breakdown_p2_vlm_continuity_v1.py
+legacy Fusion        engine/app/breakdown_p2_fusion_v1.py
+E1 Fusion            engine/app/breakdown_p2_fusion_episode_v2.py
+production E4 Fusion engine/app/breakdown_p2_fusion_episode_v4.py
+orchestrator         engine/app/breakdown_p2_pipeline_v1.py
+acceptance           engine/app/breakdown_p2_acceptance_v1.py
 ```
 
-Top-level pipeline profile remains:
+Top-level pipeline profile remains `breakdown-p2-full-v1`; Provider order remains `ASR → OCR → VLM`.
+
+Production Fusion profile:
 
 ```text
-breakdown-p2-full-v1
-provider order = ASR → OCR → VLM
+breakdown-p2-fusion-episode-context-e4-v1
+base = breakdown-p2-fusion-episode-context-e1-v2
 ```
 
-E3 deliberately remains inside the formal VLM Provider execution, so no fourth P2 component, API change or sidecar schema migration was introduced.
-
-Production profiles:
-
-```text
-Fusion = breakdown-p2-fusion-episode-context-e1-v2
-E2 VLM = breakdown-p2-vlm-episode-window-e2-v1
-E2 window schema = breakdown-p2-vlm-episode-window-v1
-E2 prompt = breakdown-p2-vlm-episode-window-zh-v1
-E3 refinement = breakdown-p2-contextual-shot-refinement-e3-v1
-E3 input schema = breakdown-p2-contextual-refinement-input-v1
-E3 prompt = breakdown-p2-contextual-shot-refinement-zh-v1
-```
-
-## P2-E1 behavior
+## E1 behavior retained by E4
 
 Scene continuity:
 
 ```text
-missing/UNKNOWN/generic environment → inherit current Scene
-compatible specificity such as 客厅 → 家中客厅 → same Scene
-strong location contradiction or explicit INT ↔ EXT contradiction → new Scene
+missing/UNKNOWN/generic -> inherit current Scene
+compatible specificity -> same Scene
+strong location or INT/EXT contradiction -> new Scene
 ```
 
 Dialogue continuity:
 
 ```text
 ASR_SEGMENT = Episode-time text truth
-Shot DIALOGUE event = projection, not sentence truth
+Shot DIALOGUE = projection
 ```
 
-Cross-Shot projections share `dialogue_group_id/asr_segment_id` and continuation metadata. Raw ASR_WORD evidence remains immutable SUPPORT provenance.
+Cross-Shot projections share dialogue-group/continuation metadata. UI continuation projections are deduped for normal display.
 
-## P2-E2 behavior
+## E2 / continuity preservation
 
-Default visual inference context:
+Default visual context remains shot-aligned overlapping Episode windows: 24s target, 20..40s allowed, 25% overlap, 10..50% allowed, sequential inference, proxy-first/source-fallback.
+
+The Qwen runner already emits `subject_continuity_hints` and `prop_continuity_hints`. The old normalizer discarded them. Production now uses `breakdown_p2_vlm_continuity_v1.py` to preserve normalized hints inside `ProviderResult.metadata.window_summaries`. Frozen per-Shot sidecar shape does not change.
+
+## E3 behavior
+
+E3 remains text-only and current-Shot grounded. It consumes Scene + neighbor E2 Shot semantics + window context + ASR/OCR. It may refine Scene/narrative wording but cannot invent current-Shot people/objects or Final IDs.
+
+E3-only runtime/model/subprocess/timeout failure now degrades to explicit `FALLBACK_E2`; E2 visual failure still fails closed. The latest real run had E3 timeout for all Shots, so E3 quality remains unaccepted.
+
+## E4 anonymous subject continuity
+
+Old LocalSubject linking used exact normalized `appearance_summary`, causing expression/pose/action wording to create false new people.
+
+E4 now builds a Scene-scoped anonymous Subject Continuity Graph:
 
 ```text
-shot-aligned overlapping Episode windows
-target 24 seconds
-allowed 20..40 seconds
-overlap 25%
-allowed 10..50%
-sequential window inference
-prefer READY preprocess proxy, fallback Episode source
+node = one Shot-local subject_* observation
+primary positive edge = E2 window subject_continuity_hint
+fallback positive edge = strong stable-appearance similarity across nearby Shots
+hard negative = any two observations in the same Shot
+cluster = LocalSubject Draft continuity
 ```
 
-Each Qwen window sees continuous video plus exact ShotRevisionItem boundaries. When a Shot appears in multiple windows, E2 selects the candidate with the largest surrounding-context margin, then closest window center, then earlier window. Selected/supporting provenance is stored in `VLM_OUTPUT.payload.episode_window`.
+Shot-local `subject_A/B` labels have no global meaning and may swap between Shots.
 
-E2 visual output remains anonymous and exact-Shot bound.
-
-## P2-E3 behavior
-
-E3 is a text-only contextual Qwen pass after E2. Each exact Shot receives:
+Stable appearance fallback excludes dynamic state:
 
 ```text
-provisional Scene context
-previous/current/next E2 Shot semantics
-selected/supporting E2 window summaries
-overlapping Episode ASR_SEGMENT context
-overlapping OCR observations
+exclude expression/emotion/action/pose/speaking/screen-position/camera-framing
+prefer gender-presentation/age-band/hair/clothing/persistent accessories
 ```
 
-Grounding/safety:
+Union-find checks same-Shot overlap before every merge, so cannot-link also blocks transitive over-merges. Ambiguous evidence remains unresolved/separate.
 
-```text
-refine current Shot only
-neighbor-only visual facts must not be imported
-only current E2 subject labels are permitted
-ASR and OCR source text remain read-only
-no speaker identity inference
-no Final Character/Scene/Prop/Binding IDs
-scene ambiguity may be resolved only from supported context
-shot type/camera/composition remain grounded in current E2 visual evidence
-Simplified Chinese generated prose
-```
-
-Frozen compatibility:
-
-```text
-VLM sidecar schema stays breakdown-p2-evidence-v1
-VLM_OUTPUT.source_type/source_id/exact Shot range remain the provenance anchor
-payload.e2_semantic preserves E2
-payload.semantic contains E3 and is consumed by existing Fusion
-payload.contextual_refinement stores E3 provenance
-```
-
-Individual malformed E3 Shot output falls back to E2 with a warning. Missing E3 runtime or whole E3 inference failure makes the production VLM Provider FAILED.
-
-## P2-E4 status
-
-```text
-P2-E4 final Episode-context Fusion = PLANNED / NEXT
-```
-
-Target: make E2 window continuity + E3 refined Shot semantics the primary Episode-time Scene/anonymous-subject continuity evidence, with E1 conservative continuity rules retained as fallback.
+E4 provenance is stored in LocalSubject `appearance_json` and Run/Fusion metadata: observation count, cluster count, hint count, explicit/fallback union count and cannot-link rejection count.
 
 ## APIs / execution discipline
 
-Formal APIs remain:
+Formal APIs are unchanged:
 
 ```text
 POST /api/episodes/{episode_id}/tasks/breakdown
@@ -189,16 +149,9 @@ GET  /api/breakdown/p2/runtime-preflight
 POST /api/breakdown-runs/{run_id}/p2-acceptance
 ```
 
-Batch remains sequential by `Episode.sort_order`; heavy P2 work is globally serialized.
+Batch remains sequential by Episode sort order; heavy jobs remain globally serialized.
 
-Local CLI supports E2 tuning:
-
-```text
---vlm-window-seconds
---vlm-window-overlap-ratio
-```
-
-## P1 / media invariants
+## P1 / media / Character invariants
 
 ```text
 FFprobe authoritative timing
@@ -210,79 +163,29 @@ Reference Clip / thumbnail / keyframes
 PROCESSING / READY / READY_WITH_WARNINGS / FAILED / STALE
 ```
 
-Historical semantic data always anchors to exact ShotRevision/ShotRevisionItem and historical BreakdownRuns/sidecars are never rewritten by E1/E2/E3.
+Historical Runs/sidecars are immutable. E4 does not modify the P1 schema.
+
+Character V10.1 remains protected: YOLOX → MOT → YoutuReID → RESOLVED/UNRESOLVED → explicit Shot Assignment → Final Gate. E4 anonymous continuity cannot override Character cannot-link, face conflicts, evidence thresholds or final bindings.
 
 ## P3 current UI
 
-```text
-02 拉片
-├─ 镜头管理
-└─ 拉片结果
-   ├─ Scene / Shot results
-   ├─ anonymous subjects
-   ├─ dialogue / action / OCR
-   ├─ prop hints
-   └─ exact historical Reference Clip
-```
-
-Technical provenance remains backend truth but is not the primary normal-user presentation. P3 acceptance remains in progress. The UI should later use E1 dialogue continuation metadata to render “对白继续” instead of unrelated-looking duplicates.
-
-## P4 / Character boundaries
-
-P4 Draft-guided Scene/Prop remains implemented and requires current-revision visual re-verification. Draft cannot directly create Final Scene/Prop.
-
-Character V10.1 remains protected:
-
-```text
-YOLOX person detection
-→ capture-first evidence
-→ mature MOT
-→ YoutuReID project identity
-→ explicit Shot × known-Character Assignment
-→ Final Character Gate
-```
-
-E1/E2/E3 do not modify Character identity thresholds, same-sample cannot-link, face hard conflicts, explicit assignment or Final Gate.
+`02 拉片` remains `镜头管理 + 拉片结果`. The dialogue UI uses projection metadata to hide repeated continuation text and show “承接上一镜对白”. Technical provenance remains backend truth, not the primary normal-user display.
 
 ## Acceptance / CI truth
 
 ```text
-P1/P2 implementation = CONDITIONAL PASS
-P2-E1 local-real acceptance = PENDING
-P2-E2 local-real Qwen/Windows acceptance = PENDING
-P2-E3 local-real contextual refinement acceptance = PENDING
-P2.6 Windows / real-model acceptance = NOT PASSED
-P3 UI acceptance = IN PROGRESS
-P4 local/model acceptance = PENDING
+P2-E4 local-real acceptance = PENDING
+P2.6 = NOT PASSED
+latest real pre-E4 run = REJECTED
 GitHub hosted Actions = intentionally not used
 ```
 
-Unit coverage present:
+Unit coverage added:
 
 ```text
-engine/tests/v2/test_breakdown_p2_fusion_episode_v2.py
-engine/tests/v2/test_breakdown_p2_vlm_episode_v2.py
-engine/tests/v2/test_breakdown_p2_refinement_v1.py
+engine/tests/v2/test_breakdown_p2_e4_subject_continuity.py
 ```
 
-E3 source/runner/runtime/test syntax was checked before remote write, but this connector session does not claim a fresh full local pytest/Qwen/CUDA PASS.
+Code presence is not a fresh local pytest/Qwen/CUDA PASS.
 
-## Phase pointer
-
-```text
-P0 COMPLETE
-P1 implementation CONDITIONAL PASS
-P2 implementation CONDITIONAL PASS
-P2-E1 Episode-context Fusion IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
-P2-E2 continuous-window VLM IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
-P2-E3 contextual Shot refinement IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
-P2-E4 final Episode-context Fusion PLANNED / NEXT
-P2.6 Windows / real-model acceptance NOT PASSED
-P3 UI IMPLEMENTED / UI ACCEPTANCE IN PROGRESS
-P4 Draft-guided Scene/Prop IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-P5 Draft ↔ Character PLANNED / PAUSED
-P6 Final fill-back/renderers PLANNED
-P7 remake integration PLANNED
-```
-
-Next safe work: run a new real short-drama BreakdownRun using the composite E2+E3 production VLM and inspect same-scene closeups/inserts, genuine scene changes, E3 current-Shot grounding, anonymous subject/prop continuity and E1 cross-Shot dialogue. If the new semantic behavior is sound, proceed to P2-E4; do not upgrade P2.6 or downstream acceptance status without real evidence.
+Next required run: re-run the same Episode after `git pull`; verify the 19-Shot living-room sequence collapses to the actual anonymous cast without merging two people visible in one Shot. Then inspect E3 timeout separately.
