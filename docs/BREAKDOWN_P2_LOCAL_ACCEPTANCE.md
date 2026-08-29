@@ -1,30 +1,36 @@
 # Breakdown P2 — 本地生产运行与真实短剧验收
 
-> Status: **P1/P2 IMPLEMENTATION CONDITIONAL PASS / P2-E1 + P2-E2 + P2-E3 IMPLEMENTED, LOCAL-REAL ACCEPTANCE PENDING / P2.6 WINDOWS REAL-MODEL ACCEPTANCE NOT PASSED**  
-> Date: 2026-08-28  
-> Last synchronized: 2026-08-28 19:39 +08:00  
-> Production pipeline profile: `breakdown-p2-full-v1`  
-> Production E2 VLM profile: `breakdown-p2-vlm-episode-window-e2-v1`  
-> Production E3 refinement profile: `breakdown-p2-contextual-shot-refinement-e3-v1`  
-> Production Fusion profile: `breakdown-p2-fusion-episode-context-e1-v2`  
+> Status: **P1/P2 IMPLEMENTATION CONDITIONAL PASS / P2-E1 + E2 + E3 + E4 IMPLEMENTED / LOCAL-REAL ACCEPTANCE NOT PASSED**  
+> Date: 2026-08-29  
+> Production pipeline: `breakdown-p2-full-v1`  
+> Production E2 VLM: `breakdown-p2-vlm-episode-window-e2-v1`  
+> Production E3: `breakdown-p2-contextual-shot-refinement-e3-v1`  
+> Production E4 Fusion: `breakdown-p2-fusion-episode-context-e4-v1`  
 > Acceptance schema: `breakdown-p2-acceptance-v1`
 
 ## 1. 当前验收结论
 
 ```text
 P1/P2 实现验收                    = CONDITIONAL PASS
-P2-E1 Episode-context Fusion       = IMPLEMENTED
-P2-E1 真实短剧行为验收             = PENDING
-P2-E2 continuous-window Qwen3-VL   = IMPLEMENTED
-P2-E2 Windows/真实短剧行为验收      = PENDING
-P2-E3 contextual Shot refinement   = IMPLEMENTED
-P2-E3 Windows/真实短剧行为验收      = PENDING
-P2-E4 final Episode Fusion          = NOT IMPLEMENTED
-P2.6 Windows / 真实模型验收         = NOT PASSED
-完整真实短剧 PASS report            = 尚不存在
+P2-E1 Scene/Dialogue              = IMPLEMENTED
+P2-E2 continuous-window Qwen3-VL  = IMPLEMENTED
+P2-E3 contextual refinement       = IMPLEMENTED / QUALITY NOT ACCEPTED
+P2-E4 Episode-context Fusion      = IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
+P2.6 Windows / 真实模型验收        = NOT PASSED
+完整真实短剧 PASS report           = 尚不存在
 ```
 
-因此当前不能写 `P2 ACCEPTED`、`P2 CLOSED`、`P2.6 PASS`、`整套 Episode-context 拉片已通过真实模型验收`。
+最新 E4 之前的真实 Run 明确 **REJECTED**：
+
+```text
+30 Shots
+21 LocalSubjects
+Scene 04 客厅 / 19 Shots -> 14 LocalSubjects
+实际 visible cast -> 同一女一男
+E3 -> TimeoutExpired -> 全部 FALLBACK_E2
+```
+
+因此当前不能写 `P2 ACCEPTED`、`P2 CLOSED`、`P2.6 PASS`。
 
 ## 2. 当前正式生产链
 
@@ -33,12 +39,15 @@ Episode Current ShotRevision
 → frozen BreakdownRun
 → Episode ASR
 → OCR
-→ P2-E2 overlapping Episode-window Qwen3-VL
-→ P2-E3 contextual Shot refinement
-→ one immutable exact-Shot VLM_OUTPUT sidecar
-   payload.e2_semantic = E2 visual result
-   payload.semantic = E3 refined result
-→ P2-E1 Episode-context Fusion
+→ E2 overlapping Episode-window Qwen3-VL
+→ preserve subject/prop continuity hints
+→ E3 contextual Shot refinement
+   └─ E3-only failure -> FALLBACK_E2
+→ immutable exact-Shot VLM_OUTPUT sidecar
+→ E4 Episode-context Fusion
+   ├─ E1 Scene continuity
+   ├─ E1 ASR dialogue projection
+   └─ anonymous Subject Continuity Graph
 → P1 validator
 → READY / READY_WITH_WARNINGS
 → acceptance report
@@ -53,128 +62,181 @@ scripts/run_breakdown_vlm_qwen3_episode_windows.py
 engine/app/breakdown_p2_refinement_v1.py
 scripts/run_breakdown_refinement_qwen3.py
 engine/app/breakdown_p2_vlm_runtime_v1.py
+engine/app/breakdown_p2_vlm_continuity_v1.py
 engine/app/breakdown_p2_fusion_episode_v2.py
+engine/app/breakdown_p2_fusion_episode_v4.py
 engine/app/breakdown_p2_pipeline_v1.py
 engine/app/breakdown_p2_acceptance_v1.py
 ```
 
-E3 保持在 formal VLM Provider 内，因此 pipeline 仍然是 `ASR → OCR → VLM → Fusion`，API 和 frozen P2 component contract 不变。
-
-Provider/E3/Fusion/validator 任一整体硬失败都不能替换旧 Current Breakdown；ShotRevision 变化导致 STALE 时不得覆盖生命周期事实。
-
-## 3. E2 runtime / 窗口参数
+## 3. E2 runtime / continuity evidence
 
 默认：
 
 ```text
 window target = 24 秒
-window overlap = 25%
+allowed = 20..40 秒
+overlap = 25%
+allowed = 10..50%
 window edge = Shot boundary
-每个 Shot 必须完整落入 >=1 window
-按 Episode 顺序串行推理
-READY preprocess proxy 优先，Episode source fallback
+每个 Shot 完整落入 >=1 window
+Episode 顺序串行
+READY proxy 优先，Episode source fallback
 ```
 
-允许调参：
+E2 window output 必须包含并允许保留：
 
 ```text
-20 <= window seconds <= 40
-0.10 <= overlap ratio <= 0.50
+window_summary
+scene_change_candidates
+subject_continuity_hints
+prop_continuity_hints
+shots[]
 ```
 
-CLI：
+旧 normalizer 丢掉了 subject/prop continuity hints。当前 production wrapper `breakdown_p2_vlm_continuity_v1.py` 会把它们规范化并保留在 `ProviderResult.metadata.window_summaries`，供 E4 使用。
 
-```text
-python scripts/run_breakdown_p2.py run --episode-id <EPISODE_ID> \
-  --vlm-window-seconds 24 \
-  --vlm-window-overlap-ratio 0.25
-```
-
-## 4. E2 专项验收 — 连续视觉上下文
-
-真实素材至少包含：
-
-```text
-同一 Scene 的大全景/中景
-→ 人物特写或背景虚化
-→ 手部/手机/关键道具插入
-→ 另一人物特写
-→ 至少一次真实明确换场
-```
-
-重点检查：
-
-```text
-1. 特写自己看不到背景时，不应因为“缺少地点”自动换 Scene
-2. scene_basis 应能区分 DIRECT / CONTEXT / MIXED / UNCERTAIN
-3. scene_continuity 应合理输出 SAME / NEW_SCENE / UNCERTAIN
-4. 明确客厅 → 医院/街道等真实换场仍要被发现，不能过度合并
-5. 同一人物的匿名外观/动作描述跨相邻镜头应更稳定，但不得变成 Character ID
-6. 关键剧情道具跨镜连续性应更稳定
-7. E2 原始视觉语义必须在最终 sidecar 的 payload.e2_semantic 中可回看
-```
-
-E2 Prompt 必须保持：
+E2 Prompt 仍必须保持：
 
 ```text
 cut != scene change
 closeup/blur/insert only borrows context when supported
 uncertain stays UNCERTAIN
-no ASR/OCR transcription inside visual E2
 anonymous subjects only
+no ASR/OCR transcription inside visual E2
 no Final asset IDs
-Simplified Chinese generated prose
 ```
 
-## 5. E3 专项验收 — 当前 Shot 上下文精修
+## 4. E3 专项验收
 
-E3 每个 Shot 使用：
+E3 每 Shot 使用：
 
 ```text
-provisional Scene context
-previous/current/next E2 Shot semantic
+provisional Scene
+previous/current/next E2 semantic
 selected/supporting E2 window summaries
 overlapping ASR_SEGMENT
-overlapping OCR_OBSERVATION
+overlapping OCR
 ```
 
-真实验收最重要的是：**上下文让当前镜头更好懂，但不能把邻镜头的视觉事实搬过来。**
-
-逐 Shot 检查：
+硬规则：
 
 ```text
-1. summary / narrative_function 是否比单纯视觉描述更符合剧情上下文
-2. Scene UNKNOWN/泛化描述是否只在前后证据充分时被补全
-3. 当前镜头没有出现的人，不能因为上一/下一镜头出现就被新增进 subjects
-4. current E2 没有的 subject_X 不能被 E3 新造出来
-5. 邻镜头独有的道具不能因为 ASR/OCR 提到就被写成当前镜头“可见”
-6. 景别/运镜/构图不能由对白推断并覆盖明确 E2 视觉事实
-7. ASR_SEGMENT 文本不能被 E3 改写、翻译或用于猜 speaker identity
-8. OCR 文本不能被 E3 改写
-9. Final Character/Scene/Prop/Binding ID 不得进入 semantic/provenance
+只精修 current Shot
+不能把邻 Shot 独有人/物搬入 current Shot
+不能新造 current E2 不存在的 subject label
+ASR/OCR text read-only
+不能猜 speaker identity
+景别/运镜/构图保持 E2-grounded
+禁止 Final IDs
 ```
 
-单 Shot E3 失败允许：
+当前 failure policy：
 
 ```text
-contextual_refinement.status = FALLBACK_E2
-payload.semantic = 该 Shot E2 semantic
-warning 明确记录
+单 Shot malformed -> FALLBACK_E2
+E3 runtime/model/subprocess/TimeoutExpired -> FALLBACK_E2
+E2 visual failure -> VLM fail closed
 ```
 
-但整套 E3 runtime 缺失/整体 inference 失败必须导致 production VLM `FAILED`，不能静默声称 E3 已执行。
+所以 E3 timeout 不应再让整集丢失，但一个 30/30 fallback 的 Run **不能作为 E3 质量 PASS**。
 
-## 6. E2 + E3 provenance / Contract 检查
+## 5. E4 专项验收 — 匿名人物连续性
 
-每条最终 Shot VLM Evidence 必须继续满足：
+E4 是当前阻塞项的正式修复。
+
+语义模型：
+
+```text
+subject_A / subject_B = Shot-local observation label
+anonymous graph node = (ShotRevisionItem, subject label)
+LocalSubject = Scene-scoped anonymous continuity cluster
+LocalSubject != Character
+```
+
+Primary positive edge：`E2 subject_continuity_hint`。
+
+Fallback positive edge：相邻/近邻 Shot 的强稳定外观相似。
+
+动态状态必须从 identity-like continuity key 中剥离：
+
+```text
+表情 / 情绪
+动作 / 姿态 / 手势
+是否说话
+screen position
+shot framing / camera framing
+```
+
+可作为 soft stable cue：
+
+```text
+发型 / 发色
+服装颜色与款式
+长期配饰
+性别表现 / 年龄段
+```
+
+Hard negative：
+
+```text
+同一 Shot 同时出现的任意两个 observations = cannot-link
+```
+
+Cannot-link 必须是传递安全的：如果 cluster A 已含 Shot 12 的人物A，则任何包含 Shot 12 人物B 的 cluster 都不能再与 A 合并。
+
+### E4 本轮真实验收重点
+
+必须优先重跑刚刚失败的同一个 Episode：
+
+```text
+Scene 04 客厅 / 19 Shots / visible cast = 一女一男
+期望：roughly 2 stable LocalSubjects
+禁止：人物 A-N 式碎片化
+```
+
+同时验证：
+
+```text
+1. subject_A/B 在后续 Shot 交换人物不会生成新人
+2. 表情惊讶 -> 愤怒、抱臂、低头看手机等变化不会生成新人
+3. 同镜两人永远不合并
+4. 真正新人物仍要分开
+5. 人物暂时出画/插入镜头后再次出现能通过 E2 hints 恢复连续性
+6. LocalSubject.appearance_json 可看到 E4 cluster provenance
+7. FUSION metadata 可看到 observation/cluster/union/cannot-link stats
+```
+
+## 6. E1 Scene / Dialogue 回归检查
+
+Scene：
+
+```text
+UNKNOWN / generic closeup -> inherit current Scene
+compatible specificity -> same Scene
+strong location or INT/EXT contradiction -> new Scene
+```
+
+Dialogue：
+
+```text
+ASR_SEGMENT = 完整文本真值
+Shot DIALOGUE = projection
+```
+
+跨镜 projections 必须共享 group + continuation metadata；UI 只在起始镜显示完整对白，后续仅显示“承接上一镜对白”，不能重复整句。
+
+## 7. Provenance / Contract 检查
+
+每条最终 VLM Evidence 必须继续满足：
 
 ```text
 source_type = VLM_OUTPUT
 shot_revision_item_id = exact frozen ShotRevisionItem
-source_start_us / source_end_us = exact Shot range
+source_start_us/end_us = exact Shot range
 ```
 
-最终 payload 应同时存在：
+payload：
 
 ```text
 payload.e2_semantic
@@ -183,63 +245,9 @@ payload.episode_window
 payload.contextual_refinement
 ```
 
-其中：
+Historical Run/sidecar 不重写；只有新 Run 使用新 E4 行为。
 
-```text
-payload.e2_semantic = original E2 visual semantic
-payload.semantic = E3 refined semantic consumed by Fusion
-payload.episode_window.profile = breakdown-p2-vlm-episode-window-e2-v1
-payload.contextual_refinement.profile = breakdown-p2-contextual-shot-refinement-e3-v1
-```
-
-E3 provenance 应至少能看到：
-
-```text
-raw_vlm_source_id
-selected_window_id
-supporting_window_ids
-asr_source_ids
-ocr_source_ids
-```
-
-Historical BreakdownRun / raw sidecar fingerprint 不允许被 E2/E3 重写；新逻辑只作用于新 Run。
-
-## 7. E1 专项验收 — 跨镜对白
-
-选择一条跨两个或更多 Shot 的真实对白。必须满足：
-
-```text
-ASR_SEGMENT = 完整对白文本真值
-每个 Shot-local projection content_text = 完整句
-projection dialogue_group_id 相同
-projection asr_segment_id 相同
-dialogue_source_start_us/end_us = 完整 Segment 范围
-continues_from_previous_shot / continues_to_next_shot 正确
-ASR_WORD raw Evidence 保持不可变
-```
-
-禁止旧行为：
-
-```text
-Shot A = “你怎么现在”
-Shot B = “才回来？”
-```
-
-E3 读取 ASR 只用于上下文理解，不得改变上述 E1 dialogue truth。
-
-## 8. E1 专项验收 — Scene continuity
-
-E1 fallback 仍需正确：
-
-```text
-UNKNOWN / missing / generic scene hint → inherit current Scene
-病房 → 医院病房、客厅 → 家中客厅 → same Scene
-明确地点冲突或 INT ↔ EXT → new Scene
-```
-
-当前 E1 已会消费 E3 的 `payload.semantic`，但 E4 尚未把 E2 的 explicit `scene_continuity/scene_basis/window_summary` 作为主要 Scene continuity truth。因此真实验收要记录是否存在“E2/E3 已看懂，但 E1 Scene planner 仍然保守过度或切错”的案例；这将直接决定 E4 的实现优先级。
-
-## 9. Runtime preflight
+## 8. Runtime preflight
 
 API：
 
@@ -253,31 +261,11 @@ CLI：
 python scripts/run_breakdown_p2.py preflight --strict
 ```
 
-基础条件至少确认：
+基础条件至少确认 main Python / faster-whisper / RapidOCR / OpenCV / FFmpeg / FFprobe / isolated Qwen runtime / checkpoint / CUDA when requested / nvidia-smi。
 
-```text
-main Python
-faster-whisper
-RapidOCR
-OpenCV
-FFmpeg / FFprobe
-isolated VLM Python
-Qwen3-VL checkpoint
-isolated torch / transformers / qwen_vl_utils
-CUDA availability when requested
-nvidia-smi GPU/VRAM/driver
-```
+注意：当前 acceptance preflight 代码仍有历史 VLM probe 路径，不能单独证明 E2/E3/E4 质量。真正的 runtime 证据仍是一次新 Episode 成功跑过当前 production chain。
 
-另外 **当前 acceptance preflight 代码仍主要检查历史 VLM 基础 runtime/runner，不足以单独证明新的 E2/E3 两个 runner 都就绪**。在 preflight 代码升级前，本地验收必须额外确认文件存在：
-
-```text
-scripts/run_breakdown_vlm_qwen3_episode_windows.py
-scripts/run_breakdown_refinement_qwen3.py
-```
-
-并以一次真实 Episode 成功跑过 `E2 → E3` 作为最终 runtime 证据。Preflight 本身不下载模型、不执行真实推理、不等于质量 PASS。
-
-## 10. Acceptance Contract
+## 9. Acceptance Contract
 
 API：
 
@@ -285,25 +273,7 @@ API：
 POST /api/breakdown-runs/{run_id}/p2-acceptance
 ```
 
-报告默认位置：
-
-```text
-workspace/<project>/episodes/<episode>/breakdown/<run>/acceptance/
-  p2-acceptance-<run>.json
-```
-
-现有机器结构至少要求：Run READY 类、ASR/OCR/VLM sidecar+fingerprint、VLM READY、Fusion READY 类、Shot Draft 全覆盖。
-
-由于 acceptance schema 尚未为 E3 单独加新 score key，本轮人工 review 必须同时检查 VLM provider metadata / sidecar：
-
-```text
-contextual_refinement_profile = breakdown-p2-contextual-shot-refinement-e3-v1
-contextual_refinement_status = READY or READY_WITH_WARNINGS
-fusion_semantic_source = VLM_OUTPUT.payload.semantic
-e2_semantic_preservation = VLM_OUTPUT.payload.e2_semantic
-```
-
-人工评分继续使用：
+人工评分继续覆盖：
 
 ```text
 asr_dialogue
@@ -318,82 +288,49 @@ fusion_timing
 fusion_conflict_handling
 ```
 
-本次人工 notes/blocking_issues 还应明确记录：
+本轮 notes/blocking_issues 必须额外写明：
 
 ```text
-E2 same-scene closeup/insert continuity
-E2 genuine scene-change detection
-E3 current-Shot grounding / no neighbor-fact leakage
-E3 Scene contextual refinement quality
-E3 anonymous subject grounding
-E3 key-prop grounding
-E1 cross-shot dialogue continuity
+E4 LocalSubject count / Scene 04 19-Shot continuity
+same-Shot cannot-link result
+label-swap result
+E3 READY vs FALLBACK_E2 / timeout count
+cross-Shot dialogue UI behavior
 ```
 
-PASS 仍要求全部 required score >=4.0 且 blocking_issues 为空。机器指标不能自动变成 PASS。
+PASS 仍要求 required scores >=4.0 且 blocking_issues 为空。机器指标不能自动变成 PASS。
 
-## 11. 单集 / 批量 / Windows 入口
+## 10. Identity / Final Asset 禁止事项
 
-```text
-POST /api/episodes/{episode_id}/tasks/breakdown
-POST /api/projects/{project_id}/tasks/breakdown-batch
-```
-
-批量规则：`Episode.sort_order → 严格逐集 → concurrency=1`。
-
-CLI：
-
-```text
-python scripts/run_breakdown_p2.py preflight --strict
-python scripts/run_breakdown_p2.py run --episode-id <EPISODE_ID>
-python scripts/run_breakdown_p2.py report --run-id <RUN_ID>
-python scripts/run_breakdown_p2.py compare <report-a.json> <report-b.json>
-```
-
-Windows：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_breakdown_p2_windows.ps1 `
-  -EpisodeId <EPISODE_ID>
-```
-
-## 12. Identity / Final Asset 禁止事项
-
-Episode-context 增加语义上下文，但不改变身份/资产边界：
+E4 LocalSubject graph 绝不能被解释成 Final Character identity。
 
 ```text
 LocalSubject != Character
-SceneSegmentDraft != Final Scene
-DraftPropHint != Final Prop
+subject continuity hint != ReID evidence
 ASR speaker != Character
-P2 cannot write Final Character/Scene/Prop/Binding
+Draft Scene/Prop != Final Scene/Prop
 ```
 
-Character V10.1 same-sample cannot-link、Face hard conflict、>=3 independent Shots/images、explicit Shot Assignment/Final Gate 均不可被 E2/E3 语义放松。
+Character V10.1 的 Person Evidence / MOT / YoutuReID / same-sample cannot-link / face hard conflict / >=3 independent Shots/images / explicit Shot assignment / Final Gate 全部保持不变。
 
-## 13. 工程完成边界
+## 11. 测试 / CI
 
-可以确认：
+E4 单元覆盖：
 
 ```text
-P2-E1 Episode-context Fusion                        IMPLEMENTED
-P2-E2 overlapping Episode-window VLM               IMPLEMENTED
-P2-E3 contextual Shot refinement                    IMPLEMENTED
-E2+E3 stable production VLM wiring                  IMPLEMENTED
-E2/E3 unit coverage                                 ADDED
-P2.6 orchestrator/preflight/Windows/acceptance      IMPLEMENTED（但 preflight E2/E3 runner 检查仍需增强）
-P1/P2 implementation acceptance                     CONDITIONAL PASS
+engine/tests/v2/test_breakdown_p2_e4_subject_continuity.py
 ```
 
-不能确认：
+覆盖：hint preservation、label swap、动态描述变化、same-Shot cannot-link、stable appearance fallback。
+
+Hosted GitHub Actions 不使用。代码存在不等于本机 pytest/Qwen/CUDA PASS。
+
+## 12. 下一步操作
 
 ```text
-P2-E1 real-short-drama acceptance                   PENDING
-P2-E2 real Qwen/Windows acceptance                  PENDING
-P2-E3 real contextual-refinement acceptance         PENDING
-P2-E4 final Episode-context Fusion                  NOT IMPLEMENTED
-P2.6 Windows / real-model acceptance                NOT PASSED
-real short-drama full-chain quality                 NOT ACCEPTED
+git pull
+→ 对同一个失败 Episode 点“重新拉片本集”
+→ 首先只看 LocalSubject/Scene 04 19 镜人物连续性
+→ 如果 E4 通过，再单独处理 E3 TimeoutExpired
+→ 在真实验收通过前 P2.6 保持 NOT PASSED，P5 保持 PAUSED
 ```
-
-下一步先做真实短剧 E2+E3 重跑；只有新 VLM 语义与 E1 Fusion 行为稳定后才进入 E4，不能因为代码已提交就提前升级验收状态。
