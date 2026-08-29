@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { breakdownApi } from '../api/breakdown'
+import { buildDialogueDisplay } from '../utils/dialogueProjection'
 import type {
   BreakdownDraftPayload,
   BreakdownPropOccurrence,
@@ -56,7 +57,9 @@ const selectedShotIndex = computed(() => allShots.value.findIndex((shot) => shot
 const hasPreviousShot = computed(() => selectedShotIndex.value > 0)
 const hasNextShot = computed(() => selectedShotIndex.value >= 0 && selectedShotIndex.value < allShots.value.length - 1)
 const referenceUrl = computed(() => selectedShot.value?.source_shot_revision_item?.reference_url ?? '')
-const dialogueEvents = computed(() => selectedShot.value?.events.filter((event) => event.event_type === 'DIALOGUE') ?? [])
+const dialogueDisplay = computed(() => buildDialogueDisplay(selectedShot.value?.events ?? []))
+const dialogueEvents = computed(() => dialogueDisplay.value.events)
+const continuedDialogueCount = computed(() => dialogueDisplay.value.continuedGroupCount)
 const actionEvents = computed(() => selectedShot.value?.events.filter((event) => event.event_type === 'ACTION') ?? [])
 const ocrEvents = computed(() => selectedShot.value?.events.filter((event) => event.event_type === 'OCR') ?? [])
 const audioEvents = computed(() => selectedShot.value?.events.filter((event) => event.event_type === 'AUDIO_EVENT') ?? [])
@@ -427,6 +430,7 @@ watch(
                     <i>▶</i>
                   </button>
                 </div>
+                <span v-else-if="continuedDialogueCount" class="empty-value">承接上一镜对白</span>
                 <span v-else class="empty-value">无对白</span>
               </div>
             </section>
