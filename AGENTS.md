@@ -207,7 +207,7 @@ VLM_OUTPUT.payload.semantic = E3 refined result used by existing Fusion
 VLM_OUTPUT.payload.contextual_refinement = exact E3 provenance
 ```
 
-Per-Shot malformed E3 output may fall back to that Shot's E2 semantic with an explicit warning. A missing E3 runtime or whole E3 inference failure fails the production VLM component closed.
+E3 is a quality refinement layer, not source truth. Malformed individual E3 output falls back to that Shot's E2 semantic. Missing E3 runtime, model-load failure, whole-pass subprocess failure or other E3-only runtime error now also **fails soft to the validated E2 semantics** with explicit `FALLBACK_E2` provenance and warnings. Only E2 visual failure still fails the production VLM component closed.
 
 E3 does not create a new P2 component and does not modify P1 schema, Character V10.1, Final Asset tables or historical sidecars.
 
@@ -326,6 +326,7 @@ ASR → OCR → E2 window VLM → E3 contextual refinement → E1 Fusion → P1 
 same-scene wide shot + closeups/inserts/blur continuity
 genuine scene changes still split
 E3 improves Shot wording/narrative context without importing neighbor-only visual facts
+E3 runtime failure degrades to explicit E2 fallback instead of losing valid E2 Breakdown evidence
 anonymous subject/key-prop continuity improves without identity overreach
 cross-Shot dialogue remains whole and ASR text is unchanged
 human required scores >=4/5
@@ -344,6 +345,7 @@ Current Episode-context unit coverage:
 engine/tests/v2/test_breakdown_p2_fusion_episode_v2.py
 engine/tests/v2/test_breakdown_p2_vlm_episode_v2.py
 engine/tests/v2/test_breakdown_p2_refinement_v1.py
+engine/tests/v2/test_breakdown_p2_e3_failsoft.py
 ```
 
 Code/test files existing in the repository are not equivalent to a fresh local pytest/Qwen/CUDA PASS.
@@ -366,7 +368,7 @@ latest docs/sessions/*.md handoff
 
 ```text
 A. run a new real Episode Breakdown with production E2 + E3
-B. inspect same-scene continuity, genuine scene changes, E3 neighbor-grounding, subject/prop continuity and E1 dialogue
+B. inspect same-scene continuity, genuine scene changes, E3 neighbor-grounding, E3 fallback warnings, subject/prop continuity and E1 dialogue
 C. if E2/E3 real behavior is sound, implement P2-E4 final Episode-context Fusion
 D. do not advance P5 until Episode-context semantic baseline is stable
 ```
