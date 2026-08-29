@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Isolated text-only Qwen3-VL runner for Breakdown P2-E3 contextual Shot refinement."""
+"""Isolated text-only Qwen3-VL runner for Breakdown P2-E3 contextual Shot refinement.
+
+E3 is an optional semantic refinement layer on top of already-valid E2 visual semantics. Runtime
+setup failures therefore must be serialized as per-Shot FAILED records so the main process can
+fall back to E2 instead of losing the whole BreakdownRun. Item-level failures follow the same
+rule. The runner still never creates Final Character/Scene/Prop/Binding truth.
+"""
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import breakdown_vlm_prompt_zh_v1 as language_profile
 import run_breakdown_vlm_qwen3 as base
@@ -18,6 +24,18 @@ def _safe_error(exc: BaseException, *, max_len: int = 900) -> str:
     return text[:max_len]
 
 
+def _cleanup_cuda() -> None:
+    """Best-effort cleanup after a failed text-generation call."""
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        return
+
+
 def _load_manifest(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or value.get("schema_version") != REFINEMENT_INPUT_SCHEMA:
@@ -25,6 +43,45 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     if not isinstance(value.get("items"), list):
         raise ValueError("manifest.items must be a list")
     return value
+
+
+def _manifest_items(manifest: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    raw = manifest.get("items")
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        item for item in raw
+        if isinstance(item, Mapping) and str(item.get("revision_item_id") or "").strip()
+    )
+
+
+def _failure_records(
+    items: Sequence[Mapping[str, Any]],
+    exc: BaseException,
+    *,
+    stage: str,
+) -> list[dict[str, Any]]:
+    error_type = type(exc).__name__
+    detail = _safe_error(exc)
+    return [
+        {
+            "revision_item_id": str(item.get("revision_item_id") or "").strip(),
+            "status": "FAILED",
+            "error_type": error_type,
+            "error_detail": detail,
+            "failure_stage": stage,
+            "refinement_note": f"E3 {stage} 失败，保留 E2 结果：{error_type}: {detail}",
+        }
+        for item in items
+    ]
+
+
+def _write_records(path: Path, records: Sequence[Mapping[str, Any]]) -> None:
+    output = "".join(
+        json.dumps(dict(record), ensure_ascii=False, separators=(",", ":")) + "\n"
+        for record in records
+    )
+    base._atomic_write_text(path, output)
 
 
 def _prompt(source_language: str, item: Mapping[str, Any]) -> str:
@@ -159,18 +216,23 @@ def main() -> int:
     parser.add_argument("--max-new-tokens", type=int, default=1536)
     args = parser.parse_args()
 
+    output_path = Path(args.output)
     manifest = _load_manifest(Path(args.manifest))
     source_language = str(manifest.get("source_language") or "und")
-    device = base._resolve_device(args.device)
-    model, processor = base._load_model(Path(args.model_path), device)
+    items = _manifest_items(manifest)
+
+    try:
+        device = base._resolve_device(args.device)
+        model, processor = base._load_model(Path(args.model_path), device)
+    except Exception as exc:
+        # E2 already contains the validated visual truth. Serialize setup failure per Shot so the
+        # main E3 adapter can fall back instead of failing the complete Breakdown pipeline.
+        _write_records(output_path, _failure_records(items, exc, stage="runtime_setup"))
+        return 0
 
     records: list[dict[str, Any]] = []
-    for item in manifest["items"]:
-        if not isinstance(item, Mapping):
-            continue
+    for item in items:
         item_id = str(item.get("revision_item_id") or "").strip()
-        if not item_id:
-            continue
         try:
             value = _analyze_item(
                 model=model,
@@ -186,18 +248,10 @@ def main() -> int:
                 "semantic": value.get("semantic"),
             })
         except Exception as exc:
-            records.append({
-                "revision_item_id": item_id,
-                "status": "FAILED",
-                "error_type": type(exc).__name__,
-                "error_detail": _safe_error(exc),
-            })
+            records.extend(_failure_records((item,), exc, stage="item_inference"))
+            _cleanup_cuda()
 
-    output = "".join(
-        json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
-        for record in records
-    )
-    base._atomic_write_text(Path(args.output), output)
+    _write_records(output_path, records)
     return 0
 
 
