@@ -6,6 +6,10 @@ current-Shot grounding guard. The final frozen VLM sidecar keeps E2 semantics in
 ``payload.e2_semantic`` and exposes the grounded E3 semantic in ``payload.semantic`` for the
 existing Episode-context Fusion.
 
+E3 is a refinement layer, not source truth. If E2 is READY but E3 cannot run, production now
+fails soft to the validated E2 semantics with explicit fallback provenance instead of discarding
+the whole BreakdownRun. E2 failures still fail closed.
+
 The legacy single-Reference-Clip provider remains in ``breakdown_p2_vlm_v1`` for historical
 contract tests; the pure E2 provider remains in ``breakdown_p2_vlm_episode_v2`` for E2 tests.
 """
@@ -27,6 +31,7 @@ VLM_WINDOW_SCHEMA = episode_window.VLM_WINDOW_SCHEMA
 VLM_CONTEXTUAL_REFINEMENT_PROFILE = refinement.REFINEMENT_PROFILE
 VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE = refinement.REFINEMENT_PROMPT_PROFILE
 VLM_CONTEXTUAL_GROUNDING_POLICY = "e3-text-only-preserve-e2-visual-facts-v1"
+VLM_CONTEXTUAL_FAILURE_POLICY = "e3-fail-soft-to-e2-v1"
 
 
 def _semantic(record: p2.P2EvidenceRecord) -> Mapping[str, Any]:
@@ -172,13 +177,7 @@ def _apply_contextual_grounding(
 
 
 def _with_e2_runtime_diagnostics(result: p2.P2ProviderResult) -> p2.P2ProviderResult:
-    """Promote sanitized E2 subprocess/window diagnostics into the first warning.
-
-    The production pipeline intentionally surfaces the first Provider warning to the user. E2
-    already stored subprocess_failure_detail/window_failure_details in metadata, but the old
-    wrapper returned only the generic warning. That made model-load/CUDA/runner crashes appear as
-    just "P2-E2 VLM inference failed". Keep metadata and prepend a bounded readable detail.
-    """
+    """Promote sanitized E2 subprocess/window diagnostics into the first warning."""
 
     if result.status == "READY":
         return result
@@ -209,6 +208,91 @@ def _with_e2_runtime_diagnostics(result: p2.P2ProviderResult) -> p2.P2ProviderRe
     )
 
 
+def _fallback_to_e2(
+    context: p2.P2RunContext,
+    e2_result: p2.P2ProviderResult,
+    *,
+    failed_result: p2.P2ProviderResult | None = None,
+    exc: BaseException | None = None,
+) -> p2.P2ProviderResult:
+    """Preserve validated E2 semantics when optional E3 cannot complete.
+
+    E2 already contains the actual continuous-window visual observation. E3 only improves
+    contextual wording/scene resolution. Losing E3 must therefore degrade quality visibly, not
+    turn valid E2 evidence into a FAILED VLM component.
+    """
+
+    detail_parts: list[str] = []
+    error_type: str | None = None
+    failed_metadata: Mapping[str, Any] = {}
+    if failed_result is not None:
+        failed_metadata = failed_result.metadata if isinstance(failed_result.metadata, Mapping) else {}
+        nested = failed_metadata.get("contextual_refinement_metadata")
+        if isinstance(nested, Mapping):
+            error_type = str(nested.get("error_type") or "").strip() or None
+        for warning in failed_result.warnings:
+            text = " ".join(str(warning or "").split())
+            if text and text not in detail_parts:
+                detail_parts.append(text[:900])
+    if exc is not None:
+        error_type = error_type or type(exc).__name__
+        text = " ".join(str(exc).strip().split())
+        if text:
+            detail_parts.append(text[:900])
+
+    evidence: list[p2.P2EvidenceRecord] = []
+    for raw in e2_result.evidence:
+        semantic = dict(_semantic(raw))
+        payload = dict(raw.payload)
+        payload["e2_semantic"] = semantic
+        payload["semantic"] = semantic
+        payload["contextual_refinement"] = {
+            "profile": VLM_CONTEXTUAL_REFINEMENT_PROFILE,
+            "prompt_profile": VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE,
+            "status": "FALLBACK_E2",
+            "failure_policy": VLM_CONTEXTUAL_FAILURE_POLICY,
+            "error_type": error_type,
+        }
+        evidence.append(p2.P2EvidenceRecord(
+            source_type=raw.source_type,
+            source_id=raw.source_id,
+            source_start_us=raw.source_start_us,
+            source_end_us=raw.source_end_us,
+            shot_revision_item_id=raw.shot_revision_item_id,
+            text=raw.text,
+            language=raw.language,
+            confidence=raw.confidence,
+            payload=payload,
+        ))
+
+    metadata = dict(e2_result.metadata)
+    metadata.update({
+        "contextual_refinement_profile": VLM_CONTEXTUAL_REFINEMENT_PROFILE,
+        "contextual_refinement_prompt_profile": VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE,
+        "contextual_refinement_status": "FALLBACK_E2",
+        "contextual_refinement_failure_policy": VLM_CONTEXTUAL_FAILURE_POLICY,
+        "contextual_refinement_error_type": error_type,
+        "contextual_refinement_failure_metadata": dict(failed_metadata),
+        "e2_semantic_preservation": "VLM_OUTPUT.payload.e2_semantic",
+        "fusion_semantic_source": "VLM_OUTPUT.payload.semantic",
+    })
+    diagnostic = "P2-E3 unavailable; using validated E2 semantics"
+    if error_type:
+        diagnostic += f" ({error_type})"
+    warnings = tuple(dict.fromkeys((*e2_result.warnings, diagnostic, *detail_parts)))
+    result = p2.P2ProviderResult(
+        component=e2_result.component,
+        provider=e2_result.provider,
+        model=e2_result.model,
+        status="READY",
+        evidence=tuple(evidence),
+        metadata=metadata,
+        warnings=warnings,
+    )
+    p2.validate_provider_result(context, result)
+    return result
+
+
 class Qwen3VLSemanticProvider(episode_window.Qwen3VLSemanticProvider):
     """Production E2+E3 provider while preserving the formal VLM Provider contract."""
 
@@ -230,7 +314,12 @@ class Qwen3VLSemanticProvider(episode_window.Qwen3VLSemanticProvider):
         if not self.enable_contextual_refinement:
             return e2_result
         active = self._contextual_refiner or refinement.ContextualShotRefiner.from_vlm_provider(self)
-        refined = refinement.refine_e2_provider_result(context, e2_result, refiner=active)
+        try:
+            refined = refinement.refine_e2_provider_result(context, e2_result, refiner=active)
+        except Exception as exc:
+            return _fallback_to_e2(context, e2_result, exc=exc)
+        if refined.status != "READY":
+            return _fallback_to_e2(context, e2_result, failed_result=refined)
         return _apply_contextual_grounding(context, e2_result, refined)
 
 
@@ -248,6 +337,7 @@ __all__ = [
     "DEFAULT_WINDOW_OVERLAP_RATIO",
     "DEFAULT_WINDOW_SECONDS",
     "Qwen3VLSemanticProvider",
+    "VLM_CONTEXTUAL_FAILURE_POLICY",
     "VLM_CONTEXTUAL_GROUNDING_POLICY",
     "VLM_CONTEXTUAL_REFINEMENT_PROFILE",
     "VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE",
