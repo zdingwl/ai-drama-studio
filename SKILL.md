@@ -1,6 +1,6 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.11.0
+version: 3.11.1
 description: AI Drama Studio Reference Video 本地短剧重制规则；Character V10.1 为正式人物基线；P2-E1 Episode-context Fusion、P2-E2 overlapping-window Qwen3-VL 与 P2-E3 contextual Shot refinement 已在 main，真实 Windows/短剧验收仍待完成，E4 为下一阶段。
 ---
 
@@ -293,7 +293,7 @@ payload.semantic = E3 refined semantic
 payload.contextual_refinement = E3 provenance
 ```
 
-A malformed individual E3 Shot may fall back to E2 with a warning. Missing E3 runtime or whole-pass inference failure makes the production VLM component fail closed.
+E3 is optional quality refinement over valid E2 source truth. A malformed individual E3 Shot falls back to E2 with a warning. Missing E3 runtime, Qwen load failure, whole-pass subprocess failure or any other E3-only runtime failure also falls back to E2 for the affected Run with explicit `FALLBACK_E2` provenance. **E2 visual failure still fails closed; E3 failure alone must not discard valid E2 Breakdown evidence.**
 
 ## 8. P2-E4 target
 
@@ -394,7 +394,7 @@ P2-E3 local-real contextual refinement = PENDING
 P2.6 Windows/real-model = NOT PASSED
 ```
 
-A real PASS still requires a new real short-drama run through `ASR → OCR → E2 VLM → E3 refinement → E1 Fusion → P1 validator`, human review, every required score >=4/5 and no blocking issue.
+A real PASS still requires a new real short-drama run through `ASR → OCR → E2 VLM → E3 refinement → E1 Fusion → P1 validator`, human review, every required score >=4/5 and no blocking issue. E3 may legitimately be `FALLBACK_E2` for runtime robustness, but that run does not count as E3 quality acceptance.
 
 Never write `P2 ACCEPTED`, `P2 CLOSED` or `P2.6 PASS` without that evidence.
 
@@ -408,6 +408,7 @@ Current Episode-context unit coverage:
 engine/tests/v2/test_breakdown_p2_fusion_episode_v2.py
 engine/tests/v2/test_breakdown_p2_vlm_episode_v2.py
 engine/tests/v2/test_breakdown_p2_refinement_v1.py
+engine/tests/v2/test_breakdown_p2_e3_failsoft.py
 ```
 
 Do not report tests/model quality as passed unless actually executed in the local project runtime.
@@ -430,4 +431,4 @@ P6 PLANNED
 P7 PLANNED
 ```
 
-Immediate safe work: run a new real Episode on the composite E2+E3 production VLM, inspect Scene continuity/genuine changes/E3 grounding/anonymous subject and prop continuity/E1 dialogue, then implement E4 only after the new semantic baseline behaves correctly.
+Immediate safe work: run a new real Episode on the composite E2+E3 production VLM, inspect Scene continuity/genuine changes/E3 grounding/E3 fallback/anonymous subject and prop continuity/E1 dialogue, then implement E4 only after the new semantic baseline behaves correctly.
