@@ -5,6 +5,7 @@ from pathlib import Path
 from engine.app import breakdown_p2_refinement_v1 as e3
 from engine.app import breakdown_p2_sidecar_v1 as p2
 from engine.app import breakdown_p2_vlm_episode_v2 as e2
+from engine.app import breakdown_p2_vlm_fast_grounded_v1 as fast
 from engine.app import breakdown_p2_vlm_runtime_v1 as runtime
 
 
@@ -96,6 +97,8 @@ def test_window_planner_is_shot_aligned_overlapping_and_covers_every_shot() -> N
 
 
 def test_provider_emits_exact_shot_vlm_output_and_selects_best_context_window(tmp_path: Path) -> None:
+    """Historical E2 provider remains testable for old artifact comparison."""
+
     shots = tuple(shot(index, (index - 1) * 5, index * 5) for index in range(1, 9))
     episode_video = tmp_path / "episode proxy.mp4"
     episode_video.write_bytes(b"video")
@@ -146,7 +149,6 @@ def test_provider_emits_exact_shot_vlm_output_and_selects_best_context_window(tm
     assert result.metadata["episode_video_kind"] == "fixture_proxy"
 
     by_ordinal = {item.payload["shot_ordinal"]: item for item in result.evidence}
-    # Shot 4 sits at the right edge of window-0001 but has surrounding context in window-0002.
     assert by_ordinal[4].text == "window-0002 镜头 4"
     assert by_ordinal[4].payload["episode_window"]["window_id"] == "window-0002"
     assert by_ordinal[4].payload["episode_window"]["scene_continuity"] == "SAME"
@@ -211,7 +213,8 @@ def test_missing_episode_video_fails_before_window_runner() -> None:
     assert called is False
 
 
-def test_stable_runtime_is_composite_e2_plus_e3_provider() -> None:
-    assert issubclass(runtime.Qwen3VLSemanticProvider, e2.Qwen3VLSemanticProvider)
-    assert runtime.VLM_EPISODE_WINDOW_PROFILE == e2.VLM_EPISODE_WINDOW_PROFILE
+def test_stable_runtime_is_fast_grounded_and_legacy_e3_is_historical() -> None:
+    assert issubclass(runtime.Qwen3VLSemanticProvider, fast.Qwen3VLSemanticProvider)
+    assert runtime.VLM_EPISODE_WINDOW_PROFILE == fast.WINDOW_CONTEXT_PROFILE
     assert runtime.VLM_CONTEXTUAL_REFINEMENT_PROFILE == e3.REFINEMENT_PROFILE
+    assert runtime.VLM_CONTEXTUAL_FAILURE_POLICY == "retired-from-production-fast-grounded-v1"
