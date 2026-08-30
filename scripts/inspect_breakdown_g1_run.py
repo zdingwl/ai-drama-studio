@@ -17,6 +17,7 @@ from engine.app.breakdown_g1_acceptance_diagnostics_v1 import (
     write_g1_acceptance_snapshot,
 )
 from engine.app.breakdown_g1_run_selector_v1 import resolve_g1_run_selection
+from engine.app.breakdown_g1_acceptance_summary_v1 import build_g1_console_summary
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,7 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--stdout-only",
         action="store_true",
-        help="print JSON only and do not write an acceptance artifact",
+        help="do not write an acceptance artifact",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="print a compact human-readable acceptance summary instead of full JSON",
     )
     return parser
 
@@ -60,7 +66,10 @@ def main() -> int:
     if not args.stdout_only:
         path = write_g1_acceptance_snapshot(snapshot, output_path=args.output)
         snapshot["artifact_path"] = str(path)
-    print(json.dumps(snapshot, ensure_ascii=False, indent=2, default=str))
+    if args.summary:
+        print(build_g1_console_summary(snapshot))
+    else:
+        print(json.dumps(snapshot, ensure_ascii=False, indent=2, default=str))
     return 0
 
 
