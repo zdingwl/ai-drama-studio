@@ -12,7 +12,7 @@ Default local path:
 .runtime/TransVLM/inference/pretrained/Qwen3-VL-4B-Instruct
 ```
 
-The repository already provides the dedicated setup script:
+The repository provides the dedicated setup script:
 
 ```powershell
 .\scripts\setup_breakdown_vlm_runtime.ps1
@@ -20,6 +20,8 @@ The repository already provides the dedicated setup script:
 
 It reuses the isolated TransVLM/Qwen Python runtime, verifies the required Qwen3-VL/decord dependencies,
 downloads the original Qwen3-VL checkpoint when it is missing, and runs the strict-reader CLI self-check.
+
+The `.ps1` entrypoint is intentionally ASCII-only so Windows PowerShell 5.1 does not misparse a UTF-8-without-BOM script through the active ANSI code page.
 
 If the isolated runtime itself is missing, first run:
 
@@ -42,6 +44,8 @@ fast-grounded VLM runtime is not available: Qwen3-VL-4B-Instruct checkpoint
 
 means the production checkpoint directory is not ready. Do not manually copy a TransVLM fine-tuned
 checkpoint into this directory: Breakdown intentionally uses the original `Qwen/Qwen3-VL-4B-Instruct`.
+
+If PowerShell reports parser errors around the final `Write-Host` lines, `git pull` first. The current setup script is ASCII-only specifically to avoid that Windows PowerShell 5.1 encoding failure.
 
 After preflight becomes READY, rerun the affected Episode Breakdown. A Run that already stopped with
 `VLM=NOT_AVAILABLE` cannot contain a complete anonymous Draft.

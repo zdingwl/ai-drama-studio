@@ -3,6 +3,7 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+# Keep this script ASCII-only for Windows PowerShell 5.1 compatibility.
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $InferenceRoot = Join-Path $RepoRoot '.runtime\TransVLM\inference'
 $PythonExe = Join-Path $InferenceRoot '.venv\Scripts\python.exe'
@@ -62,9 +63,9 @@ Write-Host '[Breakdown VLM] READY' -ForegroundColor Green
 Write-Host "  Python: $PythonExe"
 Write-Host "  Model:  $ModelDir"
 Write-Host '  Provider: qwen3-vl'
-Write-Host '  Draft 文案: 简体中文 (zh-CN)'
+Write-Host '  Draft text language: zh-CN'
 Write-Host '  Prompt Profile: breakdown-p2-vlm-zh-draft-v1'
-Write-Host '  ASR / OCR: 保留原始语言与原始文字，不在 VLM 中翻译'
+Write-Host '  ASR/OCR text stays in the original source language.'
 if ($IsWindowsPlatform) {
     Write-Host '  Video reader: decord (strict; torchvision fallback disabled)'
 }

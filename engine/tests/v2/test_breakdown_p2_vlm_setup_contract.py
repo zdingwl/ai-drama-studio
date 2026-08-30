@@ -24,3 +24,12 @@ def test_existing_breakdown_vlm_setup_script_provisions_production_checkpoint() 
     assert "qwen-vl-utils>=0.0.14" in script
     assert "decord" in script
     assert "run_breakdown_vlm_qwen3_strict_reader.py" in script
+
+
+def test_breakdown_vlm_setup_script_is_ascii_for_windows_powershell_51() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    script = (repo_root / "scripts" / "setup_breakdown_vlm_runtime.ps1").read_text(encoding="utf-8")
+
+    # Windows PowerShell 5.1 may parse UTF-8-without-BOM .ps1 files through the active ANSI code page.
+    # Keeping this setup entrypoint ASCII-only prevents locale-dependent quote/parser corruption.
+    script.encode("ascii")
