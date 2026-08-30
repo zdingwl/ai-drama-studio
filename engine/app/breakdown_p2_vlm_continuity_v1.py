@@ -1,12 +1,13 @@
-"""Production VLM continuity-preservation wrapper for P2-E4.
+"""Production continuity wrapper on top of Fast Grounded VLM.
 
-E2 already asks Qwen to emit window-level subject/prop continuity hints, but the original
-normalizer only persisted the window summary and scene-change candidates. P2-E4 needs those
-anonymous continuity observations after E3 (or E3->E2 fallback), so this wrapper keeps them in
-Provider metadata without changing the frozen exact-Shot VLM_OUTPUT sidecar schema.
+The stable Breakdown pipeline imports this module so E4 keeps a dedicated continuity-preservation
+surface. Production visual truth now comes from ``breakdown_p2_vlm_runtime_v1`` backed by Fast
+Grounded VLM: cheap Episode-window context plus exact frozen Shot frame grounding in one Qwen3-VL
+model load. The old text-only per-Shot E3 stage is retired from production.
 
-The hints are soft anonymous Draft evidence only. They never create Final Character/Scene/Prop
-IDs and they never make Shot-local ``subject_A`` labels global identities.
+This wrapper keeps window-level subject/prop continuity hints normalized for the E4 anonymous
+continuity graph. Those hints remain soft Draft evidence only: they never create Final
+Character/Scene/Prop IDs and never make Shot-local ``subject_A`` labels global identities.
 """
 from __future__ import annotations
 
@@ -51,13 +52,6 @@ def _normalize_members(
     by_ordinal: Mapping[int, str],
     by_id: Mapping[str, int],
 ) -> list[dict[str, Any]]:
-    """Accept optional explicit member mapping while remaining backward-compatible.
-
-    Current E2 prompt only requires ``shot_ordinals``. P2-E4 also understands an optional future
-    ``members`` array if the runner/model provides it, so the storage path is ready without a
-    contract migration.
-    """
-
     if not isinstance(value, list):
         return []
     result: list[dict[str, Any]] = []
@@ -103,11 +97,7 @@ def _normalize_subject_hints(raw: Any, window: e2.EpisodeVLMWindow) -> list[dict
             continue
         appearance = _clean_text(item.get("appearance_summary"), max_len=1200)
         continuity = _clean_text(item.get("continuity_summary"), max_len=1200)
-        members = _normalize_members(
-            item.get("members"),
-            by_ordinal=by_ordinal,
-            by_id=by_id,
-        )
+        members = _normalize_members(item.get("members"), by_ordinal=by_ordinal, by_id=by_id)
         ordinals = _normalize_ordinals(item.get("shot_ordinals"), valid=valid_ordinals)
         for member in members:
             ordinal = int(member["ordinal"])
@@ -116,7 +106,6 @@ def _normalize_subject_hints(raw: Any, window: e2.EpisodeVLMWindow) -> list[dict
         if not appearance and not continuity:
             continue
         if len(ordinals) < 2 and len(members) < 2:
-            # A continuity hint needs at least two temporal observations to be useful for E4.
             continue
         result.append({
             "appearance_summary": appearance,
@@ -150,7 +139,7 @@ def _normalize_prop_hints(raw: Any, window: e2.EpisodeVLMWindow) -> list[dict[st
 
 
 class Qwen3VLSemanticProvider(runtime.Qwen3VLSemanticProvider):
-    """Composite E2+E3 production provider that preserves E2 window continuity hints."""
+    """Fast-grounded production provider with E4 continuity-hint normalization."""
 
     def _normalize_window_summary(
         self,
@@ -159,22 +148,25 @@ class Qwen3VLSemanticProvider(runtime.Qwen3VLSemanticProvider):
     ) -> dict[str, Any]:
         normalized = dict(super()._normalize_window_summary(raw, window))
         normalized["subject_continuity_hints"] = _normalize_subject_hints(
-            raw.get("subject_continuity_hints"),
-            window,
+            raw.get("subject_continuity_hints"), window
         )
         normalized["prop_continuity_hints"] = _normalize_prop_hints(
-            raw.get("prop_continuity_hints"),
-            window,
+            raw.get("prop_continuity_hints"), window
         )
         normalized["continuity_preservation_profile"] = VLM_CONTINUITY_PRESERVATION_PROFILE
         return normalized
 
 
-# Preserve the stable runtime tuning/export surface used by CLI/tests.
 DEFAULT_WINDOW_OVERLAP_RATIO = runtime.DEFAULT_WINDOW_OVERLAP_RATIO
 DEFAULT_WINDOW_SECONDS = runtime.DEFAULT_WINDOW_SECONDS
+DEFAULT_WINDOW_CONTEXT_FPS = runtime.DEFAULT_WINDOW_CONTEXT_FPS
+DEFAULT_WINDOW_MAX_PIXELS = runtime.DEFAULT_WINDOW_MAX_PIXELS
+DEFAULT_EXACT_SHOT_MAX_PIXELS = runtime.DEFAULT_EXACT_SHOT_MAX_PIXELS
+DEFAULT_GROUNDING_BATCH_SIZE = runtime.DEFAULT_GROUNDING_BATCH_SIZE
 VLM_DRAFT_TEXT_LANGUAGE = runtime.VLM_DRAFT_TEXT_LANGUAGE
 VLM_EPISODE_WINDOW_PROFILE = runtime.VLM_EPISODE_WINDOW_PROFILE
+VLM_FAST_GROUNDED_PROFILE = runtime.VLM_FAST_GROUNDED_PROFILE
+VLM_EXACT_SHOT_GROUNDING_PROFILE = runtime.VLM_EXACT_SHOT_GROUNDING_PROFILE
 VLM_PROMPT_PROFILE = runtime.VLM_PROMPT_PROFILE
 VLM_WINDOW_SCHEMA = runtime.VLM_WINDOW_SCHEMA
 VLM_CONTEXTUAL_REFINEMENT_PROFILE = runtime.VLM_CONTEXTUAL_REFINEMENT_PROFILE
@@ -185,6 +177,10 @@ VLMRuntimeConfig = runtime.VLMRuntimeConfig
 
 
 __all__ = [
+    "DEFAULT_EXACT_SHOT_MAX_PIXELS",
+    "DEFAULT_GROUNDING_BATCH_SIZE",
+    "DEFAULT_WINDOW_CONTEXT_FPS",
+    "DEFAULT_WINDOW_MAX_PIXELS",
     "DEFAULT_WINDOW_OVERLAP_RATIO",
     "DEFAULT_WINDOW_SECONDS",
     "Qwen3VLSemanticProvider",
@@ -195,6 +191,8 @@ __all__ = [
     "VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE",
     "VLM_DRAFT_TEXT_LANGUAGE",
     "VLM_EPISODE_WINDOW_PROFILE",
+    "VLM_EXACT_SHOT_GROUNDING_PROFILE",
+    "VLM_FAST_GROUNDED_PROFILE",
     "VLM_PROMPT_PROFILE",
     "VLM_WINDOW_SCHEMA",
     "VLMRuntimeConfig",
