@@ -2,6 +2,8 @@
 
 P1 read endpoints remain history-safe. P2 write endpoints only enqueue background execution of the
 formal ASR -> OCR -> VLM -> Fusion pipeline; they do not expose lower-level provider writes.
+G1 diagnostic endpoints are strictly read-only: they inspect already-completed Fast Grounded Runs
+and never start providers, mutate Draft rows or write acceptance artifacts.
 """
 from __future__ import annotations
 
@@ -12,6 +14,9 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from engine.app.breakdown_g1_acceptance_diagnostics_v1 import build_g1_acceptance_snapshot
+from engine.app.breakdown_g1_acceptance_summary_v1 import build_g1_console_summary
+from engine.app.breakdown_g1_run_selector_v1 import resolve_g1_run_selection
 from engine.app.breakdown_p2_acceptance_v1 import (
     build_acceptance_report,
     collect_p2_runtime_preflight,
@@ -127,6 +132,28 @@ def _enqueue(
 
 def _stage_label(stage: str) -> str:
     return _STAGE_LABELS.get(stage, stage)
+
+
+def _g1_diagnostics_payload(
+    *,
+    run_id: str | None = None,
+    episode_id: str | None = None,
+) -> dict[str, Any]:
+    """Build one read-only API payload for an already-completed Fast Grounded Run."""
+
+    selection = resolve_g1_run_selection(
+        run_id=run_id,
+        episode_id=episode_id,
+        latest=False,
+    )
+    snapshot = dict(build_g1_acceptance_snapshot(selection.run_id))
+    selection_payload = selection.as_dict()
+    snapshot["selection"] = selection_payload
+    return {
+        "selection": selection_payload,
+        "summary": build_g1_console_summary(snapshot),
+        "diagnostics": snapshot,
+    }
 
 
 def run_episode_breakdown_task(task_id: str, episode_id: str) -> None:
@@ -252,6 +279,20 @@ def api_get_current_breakdown(episode_id: str) -> dict[str, Any] | None:
         raise _not_found(str(exc)) from exc
 
 
+@router.get("/episodes/{episode_id}/breakdown-g1-diagnostics")
+def api_get_episode_g1_diagnostics(episode_id: str) -> dict[str, Any]:
+    """读取该 Episode 当前/最近已完成 Fast Grounded Run 的 G1 验收诊断，不写任何数据。"""
+
+    if get_episode(episode_id) is None:
+        raise _not_found("剧集不存在")
+    try:
+        return _g1_diagnostics_payload(episode_id=episode_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/breakdown-runs/{run_id}")
 def api_get_breakdown_run(run_id: str) -> dict[str, Any]:
     """读取指定 Run 的完整结构化 Draft；历史 FAILED/STALE Run 仍可查看。"""
@@ -260,6 +301,18 @@ def api_get_breakdown_run(run_id: str) -> dict[str, Any]:
     if payload is None:
         raise _not_found("Breakdown Run 不存在")
     return payload
+
+
+@router.get("/breakdown-runs/{run_id}/g1-diagnostics")
+def api_get_run_g1_diagnostics(run_id: str) -> dict[str, Any]:
+    """读取指定已完成 Fast Grounded Run 的 G1 验收诊断，不写 artifact、不改变验收状态。"""
+
+    try:
+        return _g1_diagnostics_payload(run_id=run_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/episodes/{episode_id}/tasks/breakdown", status_code=202)
