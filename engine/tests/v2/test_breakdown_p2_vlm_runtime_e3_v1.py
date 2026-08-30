@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from engine.app import breakdown_p2_vlm_fast_grounded_v1 as fast
 from engine.app import breakdown_p2_vlm_runtime_v1 as runtime
 
 
@@ -43,7 +44,9 @@ def semantic(summary: str) -> dict:
     }
 
 
-def test_text_only_e3_cannot_replace_visual_presence_or_photographic_facts() -> None:
+def test_historical_e3_grounding_helper_still_preserves_original_visual_presence() -> None:
+    """Old artifacts/tests may still use the helper even though E3 is retired from production."""
+
     e2 = semantic("E2 当前镜头")
     refined = semantic("结合对白后的当前镜头摘要")
     refined["scene"] = {
@@ -102,5 +105,9 @@ def test_text_only_e3_cannot_replace_visual_presence_or_photographic_facts() -> 
     assert grounded["events"] == e2["events"]
     assert [item["label"] for item in grounded["props"]] == ["手机"]
     assert grounded["props"][0]["importance"] == "HIGH"
-    assert grounded["props"][0]["narrative_reason"] == "结合上下文可知手机消息推动剧情。"
-    assert runtime.VLM_CONTEXTUAL_GROUNDING_POLICY == "e3-text-only-preserve-e2-visual-facts-v1"
+
+
+def test_production_runtime_is_fast_grounded_not_e3() -> None:
+    assert issubclass(runtime.Qwen3VLSemanticProvider, fast.Qwen3VLSemanticProvider)
+    assert runtime.VLM_CONTEXTUAL_GROUNDING_POLICY == fast.VISUAL_TRUTH_POLICY
+    assert runtime.VLM_CONTEXTUAL_FAILURE_POLICY == "retired-from-production-fast-grounded-v1"
