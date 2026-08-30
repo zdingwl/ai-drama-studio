@@ -1,6 +1,6 @@
 # Breakdown G1 VLM runtime setup
 
-Production Fast Grounded uses the original model checkpoint:
+Fast Grounded production requires the original checkpoint:
 
 ```text
 Qwen/Qwen3-VL-4B-Instruct
@@ -12,24 +12,38 @@ Default local path:
 .runtime/TransVLM/inference/pretrained/Qwen3-VL-4B-Instruct
 ```
 
-Prepare it with:
+The repository already provides the dedicated setup script:
 
 ```powershell
-git pull
+.\scripts\setup_breakdown_vlm_runtime.ps1
+```
+
+It reuses the isolated TransVLM/Qwen Python runtime, verifies the required Qwen3-VL/decord dependencies,
+downloads the original Qwen3-VL checkpoint when it is missing, and runs the strict-reader CLI self-check.
+
+If the isolated runtime itself is missing, first run:
+
+```powershell
+.\scripts\setup_transvlm_runtime.ps1
+```
+
+Then run:
+
+```powershell
 .\scripts\setup_breakdown_vlm_runtime.ps1
 python scripts\run_breakdown_p2.py preflight --strict
 ```
 
-If `.runtime\TransVLM\inference\.venv\Scripts\python.exe` is missing, run
-`.\scripts\setup_transvlm_runtime.ps1` first.
+The error:
 
-`-CheckOnly` verifies an existing checkpoint without downloading:
-
-```powershell
-.\scripts\setup_breakdown_vlm_runtime.ps1 -CheckOnly
+```text
+fast-grounded VLM runtime is not available: Qwen3-VL-4B-Instruct checkpoint
 ```
 
-`AI_DRAMA_P2_VLM_MODEL_PATH` may override the default local path. The production provider and setup
-helper use the same path contract.
+means the production checkpoint directory is not ready. Do not manually copy a TransVLM fine-tuned
+checkpoint into this directory: Breakdown intentionally uses the original `Qwen/Qwen3-VL-4B-Instruct`.
 
-A preflight READY result means the local runtime exists; it does not by itself make G1/P2.6 a quality PASS.
+After preflight becomes READY, rerun the affected Episode Breakdown. A Run that already stopped with
+`VLM=NOT_AVAILABLE` cannot contain a complete anonymous Draft.
+
+Preflight/runtime readiness is not G1/P2.6 quality acceptance.

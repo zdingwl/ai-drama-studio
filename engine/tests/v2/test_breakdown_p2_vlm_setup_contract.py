@@ -14,12 +14,13 @@ def test_breakdown_vlm_default_checkpoint_path_matches_setup_script(monkeypatch)
     assert provider.model_name == "Qwen/Qwen3-VL-4B-Instruct"
 
 
-def test_breakdown_vlm_setup_script_provisions_production_checkpoint() -> None:
+def test_existing_breakdown_vlm_setup_script_provisions_production_checkpoint() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     script = (repo_root / "scripts" / "setup_breakdown_vlm_runtime.ps1").read_text(encoding="utf-8")
 
     assert "Qwen/Qwen3-VL-4B-Instruct" in script
     assert "pretrained\\Qwen3-VL-4B-Instruct" in script
     assert "snapshot_download" in script
-    assert "local_files_only=True" in script
-    assert "run_breakdown_p2.py preflight --strict" in script
+    assert "qwen-vl-utils>=0.0.14" in script
+    assert "decord" in script
+    assert "run_breakdown_vlm_qwen3_strict_reader.py" in script
