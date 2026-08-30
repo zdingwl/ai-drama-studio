@@ -12,6 +12,7 @@ runtime -> roughly 5~6 hour class
 Scene 04 / 19 Shots -> 14 LocalSubjects although visible cast stayed one woman + one man
 Shot 0001 visible frame -> blue roses in a vase
 old result -> "young woman's face close-up / surprised"
+legacy E3 -> 30/30 TimeoutExpired fallback
 ```
 
 A competitor reference also showed a more useful product shape: Scene header + cast/props + timestamped visual/action/dialogue timeline, rather than one large database-style card per Shot.
@@ -40,13 +41,13 @@ New isolated runner:
 scripts/run_breakdown_vlm_fast_grounded_qwen3.py
 ```
 
-Stable runtime switched:
+Stable runtime:
 
 ```text
 engine/app/breakdown_p2_vlm_runtime_v1.py
 ```
 
-Pipeline still imports:
+Pipeline import surface:
 
 ```text
 engine/app/breakdown_p2_vlm_continuity_v1.py
@@ -96,17 +97,7 @@ Phase B — Exact-Shot frame grounding:
 default 5 Shots per image batch
 ```
 
-Visible truth comes only from the exact frozen Shot images:
-
-```text
-shot summary / visual description
-shot type / composition
-subjects
-current actions/events
-visible plot-relevant props
-```
-
-Window context may only conservatively fill Scene fields.
+Visible truth comes only from exact frozen Shot images. Window context may only conservatively fill Scene fields.
 
 Mandatory regression:
 
@@ -115,6 +106,8 @@ Shot 0001 blue roses/vase
 => subjects=[]
 => no neighboring woman leak
 ```
+
+The runner was additionally hardened so malformed optional model ordinals do not crash Scene-context matching.
 
 ## Legacy E3
 
@@ -125,7 +118,7 @@ engine/app/breakdown_p2_refinement_v1.py
 scripts/run_breakdown_refinement_qwen3.py
 ```
 
-Compatibility helper exports remain in `breakdown_p2_vlm_runtime_v1.py` so historical tests/reports do not need a destructive cleanup.
+Compatibility helper exports remain in `breakdown_p2_vlm_runtime_v1.py`; historical E2/E3 tests were aligned so they test historical helpers without claiming E3 is current production truth.
 
 ## E4
 
@@ -133,26 +126,20 @@ Compatibility helper exports remain in `breakdown_p2_vlm_runtime_v1.py` so histo
 
 It now receives exact-Shot grounded subjects plus Window Context continuity hints. Character V10.1 and Final Asset gates are untouched.
 
-## Test coverage added
+## Test coverage
 
 ```text
 engine/tests/v2/test_breakdown_p2_fast_grounded_v1.py
+engine/tests/v2/test_breakdown_p2_e4_subject_continuity.py
 ```
 
-Covers:
+Fast Grounded coverage includes frame sampling, Scene-only context inheritance, no neighbor people/props leakage and production runtime wiring.
 
-```text
-frame sampling policy
-Scene-only context inheritance
-no neighbor people/props leakage into exact Shot
-stable runtime wiring to Fast Grounded provider
-```
-
-Repository test code was added, but no local pytest/Qwen/CUDA execution was available in this development environment. Do not report these tests as passed yet.
+No local pytest/Qwen/CUDA execution was available. A best-effort local clone for syntax validation also failed because this execution environment could not resolve `github.com`. Do not report tests or model quality as passed yet.
 
 ## Acceptance/preflight
 
-`engine/app/breakdown_p2_acceptance_v1.py` now imports the production OCR + continuity/Fast-Grounded VLM provider, so runtime preflight points to the current runner rather than the historical single-Shot Qwen runner.
+`engine/app/breakdown_p2_acceptance_v1.py` now imports the production OCR and continuity/Fast-Grounded VLM provider, so runtime preflight points to the current runner/model parameters rather than the historical single-Shot Qwen runner.
 
 Preflight remains environment-only and is not model-quality/performance PASS.
 
@@ -164,6 +151,7 @@ SKILL.md
 docs/PROJECT_STATE.md
 docs/CURRENT_IMPLEMENTATION_MANIFEST.md
 docs/BREAKDOWN_FAST_GROUNDED_V2_PLAN.md
+docs/BREAKDOWN_EPISODE_CONTEXT_PLAN.md
 docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
 ```
 
