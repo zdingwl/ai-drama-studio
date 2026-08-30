@@ -1,4 +1,7 @@
-param()
+param(
+    [string]$ModelId = 'Qwen/Qwen3-VL-4B-Instruct',
+    [switch]$CheckOnly
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -6,66 +9,74 @@ Set-StrictMode -Version Latest
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $InferenceRoot = Join-Path $RepoRoot '.runtime\TransVLM\inference'
 $PythonExe = Join-Path $InferenceRoot '.venv\Scripts\python.exe'
-$ModelDir = Join-Path $InferenceRoot 'pretrained\Qwen3-VL-4B-Instruct'
-$Runner = Join-Path $RepoRoot 'scripts\run_breakdown_vlm_qwen3_strict_reader.py'
-$IsWindowsPlatform = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
-
-if (-not (Test-Path $PythonExe)) {
-    throw 'Isolated TransVLM/Qwen runtime is missing. Run scripts/setup_transvlm_runtime.ps1 first.'
-}
-if (-not (Test-Path $Runner)) {
-    throw "Missing P2.4 strict diagnostic runner: $Runner"
+$DefaultModelDir = Join-Path $InferenceRoot 'pretrained\Qwen3-VL-4B-Instruct'
+$ModelDir = if ($env:AI_DRAMA_P2_VLM_MODEL_PATH) {
+    [System.IO.Path]::GetFullPath($env:AI_DRAMA_P2_VLM_MODEL_PATH)
+} else {
+    $DefaultModelDir
 }
 
-Write-Host '[Breakdown VLM] Verifying isolated Qwen3-VL runtime.'
-& $PythonExe -c "import importlib.metadata as m; from packaging.version import Version; import torch, transformers, qwen_vl_utils, huggingface_hub, decord; from transformers import Qwen3VLForConditionalGeneration, AutoProcessor; qv=m.version('qwen-vl-utils'); assert Version(qv) >= Version('0.0.14'), 'qwen-vl-utils>=0.0.14 required'; print('runtime=OK'); print('torch=' + torch.__version__); print('transformers=' + transformers.__version__); print('qwen-vl-utils=' + qv); print('decord=' + getattr(decord, '__version__', 'unknown'))"
-if ($LASTEXITCODE -ne 0) {
-    throw 'The isolated runtime is missing the current Qwen3-VL/decord dependencies. Run scripts/setup_transvlm_runtime.ps1 again, then retry this setup.'
+function Require-File([string]$PathValue, [string]$Label) {
+    if (-not (Test-Path -LiteralPath $PathValue -PathType Leaf)) {
+        throw "Missing $Label`: $PathValue"
+    }
 }
 
-if (-not (Test-Path (Join-Path $ModelDir 'config.json'))) {
+function Test-Checkpoint([string]$PathValue) {
+    if (-not (Test-Path -LiteralPath $PathValue -PathType Container)) {
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $PathValue 'config.json') -PathType Leaf)) {
+        return $false
+    }
+    $weights = Get-ChildItem -LiteralPath $PathValue -Filter '*.safetensors' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    return $null -ne $weights
+}
+
+Write-Host '[Breakdown G1 VLM] Runtime setup'
+Write-Host "  Python: $PythonExe"
+Write-Host "  Model:  $ModelId"
+Write-Host "  Path:   $ModelDir"
+
+if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
+    throw "Missing isolated Qwen runtime: $PythonExe`nRun .\scripts\setup_transvlm_runtime.ps1 first."
+}
+
+if (-not $CheckOnly) {
     New-Item -ItemType Directory -Force -Path $ModelDir | Out-Null
-    $env:AI_DRAMA_P2_VLM_SETUP_MODEL = $ModelDir
+    $env:AI_DRAMA_P2_VLM_SETUP_MODEL_ID = $ModelId
+    $env:AI_DRAMA_P2_VLM_SETUP_MODEL_PATH = $ModelDir
     try {
-        Write-Host '[Breakdown VLM] Downloading official Qwen/Qwen3-VL-4B-Instruct checkpoint.'
-        & $PythonExe -c "import os; from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen3-VL-4B-Instruct', local_dir=os.environ['AI_DRAMA_P2_VLM_SETUP_MODEL'])"
+        Write-Host '[Breakdown G1 VLM] Downloading/resuming the production Qwen3-VL checkpoint.'
+        & $PythonExe -c "import os; from huggingface_hub import snapshot_download; snapshot_download(os.environ['AI_DRAMA_P2_VLM_SETUP_MODEL_ID'], local_dir=os.environ['AI_DRAMA_P2_VLM_SETUP_MODEL_PATH'])"
         if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to download Qwen3-VL-4B-Instruct.'
+            throw 'Failed to download the Breakdown G1 VLM checkpoint.'
         }
     } finally {
-        Remove-Item Env:AI_DRAMA_P2_VLM_SETUP_MODEL -ErrorAction SilentlyContinue
+        Remove-Item Env:AI_DRAMA_P2_VLM_SETUP_MODEL_ID -ErrorAction SilentlyContinue
+        Remove-Item Env:AI_DRAMA_P2_VLM_SETUP_MODEL_PATH -ErrorAction SilentlyContinue
     }
-} else {
-    Write-Host '[Breakdown VLM] Qwen3-VL-4B-Instruct checkpoint already exists.'
 }
 
-Write-Host '[Breakdown VLM] Running production strict-reader runner CLI self-check.'
-$PreviousReader = $env:FORCE_QWENVL_VIDEO_READER
+if (-not (Test-Checkpoint $ModelDir)) {
+    throw "Breakdown G1 VLM checkpoint is incomplete: $ModelDir"
+}
+
+Require-File (Join-Path $ModelDir 'config.json') 'Qwen3-VL config.json'
+
+Write-Host '[Breakdown G1 VLM] Verifying local-only Transformers/processor load.'
+$env:AI_DRAMA_P2_VLM_VERIFY_PATH = $ModelDir
 try {
-    if ($IsWindowsPlatform) {
-        $env:FORCE_QWENVL_VIDEO_READER = 'decord'
-    }
-    & $PythonExe $Runner --help | Out-Null
+    & $PythonExe -c "import os; from transformers import AutoConfig, AutoProcessor; p=os.environ['AI_DRAMA_P2_VLM_VERIFY_PATH']; AutoConfig.from_pretrained(p, local_files_only=True); AutoProcessor.from_pretrained(p, local_files_only=True); import qwen_vl_utils; print('qwen3-vl-runtime=OK')"
     if ($LASTEXITCODE -ne 0) {
-        throw 'P2.4 Qwen3-VL strict-reader runner self-check failed.'
+        throw 'Qwen3-VL local-only processor/config verification failed.'
     }
 } finally {
-    if ($null -eq $PreviousReader) {
-        Remove-Item Env:FORCE_QWENVL_VIDEO_READER -ErrorAction SilentlyContinue
-    } else {
-        $env:FORCE_QWENVL_VIDEO_READER = $PreviousReader
-    }
+    Remove-Item Env:AI_DRAMA_P2_VLM_VERIFY_PATH -ErrorAction SilentlyContinue
 }
 
 Write-Host ''
-Write-Host '[Breakdown VLM] READY' -ForegroundColor Green
-Write-Host "  Python: $PythonExe"
-Write-Host "  Model:  $ModelDir"
-Write-Host '  Provider: qwen3-vl'
-Write-Host '  Draft 文案: 简体中文 (zh-CN)'
-Write-Host '  Prompt Profile: breakdown-p2-vlm-zh-draft-v1'
-Write-Host '  ASR / OCR: 保留原始语言与原始文字，不在 VLM 中翻译'
-if ($IsWindowsPlatform) {
-    Write-Host '  Video reader: decord (strict; torchvision fallback disabled)'
-}
-Write-Host '  Production inference is offline; model download occurs only in setup.'
+Write-Host '[Breakdown G1 VLM] READY' -ForegroundColor Green
+Write-Host "  Checkpoint: $ModelDir"
+Write-Host '  Production profile: breakdown-p2-vlm-fast-grounded-v1'
+Write-Host 'Next: python scripts\run_breakdown_p2.py preflight --strict'
