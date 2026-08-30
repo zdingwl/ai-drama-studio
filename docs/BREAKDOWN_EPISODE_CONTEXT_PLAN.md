@@ -6,16 +6,16 @@
 > **Repository:** `zdingwl/ai-drama-studio`  
 > **Architecture:** Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1
 
-当前可执行实现请优先读取：
+当前可执行实现优先读取：
 
 ```text
 docs/BREAKDOWN_FAST_GROUNDED_V2_PLAN.md
 engine/app/breakdown_p2_vlm_fast_grounded_v1.py
-scripts/run_breakdown_vlm_fast_grounded_qwen3.py
 engine/app/breakdown_p2_fusion_episode_v4.py
+scripts/inspect_breakdown_g1_run.py
 ```
 
-本文件保留 Episode-context 的长期语义原则和 E1/E4 历史背景；旧的“E2 full Shot semantics -> text-only per-Shot E3”不再是 production truth。
+本文件保留 Episode-context 长期语义原则；旧的 `E2 full Shot semantics -> text-only per-Shot E3` 已退出 production。
 
 ## 1. 长期核心原则
 
@@ -47,12 +47,12 @@ Episode 原视频 / proxy / audio
    ├─ overlapping Window Context
    │    Scene + anonymous subject/prop continuity only
    └─ Exact-Shot frame grounding
-        visible facts only from current frozen Shot images
+        current-Shot visible facts only from exact frozen Shot images
 → P2-E4 Episode-context Fusion
 → anonymous Breakdown Draft
 → P1 validator
 → human acceptance
-→ 03 资产 Evidence 验证
+→ later asset Evidence verification
 → Final Asset / Binding
 ```
 
@@ -64,18 +64,17 @@ Scene + grounded visual facts + ASR + OCR + E4 continuity
 → Scene Timeline Breakdown
 ```
 
-## 3. E1 Scene / Dialogue rules（仍有效）
+## 3. Scene / Dialogue rules
 
 Scene：
 
 ```text
 明确地点 -> current Scene anchor
-UNKNOWN / 特写 / 虚化 / 泛化“室内/房间” -> 继承 current Scene
+UNKNOWN / 特写 / 虚化 / 泛化室内 -> inherit current Scene
 兼容具体化 -> same Scene
-明确地点冲突或 INT ↔ EXT 强冲突 -> new Scene
+明确地点冲突或 INT↔EXT 强冲突 -> new Scene
+看不出来 != 换场
 ```
-
-Rule: `看不出来 != 换场`.
 
 Dialogue：
 
@@ -84,54 +83,27 @@ ASR_SEGMENT = Episode-time 对白文本真值
 Shot DIALOGUE TimelineEvent = 对白在 Shot 上的投影
 ```
 
-跨镜一句话保留完整文本和 shared dialogue group/projection/continuation metadata。UI 不重复显示 continuation projection。
+跨镜一句话保留完整文本与 shared group/projection/continuation metadata；UI 不重复显示 continuation projection。
 
-## 4. 为什么旧 E2 full-Shot Window 输出被替换
+## 4. 为什么旧 E2/E3 被替换
 
-旧 E2 使用 overlapping continuous-window Qwen3-VL，同时要求一个 window 生成每个 Shot 的：
-
-```text
-scene / shot / subjects / events / props
-```
-
-真实案例暴露：
+旧 E2 把连续 window context 与 current-Shot visible truth 混在一起，真实案例中：
 
 ```text
-Shot 0001 实际只有蓝色玫瑰/花瓶
-旧 window semantic 却写成邻镜“年轻女性面部特写，表情惊讶”
+Shot0001 实际 = 蓝色玫瑰 / 花瓶
+旧 semantic = 邻镜年轻女性面部特写
 ```
-
-原因不是“没有连续上下文”，而是连续上下文和 exact-Shot visible truth 没有分层。
 
 Fast Grounded 改为：
 
 ```text
-Window -> context/continuity only
-Exact Shot -> visible fact truth
+Window -> continuity/context only
+Exact Shot -> current visible fact truth
 ```
 
-## 5. 为什么旧 E3 被退出 production
+旧 E3 是 text-only refinement，却逐 Shot 加载/调用视觉模型；历史 30-Shot Run 中 `30/30 TimeoutExpired`，且无法可靠修正已串错的视觉事实，因此已退出 production。
 
-旧 E3 是 text-only contextual refinement，但继续加载 Qwen3-VL 并逐 Shot 调用。
-
-真实 30-Shot Run：
-
-```text
-30/30 TimeoutExpired
-全部 FALLBACK_E2
-```
-
-同时 E3 不重新看 exact Shot，因此无法可靠修复 E2 已经串错的视觉事实。
-
-当前决定：
-
-```text
-legacy E3 modules = historical comparison/tests only
-G1 Exact-Shot Grounding = current visual correction layer
-G2 Scene-level pure-text LLM = planned language organization layer
-```
-
-## 6. P2-E4 anonymous Subject Continuity Graph（仍有效）
+## 5. P2-E4 anonymous Subject Continuity Graph
 
 生产模块：
 
@@ -143,25 +115,23 @@ profile = breakdown-p2-fusion-episode-context-e4-v1
 语义：
 
 ```text
-Shot-local subject_A/B = current Shot observation label
+subject_A/B = Shot-local observation label
 anonymous graph node = (ShotRevisionItem, subject label)
 LocalSubject = Scene-scoped anonymous continuity cluster
 LocalSubject != Character
 ```
 
-Primary positive edge：Window Context `subject_continuity_hint`。
+Primary positive edge：Window Context `subject_continuity_hint`。  
+Fallback：近邻 Shot 的强稳定外观相似。  
+同一 Shot 两个 observations = hard cannot-link。
 
-Fallback：相邻/近邻 Shot 的强稳定外观相似。
-
-动态状态不能做身份 key：
+动态状态不能做 identity key：
 
 ```text
 表情 / 情绪 / 动作 / 姿态 / 手势 / speaking / screen position / framing
 ```
 
-同一 Shot 两个 observations = hard cannot-link，且通过 union graph 传递安全。
-
-## 7. Fast Grounded G1 当前参数
+## 6. Fast Grounded G1 当前参数
 
 ```text
 Window target = 24s
@@ -176,24 +146,51 @@ Grounding batch = 5 Shots default
 Model load = one subprocess / one Qwen3-VL load per Episode run
 ```
 
-详细 Contract、速度预算和验收见 `docs/BREAKDOWN_FAST_GROUNDED_V2_PLAN.md`。
+## 7. 当前真实重跑状态
 
-## 8. Performance requirement
-
-Reference：60 秒 / ~30 Shots / ~4 Scenes。
+历史 pre-Fast-Grounded Run 仍作为失败基线：
 
 ```text
-first target < 30 min total
-later target = 10..20 minute class
-60s -> 5..6h = FAIL
+30 Shots
+21 LocalSubjects
+old Scene04 / 19 Shots -> 14 LocalSubjects
+actual cast -> mainly one woman + one man
+Shot0001 blue roses/vase -> neighboring woman leakage
+multi-hour runtime class
 ```
 
-这些是工程预算，必须用 Windows/CUDA 实测确认，不能由代码存在自动变成 PASS。
-
-## 9. 当前验收真值
+Fast Grounded V2 已完成真实重跑。当前 UI：
 
 ```text
-latest real run = REJECTED (pre Fast Grounded)
+30 Shots
+4 Scenes
+Scene01 5 Shots
+Scene02 5 Shots
+Scene03 2 Shots
+Scene04 18 Shots
+```
+
+已确认：
+
+```text
+Shot0001 = blue roses / glass vase
+subjects=[]
+neighbor woman leakage no longer observed
+```
+
+尚未完成：
+
+```text
+Scene04 anonymous continuity review
+same-Shot cannot-link real review
+4 Scene boundary review
+whole-run elapsed review
+ASR/OCR/VLM timings review
+```
+
+所以当前仍是：
+
+```text
 Fast Grounded G1 = IMPLEMENTED / LOCAL-REAL PENDING
 P2-E4 under grounded input = LOCAL-REAL PENDING
 G2 Scene text LLM = NOT IMPLEMENTED
@@ -201,28 +198,51 @@ Scene Timeline UI = NOT IMPLEMENTED
 P2.6 = NOT PASSED
 ```
 
-下一真实 Run 必须先验证：
+## 8. 当前正确的验收动作
+
+不要再次重跑模型来“获取验收信息”。先读取已经完成的 Run：
+
+```powershell
+git pull
+python scripts/inspect_breakdown_g1_run.py --latest --summary
+```
+
+该工具会自动选择 completed Fast Grounded Run，并展示：
 
 ```text
-Shot 0001 蓝玫瑰不串入邻镜女性
-closeup/insert Scene continuity 不回退
-真实换场仍正确
-Scene 04 / 19 Shots / 一女一男 -> roughly 2 LocalSubjects
-same-Shot cannot-link 保持
-跨镜对白保持完整且 UI 不重复
-实际耗时显著下降
-Character V10.1 / Final Asset 不被 Breakdown 写入
+Shot0001 final Draft
+Scene boundaries
+Scene04 LocalSubjects + source_members
+same_shot_cluster_conflicts
+whole-run elapsed
+ASR/OCR/VLM timings
+OCR short-noise samples
 ```
+
+只有当发现具体 G1 问题并修改了 G1 后，才需要重新跑 Episode。
+
+## 9. Performance requirement
+
+Reference：~60 秒 / ~30 Shots / ~4 Scenes。
+
+```text
+first target < 30 min total
+later target = 10..20 minute class
+60s -> 5..6h = FAIL
+```
+
+权威整链时间：`BreakdownRun.started_at -> completed_at`。Provider timings 当前只保存 ASR/OCR/VLM。
 
 ## 10. Next
 
 ```text
-git pull
-→ 同一个失败 Episode 重新拉片
-→ 先看 Shot 0001
-→ 再看 Scene 04 anonymous continuity
-→ 记录时间
-→ G1 有问题先修 G1
-→ G1 通过后再实现 G2 Scene LLM / Scene Timeline UI
-→ P5 继续暂停直到 P2.6 真 PASS
+inspect existing Fast Grounded Run
+→ judge Scene04 anonymous continuity
+→ require same_shot_cluster_conflicts=[]
+→ judge whether 4 Scene boundaries are real
+→ record whole-run + provider timings
+→ record OCR noise only
+→ if G1 fails: fix G1 and rerun
+→ if G1 acceptable: begin G2 Scene-level pure-text LLM
+→ P5 stays paused until P2.6 genuinely passes
 ```
