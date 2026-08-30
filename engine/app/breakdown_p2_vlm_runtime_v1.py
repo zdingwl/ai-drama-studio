@@ -1,326 +1,47 @@
-"""Stable production Qwen3-VL runtime entry for Episode-context Breakdown.
+"""Stable production VLM entry for fast grounded Episode Breakdown.
 
-Production visual understanding is composite:
-P2-E2 overlapping Episode windows -> P2-E3 contextual Shot refinement -> deterministic
-current-Shot grounding guard. The final frozen VLM sidecar keeps E2 semantics in
-``payload.e2_semantic`` and exposes the grounded E3 semantic in ``payload.semantic`` for the
-existing Episode-context Fusion.
+Production no longer runs the old text-only per-Shot E3 pass. The active visual chain is:
 
-E3 is a refinement layer, not source truth. If E2 is READY but E3 cannot run, production now
-fails soft to the validated E2 semantics with explicit fallback provenance instead of discarding
-the whole BreakdownRun. E2 failures still fail closed.
+Episode-window context (cheap, low FPS)
+→ exact frozen Shot frame grounding (1..3 frames, small batches)
+→ one immutable exact-Shot VLM_OUTPUT sidecar
+→ E4 Episode Fusion.
 
-The legacy single-Reference-Clip provider remains in ``breakdown_p2_vlm_v1`` for historical
-contract tests; the pure E2 provider remains in ``breakdown_p2_vlm_episode_v2`` for E2 tests.
+Both visual passes execute in one isolated Qwen3-VL subprocess/model load. Window context may
+help Scene fields only; exact-Shot frames are authoritative for visible people/actions/props and
+shot photographic facts. The old E2/E3 modules remain in the repository for historical tests and
+comparison, but they are no longer production truth through this stable runtime entry.
 """
 from __future__ import annotations
 
-from typing import Any, Mapping
-
-from engine.app import breakdown_p2_refinement_v1 as refinement
 from engine.app import breakdown_p2_sidecar_v1 as p2
-from engine.app import breakdown_p2_vlm_episode_v2 as episode_window
+from engine.app import breakdown_p2_vlm_fast_grounded_v1 as fast
 from engine.app.breakdown_p2_vlm_v1 import VLMRuntimeConfig
 
-DEFAULT_WINDOW_OVERLAP_RATIO = episode_window.DEFAULT_WINDOW_OVERLAP_RATIO
-DEFAULT_WINDOW_SECONDS = episode_window.DEFAULT_WINDOW_SECONDS
-VLM_DRAFT_TEXT_LANGUAGE = episode_window.VLM_DRAFT_TEXT_LANGUAGE
-VLM_EPISODE_WINDOW_PROFILE = episode_window.VLM_EPISODE_WINDOW_PROFILE
-VLM_PROMPT_PROFILE = episode_window.VLM_PROMPT_PROFILE
-VLM_WINDOW_SCHEMA = episode_window.VLM_WINDOW_SCHEMA
-VLM_CONTEXTUAL_REFINEMENT_PROFILE = refinement.REFINEMENT_PROFILE
-VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE = refinement.REFINEMENT_PROMPT_PROFILE
-VLM_CONTEXTUAL_GROUNDING_POLICY = "e3-text-only-preserve-e2-visual-facts-v1"
-VLM_CONTEXTUAL_FAILURE_POLICY = "e3-fail-soft-to-e2-v1"
+DEFAULT_WINDOW_OVERLAP_RATIO = fast.DEFAULT_WINDOW_OVERLAP_RATIO
+DEFAULT_WINDOW_SECONDS = fast.DEFAULT_WINDOW_SECONDS
+DEFAULT_WINDOW_CONTEXT_FPS = fast.DEFAULT_WINDOW_CONTEXT_FPS
+DEFAULT_WINDOW_MAX_PIXELS = fast.DEFAULT_WINDOW_MAX_PIXELS
+DEFAULT_EXACT_SHOT_MAX_PIXELS = fast.DEFAULT_EXACT_SHOT_MAX_PIXELS
+DEFAULT_GROUNDING_BATCH_SIZE = fast.DEFAULT_GROUNDING_BATCH_SIZE
+
+VLM_DRAFT_TEXT_LANGUAGE = "zh-CN"
+VLM_EPISODE_WINDOW_PROFILE = fast.WINDOW_CONTEXT_PROFILE
+VLM_PROMPT_PROFILE = "breakdown-p2-vlm-fast-grounded-zh-v1"
+VLM_WINDOW_SCHEMA = fast.FAST_GROUNDED_SCHEMA
+VLM_FAST_GROUNDED_PROFILE = fast.FAST_GROUNDED_PROFILE
+VLM_EXACT_SHOT_GROUNDING_PROFILE = fast.EXACT_SHOT_GROUNDING_PROFILE
+VLM_CONTEXTUAL_GROUNDING_POLICY = fast.VISUAL_TRUTH_POLICY
+
+# Compatibility exports for code/tests that still import the old E3 names. They now explicitly
+# describe a retired production stage rather than pretending E3 ran.
+VLM_CONTEXTUAL_REFINEMENT_PROFILE = "breakdown-p2-contextual-shot-refinement-e3-v1"
+VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE = "breakdown-p2-contextual-shot-refinement-zh-v1"
+VLM_CONTEXTUAL_FAILURE_POLICY = "retired-from-production-fast-grounded-v1"
 
 
-def _semantic(record: p2.P2EvidenceRecord) -> Mapping[str, Any]:
-    value = record.payload.get("semantic") if isinstance(record.payload, Mapping) else None
-    return value if isinstance(value, Mapping) else {}
-
-
-def _label_key(value: Any) -> str:
-    text = " ".join(str(value or "").strip().split()).lower()
-    return "".join(char for char in text if char.isalnum())
-
-
-def _compatible_label(left: Any, right: Any) -> bool:
-    left_key = _label_key(left)
-    right_key = _label_key(right)
-    return bool(left_key and right_key) and (
-        left_key == right_key or left_key in right_key or right_key in left_key
-    )
-
-
-def _ground_contextual_semantic(
-    e2_semantic: Mapping[str, Any],
-    refined_semantic: Mapping[str, Any],
-) -> dict[str, Any]:
-    """Keep E3 contextual prose but prevent text-only E3 from inventing visual presence."""
-
-    scene = dict(e2_semantic.get("scene") or {})
-    refined_scene = refined_semantic.get("scene") if isinstance(refined_semantic.get("scene"), Mapping) else {}
-    # E3 is allowed to resolve Scene context because that is the purpose of the contextual pass.
-    for key in ("location_hint", "interior_exterior", "time_of_day", "environment_description"):
-        value = refined_scene.get(key)
-        if value not in (None, "", "UNKNOWN"):
-            scene[key] = value
-
-    shot = dict(e2_semantic.get("shot") or {})
-    refined_shot = refined_semantic.get("shot") if isinstance(refined_semantic.get("shot"), Mapping) else {}
-    # Summary/narrative purpose may use context; photographic facts stay E2-grounded.
-    for key in ("summary", "narrative_function_hint"):
-        value = refined_shot.get(key)
-        if value:
-            shot[key] = value
-
-    subjects = [
-        dict(item) for item in e2_semantic.get("subjects", []) if isinstance(item, Mapping)
-    ]
-    events = [
-        dict(item) for item in e2_semantic.get("events", []) if isinstance(item, Mapping)
-    ]
-
-    refined_props = [
-        dict(item) for item in refined_semantic.get("props", []) if isinstance(item, Mapping)
-    ]
-    props: list[dict[str, Any]] = []
-    for raw_prop in e2_semantic.get("props", []):
-        if not isinstance(raw_prop, Mapping):
-            continue
-        prop = dict(raw_prop)
-        match = next((
-            item for item in refined_props
-            if _compatible_label(raw_prop.get("label"), item.get("label"))
-        ), None)
-        if match is not None:
-            # E3 may contextualize importance/reason for an already-visible E2 prop, but never add one.
-            if match.get("importance"):
-                prop["importance"] = match["importance"]
-            if match.get("narrative_reason"):
-                prop["narrative_reason"] = match["narrative_reason"]
-        props.append(prop)
-
-    return {
-        "scene": scene,
-        "shot": shot,
-        "subjects": subjects,
-        "events": events,
-        "props": props,
-    }
-
-
-def _apply_contextual_grounding(
-    context: p2.P2RunContext,
-    e2_result: p2.P2ProviderResult,
-    refined_result: p2.P2ProviderResult,
-) -> p2.P2ProviderResult:
-    if refined_result.status != "READY":
-        return refined_result
-    e2_by_shot = {
-        str(item.shot_revision_item_id): item
-        for item in e2_result.evidence
-        if item.shot_revision_item_id
-    }
-    evidence: list[p2.P2EvidenceRecord] = []
-    for item in refined_result.evidence:
-        raw = e2_by_shot.get(str(item.shot_revision_item_id or ""))
-        if raw is None:
-            raise refinement.BreakdownP2RefinementError(
-                "E3 grounding guard 无法映射 exact E2 Shot"
-            )
-        payload = dict(item.payload)
-        e2_semantic = payload.get("e2_semantic")
-        if not isinstance(e2_semantic, Mapping):
-            e2_semantic = _semantic(raw)
-        refined_semantic = payload.get("semantic")
-        if not isinstance(refined_semantic, Mapping):
-            refined_semantic = e2_semantic
-        grounded = _ground_contextual_semantic(e2_semantic, refined_semantic)
-        payload["e2_semantic"] = dict(e2_semantic)
-        payload["semantic"] = grounded
-        contextual = payload.get("contextual_refinement")
-        if isinstance(contextual, Mapping):
-            payload["contextual_refinement"] = {
-                **dict(contextual),
-                "grounding_policy": VLM_CONTEXTUAL_GROUNDING_POLICY,
-            }
-        evidence.append(p2.P2EvidenceRecord(
-            source_type=item.source_type,
-            source_id=item.source_id,
-            source_start_us=item.source_start_us,
-            source_end_us=item.source_end_us,
-            shot_revision_item_id=item.shot_revision_item_id,
-            text=str((grounded.get("shot") or {}).get("summary") or item.text or "").strip() or None,
-            language=item.language,
-            confidence=item.confidence,
-            payload=payload,
-        ))
-
-    metadata = dict(refined_result.metadata)
-    metadata["contextual_grounding_policy"] = VLM_CONTEXTUAL_GROUNDING_POLICY
-    metadata["contextual_grounding_rule"] = (
-        "E3 may refine Scene, Shot summary/narrative purpose, and existing-prop importance/reason; "
-        "subjects/events/photographic facts/new prop presence remain E2-grounded"
-    )
-    result = p2.P2ProviderResult(
-        component=refined_result.component,
-        provider=refined_result.provider,
-        model=refined_result.model,
-        status=refined_result.status,
-        evidence=tuple(evidence),
-        metadata=metadata,
-        warnings=refined_result.warnings,
-    )
-    p2.validate_provider_result(context, result)
-    return result
-
-
-def _with_e2_runtime_diagnostics(result: p2.P2ProviderResult) -> p2.P2ProviderResult:
-    """Promote sanitized E2 subprocess/window diagnostics into the first warning."""
-
-    if result.status == "READY":
-        return result
-    metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-    details: list[str] = []
-    subprocess_detail = " ".join(str(metadata.get("subprocess_failure_detail") or "").split())
-    if subprocess_detail:
-        details.append(subprocess_detail[:1200])
-    raw_window_details = metadata.get("window_failure_details")
-    if isinstance(raw_window_details, list):
-        for item in raw_window_details[:3]:
-            text = " ".join(str(item or "").split())
-            if text and text not in details:
-                details.append(text[:900])
-    if not details:
-        return result
-
-    diagnostic = "P2-E2 runtime detail: " + " | ".join(details)
-    warnings = tuple(dict.fromkeys((diagnostic, *result.warnings)))
-    return p2.P2ProviderResult(
-        component=result.component,
-        provider=result.provider,
-        model=result.model,
-        status=result.status,
-        evidence=result.evidence,
-        metadata=result.metadata,
-        warnings=warnings,
-    )
-
-
-def _fallback_to_e2(
-    context: p2.P2RunContext,
-    e2_result: p2.P2ProviderResult,
-    *,
-    failed_result: p2.P2ProviderResult | None = None,
-    exc: BaseException | None = None,
-) -> p2.P2ProviderResult:
-    """Preserve validated E2 semantics when optional E3 cannot complete.
-
-    E2 already contains the actual continuous-window visual observation. E3 only improves
-    contextual wording/scene resolution. Losing E3 must therefore degrade quality visibly, not
-    turn valid E2 evidence into a FAILED VLM component.
-    """
-
-    detail_parts: list[str] = []
-    error_type: str | None = None
-    failed_metadata: Mapping[str, Any] = {}
-    if failed_result is not None:
-        failed_metadata = failed_result.metadata if isinstance(failed_result.metadata, Mapping) else {}
-        nested = failed_metadata.get("contextual_refinement_metadata")
-        if isinstance(nested, Mapping):
-            error_type = str(nested.get("error_type") or "").strip() or None
-        for warning in failed_result.warnings:
-            text = " ".join(str(warning or "").split())
-            if text and text not in detail_parts:
-                detail_parts.append(text[:900])
-    if exc is not None:
-        error_type = error_type or type(exc).__name__
-        text = " ".join(str(exc).strip().split())
-        if text:
-            detail_parts.append(text[:900])
-
-    evidence: list[p2.P2EvidenceRecord] = []
-    for raw in e2_result.evidence:
-        semantic = dict(_semantic(raw))
-        payload = dict(raw.payload)
-        payload["e2_semantic"] = semantic
-        payload["semantic"] = semantic
-        payload["contextual_refinement"] = {
-            "profile": VLM_CONTEXTUAL_REFINEMENT_PROFILE,
-            "prompt_profile": VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE,
-            "status": "FALLBACK_E2",
-            "failure_policy": VLM_CONTEXTUAL_FAILURE_POLICY,
-            "error_type": error_type,
-        }
-        evidence.append(p2.P2EvidenceRecord(
-            source_type=raw.source_type,
-            source_id=raw.source_id,
-            source_start_us=raw.source_start_us,
-            source_end_us=raw.source_end_us,
-            shot_revision_item_id=raw.shot_revision_item_id,
-            text=raw.text,
-            language=raw.language,
-            confidence=raw.confidence,
-            payload=payload,
-        ))
-
-    metadata = dict(e2_result.metadata)
-    metadata.update({
-        "contextual_refinement_profile": VLM_CONTEXTUAL_REFINEMENT_PROFILE,
-        "contextual_refinement_prompt_profile": VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE,
-        "contextual_refinement_status": "FALLBACK_E2",
-        "contextual_refinement_failure_policy": VLM_CONTEXTUAL_FAILURE_POLICY,
-        "contextual_refinement_error_type": error_type,
-        "contextual_refinement_failure_metadata": dict(failed_metadata),
-        "e2_semantic_preservation": "VLM_OUTPUT.payload.e2_semantic",
-        "fusion_semantic_source": "VLM_OUTPUT.payload.semantic",
-    })
-    diagnostic = "P2-E3 unavailable; using validated E2 semantics"
-    if error_type:
-        diagnostic += f" ({error_type})"
-    warnings = tuple(dict.fromkeys((*e2_result.warnings, diagnostic, *detail_parts)))
-    result = p2.P2ProviderResult(
-        component=e2_result.component,
-        provider=e2_result.provider,
-        model=e2_result.model,
-        status="READY",
-        evidence=tuple(evidence),
-        metadata=metadata,
-        warnings=warnings,
-    )
-    p2.validate_provider_result(context, result)
-    return result
-
-
-class Qwen3VLSemanticProvider(episode_window.Qwen3VLSemanticProvider):
-    """Production E2+E3 provider while preserving the formal VLM Provider contract."""
-
-    def __init__(
-        self,
-        *args: Any,
-        contextual_refiner: refinement.ContextualShotRefiner | None = None,
-        enable_contextual_refinement: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        self._contextual_refiner = contextual_refiner
-        self.enable_contextual_refinement = bool(enable_contextual_refinement)
-
-    def analyze(self, context: p2.P2RunContext) -> p2.P2ProviderResult:
-        e2_result = super().analyze(context)
-        if e2_result.status != "READY":
-            return _with_e2_runtime_diagnostics(e2_result)
-        if not self.enable_contextual_refinement:
-            return e2_result
-        active = self._contextual_refiner or refinement.ContextualShotRefiner.from_vlm_provider(self)
-        try:
-            refined = refinement.refine_e2_provider_result(context, e2_result, refiner=active)
-        except Exception as exc:
-            return _fallback_to_e2(context, e2_result, exc=exc)
-        if refined.status != "READY":
-            return _fallback_to_e2(context, e2_result, failed_result=refined)
-        return _apply_contextual_grounding(context, e2_result, refined)
+class Qwen3VLSemanticProvider(fast.Qwen3VLSemanticProvider):
+    """Stable production class name backed by the fast-grounded visual provider."""
 
 
 def run_qwen3_vl_episode_window_semantics(
@@ -328,12 +49,16 @@ def run_qwen3_vl_episode_window_semantics(
     *,
     provider: Qwen3VLSemanticProvider | None = None,
 ):
-    """Compatibility entry; production call persists the composite grounded E2+E3 result."""
+    """Compatibility entry; persists the current fast-grounded VLM result."""
 
     return p2.run_local_provider(run_id, provider or Qwen3VLSemanticProvider())
 
 
 __all__ = [
+    "DEFAULT_EXACT_SHOT_MAX_PIXELS",
+    "DEFAULT_GROUNDING_BATCH_SIZE",
+    "DEFAULT_WINDOW_CONTEXT_FPS",
+    "DEFAULT_WINDOW_MAX_PIXELS",
     "DEFAULT_WINDOW_OVERLAP_RATIO",
     "DEFAULT_WINDOW_SECONDS",
     "Qwen3VLSemanticProvider",
@@ -343,6 +68,8 @@ __all__ = [
     "VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE",
     "VLM_DRAFT_TEXT_LANGUAGE",
     "VLM_EPISODE_WINDOW_PROFILE",
+    "VLM_EXACT_SHOT_GROUNDING_PROFILE",
+    "VLM_FAST_GROUNDED_PROFILE",
     "VLM_PROMPT_PROFILE",
     "VLM_WINDOW_SCHEMA",
     "VLMRuntimeConfig",
