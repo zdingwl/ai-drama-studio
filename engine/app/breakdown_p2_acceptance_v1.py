@@ -21,8 +21,8 @@ from sqlalchemy import func, select
 from engine.app import studio_v2
 from engine.app.breakdown_models_v1 import BreakdownRun
 from engine.app.breakdown_p2_asr_v1 import FasterWhisperASRProvider
-from engine.app.breakdown_p2_ocr_v1 import RapidOCROCRProvider
-from engine.app.breakdown_p2_vlm_v1 import Qwen3VLSemanticProvider
+from engine.app.breakdown_p2_ocr_runtime_v1 import RapidOCROCRProvider
+from engine.app.breakdown_p2_vlm_continuity_v1 import Qwen3VLSemanticProvider
 from engine.app.shot_revision_v2 import ShotRevisionItem
 
 P2_ACCEPTANCE_SCHEMA = "breakdown-p2-acceptance-v1"
@@ -129,9 +129,16 @@ def _probe_vlm_runtime(provider: Qwen3VLSemanticProvider) -> dict[str, Any]:
         "model_path_exists": provider.model_path.is_dir(),
         "model": provider.model_name,
         "device_requested": provider.device,
-        "video_fps": provider.video_fps,
-        "max_pixels": provider.max_pixels,
-        "max_new_tokens": provider.max_new_tokens,
+        "production_profile": getattr(provider, "FAST_GROUNDED_PROFILE", None) or "breakdown-p2-vlm-fast-grounded-v1",
+        "window_seconds": getattr(provider, "window_duration_seconds", None),
+        "window_overlap_ratio": getattr(provider, "window_overlap_ratio", None),
+        "window_fps": provider.video_fps,
+        "window_max_pixels": provider.max_pixels,
+        "window_max_new_tokens": provider.max_new_tokens,
+        "exact_shot_max_pixels": getattr(provider, "exact_shot_max_pixels", None),
+        "grounding_max_new_tokens": getattr(provider, "grounding_max_new_tokens", None),
+        "grounding_batch_size": getattr(provider, "grounding_batch_size", None),
+        "model_load_policy": "one-run-one-vlm-process-one-model-load",
     }
     if not provider.python_executable.is_file():
         return result
@@ -238,7 +245,7 @@ def collect_p2_runtime_preflight() -> dict[str, Any]:
         "ffmpeg": ffmpeg,
         "ffprobe": ffprobe,
         "nvidia": nvidia,
-        "note": "Preflight checks local runtime presence only; it is not a real-video quality score.",
+        "note": "Preflight checks current Fast Grounded runtime presence only; it is not a real-video quality or performance PASS.",
     }
 
 
@@ -333,7 +340,6 @@ def evaluate_acceptance(
 
     not_applicable = set(review["not_applicable"])
     required = [key for key in CORE_REVIEW_KEYS if key not in not_applicable]
-    # OCR is required unless the reviewer explicitly marks the source clip as having no reviewable text.
     if "ocr_text" not in not_applicable:
         required.append("ocr_text")
     score_values = [review["scores"].get(key) for key in required]
