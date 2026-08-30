@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -23,6 +22,20 @@ FAST_GROUNDED_SCHEMA = "breakdown-p2-vlm-fast-grounded-v1"
 def _safe_error(exc: BaseException, *, max_len: int = 900) -> str:
     text = " ".join(str(exc).strip().split()) or type(exc).__name__
     return text[:max_len]
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _cleanup_cuda() -> None:
@@ -60,10 +73,10 @@ def _window_shots(window: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
 def _shot_boundary_text(window: Mapping[str, Any]) -> str:
     return "\n".join(
         "- Shot {ordinal}: revision_item_id={item}; {start:.3f}s→{end:.3f}s".format(
-            ordinal=int(shot.get("ordinal") or 0),
+            ordinal=_safe_int(shot.get("ordinal")),
             item=str(shot.get("revision_item_id") or ""),
-            start=float(shot.get("window_start_seconds") or 0.0),
-            end=float(shot.get("window_end_seconds") or 0.0),
+            start=_safe_float(shot.get("window_start_seconds")),
+            end=_safe_float(shot.get("window_end_seconds")),
         )
         for shot in _window_shots(window)
     )
@@ -125,17 +138,16 @@ def _grounding_scene_contexts(
     windows: Sequence[Mapping[str, Any]],
     window_results: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
+    """Return only scene context and tolerate malformed optional model hints."""
+
     result: dict[str, list[dict[str, Any]]] = {}
     for shot in batch:
         item_id = str(shot.get("revision_item_id") or "").strip()
-        try:
-            ordinal = int(shot.get("ordinal") or 0)
-        except (TypeError, ValueError):
-            ordinal = 0
+        ordinal = _safe_int(shot.get("ordinal"))
         contexts: list[dict[str, Any]] = []
         for window in windows:
             if not any(
-                int(candidate.get("ordinal") or 0) == ordinal
+                _safe_int(candidate.get("ordinal")) == ordinal
                 for candidate in _window_shots(window)
             ):
                 continue
@@ -149,10 +161,9 @@ def _grounding_scene_contexts(
                 for hint in raw_hints:
                     if not isinstance(hint, Mapping):
                         continue
-                    if (
-                        str(hint.get("revision_item_id") or "").strip() == item_id
-                        or int(hint.get("ordinal") or 0) == ordinal
-                    ):
+                    hint_id = str(hint.get("revision_item_id") or "").strip()
+                    hint_ordinal = _safe_int(hint.get("ordinal"))
+                    if hint_id == item_id or (ordinal > 0 and hint_ordinal == ordinal):
                         matched_hint = dict(hint)
                         break
             contexts.append({
@@ -171,7 +182,7 @@ def _grounding_prompt(
 ) -> str:
     language = (source_language or "und").strip() or "und"
     target_text = "\n".join(
-        f"- Shot {int(shot.get('ordinal') or 0)}: revision_item_id={str(shot.get('revision_item_id') or '')}; "
+        f"- Shot {_safe_int(shot.get('ordinal'))}: revision_item_id={str(shot.get('revision_item_id') or '')}; "
         f"frames={len(shot.get('frames') or [])}"
         for shot in batch
     )
@@ -350,7 +361,7 @@ def _grounding_messages(
     }]
     for shot in batch:
         item_id = str(shot.get("revision_item_id") or "").strip()
-        ordinal = int(shot.get("ordinal") or 0)
+        ordinal = _safe_int(shot.get("ordinal"))
         content.append({
             "type": "text",
             "text": f"下面图片只属于 Shot {ordinal} / revision_item_id={item_id}。",
@@ -364,7 +375,7 @@ def _grounding_messages(
             path = Path(str(raw.get("path") or ""))
             if not path.is_file():
                 raise FileNotFoundError(f"Shot {ordinal} frame missing")
-            ratio = float(raw.get("ratio") or 0.5)
+            ratio = _safe_float(raw.get("ratio"), 0.5)
             content.append({"type": "text", "text": f"Shot {ordinal} frame {index}, ratio={ratio:.2f}"})
             content.append({
                 "type": "image",
