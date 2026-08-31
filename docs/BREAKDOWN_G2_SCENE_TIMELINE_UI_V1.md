@@ -101,6 +101,8 @@ frontend/src/utils/sceneTimelineUi.ts
 frontend/src/utils/sceneTimelineUi.test.ts
 frontend/src/components/SceneTimelineResultsV1.vue
 frontend/src/components/BreakdownStageV1.vue
+frontend/src/scene-timeline-g2-6-overrides.css
+frontend/src/main.ts
 ```
 
 Legacy `BreakdownResultsV1.vue` remains in the repository for rollback/reference but is no longer mounted by the primary `02 拉片 → 拉片结果` path.
@@ -110,7 +112,7 @@ Legacy `BreakdownResultsV1.vue` remains in the repository for rollback/reference
 Run from `frontend`:
 
 ```powershell
-npm test -- --run src/utils/sceneTimelineUi.test.ts
+npm test -- src/utils/sceneTimelineUi.test.ts
 npm run typecheck
 npm run build
 ```
