@@ -17,8 +17,8 @@ Exact-Shot contract                   = COMPACT-RECONSTRUCTION V3 / REAL ACCEPTE
 P2-E6 Fusion                          = E6-V2 / REAL PRODUCTION ACCEPTED / FROZEN
 Replay-v5 continuity                  = REAL ACCEPTED / promoted into E6-v2
 P2.6 Windows / real-model acceptance  = PASS
-G2 Scene Timeline Contract            = V1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
-G2 Deterministic Assembler            = V1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+G2 Scene Timeline Contract            = V1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
+G2 Deterministic Assembler            = V1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
 G2 Scene-level text LLM               = UNBLOCKED / NOT IMPLEMENTED
 Scene Timeline result UI              = UNBLOCKED / NOT IMPLEMENTED
 P3 current 02 拉片 Shot-card UI        = IMPLEMENTED / NOT FINAL ACCEPTED
@@ -30,7 +30,7 @@ same-Shot hard safety                 = PASS / conflicts=0
 G1 performance/quality tuning is frozen. Do not change Window-v4, Exact-Shot-v3, E6-v2 thresholds,
 same-Shot cannot-link, or Character V10.1 identity gates without a new concrete real regression.
 
-G2.1/G2.2 code is implemented but is **not PASS yet**. User-local fixture and final-Run acceptance must happen first.
+G2.1/G2.2 user-local regression tests are PASS. Final accepted real-Run smoke acceptance is still required before final PASS.
 
 ## 2. Final P2.6 production acceptance Run
 
@@ -186,7 +186,7 @@ YOLOX Person Detection
 → Final Character Gate
 ```
 
-## 5. G2.1 / G2.2 implementation
+## 5. G2.1 / G2.2 implementation and local regression acceptance
 
 G2 now has a read-only ordinary-user result foundation:
 
@@ -202,6 +202,14 @@ Tests:
 
 Contract document:
   docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md
+```
+
+User-local regression evidence on 2026-08-31:
+
+```text
+python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
+....
+4 passed
 ```
 
 The assembler consumes the existing `breakdown_serializer_v1` payload shape and does not modify G1.
@@ -241,15 +249,14 @@ Scene ownership mismatch, and duplicate Scene-local LocalSubject identity record
 
 G2.1/G2.2 deliberately do **not** implement a Scene LLM, persistence, API route or new frontend yet.
 
-## 6. Next work — G2 foundation acceptance, then Scene LLM
+## 6. Next work — final real-Run smoke acceptance, then Scene LLM
 
 Required order:
 
 ```text
-1. user-local run engine/tests/v2/test_breakdown_scene_timeline_v1.py
-2. exercise G2 deterministic assembly against:
+1. exercise G2 deterministic assembly against:
    BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
-3. verify:
+2. verify:
    - Scenes=2
    - Shots=30
    - Scene1 people=2
@@ -260,7 +267,8 @@ Required order:
    - dialogue text remains ASR verbatim
    - OCR remains verbatim
    - debug Evidence/cluster/confidence are absent from primary output
-4. only after G2.1/G2.2 PASS, implement G2.3 Scene-level pure-text LLM
+3. after that smoke check passes, mark G2.1/G2.2 final PASS
+4. implement G2.3 Scene-level pure-text LLM
 5. add G2.4 support/source validator
 6. add G2.5 Scene Timeline API
 7. finally replace the ordinary-user 02 拉片 result surface with G2.6 Scene Timeline UI
