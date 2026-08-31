@@ -18,5 +18,6 @@ import './task-progress.css'
 import './breakdown-p3-acceptance.css'
 import './breakdown-p3-v2-layout-fix.css'
 import './breakdown-p3-v2-polish.css'
+import './scene-timeline-g2-6-overrides.css'
 
 createApp(App).use(router).mount('#app')
