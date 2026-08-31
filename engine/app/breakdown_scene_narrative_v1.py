@@ -32,7 +32,7 @@ from engine.app.breakdown_scene_narrative_validator_v1 import (
 from engine.app.breakdown_scene_timeline_contract_v1 import SceneTimelinePayloadV1
 
 
-SCENE_NARRATIVE_PROMPT_PROFILE = "breakdown-g2-scene-narrative-zh-v1.2"
+SCENE_NARRATIVE_PROMPT_PROFILE = "breakdown-g2-scene-narrative-zh-v1.3"
 
 SCENE_NARRATIVE_SYSTEM_PROMPT_V1 = """你是“短剧拉片 Scene 文本整理器”。
 
@@ -45,7 +45,9 @@ SCENE_NARRATIVE_SYSTEM_PROMPT_V1 = """你是“短剧拉片 Scene 文本整理�
 
 硬规则：
 - Exact-Shot / Scene Timeline 是视觉事实；不得创造人物、动作、道具、地点或镜头事实。
-- ASR 对白只是理解上下文的只读数据；不得纠错、改写或把对白中的姓名绑定给匿名人物。
+- ASR 对白只是理解上下文的只读数据；不得纠错、改写或把对白中的姓名、自称、亲属/伴侣称谓绑定给匿名人物。
+- 如果“结婚/离婚/怀孕/死亡/绑架/丈夫/妻子”等重大事件或关系词只出现在 ASR 中，只能写成“围绕X、谈到X、讨论X、询问X、质问X”等对白话题，不能写成 X 已经实际发生；并必须引用包含该词的 DIALOGUE Fxxxx。
+- 例如 ASR 出现“什么时候结婚”，可写“双方围绕结婚问题争执”，不能写“两人结婚”。
 - P1/P2/... 是内部 Scene-local 引用。输出文字禁止出现 P1/P2，人物只能写输入中存在的“人物1/人物2/...”。
 - Scene 之间绝不推断人物身份连续性。
 - 不创建或声称 Final Character、Final Scene、Final Prop，不输出任何 Character/Scene/Prop ID。
