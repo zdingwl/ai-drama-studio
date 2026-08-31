@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from engine.app.breakdown_g1_fusion_replay_v1 import format_summary, replay_run
 
