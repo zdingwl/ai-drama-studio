@@ -14,8 +14,12 @@ P2-E6 anonymous continuity Fusion     = E6-v2 / real production accepted / froze
 P2.6 Windows / real-model acceptance  = PASS
 G2 Scene Timeline Contract            = v1 / FINAL PASS / FROZEN FOUNDATION
 G2 Deterministic Assembler            = v1 / FINAL PASS / FROZEN FOUNDATION
-G2 Scene-level text LLM               = UNBLOCKED / NOT IMPLEMENTED
-Scene Timeline result UI              = UNBLOCKED / NOT IMPLEMENTED
+G2 Scene Narrative Core               = v1 / IMPLEMENTED / USER-LOCAL TEST PENDING
+G2 Local Qwen text runtime            = v1 / IMPLEMENTED / USER-LOCAL TEST PENDING
+G2 Source / Support Validator         = v1 / IMPLEMENTED / USER-LOCAL TEST PENDING
+G2.3/G2.4 real-model acceptance       = PENDING
+G2.5 Scene Timeline API               = NOT IMPLEMENTED
+G2.6 ordinary-user result UI          = NOT IMPLEMENTED
 P5 Draft ↔ Character                  = PAUSED
 ```
 
@@ -27,6 +31,7 @@ PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests = executabl
 
 G2.1/G2.2 regression tests (`4 passed`) and final accepted real-Run smoke check both passed on 2026-08-31.
 Treat the deterministic Scene Timeline foundation as frozen unless a concrete G2 regression is demonstrated.
+G2.3/G2.4 implementation is not a PASS claim until user-local tests and final real-model acceptance pass.
 
 ## 2. Recovery order
 
@@ -43,10 +48,11 @@ Always read repository truth before old chat/history:
 8. docs/BREAKDOWN_DRAFT_DATA_CONTRACT.md
 9. docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
 10. docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
-11. docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md when working on G2
-12. Character docs when relevant
-13. current code/tests
-14. latest docs/sessions/*.md handoff
+11. docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md
+12. docs/BREAKDOWN_G2_SCENE_NARRATIVE_CONTRACT.md when working on G2.3+
+13. Character docs when relevant
+14. current code/tests
+15. latest docs/sessions/*.md handoff
 ```
 
 ## 3. Frozen production Breakdown chain
@@ -99,33 +105,7 @@ Fusion = breakdown-p2-fusion-episode-context-e6-v2
 
 P2.6 is PASS. G1 is frozen.
 
-## 5. E6-v2 continuity rules
-
-```text
-Stage1 Window hint:
-  listed Shot ordinal = candidate presence only
-  Exact-Shot appearance must positively support the hint
-
-Stages2..4:
-  compact aliases are canonicalized for comparison only
-  persisted source appearance text is unchanged
-  accepted thresholds are unchanged
-
-Hard safety:
-  same-Shot observations = hard cannot-link
-  explicit male/female contradiction blocks soft union
-  explicit long-hair vs short/bald contradiction blocks soft union
-  missing attribute is not conflict
-```
-
-Policies:
-
-```text
-window hint resolver = window-hint-positive-appearance-support-compact-alias-v2
-compact appearance = compact-observation-stable-alias-normalization-v1
-```
-
-## 6. Core semantic rules
+## 5. Core semantic rules
 
 > **先看懂，再识别，再回填。**
 
@@ -151,7 +131,7 @@ OCR-origin text is verbatim source truth
 
 Dynamic expression/emotion/action/pose/speaking/screen position/framing are not identity keys.
 
-## 7. Character V10.1 is protected
+## 6. Character V10.1 is protected
 
 ```text
 YOLOX Person Detection
@@ -166,7 +146,7 @@ YOLOX Person Detection
 Never relax same-sample cannot-link, face conflict, >=3 independent evidence rule, ambiguity rules,
 explicit Shot assignment or Final Gate because of Breakdown hints.
 
-## 8. G2 frozen foundation and next safe work
+## 7. G2.1 / G2.2 frozen foundation
 
 Accepted read-only G2 foundation:
 
@@ -177,17 +157,12 @@ engine/tests/v2/test_breakdown_scene_timeline_v1.py
 docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md
 ```
 
-User-local regression evidence:
+Accepted evidence:
 
 ```text
 python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
-....
 4 passed
-```
 
-Final real-Run smoke evidence:
-
-```text
 Run = BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
 scenes = 2
 shots = 30
@@ -197,19 +172,64 @@ shot1_props = ['遥控器', '蓝色玫瑰花束', '玻璃花瓶', '书本']
 warnings = []
 ```
 
-It does not modify the frozen G1 chain and does not create Final assets.
+Do not change G2.1/G2.2 truth ownership to accommodate an LLM.
 
-Next safe order:
+## 8. G2.3 / G2.4 implemented boundary
+
+Implemented modules:
 
 ```text
-1. implement G2.3 Scene-level pure-text LLM on top of frozen deterministic output
-2. implement G2.4 support/source validator and fail-closed fallback
-3. validate against the accepted real Run
-4. add G2.5 API
-5. add G2.6 ordinary-user Scene Timeline UI last
+engine/app/breakdown_scene_narrative_contract_v1.py
+engine/app/breakdown_scene_grounding_v1.py
+engine/app/breakdown_scene_narrative_v1.py
+engine/app/breakdown_scene_narrative_validator_v1.py
+engine/app/breakdown_scene_narrative_qwen3_v1.py
+scripts/run_breakdown_scene_narrative_qwen3.py
+engine/tests/v2/test_breakdown_scene_narrative_v1.py
+engine/tests/v2/test_breakdown_scene_narrative_qwen3_v1.py
+docs/BREAKDOWN_G2_SCENE_NARRATIVE_CONTRACT.md
 ```
 
-G2.3/G2.4 may improve organization/readability only. They must not replace deterministic timestamps,
-people refs/count, ASR dialogue, OCR text, prop existence, shot type or composition.
+G2.3 LLM authority is deliberately narrow:
+
+```text
+LLM MAY write:
+  readable_title
+  story_summary
+
+LLM MUST NOT own or rewrite:
+  Scene/Shot timestamps
+  people count or identity
+  Shot visual facts
+  performance/action facts
+  ASR dialogue
+  OCR text
+  prop existence
+  shot type
+  composition
+  camera motion
+  Final Character/Scene/Prop
+```
+
+Every non-null Narrative claim must cite current Scene `Fxxxx` support facts. Overlay application rechecks
+Run/ShotRevision/Episode anchors and a per-Scene SHA-256 source fingerprint. Unsupported claims are discarded;
+deterministic Timeline remains usable.
+
+The local model path reuses the existing isolated `Qwen3-VL-4B-Instruct` base checkpoint in **text-only** mode.
+The new G2 runner loads the model once, processes Scenes sequentially, and never opens video/images.
+
+## 9. Next safe order
+
+```text
+1. user-local run G2.3/G2.4 unit/contract tests
+2. user-local G2 local Qwen runtime preflight
+3. real text-only Qwen acceptance on BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
+4. verify Narrative only changes title/story_summary and Shot facts remain byte-for-structure unchanged
+5. mark G2.3/G2.4 FINAL PASS only after real acceptance
+6. add G2.5 API
+7. add G2.6 ordinary-user Scene Timeline UI last
+```
+
+If G2.3/G2.4 fails, fix those layers. Do not retune G1 or alter the frozen G2.1/G2.2 foundation to hide the regression.
 
 Hosted GitHub Actions must not be used; commits use `[skip ci]`.
