@@ -1,7 +1,7 @@
 # AI Drama Studio — Current Implementation Manifest
 
 > Purpose: code-aligned CURRENT manifest.  
-> Last synchronized: **2026-08-31 11:27 +08:00**
+> Last synchronized: **2026-08-31 12:27 +08:00**
 
 ## Repository baseline
 
@@ -12,11 +12,12 @@ Architecture: Reference Video V2 + Breakdown Fast Grounded V2
 FastAPI app version: 2.4.1
 Formal Character runtime: Character V10.1
 P1/P2 implementation acceptance: CONDITIONAL PASS
-Fast Grounded G1: IMPLEMENTED / FINAL FRESH-RUN ACCEPTANCE PENDING
-P2-E6 Episode-context Fusion: IMPLEMENTED / LOCAL TARGETED TESTS PASS / FRESH RUN PENDING
-P2-E5 Episode-context Fusion: PRESERVED / ROLLBACK BASELINE
-P2-E4 Episode-context Fusion: PRESERVED / OLDER ROLLBACK BASELINE
-Fast Grounded VLM timing instrumentation: IMPLEMENTED / LOCAL TEST PENDING
+Fast Grounded G1 exact-Shot/E6 quality: FRESH REAL RUN POSITIVE
+Window Context contract: SEGMENT V3 IMPLEMENTED / LOCAL WINDOW-ONLY VALIDATION PENDING
+P2-E6 Episode-context Fusion: IMPLEMENTED / LOCAL TARGETED TESTS PASS / FRESH REAL RUN POSITIVE
+P2-E5 Fusion: PRESERVED / ROLLBACK BASELINE
+P2-E4 Fusion: PRESERVED / OLDER ROLLBACK BASELINE
+VLM performance instrumentation: IMPLEMENTED / REAL DATA COLLECTED
 legacy text-only per-Shot E3: RETIRED FROM PRODUCTION / HISTORICAL ONLY
 G2 Scene-level text LLM: PLANNED / NOT IMPLEMENTED
 Scene Timeline UI: PLANNED / NOT IMPLEMENTED
@@ -26,81 +27,185 @@ P4 Draft-guided Scene/Prop: IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character: PLANNED / PAUSED
 ```
 
-## Latest real execution truth
+Fusion quality tuning is frozen unless a future real regression provides new evidence.
 
-Reference real Run:
+## Latest fresh E6 real execution
 
 ```text
-Run = BREAKDOWNRUN_85be6db2faa94901a2a6db932c71ed62
+Run = BREAKDOWNRUN_7d27295da479475f92888351bbfb9839
+Episode = EPISODE_0ed6aaca0da4471db0364bd29c3d6a61
 30 Shots
-formal E4 Draft at run time = 4 Scenes
-runtime = 33.705 min
-ASR = 17.1s
-OCR = 265.9s
-VLM = 1738.0s
+whole run = 1820.013s = 30.334 min
+ASR = 17.951s
+OCR = 240.770s
+VLM = 1559.171s
 ```
 
-Confirmed exact-Shot positive gate:
+Quality:
 
 ```text
-Shot0001 = blue roses / glass vase
-subjects=[]
-neighbor woman leakage not observed
-```
+Shot0001 subjects=0
+props=蓝色玫瑰花束, 玻璃花瓶, 木质桌面
+neighbor person leakage=NO
 
-The same immutable ASR/OCR/VLM sidecars were evaluated through read-only replay v3:
-
-```text
-Candidate Scenes = 2
+Scenes=2
 Scene1 = Shots 1-12 / 公寓走廊 / LocalSubjects=2
 Scene2 = Shots 13-30 / 客厅 / LocalSubjects=2
-same_shot_cluster_conflicts = 0
-providers_executed = []
-mutates_breakdown_run = false
-mutates_final_assets = false
+same_shot_cluster_conflicts=0
 ```
 
-Scene1 real anonymous chains:
+This is the first fresh production E6 quality result and is positive.
+
+## Measured performance
 
 ```text
-white long-hair chain:
-Shots 2,3,4,5,7,8,9,11,12
-
-gray/white curly-hair + orange floral-shirt chain:
-Shots 3,4,5,6,9,10,11
+Host Window materialization = 4.842s
+Host Exact-Shot extraction = 6.161s
+Qwen model load = 4.723s
+Qwen Window Context = 465.062s
+Qwen Exact-Shot = 1076.135s
+Qwen runner total = 1547.107s
+Grounding frames = 58
 ```
 
-Scene2 remains the accepted one-woman + one-man anonymous continuity result.
-
-User-local validation on Windows after E6 promotion:
+Measured priority:
 
 ```text
-engine/tests/v2/test_breakdown_g1_fusion_replay_v3.py
-engine/tests/v2/test_breakdown_p2_e6_promoted_continuity.py
-engine/tests/v2/test_breakdown_g1_fusion_replay_v2_conflict_guard.py
-engine/tests/v2/test_breakdown_g1_subject_cluster_bridge_v2.py
-
-12 tests PASS
+Exact-Shot > Window Context >>> model load / FFmpeg preparation
 ```
 
-Therefore Fusion quality tuning is now **FROZEN** unless a future real regression provides concrete evidence.
-Do not continue changing Scene/anonymous-subject thresholds speculatively.
+First performance gate remains `<30 min`; the fresh Run missed by about 20 seconds.
 
-Overall status:
+## Window failure truth
+
+Original timed Window prompt on the fresh Run:
 
 ```text
-G1 exact-Shot focused grounding gate = POSITIVE
-G1 Scene boundary replay gate = POSITIVE
-G1 Scene1 anonymous continuity replay gate = POSITIVE
-G1 Scene2 anonymous continuity replay gate = POSITIVE
-same-Shot hard safety replay gate = POSITIVE
-E6 code promotion = IMPLEMENTED
-E6 targeted local regression = PASS (12/12)
-fresh E6 production real-run = PENDING
-performance <30min = FAIL on previous full run
-VLM detailed timing instrumentation = IMPLEMENTED / LOCAL TEST PENDING
-P2.6 = NOT PASSED
+12 Shots -> 1600/1600 MAXED -> invalid JSON
+12 Shots -> 1600/1600 MAXED -> invalid JSON
+ 9 Shots -> 1600/1600 MAXED -> invalid JSON
+ 7 Shots -> 1442/1600 READY
 ```
+
+Compact per-Shot v2 follow-up on the same frozen Run:
+
+```text
+12 Shots -> 1598/1600 READY
+12 Shots -> 1600/1600 MAXED -> invalid JSON
+ 9 Shots -> 1435/1600 READY
+ 7 Shots -> 1600/1600 MAXED -> invalid JSON
+```
+
+Therefore output truncation is confirmed and per-Shot repeated Scene objects remain structurally too
+verbose. Do not solve this by simply increasing the token cap.
+
+## Current Window Segment Contract v3
+
+Profile:
+
+```text
+breakdown-p2-vlm-window-context-segment-zh-v3
+```
+
+Model output is Scene-segment based rather than one Scene object per Shot:
+
+```text
+window_summary
+scene_segments[]:
+  start_ordinal
+  end_ordinal
+  boundary_basis = WINDOW_START | DIRECT | CONTEXT | UNCERTAIN
+  location_hint
+  interior_exterior
+  time_of_day
+subject_continuity_hints[]
+prop_continuity_hints[]
+```
+
+Host-side deterministic adapter expands this into canonical `shot_scene_hints[]`:
+
+```text
+revision_item_id = copied only from frozen manifest
+first Window segment = never hard-cuts
+later DIRECT segment start = NEW_SCENE + DIRECT
+later CONTEXT/UNCERTAIN start = UNCERTAIN
+all other Shots = SAME
+segment coverage gap/overlap = fail closed
+```
+
+This keeps downstream Exact-Shot grounding and E6 interfaces unchanged while removing repeated model
+output. Exact-Shot visible fact remains authoritative.
+
+## Current production Breakdown chain
+
+```text
+Episode Current ShotRevision
+→ frozen PROCESSING BreakdownRun
+→ Episode ASR
+→ OCR
+→ Fast Grounded Qwen3-VL, one model load
+   ├─ Window Segment v3 Context
+   │    24s / 25% overlap / 1 FPS / 262144 px
+   │    compact Scene segments + anonymous subject/prop continuity
+   │    host expands canonical shot_scene_hints
+   └─ Exact-Shot frame grounding
+        <1.2s -> 1 frame
+        1.2..3s -> 2 frames
+        >3s -> 3 frames
+        default 5 Shots/batch
+        visible facts only from exact frozen Shot frames
+→ immutable exact-Shot VLM_OUTPUT sidecar
+→ P2-E6 Episode-context Fusion
+   ├─ corridor-family Scene compatibility + DIRECT NEW_SCENE safeguard
+   ├─ ASR_SEGMENT dialogue truth + Shot projections
+   └─ anonymous continuity
+        Stage1 Window hints + exact-Shot conflict guard
+        Stage2 stable-appearance gap fallback + conflict guard
+        Stage3 mutual-best cluster bridge
+        Stage4 coherent-component bridge
+        every union preserves hard same-Shot cannot-link
+→ P1 validator
+→ READY / READY_WITH_WARNINGS
+```
+
+Top-level pipeline profile remains `breakdown-p2-full-v1`; provider order remains `ASR → OCR → VLM`.
+Production Fusion remains `breakdown-p2-fusion-episode-context-e6-v1`.
+
+## Production modules
+
+```text
+P2 sidecar                    engine/app/breakdown_p2_sidecar_v1.py
+ASR                           engine/app/breakdown_p2_asr_v1.py
+OCR                           engine/app/breakdown_p2_ocr_runtime_v1.py
+Fast Grounded semantic base   engine/app/breakdown_p2_vlm_fast_grounded_v1.py
+VLM timing/provider routing   engine/app/breakdown_p2_vlm_fast_grounded_instrumented_v2.py
+stable VLM runtime            engine/app/breakdown_p2_vlm_runtime_v1.py
+Window compact rollback v2    scripts/run_breakdown_vlm_window_compact_v2.py
+Window segment production v3  scripts/run_breakdown_vlm_window_segment_v3.py
+timed instrumentation v1      scripts/run_breakdown_vlm_fast_grounded_qwen3_timed.py
+timed production entry v2     scripts/run_breakdown_vlm_fast_grounded_qwen3_timed_v2.py
+Window-only diagnostic        scripts/diagnose_breakdown_vlm_windows.py
+VLM performance inspector     scripts/inspect_breakdown_vlm_performance.py
+production E6 Fusion          engine/app/breakdown_p2_fusion_episode_v6.py
+rollback E5 Fusion            engine/app/breakdown_p2_fusion_episode_v5.py
+older rollback E4 Fusion      engine/app/breakdown_p2_fusion_episode_v4.py
+orchestrator                  engine/app/breakdown_p2_pipeline_v1.py
+```
+
+## E6 anonymous continuity invariant
+
+```text
+subject_A/B = Shot-local labels only
+LocalSubject != Character
+same-Shot observations = hard cannot-link
+explicit male vs female = block soft union
+explicit long hair vs short/buzz/bald = block soft union
+missing attribute = not a conflict
+expression/emotion/action/pose/speaking/screen position/framing = not identity keys
+```
+
+E6 metadata records `cluster_bridge_union_count` and `component_bridge_union_count` and fails closed
+on same-Shot conflicts, duplicate observation mapping, or incomplete cluster coverage.
 
 ## Core semantic rules
 
@@ -115,192 +220,9 @@ DraftPropHint != Final Prop
 ASR speaker != Character
 ```
 
-## Current production Breakdown chain
-
-```text
-Episode Current ShotRevision
-→ frozen PROCESSING BreakdownRun
-→ Episode ASR
-→ OCR
-→ Fast Grounded Qwen3-VL
-   ├─ Host preparation timing
-   │    Window clip materialization
-   │    Exact-Shot FFmpeg frame extraction
-   ├─ Window Context: 24s / 25% overlap / 1 FPS / 262144 px
-   │    Scene + anonymous subject/prop continuity only
-   └─ Exact-Shot frame grounding
-        <1.2s -> 1 frame
-        1.2..3s -> 2 frames
-        >3s -> 3 frames
-        default 5 Shots/batch
-        visible people/actions/props/shot prose only from current Shot images
-   one subprocess/model load for both stages
-   timing metadata persists:
-        model load
-        Window total + per-window
-        Exact-Shot total + per-top-level-batch
-        batch shot/frame counts
-        subprocess wall
-→ immutable exact-Shot VLM_OUTPUT sidecar
-→ P2-E6 Episode-context Fusion
-   ├─ corridor-family Scene compatibility + DIRECT NEW_SCENE safeguard
-   ├─ ASR_SEGMENT dialogue truth + Shot projections
-   └─ anonymous continuity:
-        Stage1 Window hints with exact-Shot conflict guard
-        Stage2 conservative stable-appearance gap fallback with conflict guard
-        Stage3 mutual-best cluster bridge
-        Stage4 coherent-component bridge using co-star structure/distinctive attire
-        every union preserves hard same-Shot cannot-link
-→ P1 validator
-→ READY / READY_WITH_WARNINGS
-```
-
-Top-level pipeline profile remains `breakdown-p2-full-v1`; provider order remains `ASR → OCR → VLM`.
-
-## Production modules
-
-```text
-P2 sidecar                   engine/app/breakdown_p2_sidecar_v1.py
-ASR                          engine/app/breakdown_p2_asr_v1.py
-OCR                          engine/app/breakdown_p2_ocr_runtime_v1.py
-Fast Grounded semantic base  engine/app/breakdown_p2_vlm_fast_grounded_v1.py
-VLM timing provider          engine/app/breakdown_p2_vlm_fast_grounded_instrumented_v2.py
-Timed isolated runner        scripts/run_breakdown_vlm_fast_grounded_qwen3_timed.py
-stable VLM runtime           engine/app/breakdown_p2_vlm_runtime_v1.py
-continuity wrapper           engine/app/breakdown_p2_vlm_continuity_v1.py
-production E6 Fusion         engine/app/breakdown_p2_fusion_episode_v6.py
-rollback E5 Fusion           engine/app/breakdown_p2_fusion_episode_v5.py
-older rollback E4 Fusion     engine/app/breakdown_p2_fusion_episode_v4.py
-orchestrator                 engine/app/breakdown_p2_pipeline_v1.py
-VLM performance inspector    scripts/inspect_breakdown_vlm_performance.py
-G1 inspection CLI            scripts/inspect_breakdown_g1_run.py
-G1 replay v3                 engine/app/breakdown_g1_fusion_replay_v3.py
-completed replay v3          engine/app/breakdown_g1_fusion_replay_completed_v3.py
-v2 cluster bridge            engine/app/breakdown_g1_subject_cluster_bridge_v2.py
-v3 component bridge          engine/app/breakdown_g1_subject_component_bridge_v3.py
-```
-
-Production Fusion profile:
-
-```text
-breakdown-p2-fusion-episode-context-e6-v1
-```
-
-VLM performance profile:
-
-```text
-breakdown-p2-vlm-performance-timing-v1
-```
-
-## E6 Scene / anonymous continuity policy
-
-Scene policy:
-
-```text
-corridor-family-qualifier-drift-with-direct-new-scene-v1
-```
-
-Anonymous subject policy:
-
-```text
-coherent-component-distinctive-attire-hard-same-shot-v3
-base = cluster-visual-plus-common-costar-mutual-best-hard-same-shot-v2
-```
-
-Hard rules:
-
-```text
-subject_A/B = Shot-local labels only
-same-Shot observations = hard cannot-link
-explicit male vs female = block soft union
-explicit long hair vs short/buzz/bald = block soft union
-missing attribute = not a conflict
-expression/emotion/action/pose/speaking/screen position/framing = not identity keys
-```
-
-E6 fails closed if final clusters contain same-Shot conflicts, one observation maps to multiple
-clusters, or cluster coverage does not exactly cover Scene observations.
-
-E6 metadata records both:
-
-```text
-cluster_bridge_union_count
-component_bridge_union_count
-```
-
-## Performance instrumentation contract
-
-The instrumented production VLM adds only metadata; it does not change semantic prompts, sampling,
-resolution, token limits, window planning, batch size or Exact-Shot truth rules.
-
-Persisted VLM metadata contains:
-
-```text
-performance.profile
-performance.provider_runner_wall_seconds
-performance.host.window_materialization_total_seconds
-performance.host.window_materialization[]
-performance.host.grounding_frame_materialization_total_seconds
-performance.host.shot_frame_materialization[]
-performance.host.subprocess_wall_seconds
-performance.host.grounding_frame_count
-performance.model_runner.model_load_seconds
-performance.model_runner.window_context_total_seconds
-performance.model_runner.window_timings[]
-performance.model_runner.exact_shot_total_seconds
-performance.model_runner.grounding_batch_timings[]
-performance.model_runner.grounding_batch_count
-performance.model_runner.grounding_frame_count
-performance.model_runner.runner_total_seconds
-```
-
-CUDA timing uses synchronization around measured inference stages when CUDA is available so model
-stage timings are not misleadingly short due to asynchronous kernel launch.
-
-Read-only summary after a newly completed instrumented Run:
-
-```powershell
-python scripts/inspect_breakdown_vlm_performance.py --run-id <NEW_RUN_ID>
-```
-
-## Performance / acceptance truth
-
-Reference target:
-
-```text
-~60 seconds / ~30 Shots
-first target: <30 minutes total
-later target: 10..20 minute class
-5..6 hours: FAIL
-```
-
-Previous full Fast Grounded Run:
-
-```text
-33.705 min total -> FAIL first <30min target
-VLM 1738.0s -> dominant cost
-OCR 265.9s
-ASR 17.1s
-```
-
-Do not optimize blindly. The next full run must use the new timing profile and be used to decide
-which cost center to change.
-
-## G2 / Scene Timeline target
-
-Do not begin G2 or Scene Timeline UI before fresh E6 + performance acceptance.
-
-Later target:
-
-```text
-Scene + grounded Shot visual facts + ASR + OCR + E6 LocalSubjects + prop continuity
-→ pure-text LLM once per Scene
-→ Scene Timeline Breakdown
-```
-
 ## Character invariant
 
-Character V10.1 remains protected and was not changed by E6 or VLM instrumentation:
+Character V10.1 remains protected and unchanged:
 
 ```text
 YOLOX -> capture-first evidence -> mature MOT -> YoutuReID
@@ -312,23 +234,21 @@ YOLOX -> capture-first evidence -> mature MOT -> YoutuReID
 Already user-local PASS:
 
 ```text
-12/12 E6/v3 targeted Fusion tests
+12/12 E6/v3 Fusion targeted tests
 ```
 
-New instrumentation tests still require user-local execution after `git pull`:
-
-```text
-engine/tests/v2/test_breakdown_p2_fast_grounded_v1.py
-engine/tests/v2/test_breakdown_p2_vlm_performance_instrumentation_v1.py
-```
-
-Hosted GitHub Actions remain intentionally unused.
+Segment-v3 adapter/routing tests are now present but require user-local execution. Hosted GitHub
+Actions remain intentionally unused.
 
 ## Next required action
 
-1. Pull current main.
-2. Run the cheap instrumentation tests and Python compile checks.
-3. If green, do not change Fusion further.
-4. Execute exactly one fresh full E6 production Breakdown Run with timing enabled.
-5. Run `scripts/inspect_breakdown_vlm_performance.py` on that new Run.
-6. Optimize the measured dominant cost center, then decide G1/P2.6 acceptance.
+Do not rerun the full Episode yet.
+
+1. Pull current `main`.
+2. Run py_compile for Window segment v3 and timed-v2 entry.
+3. Run segment-v3 adapter/routing tests plus existing timing test.
+4. Run Window-only diagnostic against `BREAKDOWNRUN_7d27295da479475f92888351bbfb9839`.
+5. Require 4/4 Window READY, zero MAXED, and materially lower output token totals.
+6. If v3 passes, decide whether one final full production Run is needed for P2.6.
+7. Then optimize the measured Exact-Shot 1076s cost center from real generation-token data.
+8. G2 / Scene Timeline UI remains blocked until P2.6 final acceptance.
