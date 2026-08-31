@@ -5,7 +5,7 @@
 - Date: 2026-08-31
 - Branch: `main`
 - Scope: **G2.1 Scene Timeline Contract + G2.2 Deterministic Assembler**
-- Status: **IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING**
+- Status: **USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING**
 - G1 status: **PASS / PRODUCTION / FROZEN**
 - Character: **V10.1 protected / unchanged**
 
@@ -117,35 +117,40 @@ Updated:
 
 ```text
 AGENTS.md
-SKILL.md                  -> 3.18.0
+SKILL.md                  -> 3.18.1
 docs/PROJECT_STATE.md
 docs/CURRENT_IMPLEMENTATION_MANIFEST.md
 ```
 
-They now explicitly say:
+Current status:
 
 ```text
-G2 Scene Timeline Contract = v1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
-G2 Deterministic Assembler = v1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+G2 Scene Timeline Contract = v1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
+G2 Deterministic Assembler = v1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
 G2 Scene-level LLM = NOT IMPLEMENTED
 Scene Timeline UI = NOT IMPLEMENTED
 ```
 
-Do not call G2.1/G2.2 PASS before the user-local acceptance below.
-
 ## 4. User-local acceptance
 
-### A. Unit contract / assembler tests
+### A. Unit contract / assembler tests — PASS
 
-From repository root:
+User-local command:
 
 ```powershell
 python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
 ```
 
-Expected: all tests PASS.
+Observed result on 2026-08-31:
 
-### B. Final accepted real Run smoke check
+```text
+....
+4 passed
+```
+
+Therefore the regression gate for G2.1/G2.2 is **PASS**.
+
+### B. Final accepted real Run smoke check — PENDING
 
 Use the existing local `studio_v2.sqlite3` that contains the final accepted Run:
 
@@ -183,10 +188,10 @@ Current P3 developer/acceptance Shot UI remains unchanged.
 
 ## 6. Next action after acceptance
 
-If A + B pass:
+If B passes:
 
 ```text
-mark G2.1 / G2.2 PASS
+mark G2.1 / G2.2 FINAL PASS
 → implement G2.3 Scene-level pure-text LLM
 → implement G2.4 source/support validator
 ```
