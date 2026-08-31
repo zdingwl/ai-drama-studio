@@ -203,3 +203,49 @@ def test_dialogue_identity_name_still_cannot_bind_anonymous_people() -> None:
 
     assert accepted["story_summary"] is None
     assert any("未绑定姓名" in item for item in warnings)
+
+
+def test_dialogue_claims_need_attribution_and_can_ground_real_scene2_style_summary() -> None:
+    packet = _packet()
+    packet["facts"].extend(
+        [
+            {
+                "fact_id": "F0005",
+                "kind": "DIALOGUE",
+                "shot_ordinal": 18,
+                "people": ["P2"],
+                "text": "你为什么不帮我说话，还偏袒那个偷花的邻居，她就是小偷。",
+            },
+            {
+                "fact_id": "F0006",
+                "kind": "DIALOGUE",
+                "shot_ordinal": 19,
+                "people": ["P1"],
+                "text": "我不是帮她说话，是你自己事多矫情。",
+            },
+        ]
+    )
+
+    grounded = {
+        "scene_ordinal": 2,
+        "readable_title": None,
+        "story_summary": {
+            "text": "人物1与人物2在客厅争论邻居偷花事件，人物2指责人物1不帮说话、偏袒小偷，人物1则称对方事多矫情。",
+            "support": ["F0004"],
+        },
+    }
+    accepted, warnings = validate_scene_narrative_v1(packet, grounded)
+    assert warnings == []
+    assert accepted["story_summary"] is not None
+    assert "F0005" in accepted["story_summary"]["support"]
+    assert "F0006" in accepted["story_summary"]["support"]
+
+    # 同样的 ASR 内容如果没有“争论/指责/称”等归因框架，就不能升级为客观事实。
+    unframed = deepcopy(grounded)
+    unframed["story_summary"] = {
+        "text": "邻居偷花，人物1偏袒小偷。",
+        "support": ["F0004"],
+    }
+    rejected, rejected_warnings = validate_scene_narrative_v1(packet, unframed)
+    assert rejected["story_summary"] is None
+    assert any("缺少争论/指责/称/表示等对白框架" in item for item in rejected_warnings)
