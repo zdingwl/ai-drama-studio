@@ -13,25 +13,25 @@
 P1/P2 implementation acceptance       = CONDITIONAL PASS
 Fast Grounded V2 baseline             = APPROVED
 G1 Exact-Shot + E6 quality            = FRESH REAL RUN POSITIVE
-Window Context production contract    = SEGMENT-INDEX V4 / REAL WINDOW-ONLY ACCEPTANCE POSITIVE
+Window Context production contract    = SEGMENT-INDEX V4 / REAL ACCEPTED / FROZEN
+Exact-Shot production contract        = COMPACT-RECONSTRUCTION V3 / SELECTED-BATCH REAL ACCEPTED
 P2-E6 anonymous continuity Fusion     = IMPLEMENTED / TARGETED LOCAL TEST PASS / FRESH REAL RUN POSITIVE
 P2-E5 Fusion                          = PRESERVED / ROLLBACK BASELINE
 P2-E4 Fusion                          = PRESERVED / OLDER ROLLBACK BASELINE
 Fast Grounded VLM timing              = IMPLEMENTED / REAL DATA COLLECTED
-Exact-Shot performance optimization   = DIAGNOSTIC PHASE
 legacy text-only per-Shot E3          = RETIRED FROM PRODUCTION / HISTORICAL ONLY
 G2 Scene-level text LLM               = PLANNED / NOT IMPLEMENTED
 Scene Timeline result UI              = PLANNED / NOT IMPLEMENTED
-P2.6 Windows / real-model acceptance  = NOT FINAL PASS (fresh v4 full-run timing still required)
+P2.6 Windows / real-model acceptance  = NOT FINAL PASS (one fresh production Run still required)
 P3 current 02 拉片 Shot-card UI        = IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character                  = PLANNED / PAUSED
 ```
 
-Fusion Scene/anonymous-subject quality tuning is **FROZEN** unless a future real regression provides
-new evidence. Character V10.1 remains protected.
+Fusion quality, Window-v4 and Exact-Shot-v3 tuning are now **FROZEN** unless a future real production
+regression provides new evidence. Character V10.1 remains protected.
 
-## 2. Latest fresh E6 real Run quality
+## 2. Latest fresh E6 production quality baseline
 
 ```text
 Run = BREAKDOWNRUN_7d27295da479475f92888351bbfb9839
@@ -46,10 +46,9 @@ VLM = 1559.171s
 Quality:
 
 ```text
-Shot0001:
-subjects=0
+Shot0001 subjects=0
 props=蓝色玫瑰花束, 玻璃花瓶, 木质桌面
-no neighboring-person leakage
+neighbor person leakage=NO
 
 Scenes=2
 Scene1 = 00:00.000–00:22.800 | Shots 1-12 | 公寓走廊 | LocalSubjects=2
@@ -57,179 +56,176 @@ Scene2 = 00:22.800–01:06.360 | Shots 13-30 | 客厅 | LocalSubjects=2
 same_shot_cluster_conflicts=0
 ```
 
-Therefore E6 Scene/anonymous-continuity and Exact-Shot visible-truth quality gates are positive.
+This fresh E6 quality baseline is positive. It predates the final Window-v4 + Exact-Shot-v3
+production combination, so one final fresh production Run is still required before P2.6 PASS.
 
-## 3. Measured performance before Window v4
+## 3. Window Context v4 — accepted and frozen
 
-Fresh instrumented Run:
-
-```text
-Host Window materialization = 4.842s
-Host Exact-Shot frame extraction = 6.161s
-Grounding frames = 58
-Qwen model load = 4.723s
-Window Context = 465.062s
-Exact-Shot = 1076.135s
-runner total = 1547.107s
-```
-
-Dominant cost is Exact-Shot. Model load and FFmpeg preparation are negligible in comparison.
-
-The first whole-run target is `<30 min`; the fresh Run missed it by about 20 seconds.
-
-## 4. Window Context evolution and real acceptance
-
-### Original prose-heavy Window
-
-```text
-12 Shots -> FAILED -> 1600/1600 MAXED
-12 Shots -> FAILED -> 1600/1600 MAXED
- 9 Shots -> FAILED -> 1600/1600 MAXED
- 7 Shots -> READY  -> 1442/1600
-```
-
-### Compact per-Shot v2
-
-Still repeated one Scene object per Shot and remained unreliable:
-
-```text
-READY 1598/1600
-FAILED 1600/1600 MAXED
-READY 1435/1600
-FAILED 1600/1600 MAXED
-```
-
-### Segment v3
-
-Token problem was solved but the model-generated Episode ordinal contract was invalid:
-
-```text
-Window total = 107.664s
-tokens = 296..366
-0 MAXED
-4/4 failed segment ordinal validation
-```
-
-### Segment-index v4 — ACCEPTED
-
-The model now emits only Window-local 1-based indexes. Frozen Episode ordinal and
-`revision_item_id` are deterministically restored by the host adapter.
-
-Real Window-only acceptance on the same completed frozen Run:
-
-```text
-profile = breakdown-p2-vlm-window-context-segment-index-zh-v4
-Host window materialization = 4.735s
-Model load = 5.882s
-Window Context total = 41.920s
-Runner total = 48.900s
-
-window-0001 | 12 Shots | READY | 276/1600
-window-0002 | 12 Shots | READY | 304/1600
-window-0003 |  9 Shots | READY | 237/1600
-window-0004 |  7 Shots | READY | 233/1600
-
-4/4 READY
-0 MAXED
-0 JSON truncation
-0 segment range error
-```
-
-Window Context is now considered **FROZEN / ACCEPTED** unless a future real regression appears.
-
-## 5. Current production VLM path
-
-```text
-engine/app/breakdown_p2_vlm_continuity_v1.py
-→ engine/app/breakdown_p2_vlm_runtime_v1.py
-→ engine/app/breakdown_p2_vlm_fast_grounded_instrumented_v2.py
-→ scripts/run_breakdown_vlm_fast_grounded_qwen3_timed_v3.py
-→ scripts/run_breakdown_vlm_window_segment_index_v4.py
-```
-
-Production Window profile:
+Profile:
 
 ```text
 breakdown-p2-vlm-window-context-segment-index-zh-v4
 ```
 
-Window v3/v2 files remain available as historical/rollback implementations.
-
-Exact-Shot visible-truth path is unchanged:
+Real Window-only acceptance on the frozen completed Run:
 
 ```text
-<1.2s -> 1 frame
-1.2..3s -> 2 frames
->3s -> 3 frames
-default 5 Shots/batch
-max pixels = 524288
-max new tokens = 4096
+Window Context total = 41.920s
+window-0001 | 12 Shots | READY | 276/1600
+window-0002 | 12 Shots | READY | 304/1600
+window-0003 |  9 Shots | READY | 237/1600
+window-0004 |  7 Shots | READY | 233/1600
+4/4 READY
+0 MAXED
+0 invalid JSON
+0 range errors
 ```
 
-Window Context may help Scene and anonymous continuity only. Exact-Shot remains authoritative for
-current-Shot people/actions/props/framing/visual prose.
+The model emits Window-local 1-based indexes; frozen Episode Shot ordinal/revision_item_id are
+restored by Python. Window context may help Scene and anonymous continuity only.
 
-## 6. Current production Breakdown chain
+## 4. Exact-Shot performance diagnosis
+
+Original production Exact-Shot selected batches:
+
+```text
+batch 1 | Shots 1-5   | 10 frames | 85.693s | 2158/4096 | READY
+batch 4 | Shots 16-20 | 10 frames | 97.333s | 2374/4096 | READY
+batch 6 | Shots 26-30 | 11 frames | 96.481s | 2277/4096 | READY
+```
+
+This proved the dominant cost was verbose generated semantic JSON, not model load, FFmpeg,
+4096-token exhaustion or adaptive retry.
+
+## 5. Exact-Shot compact v2 history
+
+Compact v2 reduced selected Exact-Shot total from ~279.6s to ~108.3s and output to 851..1097 tokens,
+but real review exposed a reconstruction regression:
+
+```text
+Shot1 summary correctly saw blue roses + glass vase
+Shot1 subjects=0
+Shot1 props=[]   <- unacceptable for reconstruction
+```
+
+Therefore v2 remains historical/candidate-only and was not promoted.
+
+## 6. Exact-Shot reconstruction-safe compact v3 — accepted and production
+
+Profile:
+
+```text
+breakdown-p2-vlm-exact-shot-compact-reconstruction-zh-v3
+```
+
+Semantic rule added over v2:
+
+```text
+salient independently visible objects needed to reconstruct the Shot must be represented in props,
+even when no person interacts with them.
+```
+
+User-local targeted tests:
+
+```text
+3/3 PASS
+```
+
+Real selected-batch acceptance:
+
+```text
+batch 1 | Shots 1-5   | 10 frames | 36.421s |  993/4096 | READY
+batch 4 | Shots 16-20 | 10 frames | 58.451s | 1055/4096 | READY
+batch 6 | Shots 26-30 | 11 frames | 44.921s | 1061/4096 | READY
+```
+
+Quality examples:
+
+```text
+Shot1  subjects=0 | props=蓝色玫瑰花束, 玻璃花瓶, 遥控器, 书本
+Shot3  subjects=2 | props=黑色塑料袋
+Shot16 subjects=2 | props=手机
+Shot26 subjects=1 | props=花瓶, 书本
+Shot27 subjects=2 | props=手机, 玫瑰
+Shot30 subjects=2 | props=手机
+```
+
+The accepted compact contract keeps:
+
+```text
+visible Shot description
+minimal Scene check
+shot type + composition
+visible people appearance/activity/position/visibility
+reconstruction-relevant visible props + person association
+```
+
+Host compatibility restores:
+
+```text
+revision_item_id from frozen manifest
+subject_A/B from current-Shot person order
+summary + visual_description from visible
+speaking_state=UNKNOWN (ASR owns dialogue truth)
+events=[] (Fusion summary fallback creates VISUAL event when needed)
+camera_motion_hint=UNKNOWN for static-frame-only evidence
+```
+
+No frame ratios, image resolution, max token cap or top-level batch size were changed.
+
+## 7. Current production VLM path
+
+```text
+engine/app/breakdown_p2_vlm_continuity_v1.py
+→ engine/app/breakdown_p2_vlm_fast_grounded_instrumented_v3.py
+→ scripts/run_breakdown_vlm_fast_grounded_qwen3_timed_v5.py
+   ├─ scripts/run_breakdown_vlm_window_segment_index_v4.py
+   └─ scripts/run_breakdown_vlm_exact_shot_compact_v3.py
+```
+
+Production visual contracts:
+
+```text
+Window prompt profile    = breakdown-p2-vlm-window-context-segment-index-zh-v4
+Exact-Shot prompt profile = breakdown-p2-vlm-exact-shot-compact-reconstruction-zh-v3
+```
+
+Stable inference parameters remain:
+
+```text
+Window: 24s / 25% overlap / 1 FPS / 262144 px / 1600 max new tokens
+Exact-Shot:
+  <1.2s -> 1 frame at 50%
+  1.2..3s -> 2 frames at 25/75%
+  >3s -> 3 frames at 15/50/85%
+  524288 max pixels
+  4096 max new tokens
+  5 Shots / top-level batch
+```
+
+## 8. Current production Breakdown chain
 
 ```text
 Episode Current ShotRevision
 → frozen PROCESSING BreakdownRun
 → Episode ASR
 → OCR
-→ G1 Fast Grounded Qwen3-VL, one model load
-   ├─ Window Segment-index v4 Context
-   │    24s / 25% overlap / 1 FPS / 262144 px
-   │    Scene segments + anonymous subject/prop continuity only
-   │    local window indexes -> frozen Shot ordinal/revision_item_id in host
-   └─ Exact-Shot frame grounding
-        1..3 frames per frozen Shot
-        default 5 Shots/batch
-        visible facts only from exact frozen Shot frames
+→ one-load Qwen3-VL
+   ├─ accepted Window Segment-index v4
+   └─ accepted Exact-Shot reconstruction-safe compact v3
 → immutable exact-Shot VLM_OUTPUT sidecar
 → P2-E6 Episode-context Fusion
-   ├─ corridor-family Scene continuity + DIRECT NEW_SCENE safeguard
-   ├─ ASR_SEGMENT dialogue truth/projections
-   └─ anonymous Subject Continuity
-        Stage1 Window hints + exact-Shot explicit conflict guard
-        Stage2 stable-appearance gap fallback + conflict guard
-        Stage3 mutual-best cluster bridge
-        Stage4 coherent-component bridge
-        all unions preserve same-Shot hard cannot-link
+   ├─ corridor-family Scene compatibility + DIRECT NEW_SCENE safeguard
+   ├─ ASR_SEGMENT dialogue truth + Shot projections
+   └─ anonymous continuity Stage1..4 with hard same-Shot cannot-link
 → P1 validator
 → READY / READY_WITH_WARNINGS
 ```
 
-Formal orchestrator remains `breakdown-p2-full-v1`; provider order remains `ASR → OCR → VLM`.
-Production Fusion profile remains `breakdown-p2-fusion-episode-context-e6-v1`.
+Top-level pipeline profile remains `breakdown-p2-full-v1`; provider order remains `ASR → OCR → VLM`.
+Production Fusion remains `breakdown-p2-fusion-episode-context-e6-v1`.
 
-## 7. Exact-Shot performance diagnostic
-
-Do not change `4096`, image resolution, frame ratios or batch size speculatively.
-
-A read-only selected-batch diagnostic is available:
-
-```powershell
-python scripts/diagnose_breakdown_exact_shot_batches.py `
-  --run-id BREAKDOWNRUN_7d27295da479475f92888351bbfb9839 `
-  --batches 1,4,6
-```
-
-It runs accepted Window v4 once and only the selected Exact-Shot top-level batches, with no DB,
-sidecar, Draft or Final writes. It reports:
-
-```text
-real output token count / 4096
-MAXED or not
-adaptive generation attempt count
-batch elapsed time
-Shot ordinals
-frame count
-```
-
-Use those measurements to decide whether the Exact-Shot bottleneck is mostly output generation,
-image/vision input cost, oversized schema, or retry/split behavior.
-
-## 8. Core truth boundaries
+## 9. Core invariants
 
 ```text
 Shot = smallest visual evidence/location unit
@@ -238,48 +234,35 @@ LocalSubject != Character
 SceneSegmentDraft != Final Scene
 DraftPropHint != Final Prop
 ASR speaker != Character
-raw Evidence / Draft != Final binding truth
-```
-
-Anonymous continuity:
-
-```text
-subject_A/B = Shot-local observation labels
+subject_A/B = Shot-local observation labels only
 same-Shot observations = hard cannot-link
-explicit male/female contradiction blocks soft union
-explicit long-hair/short-hair contradiction blocks soft union
-missing attributes are not contradictions
-expression/emotion/action/pose/speaking/screen position/framing do not define identity
 ```
 
-## 9. Character V10.1 protection
+Character V10.1 remains unchanged:
 
 ```text
-YOLOX Person Detection
-→ capture-first Person Evidence
-→ mature MOT
-→ YoutuReID project identity
-→ RESOLVED / UNRESOLVED
-→ explicit Shot × known-Character Assignment
-→ Final Character Gate
+YOLOX -> capture-first Person Evidence -> mature MOT -> YoutuReID
+-> RESOLVED/UNRESOLVED -> explicit Shot Assignment -> Final Gate
 ```
-
-Anonymous Breakdown continuity must never be treated as Final Character identity truth.
 
 ## 10. Next required action
 
-Do not run another full Episode yet.
+Run cheap production-routing regression tests first. If green, execute exactly one fresh full
+production Breakdown on the reference Episode.
+
+Final P2.6 acceptance requires the new Run to preserve:
 
 ```text
-1. git pull
-2. run v4 production routing + Exact-Shot diagnostic unit tests
-3. run selected Exact-Shot batches 1,4,6 on the completed frozen Run
-4. inspect actual output tokens / retries / elapsed time
-5. optimize only the measured Exact-Shot bottleneck
-6. run one final fresh full E6 + Window-v4 production Breakdown
-7. require quality gates remain positive and whole-run <30min
-8. then decide final G1/P2.6 PASS
-9. G2 / Scene Timeline UI stays blocked until that decision
+Window profile = ...segment-index-zh-v4
+Exact-Shot profile = ...compact-reconstruction-zh-v3
+Scenes ~= 2 with correct boundaries
+Scene1 LocalSubjects ~= 2
+Scene2 LocalSubjects ~= 2
+same_shot_cluster_conflicts=0
+Shot0001 subjects=0
+Shot0001 reconstruction props include blue roses + glass vase
+whole-run <30 min
 ```
 
-Hosted GitHub Actions remain intentionally unused.
+Do not continue tuning G1 if those gates pass. Then P2.6 can be reviewed for final PASS and G2 /
+Scene Timeline planning may begin. Hosted GitHub Actions remain intentionally unused.
