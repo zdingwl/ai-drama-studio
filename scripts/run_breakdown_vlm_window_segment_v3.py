@@ -12,7 +12,15 @@ only from the frozen Window manifest.
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 from typing import Any, Mapping, Sequence
+
+# Keep the runner importable both as a direct script and as ``scripts.*`` under pytest. Production
+# executes these files directly (where the scripts directory is already on sys.path), while tests
+# import them as namespace-package modules from the repository root.
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import run_breakdown_vlm_fast_grounded_qwen3 as fast
 
