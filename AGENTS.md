@@ -12,6 +12,8 @@ Window Context                         = Segment-index v4 / accepted / frozen
 Exact-Shot                             = Compact-reconstruction v3 / accepted / frozen
 P2-E6 anonymous continuity Fusion     = E6-v2 / real production accepted / frozen
 P2.6 Windows / real-model acceptance  = PASS
+G2 Scene Timeline Contract            = v1 / implemented / user-local acceptance pending
+G2 Deterministic Assembler            = v1 / implemented / user-local acceptance pending
 G2 Scene-level text LLM               = UNBLOCKED / NOT IMPLEMENTED
 Scene Timeline result UI              = UNBLOCKED / NOT IMPLEMENTED
 P5 Draft ↔ Character                  = PAUSED
@@ -22,6 +24,8 @@ Truth priority:
 ```text
 PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests = executable CURRENT
 ```
+
+G2.1/G2.2 implementation is not a PASS claim until user-local acceptance is completed.
 
 ## 2. Recovery order
 
@@ -38,9 +42,10 @@ Always read repository truth before old chat/history:
 8. docs/BREAKDOWN_DRAFT_DATA_CONTRACT.md
 9. docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
 10. docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
-11. Character docs when relevant
-12. current code/tests
-13. latest docs/sessions/*.md handoff
+11. docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md when working on G2
+12. Character docs when relevant
+13. current code/tests
+14. latest docs/sessions/*.md handoff
 ```
 
 ## 3. Frozen production Breakdown chain
@@ -137,6 +142,10 @@ ASR speaker != Character
 raw Evidence / Draft != Final binding truth
 subject_A/B = Shot-local labels only
 same-Shot person observations = hard cannot-link
+G2 Scene-local P1/P2 refs != Character identity
+G2 Scene Timeline != Final Character / Final Scene / Final Prop truth
+ASR-origin DIALOGUE text is verbatim source truth
+OCR-origin text is verbatim source truth
 ```
 
 Dynamic expression/emotion/action/pose/speaking/screen position/framing are not identity keys.
@@ -156,16 +165,29 @@ YOLOX Person Detection
 Never relax same-sample cannot-link, face conflict, >=3 independent evidence rule, ambiguity rules,
 explicit Shot assignment or Final Gate because of Breakdown hints.
 
-## 8. Next safe work
+## 8. G2 foundation and next safe work
 
-G2 / Scene Timeline is now unblocked.
+Implemented read-only G2 foundation:
 
 ```text
-1. define the Scene Timeline user-facing contract
-2. build deterministic Scene Timeline assembly from accepted G1 Draft/Evidence
-3. keep raw Evidence/diagnostics out of the primary result
-4. add Scene-level pure-text LLM only for readable organization, not source truth
-5. build the Scene Timeline result UI after the contract is stable
+engine/app/breakdown_scene_timeline_contract_v1.py
+engine/app/breakdown_scene_timeline_assembler_v1.py
+engine/tests/v2/test_breakdown_scene_timeline_v1.py
+docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md
+```
+
+It does not modify the frozen G1 chain and does not create Final assets.
+
+Next safe order:
+
+```text
+1. user-local run G2.1/G2.2 tests
+2. exercise deterministic assembler on final accepted Run
+3. verify 2 Scenes / 30 Shots / Scene-local anonymous people / Shot0001 exact truth / ASR verbatim
+4. only after PASS, implement G2.3 Scene-level pure-text LLM
+5. add G2.4 support/source validator
+6. add G2.5 API
+7. add G2.6 ordinary-user Scene Timeline UI
 ```
 
 Hosted GitHub Actions must not be used; commits use `[skip ci]`.
