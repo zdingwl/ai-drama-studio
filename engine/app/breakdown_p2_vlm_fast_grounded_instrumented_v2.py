@@ -1,9 +1,9 @@
 """Instrumented Fast Grounded VLM provider.
 
 This is a production-compatible layer on top of ``breakdown_p2_vlm_fast_grounded_v1``. Exact-Shot
-semantic behavior stays unchanged. Window Context is executed by the timed runner with the
-segment-based v3 contract after real acceptance proved both the prose-heavy v1 prompt and compact
-per-Shot v2 shape could still hit the 1600-token limit.
+semantic behavior stays unchanged. Window Context now uses the local-index Segment Contract v4
+that passed the completed real Run Window-only gate: 4/4 READY, 0 MAXED, 233..304 output tokens
+and 41.920s total Window inference on the reference 30-Shot Episode.
 
 The provider persists structured performance provenance and the active Window prompt profile.
 No Character/Scene/Prop Final assets are touched by this module.
@@ -23,7 +23,7 @@ from engine.app import breakdown_p2_vlm_fast_grounded_v1 as fast
 from engine.app import breakdown_p2_vlm_v1 as legacy
 
 PERFORMANCE_PROFILE = "breakdown-p2-vlm-performance-timing-v1"
-WINDOW_PROMPT_PROFILE = "breakdown-p2-vlm-window-context-segment-zh-v3"
+WINDOW_PROMPT_PROFILE = "breakdown-p2-vlm-window-context-segment-index-zh-v4"
 
 
 def _round_elapsed(started: float) -> float:
@@ -31,13 +31,13 @@ def _round_elapsed(started: float) -> float:
 
 
 class Qwen3VLSemanticProvider(fast.Qwen3VLSemanticProvider):
-    """Fast Grounded provider with timing provenance and segment-v3 Window Context routing."""
+    """Fast Grounded provider with timing provenance and segment-index-v4 Window routing."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         if kwargs.get("runner_script") is None:
             kwargs["runner_script"] = str(
-                repo_root / "scripts" / "run_breakdown_vlm_fast_grounded_qwen3_timed_v2.py"
+                repo_root / "scripts" / "run_breakdown_vlm_fast_grounded_qwen3_timed_v3.py"
             )
         self._last_host_timing: dict[str, Any] = {}
         self._last_runtime_timing: dict[str, Any] = {}
