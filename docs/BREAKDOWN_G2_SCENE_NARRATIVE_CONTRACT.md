@@ -1,7 +1,7 @@
 # Breakdown G2.3 / G2.4 — Scene Narrative Contract v1
 
-> Status: **IMPLEMENTED / PRIOR USER-LOCAL 13 TESTS PASS / CURRENT v1.4 RETEST REQUIRED / REAL-MODEL ACCEPTANCE RETEST REQUIRED**  
-> Prompt profile: `breakdown-g2-scene-narrative-zh-v1.4`  
+> Status: **IMPLEMENTED / PRIOR USER-LOCAL 14 TESTS PASS / CURRENT v1.5 RETEST REQUIRED / REAL-MODEL ACCEPTANCE RETEST REQUIRED**  
+> Prompt profile: `breakdown-g2-scene-narrative-zh-v1.5`  
 > Local runtime profile: `breakdown-g2-scene-narrative-qwen3-local-v1`  
 > Source foundation: **G2.1/G2.2 FINAL PASS / FROZEN FOUNDATION**
 
@@ -183,34 +183,76 @@ ASR 只证明“视频里有人说了什么”，不自动证明对白中的主�
 
 Validator 只把 claim 与相关 DIALOGUE fact 实际重叠的字符计入 coverage，并自动补对应 DIALOGUE `Fxxxx`；**不会把整段对白直接变成 lexical authority**。
 
-## 6. 高影响剧情词与关系词
+## 6. 高影响事件词与关系词
 
-以下类型如果只来自 ASR，规则更严格：
+高影响词必须区分“事件”与“身份关系”。
+
+### 6.1 高影响事件词
+
+例如：
 
 ```text
 死亡 / 杀害 / 枪击 / 绑架 / 报警
 怀孕 / 生子 / 结婚 / 离婚
-丈夫 / 妻子 / 父母 / 子女 / 恋人
 刀 / 枪 / 毒药
 ...
 ```
 
-它们只能作为明确的话题表达：
+如果只来自 ASR，允许两种安全写法：
 
 ```text
+话题表达：
 双方围绕结婚问题争执
 人物提到报警
-两人谈到丈夫问题
+
+明确归因：
+人物2指责对方，称结婚八年来从未获得支持
+人物1声称对方曾报警
 ```
 
-不能升级为既成事件或匿名人物身份：
+“明确归因”只证明**人物说了这件事**，不证明事件客观为真。脱离归因框架仍禁止：
 
 ```text
-两人结婚
+两人已经结婚八年
+对方确实报警
+某人已经死亡
+```
+
+### 6.2 亲属 / 伴侣关系词
+
+例如：
+
+```text
+丈夫 / 妻子 / 父母 / 子女 / 恋人 / 男友 / 女友
+```
+
+这些词更严格，只允许作为话题：
+
+```text
+谈到丈夫问题
+围绕父亲一事争论
+```
+
+不能借“称/指责/表示”等框架绑定匿名人物身份：
+
+```text
 人物1是人物2的丈夫
+人物2称人物1是丈夫
 ```
 
 对白中通过“我叫/名叫/改名成/我是...”等形式出现的姓名也不能进入匿名人物绑定。
+
+### 6.3 数字 / 数量
+
+数字检查在所有自动 DIALOGUE support 补齐之后执行，并同时覆盖：
+
+```text
+8 / 10 / 1
+八年 / 十年
+一句 / 三次 / 两个月
+```
+
+因此来源对白是“结婚八年”，Narrative 可以在明确归因中写“八年”；不能改成“十年”。
 
 ## 7. Candidate Contract
 
@@ -252,10 +294,11 @@ support 去重
 人物N 必须属于当前 Scene
 必要人物 provenance 自动补齐
 地点/时间/室内外/道具/景别/运镜硬锚点自动补 support
-新数字不能凭空出现
-对白中的未绑定姓名禁止进入结果
 普通 ASR 内容必须带对白陈述框架
-高影响 ASR 词必须是话题表达，不能升级成既成事件/关系
+高影响事件词可作为话题或明确归因陈述，但不能升级成无归因客观事实
+亲属/伴侣关系词仅允许话题表达，不能绑定匿名人物
+中英文数字/数量必须来自最终 support
+对白中的未绑定姓名禁止进入结果
 Scene summary / visual / performance 等仍提供视觉事实 coverage
 最终摘要必须达到保守 grounded coverage
 ```
@@ -366,23 +409,25 @@ Qwen batch adapter
 人物 support auto-complete
 合理自然语言压缩
 重大新剧情拒绝
-ASR 高影响词仅话题表达
+ASR 高影响词话题表达
 ASR 关系词不能绑定人物
 对白姓名不能绑定匿名人物
 普通 ASR 剧情必须带归因框架
 带归因的真实 Scene2 风格摘要可以 grounded
+高影响事件词可在明确归因中进入摘要
+中文数量必须与最终 ASR support 一致
 ```
 
-在 Prompt v1.4 / attributed-ASR Validator 修改前，用户本机曾确认：
-
-```text
-13 tests passed
-```
-
-当前 v1.4 新增一个回归用例，因此下一次本机目标是：
+Prompt v1.5 修改前，用户本机已经确认：
 
 ```text
 14 tests passed
+```
+
+当前 v1.5 新增一个回归用例，因此下一次本机目标是：
+
+```text
+15 tests passed
 ```
 
 ## 14. Real-model acceptance gate
@@ -412,12 +457,12 @@ narrative_gate = PASS
 acceptance_machine_gate = PASS
 ```
 
-即使机器 gate PASS，还必须人工检查两个 Scene 的 title/summary：不能编造事实，不能把对白主张升级成客观事实，不能做身份绑定。
+即使机器 gate PASS，还必须人工检查两个 Scene 的 title/summary：不能编造事实，不能把对白主张升级成无归因客观事实，不能做身份绑定。
 
 ## 15. 后续顺序
 
 ```text
-当前 v1.4 user-local tests
+当前 v1.5 user-local 15 tests
 → 同一真实 Run 再验收
 → 人工检查 Narrative
 → G2.3/G2.4 FINAL PASS 后冻结
