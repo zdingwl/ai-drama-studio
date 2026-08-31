@@ -2,9 +2,11 @@
 
 Date: 2026-08-31
 
-Status: **IMPLEMENTED ON BRANCH / USER-LOCAL ACCEPTANCE PENDING**
+Status: **IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING**
 
-Branch: `p5-breakdown-character-bridge`
+Historical branch: `p5-breakdown-character-bridge`  
+PR: `#17` / merged / closed  
+Merge commit: `ab4b11716f5c1c5ead7367119d1b2d787defe8f9`
 
 ## Why P5 is resumed now
 
@@ -57,7 +59,7 @@ current Final ShotCharacterBinding rows
 
 No ordinal or nearest-timestamp history remapping exists.
 
-## Files
+## Files on main
 
 ```text
 engine/app/breakdown_character_bridge_contract_v1.py
@@ -67,7 +69,7 @@ scripts/run_breakdown_p5_character_bridge_acceptance_v1.py
 docs/P5_BREAKDOWN_CHARACTER_BRIDGE_V1.md
 ```
 
-No frozen G1/G2 module and no Character V10.1 module is modified.
+No frozen G1/G2 module and no Character V10.1 module was modified.
 
 ## Acceptance commands
 
