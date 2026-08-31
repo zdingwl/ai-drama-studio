@@ -146,7 +146,10 @@ class Qwen3VLSceneTextLLM:
         env.setdefault("HF_HUB_OFFLINE", "1")
         env.setdefault("TRANSFORMERS_OFFLINE", "1")
         if os.name == "nt":
-            torch_lib = config.python_executable.parents[1] / "Lib" / "site-packages" / "torch" / "lib"
+            # Use parent/parent instead of indexed ``parents`` so even a custom shallow relative
+            # executable path cannot raise IndexError while constructing the environment.
+            runtime_root = config.python_executable.parent.parent
+            torch_lib = runtime_root / "Lib" / "site-packages" / "torch" / "lib"
             if torch_lib.is_dir():
                 existing = env.get("PATH", "")
                 env["PATH"] = os.pathsep.join([str(torch_lib)] + ([existing] if existing else []))
