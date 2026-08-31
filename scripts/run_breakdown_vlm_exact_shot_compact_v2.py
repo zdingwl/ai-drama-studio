@@ -94,7 +94,7 @@ Scene上下文（只可补地点/INT-EXT/时间，不能搬入邻镜人物动作
 4. 不转录对白/OCR；说话真相由 ASR 负责。
 5. 静态采样图不能可靠判断推/拉/摇/移，因此不要输出 camera motion；程序统一记 UNKNOWN。
 6. visible<=80字；appearance<=32字；activity<=24字；composition<=24字；interaction<=20字。
-7. 每个 ShotIndex 必须且只能输出一次。不要输出 revision_item_id、subject_A/B、events、长解释。
+7. 每个 ShotIndex 必须且只能输出一次。不要输出 revision_item_id、人物身份标签、跨镜人物标签、events、长解释。
 
 JSON schema：
 {{
