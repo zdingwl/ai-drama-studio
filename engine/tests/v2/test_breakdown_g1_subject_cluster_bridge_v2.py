@@ -38,23 +38,24 @@ def test_real_scene_shape_converges_to_woman_and_man_without_same_shot_conflict(
         obs(18, "subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),          # 5
         obs(27, "subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),          # 6
         obs(30, "subject_B", "长发女性，身穿白色露肩上衣和白色裤子。"),          # 7
-        # D: main man fragment.
+        # D: main man fragment. Shot 21 mirrors the real Run's strongest D<->E bridge evidence.
         obs(16, "subject_B", "短发男性，身穿灰色连帽衫，手持手机。"),             # 8
         obs(17, "subject_A", "短发男性，身穿灰色连帽衫，内搭白色T恤。"),          # 9
-        obs(24, "subject_B", "短发男性，身穿灰色连帽衫，内搭白色T恤。"),          # 10
+        obs(21, "subject_B", "短发，身穿灰色连帽衫，低头看手机。"),              # 10
+        obs(24, "subject_B", "短发男性，身穿灰色连帽衫，内搭白色T恤。"),          # 11
         # E: late man fragment.
-        obs(27, "subject_B", "短发，身穿灰色连帽衫，低头看手机。"),              # 11
-        obs(28, "subject_B", "短发，身穿灰色连帽衫，专注操作手机。"),            # 12
-        obs(29, "subject_B", "短发，身穿灰色连帽衫。"),                         # 13
+        obs(27, "subject_B", "短发，身穿灰色连帽衫，低头看手机。"),              # 12
+        obs(28, "subject_B", "短发，身穿灰色连帽衫，专注操作手机。"),            # 13
+        obs(29, "subject_B", "短发，身穿灰色连帽衫。"),                         # 14
         # F: final one-Shot man fragment.
-        obs(30, "subject_A", "短发，身穿灰色连帽衫，手指放在嘴边。"),            # 14
+        obs(30, "subject_A", "短发，身穿灰色连帽衫，手指放在嘴边。"),            # 15
     ]
     uf = e4._UnionFind(observations)
     _union_chain(uf, [0, 1])
     _union_chain(uf, [2, 3])
     _union_chain(uf, [4, 5, 6, 7])
-    _union_chain(uf, [8, 9, 10])
-    _union_chain(uf, [11, 12, 13])
+    _union_chain(uf, [8, 9, 10, 11])
+    _union_chain(uf, [12, 13, 14])
 
     accepted = bridge.apply_cluster_bridges(observations, uf)
     groups = _groups(uf, len(observations))
@@ -62,7 +63,7 @@ def test_real_scene_shape_converges_to_woman_and_man_without_same_shot_conflict(
     assert len(accepted) >= 4
     assert len(groups) == 2
     assert {0, 1, 4, 5, 6, 7} in groups
-    assert {2, 3, 8, 9, 10, 11, 12, 13, 14} in groups
+    assert {2, 3, 8, 9, 10, 11, 12, 13, 14, 15} in groups
     assert uf.rejected_cannot_link_count == 0
 
 
