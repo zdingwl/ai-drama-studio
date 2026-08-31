@@ -5,7 +5,7 @@
 - Date: 2026-08-31
 - Branch: `main`
 - Scope: **G2.1 Scene Timeline Contract + G2.2 Deterministic Assembler**
-- Status: **USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING**
+- Status: **FINAL PASS / FROZEN FOUNDATION**
 - G1 status: **PASS / PRODUCTION / FROZEN**
 - Character: **V10.1 protected / unchanged**
 
@@ -117,7 +117,7 @@ Updated:
 
 ```text
 AGENTS.md
-SKILL.md                  -> 3.18.1
+SKILL.md                  -> 3.18.2
 docs/PROJECT_STATE.md
 docs/CURRENT_IMPLEMENTATION_MANIFEST.md
 ```
@@ -125,8 +125,8 @@ docs/CURRENT_IMPLEMENTATION_MANIFEST.md
 Current status:
 
 ```text
-G2 Scene Timeline Contract = v1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
-G2 Deterministic Assembler = v1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
+G2 Scene Timeline Contract = v1 / FINAL PASS / FROZEN FOUNDATION
+G2 Deterministic Assembler = v1 / FINAL PASS / FROZEN FOUNDATION
 G2 Scene-level LLM = NOT IMPLEMENTED
 Scene Timeline UI = NOT IMPLEMENTED
 ```
@@ -148,28 +148,46 @@ Observed result on 2026-08-31:
 4 passed
 ```
 
-Therefore the regression gate for G2.1/G2.2 is **PASS**.
+### B. Final accepted real Run smoke check — PASS
 
-### B. Final accepted real Run smoke check — PENDING
-
-Use the existing local `studio_v2.sqlite3` that contains the final accepted Run:
-
-```powershell
-python -c "from engine.app.breakdown_serializer_v1 import get_breakdown_run; from engine.app.breakdown_scene_timeline_assembler_v1 import assemble_scene_timeline_v1; p=get_breakdown_run('BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4'); assert p is not None; r=assemble_scene_timeline_v1(p); print('scenes=',r['scene_count'],'shots=',r['shot_count']); print('people=',[len(s['people']) for s in r['scenes']]); s1=r['scenes'][0]['shots'][0]; print('shot1_people=',s1['people']); print('shot1_props=',[x['label'] for x in s1['props']]); print('warnings=',r['warnings'])"
-```
-
-Acceptance target:
+User-local command exercised the deterministic assembler against:
 
 ```text
-scenes = 2
-shots = 30
-people = [2, 2]
-shot1_people = []
-shot1_props contains 蓝色玫瑰花束
-shot1_props contains 玻璃花瓶
+BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
 ```
 
-Also inspect several dialogue/OCR rows if needed to confirm text remains identical to G1 source.
+Observed result on 2026-08-31:
+
+```text
+scenes= 2 shots= 30
+people= [2, 2]
+shot1_people= []
+shot1_props= ['遥控器', '蓝色玫瑰花束', '玻璃花瓶', '书本']
+warnings= []
+```
+
+Acceptance target was fully satisfied:
+
+```text
+Scenes = 2                       PASS
+Shots = 30                       PASS
+Scene1 people = 2                PASS
+Scene2 people = 2                PASS
+Shot0001 people = []             PASS
+Shot0001 蓝色玫瑰花束             PASS
+Shot0001 玻璃花瓶                 PASS
+warnings = []                    PASS
+```
+
+Together with the regression suite that verifies ASR/OCR verbatim behavior and debug-field exclusion,
+this closes G2.1/G2.2 acceptance.
+
+Therefore:
+
+```text
+G2.1 Scene Timeline Contract = FINAL PASS / FROZEN FOUNDATION
+G2.2 Deterministic Assembler = FINAL PASS / FROZEN FOUNDATION
+```
 
 ## 5. Not implemented in this session
 
@@ -186,17 +204,18 @@ Final Character / Final Scene / Final Prop creation
 
 Current P3 developer/acceptance Shot UI remains unchanged.
 
-## 6. Next action after acceptance
-
-If B passes:
+## 6. Next action
 
 ```text
-mark G2.1 / G2.2 FINAL PASS
+G2.1/G2.2 FINAL PASS
 → implement G2.3 Scene-level pure-text LLM
-→ implement G2.4 source/support validator
+→ implement G2.4 source/support validator + fail-closed fallback
+→ validate on final accepted Run
+→ G2.5 API
+→ G2.6 ordinary-user Scene Timeline UI
 ```
 
 The LLM may improve readable Scene summary / wording only. It must not own timestamps, people count,
 identity, dialogue, OCR, props, shot type or composition.
 
-If acceptance fails, fix the G2 Contract/Assembler first. Do not retune frozen G1 unless the failure is proven to be a real G1 regression.
+If a later regression appears, fix the responsible G2 layer first. Do not retune frozen G1 or alter the accepted deterministic source-truth ownership without concrete evidence.
