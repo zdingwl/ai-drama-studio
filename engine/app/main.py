@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from engine.app.asset_batch_routes_v4 import router as asset_batch_router
 from engine.app.asset_routes_v3 import router as asset_router
 from engine.app.breakdown_routes_v1 import router as breakdown_router
+from engine.app.breakdown_scene_timeline_routes_v1 import router as scene_timeline_router
 from engine.app.character_gallery_routes_v10 import router as character_gallery_router
 from engine.app.content_analysis_v2 import (
     ContentAnalysisError,
@@ -67,6 +68,7 @@ app.include_router(task_router)
 app.include_router(shot_cache_router)
 app.include_router(shot_edit_router)
 app.include_router(breakdown_router)
+app.include_router(scene_timeline_router)
 app.include_router(asset_router)
 app.include_router(asset_batch_router)
 app.include_router(character_gallery_router)
