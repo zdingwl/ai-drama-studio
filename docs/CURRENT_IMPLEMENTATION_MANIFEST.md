@@ -17,6 +17,8 @@ Window Context: SEGMENT-INDEX V4 / REAL ACCEPTED / PRODUCTION / FROZEN
 Exact-Shot: COMPACT-RECONSTRUCTION V3 / REAL ACCEPTED / PRODUCTION / FROZEN
 P2-E6 Fusion: E6-V2 / REAL PRODUCTION ACCEPTED / FROZEN
 P2.6 Windows / real-model acceptance: PASS
+G2 Scene Timeline Contract: V1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+G2 Deterministic Assembler: V1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
 G2 Scene-level text LLM: UNBLOCKED / NOT IMPLEMENTED
 Scene Timeline UI: UNBLOCKED / NOT IMPLEMENTED
 P3 current 02 拉片 Shot-card UI: IMPLEMENTED / NOT FINAL ACCEPTED
@@ -25,6 +27,7 @@ P5 Draft ↔ Character: PLANNED / PAUSED
 ```
 
 Do not tune G1 again without a new real regression. Character V10.1 remains protected.
+G2.1/G2.2 implementation is not a PASS claim until user-local tests are run.
 
 ## Final real acceptance evidence
 
@@ -125,6 +128,17 @@ Compact appearance normalizer      engine/app/breakdown_g1_compact_appearance_no
 Orchestrator                       engine/app/breakdown_p2_pipeline_v1.py
 ```
 
+G2 foundation modules:
+
+```text
+Scene Timeline Contract v1          engine/app/breakdown_scene_timeline_contract_v1.py
+Deterministic Scene assembler v1    engine/app/breakdown_scene_timeline_assembler_v1.py
+Contract / assembler tests          engine/tests/v2/test_breakdown_scene_timeline_v1.py
+Contract document                   docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md
+```
+
+The G2 foundation is read-only. It does not change the frozen G1 production chain.
+
 Continuity semantics:
 
 ```text
@@ -163,6 +177,10 @@ DraftPropHint != Final Prop
 ASR speaker != Character
 subject_A/B = Shot-local observation labels only
 same-Shot observations = hard cannot-link
+G2 Scene-local P1/P2 refs != Character identity
+G2 Scene Timeline != Final Scene / Final Prop / Final Character truth
+ASR-origin DIALOGUE text is copied verbatim by G2
+OCR-origin text is copied verbatim by G2
 ```
 
 Character V10.1 remains unchanged:
@@ -172,22 +190,49 @@ YOLOX -> capture-first evidence -> mature MOT -> YoutuReID
 -> RESOLVED/UNRESOLVED -> explicit Shot Assignment -> Final Gate
 ```
 
+## G2 foundation behavior
+
+`scene-timeline-v1` is intentionally ordinary-user oriented:
+
+```text
+Scene
+→ scene info
+→ anonymous people (P1/P2 internally, 人物1/人物2 for display)
+→ Shots
+   → Exact-Shot visual description
+   → visible people / grounded performance
+   → ASR-only dialogue
+   → Shot prop occurrences
+   → shot type / Exact-Shot composition / reliable camera motion
+   → OCR-only on-screen text
+→ existing Scene summary as deterministic story-summary baseline
+```
+
+Primary output excludes Evidence IDs, cluster data, confidence, LocalSubject DB IDs and provider/model diagnostics.
+The deterministic assembler fails closed on duplicate Scene/Shot ordinals, invalid time ranges or Shot/Scene ownership conflicts.
+
 ## Testing / CI discipline
 
 Accepted user-local evidence includes replay continuity regression PASS, real Window/Exact-Shot model
 runs, and the final E6-v2 full production Run above. Do not claim assistant-local CUDA/pytest execution.
 Hosted GitHub Actions remain unused; commits use `[skip ci]`.
 
+G2.1/G2.2 tests have been added but are **USER-LOCAL ACCEPTANCE PENDING**. Do not mark them PASS before the user runs them.
+
 ## Next required action
 
-G1/P2.6 is no longer the blocker. Begin G2 / Scene Timeline design and implementation.
+G1/P2.6 is no longer the blocker. G2.1 Contract and G2.2 deterministic assembly are implemented without touching G1.
 
-Recommended first slice:
+Next safe order:
 
 ```text
-1. define user-facing Scene Timeline contract
-2. build deterministic assembler over current Scene/Shot/ASR/OCR/LocalSubject/Prop Draft
-3. keep evidence/debug internals out of primary UI
-4. use pure-text Scene LLM only where it improves readable organization, never as source truth
-5. add Scene Timeline result UI after contract/assembler are stable
+1. user-local run engine/tests/v2/test_breakdown_scene_timeline_v1.py
+2. exercise deterministic assembler against final accepted Run BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
+3. verify 2 Scenes / 30 Shots / Scene-local anonymous people / Shot0001 no people + blue roses + glass vase / ASR verbatim
+4. only after that acceptance, begin G2.3 Scene-level pure-text LLM
+5. then G2.4 source/support validator
+6. then G2.5 Scene Timeline API
+7. finally G2.6 ordinary-user Scene Timeline UI
 ```
+
+Do not add an LLM, API or UI workaround to hide a deterministic assembler regression. Fix G2 only; do not retune frozen G1 without a new concrete G1 regression.
