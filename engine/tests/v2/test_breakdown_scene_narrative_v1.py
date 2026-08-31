@@ -176,7 +176,7 @@ def test_validator_accepts_supported_scene_text_and_rejects_fake_support() -> No
     candidate = {
         "scene_ordinal": 1,
         "readable_title": {
-            "text": "公寓走廊的短暂交流",
+            "text": "公寓走廊交流",
             "support": [_fact_id(packet, "SCENE_LOCATION"), _fact_id(packet, "SCENE_BASE_SUMMARY")],
         },
         "story_summary": {
@@ -186,7 +186,7 @@ def test_validator_accepts_supported_scene_text_and_rejects_fake_support() -> No
     }
     accepted, warnings = validate_scene_narrative_v1(packet, candidate)
     assert warnings == []
-    assert accepted["readable_title"]["text"] == "公寓走廊的短暂交流"
+    assert accepted["readable_title"]["text"] == "公寓走廊交流"
     assert accepted["story_summary"]["text"] == "人物1走向人物2并与其交流。"
 
     bad = deepcopy(candidate)
@@ -195,6 +195,16 @@ def test_validator_accepts_supported_scene_text_and_rejects_fake_support() -> No
     assert accepted_bad["readable_title"] is not None
     assert accepted_bad["story_summary"] is None
     assert any("不存在的事实" in item for item in warnings_bad)
+
+    # 真实 support id 也不能给模型“借壳”编一个新动作。
+    hallucinated = deepcopy(candidate)
+    hallucinated["story_summary"] = {
+        "text": "人物1杀死人物2。",
+        "support": [_fact_id(packet, "SCENE_BASE_SUMMARY")],
+    }
+    accepted_hallucinated, warnings_hallucinated = validate_scene_narrative_v1(packet, hallucinated)
+    assert accepted_hallucinated["story_summary"] is None
+    assert any("新内容字符" in item for item in warnings_hallucinated)
 
 
 def test_validator_requires_support_for_hard_anchor_terms() -> None:
@@ -294,7 +304,7 @@ def test_apply_overlay_changes_only_title_summary_and_rejects_stale_fingerprint(
                 "scene_ordinal": 1,
                 "readable_title": {
                     "text": "走廊里的交流",
-                    "support": [_fact_id(packet1, "SCENE_LOCATION")],
+                    "support": [_fact_id(packet1, "SCENE_LOCATION"), _fact_id(packet1, "SCENE_BASE_SUMMARY")],
                 },
                 "story_summary": {
                     "text": "人物1走向人物2并与其交流。",
