@@ -13,7 +13,7 @@ import json
 import time
 from typing import Any, Callable, Mapping, Sequence
 
-from engine.app import breakdown_p2_fusion_episode_v5 as fusion
+from engine.app import breakdown_p2_fusion_episode_v6 as fusion
 from engine.app import breakdown_p2_sidecar_v1 as p2
 from engine.app import breakdown_service_v1, studio_v2
 from engine.app.breakdown_models_v1 import BreakdownRun
