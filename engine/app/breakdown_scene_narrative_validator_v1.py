@@ -6,10 +6,10 @@ Validator 不判断“文采”，只负责硬边界：
 - 不能泄漏内部 P1/P2 引用；普通文本只能使用当前 Scene 已存在的“人物N”；
 - 地点/时间/室内外/道具/景别等冻结硬锚点一旦出现在文本中，会确定性补齐对应 support；
 - 剧情摘要自动补 Scene 基础摘要与必要的人物存在 support，避免模型漏列 provenance 导致误拒绝；
-- 摘要允许有限自然语言压缩，但整体内容必须主要覆盖冻结事实；
-- ASR 可以支持“谈到/围绕/讨论某剧情话题”，但不能把对白中的姓名/关系直接绑定成匿名人物身份；
+- 视觉/Timeline 事实可以直接陈述；ASR 只允许作为“说了什么/争论什么/指责什么”的受限 Narrative 来源；
+- 摘要若使用仅来自 ASR 的普通词面，所在分句必须有争论/指责/称/表示/质问/回应等对白框架，并补对应 DIALOGUE support；
 - 高影响剧情词如果只来自 ASR，只允许作为明确的“话题表达”，不能写成已经发生的视觉事件；
-- 已通过话题表达检查的 ASR 关键词只贡献该关键词与实际话题框架的 coverage，不把整段对白加入 lexical authority；
+- 对白中的姓名、亲属/伴侣称谓不能被升级成匿名人物身份绑定；
 - 场景标题允许少量受控的高层概括词，例如“纠纷/争执/交流”；
 - 新数字必须出现在 support 中，避免凭空增加数量、时间、门牌等事实；
 - 禁止 Final Asset / database id 风格的身份声明；
@@ -39,6 +39,7 @@ class SceneNarrativeValidationError(ValueError):
 _INTERNAL_PERSON_REF_RE = re.compile(r"(?<![A-Za-z0-9_])P[1-9][0-9]*(?![A-Za-z0-9_])")
 _DISPLAY_PERSON_RE = re.compile(r"人物[1-9][0-9]*")
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+_CLAUSE_SPLIT_RE = re.compile(r"[，,；;。！？!?]+")
 _DIALOGUE_IDENTITY_NAME_RE = re.compile(
     r"(?:改名成|名字是|名叫|叫|我是|他是|她是)\s*([\u4e00-\u9fff]{2,4})"
 )
@@ -96,6 +97,33 @@ _TITLE_ABSTRACTION_CHARS = frozenset(
 # 这类合理压缩词把已经有视觉/对白 provenance 的摘要误判为完全不 grounded。
 _SUMMARY_ABSTRACTION_CHARS = frozenset(
     "双方两人彼此冲突争执纠纷对话交流对峙争吵质问回应交涉讨论争论矛盾关系紧张不满气氛"
+)
+# 普通 ASR 内容只有在明确的话语框架里才能成为 Narrative 来源。该列表只证明“这是对白陈述”，
+# 不证明对白中的主张客观为真。
+_DIALOGUE_REPORTING_MARKERS = (
+    "争论",
+    "争执",
+    "讨论",
+    "谈论",
+    "谈到",
+    "提到",
+    "关于",
+    "围绕",
+    "指责",
+    "质问",
+    "回应",
+    "表示",
+    "声称",
+    "称",
+    "说",
+    "认为",
+    "抱怨",
+    "询问",
+    "反驳",
+    "否认",
+    "解释",
+    "批评",
+    "埋怨",
 )
 _SENSITIVE_PLOT_TERMS = (
     "杀死",
@@ -190,8 +218,10 @@ _DIALOGUE_TOPIC_SUFFIXES = (
     "问题",
     "一事",
     "事情",
+    "事件",
 )
 _MIN_SUMMARY_CHAR_COVERAGE = 0.50
+_MAX_AUTO_DIALOGUE_SUPPORT_FACTS = 24
 
 
 def _claim_warning(scene_ordinal: int, field: str, reason: str) -> str:
@@ -267,12 +297,6 @@ def _dialogue_topic_markers(text: str, term: str) -> set[str]:
     return markers
 
 
-def _is_dialogue_topic_expression(text: str, term: str) -> bool:
-    """只允许把对白里的高影响词写成“讨论某话题”，不能写成事件已经发生。"""
-
-    return bool(_dialogue_topic_markers(text, term))
-
-
 def _dialogue_identity_names(packet: SceneGroundingPacketV1) -> set[str]:
     """从对白中的显式身份/改名句抽取候选姓名；这些词不能进入匿名人物 Narrative。"""
 
@@ -285,6 +309,69 @@ def _dialogue_identity_names(packet: SceneGroundingPacketV1) -> set[str]:
             if name:
                 names.add(name)
     return names
+
+
+def _dialogue_reporting_markers(text: str) -> set[str]:
+    return {marker for marker in _DIALOGUE_REPORTING_MARKERS if marker in text}
+
+
+def _ground_dialogue_claims(
+    packet: SceneGroundingPacketV1,
+    text: str,
+    support: list[str],
+    *,
+    already_grounded_chars: set[str],
+) -> tuple[set[str], str | None]:
+    """为普通 ASR 剧情陈述补 provenance，但要求每个需要 ASR 的分句都明确处于话语框架中。
+
+    这里只把“claim 与相关对白实际重叠的字符”加入 coverage，不会把整段 ASR 变成 lexical authority。
+    因而对白可以证明“人物在争论/指责某事”，不能证明该事客观发生。
+    """
+
+    dialogue_facts = [fact for fact in packet.facts if fact.kind == "DIALOGUE"]
+    if not dialogue_facts:
+        return set(), None
+
+    dialogue_chars_by_fact = {
+        fact.fact_id: _substantive_chars(fact.text)
+        for fact in dialogue_facts
+    }
+    coverage_chars: set[str] = set()
+    auto_support_count = 0
+
+    for clause in (item.strip() for item in _CLAUSE_SPLIT_RE.split(text)):
+        if not clause:
+            continue
+        clause_chars = _substantive_chars(clause)
+        if not clause_chars:
+            continue
+        reporting_markers = _dialogue_reporting_markers(clause)
+        marker_chars = _substantive_chars("".join(sorted(reporting_markers)))
+
+        ranked: list[tuple[int, str, set[str]]] = []
+        for fact in dialogue_facts:
+            overlap = clause_chars.intersection(dialogue_chars_by_fact[fact.fact_id])
+            meaningful = overlap.difference(already_grounded_chars)
+            meaningful = meaningful.difference(_SUMMARY_ABSTRACTION_CHARS)
+            meaningful = meaningful.difference(marker_chars)
+            if len(meaningful) >= 2:
+                ranked.append((len(meaningful), fact.fact_id, overlap))
+
+        if not ranked:
+            continue
+        if not reporting_markers:
+            return set(), "使用了仅来自对白的内容，但该分句缺少争论/指责/称/表示等对白框架"
+
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        for _score, fact_id, overlap in ranked:
+            if auto_support_count >= _MAX_AUTO_DIALOGUE_SUPPORT_FACTS:
+                break
+            _append_support(support, fact_id)
+            auto_support_count += 1
+            coverage_chars.update(overlap)
+        coverage_chars.update(marker_chars)
+
+    return coverage_chars, None
 
 
 def _validate_claim(
@@ -369,7 +456,7 @@ def _validate_claim(
     claim_chars = _substantive_chars(text)
 
     if field_label == "剧情摘要":
-        # 只记录“已由 ASR 精确命中 + 已写成话题表达”的词面字符。绝不把整段对白并入 lexical authority。
+        # 高影响词有单独更严格的 gate：即使 ASR 真出现，也只能作为“谈到/围绕 X”的话题。
         dialogue_topic_chars: set[str] = set()
         for term in _SENSITIVE_PLOT_TERMS:
             if term not in text or term in lexical_support_text:
@@ -391,10 +478,24 @@ def _validate_claim(
                 )
             ]
 
-        # 高影响词可能确定性补入 ASR support；重新构造 supported_facts，供最终 provenance 使用。
+        # 普通对白内容也可以进入 Narrative，但必须逐分句处于明确的说话/争论框架中。
+        dialogue_claim_chars, dialogue_reason = _ground_dialogue_claims(
+            packet,
+            text,
+            support,
+            already_grounded_chars=supported_chars.union(dialogue_topic_chars),
+        )
+        if dialogue_reason is not None:
+            return None, [_claim_warning(packet.scene_ordinal, field_label, dialogue_reason)]
+
         supported_facts = [fact_by_id[fact_id] for fact_id in support]
         if claim_chars:
-            coverage_chars = supported_chars.union(dialogue_topic_chars).union(_SUMMARY_ABSTRACTION_CHARS)
+            coverage_chars = (
+                supported_chars
+                .union(dialogue_topic_chars)
+                .union(dialogue_claim_chars)
+                .union(_SUMMARY_ABSTRACTION_CHARS)
+            )
             grounded_chars = claim_chars.intersection(coverage_chars)
             coverage = len(grounded_chars) / len(claim_chars)
             if coverage < _MIN_SUMMARY_CHAR_COVERAGE:
@@ -402,7 +503,7 @@ def _validate_claim(
                     _claim_warning(
                         packet.scene_ordinal,
                         field_label,
-                        f"与来源事实/已验证对白话题的内容覆盖率过低（{coverage:.0%}）",
+                        f"与来源事实/受限对白陈述的内容覆盖率过低（{coverage:.0%}）",
                     )
                 ]
     else:
