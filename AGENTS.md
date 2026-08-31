@@ -20,9 +20,9 @@ G2 Source / Support Validator         = v1.5 / FINAL PASS / FROZEN
 G2.3/G2.4 real-model acceptance       = PASS
 G2.5 Scene Timeline API               = v1 / FINAL PASS / FROZEN
 G2.5 Windows/CUDA local acceptance    = PASS
-G2.6 ordinary-user result UI          = IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+G2.6 ordinary-user result UI          = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-P5 Draft ↔ Character                  = IMPLEMENTED ON PR #17 / USER-LOCAL ACCEPTANCE PENDING / NOT MERGED
+P5 Draft ↔ Character                  = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 ```
 
 Truth priority:
@@ -271,7 +271,7 @@ ASR may support Narrative only as attributed speech/argument content. High-impac
 
 G2.6 is present on `main` and consumes the frozen G2.5 Scene Timeline API. It is not FINAL PASS until user-local frontend commands and visual review are observed.
 
-P5 is currently implemented on Draft PR #17 only and remains outside `main` until accepted or explicitly merged by the user.
+P5 is now present on `main` through merged PR #17. Merge commit: `ab4b11716f5c1c5ead7367119d1b2d787defe8f9`. P5 is still **USER-LOCAL ACCEPTANCE PENDING** and is not FINAL PASS.
 
 Current safe order:
 
@@ -279,7 +279,7 @@ Current safe order:
 1. keep G1 + G2.1/G2.2 + G2.3/G2.4 + G2.5 frozen
 2. finish user-local G2.6 UI acceptance when needed
 3. run P5 user-local deterministic + real-Episode acceptance
-4. merge P5 only after acceptance, unless the user explicitly requests direct merge
+4. do not mark P5 FINAL PASS without user-local evidence
 5. after accepted P5, implement P6 Final identity/asset fill-back + final Breakdown renderers
 ```
 
