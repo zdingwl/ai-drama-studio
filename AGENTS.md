@@ -8,8 +8,8 @@ Formal Character baseline: **Character V10.1 + explicit Shot Character Assignmen
 ```text
 P1/P2 implementation acceptance       = CONDITIONAL PASS
 Fast Grounded G1                      = REAL ACCEPTED / PRODUCTION / FROZEN
-Window Context                         = Segment-index v4 / accepted / frozen
-Exact-Shot                             = Compact-reconstruction v3 / accepted / frozen
+Window Context                        = Segment-index v4 / accepted / frozen
+Exact-Shot                            = Compact-reconstruction v3 / accepted / frozen
 P2-E6 anonymous continuity Fusion     = E6-v2 / real production accepted / frozen
 P2.6 Windows / real-model acceptance  = PASS
 G2 Scene Timeline Contract            = v1 / FINAL PASS / FROZEN FOUNDATION
@@ -18,9 +18,11 @@ G2 Scene Narrative Core               = v1.5 / FINAL PASS / FROZEN
 G2 Local Qwen text runtime            = REAL ACCEPTED / FROZEN BASELINE
 G2 Source / Support Validator         = v1.5 / FINAL PASS / FROZEN
 G2.3/G2.4 real-model acceptance       = PASS
-G2.5 Scene Timeline API               = NOT IMPLEMENTED
-G2.6 ordinary-user result UI          = NOT IMPLEMENTED
-P5 Draft ↔ Character                  = PAUSED
+G2.5 Scene Timeline API               = v1 / FINAL PASS / FROZEN
+G2.5 Windows/CUDA local acceptance    = PASS
+G2.6 ordinary-user result UI          = IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
+P5 Draft ↔ Character                  = IMPLEMENTED ON PR #17 / USER-LOCAL ACCEPTANCE PENDING / NOT MERGED
 ```
 
 Truth priority:
@@ -29,7 +31,23 @@ Truth priority:
 PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests = executable CURRENT
 ```
 
-G1 and G2.1/G2.2 are frozen. G2.3/G2.4 are also frozen after user-local regression + real-model acceptance on 2026-08-31. Do not reopen any frozen layer without a concrete new regression.
+G1 and G2.1/G2.2 are frozen. G2.3/G2.4 and G2.5 are also frozen after user-local regression + real-model acceptance on 2026-08-31. Do not reopen any frozen layer without a concrete new regression.
+
+### Repository workflow
+
+```text
+Documentation-only synchronization/update:
+  -> edit main directly
+  -> do not create a branch or PR only for docs
+
+Code/behavior changes:
+  -> use a feature branch + Draft PR by default
+  -> if the user explicitly asks to change/merge directly on main, follow that instruction
+
+All commits:
+  -> include [skip ci]
+  -> do not use hosted GitHub Actions as acceptance evidence
+```
 
 ## 2. Recovery order
 
@@ -143,6 +161,20 @@ Scene2 summary = 人物2指责人物1对邻居偷花一事不作为，称其结�
 
 Human review accepted these as Scene-level Narrative: ASR claims remain explicitly attributed, no Final identity is created, and frozen Shot objects are unchanged.
 
+G2.5 accepted evidence:
+
+```text
+python -m pytest engine/tests/v2/test_breakdown_scene_timeline_result_v1.py engine/tests/v2/test_breakdown_scene_timeline_routes_v1.py -q
+12 passed
+
+materialize accepted Run:
+scene_count = 2
+accepted_title_count = 2
+accepted_summary_count = 2
+warning_count = 0
+runtime_profile = breakdown-g2-scene-narrative-qwen3-local-v1
+```
+
 ## 5. Core semantic rules
 
 > **先看懂，再识别，再回填。**
@@ -183,6 +215,16 @@ YOLOX Person Detection
 
 Never relax same-sample cannot-link, face conflict, >=3 independent evidence rule, ambiguity rules, explicit Shot assignment or Final Gate because of Breakdown hints.
 
+P5 identity reconciliation is one-way only:
+
+```text
+Final ShotCharacterBinding
+→ deterministic Scene-local presence reconciliation
+→ resolve Breakdown anonymous display when uniquely safe
+```
+
+Breakdown dialogue, ASR names, relationship terms, appearance prose and role hints must never become Character identity authority.
+
 ## 7. G2 frozen foundation
 
 Frozen modules include:
@@ -195,8 +237,11 @@ engine/app/breakdown_scene_grounding_v1.py
 engine/app/breakdown_scene_narrative_v1.py
 engine/app/breakdown_scene_narrative_validator_v1.py
 engine/app/breakdown_scene_narrative_qwen3_v1.py
+engine/app/breakdown_scene_timeline_result_v1.py
+engine/app/breakdown_scene_timeline_routes_v1.py
 scripts/run_breakdown_scene_narrative_qwen3.py
 scripts/run_breakdown_g2_scene_narrative_acceptance_v1.py
+scripts/materialize_breakdown_g2_scene_timeline_v1.py
 ```
 
 G2.3 LLM authority remains deliberately narrow:
@@ -222,14 +267,20 @@ LLM MUST NOT own or rewrite:
 
 ASR may support Narrative only as attributed speech/argument content. High-impact event claims must remain attributed or explicit topics. Relationship terms such as 丈夫/妻子/父亲/男友 remain topic-only and cannot bind anonymous people. Numeric quantities must be supported by final provenance.
 
-## 8. Next safe order
+## 8. Current implementation frontier
+
+G2.6 is present on `main` and consumes the frozen G2.5 Scene Timeline API. It is not FINAL PASS until user-local frontend commands and visual review are observed.
+
+P5 is currently implemented on Draft PR #17 only and remains outside `main` until accepted or explicitly merged by the user.
+
+Current safe order:
 
 ```text
-1. keep G1 + G2.1/G2.2 + G2.3/G2.4 frozen
-2. implement G2.5 Scene Timeline API
-3. validate API returns ordinary-user Scene Timeline without engineering internals
-4. implement G2.6 ordinary-user result UI
-5. keep Evidence IDs / support refs / provider diagnostics in developer diagnostics only
+1. keep G1 + G2.1/G2.2 + G2.3/G2.4 + G2.5 frozen
+2. finish user-local G2.6 UI acceptance when needed
+3. run P5 user-local deterministic + real-Episode acceptance
+4. merge P5 only after acceptance, unless the user explicitly requests direct merge
+5. after accepted P5, implement P6 Final identity/asset fill-back + final Breakdown renderers
 ```
 
 Hosted GitHub Actions must not be used; commits use `[skip ci]`.
