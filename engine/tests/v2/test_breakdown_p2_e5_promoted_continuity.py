@@ -100,23 +100,54 @@ def test_e5_direct_window_new_scene_still_forces_corridor_cut() -> None:
 
 
 def test_e5_real_scene_shape_converges_six_fragments_to_two_anonymous_people() -> None:
+    """Mirror the accepted real Scene02 evidence instead of weakening it into a generic fixture."""
+
     shots = [shot(index) for index in range(13, 31)]
+    female_by_shot: dict[int, tuple[str, str]] = {
+        13: ("subject_A", "黑发长发，穿白色露肩上衣和白色阔腿裤。"),
+        15: ("subject_A", "黑色长发，身穿白色露肩上衣和白色裤子。"),
+        16: ("subject_A", "长发女性，身穿白色露肩上衣，搭配白色裤子。"),
+        18: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        19: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        20: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        21: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        22: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        23: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        24: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        25: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        26: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        27: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        28: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        29: ("subject_A", "长发女性，身穿白色露肩上衣和白色裤子。"),
+        30: ("subject_B", "长发女性，身穿白色露肩上衣和白色裤子。"),
+    }
+    male_by_shot: dict[int, tuple[str, str]] = {
+        13: ("subject_B", "黑发短发，穿灰色连帽衫，内搭白色T恤。"),
+        14: ("subject_A", "短发，身穿灰色连帽衫，内搭白色T恤。"),
+        16: ("subject_B", "短发男性，身穿灰色连帽衫，手持手机。"),
+        17: ("subject_A", "短发男性，身穿灰色连帽衫，内搭白色T恤。"),
+        18: ("subject_B", "短发男性，身穿灰色连帽衫，内搭白色T恤。"),
+        19: ("subject_B", "短发男性，身穿灰色连帽衫，内搭白色T恤。"),
+        20: ("subject_B", "短发男性，身穿灰色连帽衫，内搭白色T恤。"),
+        21: ("subject_B", "短发，身穿灰色连帽衫，低头看手机。"),
+        22: ("subject_B", "短发男性，身穿灰色连帽衫，内搭白色T恤。"),
+        23: ("subject_B", "短发男性，身穿灰色连帽衫，内搭白色T恤。"),
+        24: ("subject_B", "短发男性，身穿灰色连帽衫，内搭白色T恤。"),
+        27: ("subject_B", "短发，身穿灰色连帽衫，低头看手机。"),
+        28: ("subject_B", "短发，身穿灰色连帽衫，专注操作手机。"),
+        29: ("subject_B", "短发，身穿灰色连帽衫。"),
+        30: ("subject_A", "短发，身穿灰色连帽衫，手指放在嘴边。"),
+    }
+
     semantics: list[dict] = []
     for item in shots:
-        ordinal = item.ordinal
         subjects: list[dict] = []
-        if ordinal in {13, 15}:
-            subjects.append(subject("subject_A", "黑发长发，穿白色上衣和白色裤子。"))
-        if ordinal in {13, 14}:
-            subjects.append(subject("subject_B", "黑发短发，穿灰色T恤。"))
-        if ordinal in {16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30}:
-            subjects.append(subject("subject_A", "长发女性，身穿白色上衣和白色裤子。"))
-        if ordinal in {16, 17, 18, 19, 20, 21, 22, 23, 24}:
-            subjects.append(subject("subject_B", "短发男性，身穿灰色T恤。"))
-        if ordinal in {27, 28, 29}:
-            subjects.append(subject("subject_B", "短发，身穿灰色T恤。"))
-        if ordinal == 30:
-            subjects.append(subject("subject_B", "短发，身穿灰色T恤。"))
+        female = female_by_shot.get(item.ordinal)
+        male = male_by_shot.get(item.ordinal)
+        if female is not None:
+            subjects.append(subject(*female))
+        if male is not None:
+            subjects.append(subject(*male))
         semantics.append(semantic("客厅", subjects))
 
     plan = legacy._SegmentPlan(index=1, shots=shots, semantics=semantics)
@@ -126,11 +157,30 @@ def test_e5_real_scene_shape_converges_six_fragments_to_two_anonymous_people() -
     male_key = keys[("ITEM_13", "subject_B")]
     assert female_key != male_key
     assert female_key == keys[("ITEM_16", "subject_A")]
-    assert female_key == keys[("ITEM_30", "subject_A")]
+    assert female_key == keys[("ITEM_30", "subject_B")]
     assert male_key == keys[("ITEM_16", "subject_B")]
     assert male_key == keys[("ITEM_27", "subject_B")]
-    assert male_key == keys[("ITEM_30", "subject_B")]
+    assert male_key == keys[("ITEM_30", "subject_A")]
     assert len(members) == 2
     assert stats.cluster_count == 2
     assert stats.cluster_bridge_union_count >= 1
+    assert stats.final_same_shot_conflict_count == 0
+
+
+def test_e5_does_not_bridge_explicit_long_hair_to_short_hair() -> None:
+    shots = [shot(1), shot(2)]
+    plan = legacy._SegmentPlan(
+        index=1,
+        shots=shots,
+        semantics=[
+            semantic("客厅", [subject("subject_A", "年轻女性，黑色长发，白色上衣，白色裤子")]),
+            semantic("客厅", [subject("subject_A", "年轻女性，黑色短发，白色上衣，白色裤子")]),
+        ],
+    )
+
+    keys, members, stats = e5._build_subject_cluster_keys([plan], [])
+
+    assert keys[("ITEM_1", "subject_A")] != keys[("ITEM_2", "subject_A")]
+    assert len(members) == 2
+    assert stats.cluster_count == 2
     assert stats.final_same_shot_conflict_count == 0
