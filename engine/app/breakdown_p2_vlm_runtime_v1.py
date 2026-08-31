@@ -5,19 +5,20 @@ Production no longer runs the old text-only per-Shot E3 pass. The active visual 
 Episode-window context (cheap, low FPS)
 → exact frozen Shot frame grounding (1..3 frames, small batches)
 → one immutable exact-Shot VLM_OUTPUT sidecar
-→ E4 Episode Fusion.
+→ E6 Episode Fusion.
 
 Both visual passes execute in one isolated Qwen3-VL subprocess/model load. Window context may
 help Scene fields only; exact-Shot frames are authoritative for visible people/actions/props and
-shot photographic facts. The old E2/E3 modules remain in the repository for historical tests and
-comparison, but they are no longer production truth through this stable runtime entry.
+shot photographic facts. The stable runtime now routes through the instrumented Fast Grounded
+provider so the next real acceptance Run persists model/window/batch timings without changing
+semantic behavior. The old E2/E3 modules remain for historical tests and comparison only.
 """
 from __future__ import annotations
 
 from typing import Any, Mapping
 
 from engine.app import breakdown_p2_sidecar_v1 as p2
-from engine.app import breakdown_p2_vlm_fast_grounded_v1 as fast
+from engine.app import breakdown_p2_vlm_fast_grounded_instrumented_v2 as fast
 from engine.app.breakdown_p2_vlm_v1 import VLMRuntimeConfig
 
 DEFAULT_WINDOW_OVERLAP_RATIO = fast.DEFAULT_WINDOW_OVERLAP_RATIO
@@ -34,6 +35,7 @@ VLM_WINDOW_SCHEMA = fast.FAST_GROUNDED_SCHEMA
 VLM_FAST_GROUNDED_PROFILE = fast.FAST_GROUNDED_PROFILE
 VLM_EXACT_SHOT_GROUNDING_PROFILE = fast.EXACT_SHOT_GROUNDING_PROFILE
 VLM_CONTEXTUAL_GROUNDING_POLICY = fast.VISUAL_TRUTH_POLICY
+VLM_PERFORMANCE_PROFILE = fast.PERFORMANCE_PROFILE
 
 # Historical E3 exports remain import-compatible for old tests/reports. Production does not call
 # E3 anymore; these constants/helpers only preserve read/compare compatibility for old artifacts.
@@ -209,7 +211,7 @@ def _fallback_to_e2(
 
 
 class Qwen3VLSemanticProvider(fast.Qwen3VLSemanticProvider):
-    """Stable production class name backed by the fast-grounded visual provider."""
+    """Stable production class name backed by the instrumented fast-grounded provider."""
 
 
 def run_qwen3_vl_episode_window_semantics(
@@ -237,6 +239,7 @@ __all__ = [
     "VLM_EPISODE_WINDOW_PROFILE",
     "VLM_EXACT_SHOT_GROUNDING_PROFILE",
     "VLM_FAST_GROUNDED_PROFILE",
+    "VLM_PERFORMANCE_PROFILE",
     "VLM_PROMPT_PROFILE",
     "VLM_WINDOW_SCHEMA",
     "VLMRuntimeConfig",
