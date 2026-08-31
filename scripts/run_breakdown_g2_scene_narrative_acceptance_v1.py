@@ -6,7 +6,8 @@ This script is read-only with respect to project data. It:
 2. assembles the FINAL PASS deterministic Scene Timeline;
 3. runs the local text-only Qwen Scene Narrative once for the whole Episode;
 4. applies only validated title/story_summary overlay;
-5. verifies every Shot object is structurally unchanged.
+5. verifies every Shot object is structurally unchanged;
+6. reports Scene-level safe runner diagnostics and a separate Narrative gate.
 
 It does not open video/images and does not write Final Character/Scene/Prop assets.
 """
@@ -83,6 +84,7 @@ def main() -> int:
         raise AssertionError(f"G2 local Qwen runtime not READY: {preflight}")
 
     overlay = organize_scene_timeline_narrative_v1(timeline, llm)
+    diagnostics = llm.last_batch_diagnostics()
     applied = apply_scene_narrative_overlay_v1(timeline, overlay)
     after_shots = _shot_snapshot(applied)
 
@@ -93,9 +95,27 @@ def main() -> int:
     if applied.get("shot_count") != timeline.get("shot_count"):
         raise AssertionError("Narrative overlay changed shot_count")
 
+    overlay_by_ordinal = {
+        int(item.get("scene_ordinal")): item
+        for item in overlay.get("scenes", [])
+        if isinstance(item, dict) and item.get("scene_ordinal") is not None
+    }
+    expected_ordinals = [int(scene["ordinal"]) for scene in before_scenes]
+    narrative_complete = True
+    for ordinal in expected_ordinals:
+        narrative = overlay_by_ordinal.get(ordinal) or {}
+        if not narrative.get("readable_title") or not narrative.get("story_summary"):
+            narrative_complete = False
+        diagnostic = diagnostics.get(ordinal) or {}
+        if diagnostic and str(diagnostic.get("status") or "").upper() != "READY":
+            narrative_complete = False
+    if overlay.get("status") != "READY":
+        narrative_complete = False
+
     print("=== G2.3/G2.4 Real Local-Qwen Acceptance ===")
     print("run=", args.run_id)
     print("preflight=", json.dumps(preflight, ensure_ascii=False))
+    print("runner_diagnostics=", json.dumps(diagnostics, ensure_ascii=False, sort_keys=True))
     print("scenes=", applied.get("scene_count"), "shots=", applied.get("shot_count"))
     print("people=", [len(scene.get("people", [])) for scene in _scene_snapshot(applied)])
     print("shot1_people=", shot1.get("people"))
@@ -103,11 +123,6 @@ def main() -> int:
     print("overlay_status=", overlay.get("status"))
     print("warnings=", json.dumps(overlay.get("warnings", []), ensure_ascii=False))
 
-    overlay_by_ordinal = {
-        int(item.get("scene_ordinal")): item
-        for item in overlay.get("scenes", [])
-        if isinstance(item, dict) and item.get("scene_ordinal") is not None
-    }
     for before, after in zip(before_scenes, _scene_snapshot(applied)):
         ordinal = int(before["ordinal"])
         narrative = overlay_by_ordinal.get(ordinal, {})
@@ -118,10 +133,13 @@ def main() -> int:
         print("narrative_summary=", after.get("story_summary"))
         print("title_support=", (narrative.get("readable_title") or {}).get("support"))
         print("summary_support=", (narrative.get("story_summary") or {}).get("support"))
+        print("runner_scene_status=", json.dumps(diagnostics.get(ordinal, {}), ensure_ascii=False))
 
     print("\nshot_objects_unchanged= YES")
-    print("acceptance_machine_gate= PASS")
-    return 0
+    print("structure_gate= PASS")
+    print("narrative_gate=", "PASS" if narrative_complete else "FAIL")
+    print("acceptance_machine_gate=", "PASS" if narrative_complete else "FAIL")
+    return 0 if narrative_complete else 2
 
 
 if __name__ == "__main__":
