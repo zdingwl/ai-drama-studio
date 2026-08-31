@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.17.0
-description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6 已完成真实生产验收并冻结，下一阶段为 G2 Scene Timeline。
+version: 3.18.0
+description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6 已完成真实生产验收并冻结，G2.1 Scene Timeline Contract + G2.2 Deterministic Assembler 已实现待本机验收。
 ---
 
 # AI Drama Studio — Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1
@@ -16,6 +16,7 @@ AGENTS.md
 → docs/PROJECT_STATE.md
 → docs/CURRENT_IMPLEMENTATION_MANIFEST.md
 → Breakdown plans/contracts
+→ docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md when working on G2
 → Character docs when relevant
 → current code/tests
 → latest docs/sessions/*.md handoff
@@ -34,10 +35,14 @@ Window Context: Segment-index v4 / REAL ACCEPTED / FROZEN
 Exact-Shot: Compact-reconstruction v3 / REAL ACCEPTED / FROZEN
 P2-E6 Fusion: E6-v2 / REAL PRODUCTION ACCEPTED / FROZEN
 P2.6 Windows / real-model acceptance: PASS
+G2 Scene Timeline Contract: v1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+G2 Deterministic Assembler: v1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
 G2 Scene-level pure-text LLM: UNBLOCKED / NOT IMPLEMENTED
 Scene Timeline UI: UNBLOCKED / NOT IMPLEMENTED
 P5 Draft ↔ Character: PAUSED
 ```
+
+G2.1/G2.2 implementation must not be called PASS until user-local acceptance is completed.
 
 ## 2. Frozen production flow
 
@@ -123,10 +128,14 @@ ASR speaker != Character
 raw Evidence / Draft != Final binding truth
 subject_A/B = Shot-local observation labels only
 same-Shot observations = hard cannot-link
+G2 Scene-local P1/P2 != Character identity
+G2 Scene Timeline != Final Character / Final Scene / Final Prop truth
 ```
 
 Window Context provides Scene/anonymous continuity context. Exact-Shot owns current-Shot visible truth.
 ASR owns dialogue text truth. OCR owns visible text evidence.
+
+G2.2 copies ASR-origin DIALOGUE and OCR-origin text verbatim. It does not use an LLM.
 
 ## 5. Accepted E6-v2 anonymous continuity
 
@@ -167,20 +176,60 @@ YOLOX Person Detection
 
 Never weaken Character identity safety because of Breakdown anonymous hints.
 
-## 7. Testing / CI discipline
+## 7. G2 Scene Timeline foundation
+
+Implemented:
+
+```text
+Contract:
+  engine/app/breakdown_scene_timeline_contract_v1.py
+
+Deterministic assembler:
+  engine/app/breakdown_scene_timeline_assembler_v1.py
+
+Tests:
+  engine/tests/v2/test_breakdown_scene_timeline_v1.py
+
+Contract doc:
+  docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md
+```
+
+Deterministic semantics:
+
+```text
+SceneSegmentDraft
+→ Scene info
+→ Scene-local P1/P2 anonymous people
+→ ordered Shots
+   → Exact-Shot visual_description
+   → grounded performance
+   → ASR-only dialogue, verbatim
+   → Shot prop occurrences
+   → shot type / Exact-Shot composition
+   → reliable non-UNKNOWN camera motion only
+   → OCR-only visible text, verbatim
+→ existing Scene summary as non-LLM baseline
+```
+
+Primary output intentionally excludes Evidence, cluster, confidence, LocalSubject IDs, provider diagnostics and Final Asset IDs.
+
+## 8. Testing / CI discipline
 
 Do not claim assistant-local pytest/CUDA execution. User-local real production evidence is the P2.6
 acceptance source. Do not consume hosted GitHub Actions quota. Use `[skip ci]`.
 
-## 8. Immediate safe work
+G2.1/G2.2 tests exist but remain **USER-LOCAL ACCEPTANCE PENDING** until the user runs them.
 
-G1 tuning is finished. Start G2 / Scene Timeline from current accepted Draft contracts.
+## 9. Immediate safe work
 
 ```text
-1. define a concise Scene Timeline contract users can directly understand
-2. assemble Scene -> Shots -> dialogue -> visible people/actions -> reconstruction props deterministically
-3. preserve ASR_SEGMENT as dialogue text truth
-4. preserve Exact-Shot as visual truth
-5. use Scene-level pure-text LLM only to organize/readability, never to invent evidence
-6. design primary UI around direct results; hide Evidence/debug internals by default
+1. user-local run engine/tests/v2/test_breakdown_scene_timeline_v1.py
+2. exercise deterministic assembler against BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
+3. verify 2 Scenes / 30 Shots / Scene-local people / Shot0001 exact props / ASR verbatim / no debug leakage
+4. only after PASS, implement G2.3 Scene-level pure-text LLM
+5. add G2.4 source/support validator
+6. add G2.5 Scene Timeline API
+7. build G2.6 ordinary-user Scene Timeline UI last
 ```
+
+If a G2 acceptance regression appears, fix G2. Do not retune the frozen G1 chain unless the regression is proven to originate in G1.
