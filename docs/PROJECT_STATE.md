@@ -1,6 +1,6 @@
 # AI Drama Studio — Project State
 
-> **Last synchronized:** 2026-08-31 +08:00  
+> **Last synchronized:** 2026-08-31 11:27 +08:00  
 > **Repository:** `zdingwl/ai-drama-studio`  
 > **Branch:** `main`  
 > **Architecture:** Reference Video V2 + Breakdown Fast Grounded V2  
@@ -12,10 +12,11 @@
 ```text
 P1/P2 implementation acceptance       = CONDITIONAL PASS
 Fast Grounded V2 baseline             = APPROVED
-G1 Window Context + Exact-Shot Ground = IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
-P2-E6 anonymous continuity Fusion     = IMPLEMENTED / FRESH PRODUCTION REAL-RUN PENDING
+G1 Window Context + Exact-Shot Ground = IMPLEMENTED / FINAL FRESH-RUN ACCEPTANCE PENDING
+P2-E6 anonymous continuity Fusion     = IMPLEMENTED / TARGETED LOCAL TEST PASS / FRESH RUN PENDING
 P2-E5 Fusion                          = PRESERVED / ROLLBACK BASELINE
 P2-E4 Fusion                          = PRESERVED / OLDER ROLLBACK BASELINE
+Fast Grounded VLM timing              = IMPLEMENTED / LOCAL TEST PENDING
 legacy text-only per-Shot E3          = RETIRED FROM PRODUCTION / HISTORICAL ONLY
 G2 Scene-level text LLM               = PLANNED / NOT IMPLEMENTED
 Scene Timeline result UI              = PLANNED / NOT IMPLEMENTED
@@ -27,26 +28,12 @@ P5 Draft ↔ Character                  = PLANNED / PAUSED
 
 ## 2. Latest real-run and replay truth
 
-Historical pre-Fast-Grounded rejection baseline:
-
-```text
-30 Shots
-21 LocalSubjects
-old Scene04 / 19 Shots -> 14 temporary people
-actual visible cast -> mainly one woman + one man
-Shot0001 visible truth -> blue roses / glass vase
-old result -> neighboring woman leakage
-legacy E3 -> 30/30 TimeoutExpired fallback
-~1 minute Episode -> multi-hour runtime class
-```
-
-Latest full Fast Grounded V2 execution:
+Reference full Fast Grounded execution:
 
 ```text
 Run = BREAKDOWNRUN_85be6db2faa94901a2a6db932c71ed62
 30 Shots
 formal E4 Draft at execution time = 4 Scenes
-5 / 5 / 2 / 18 Shots
 whole run = 33.705 min
 ASR = 17.1s
 OCR = 265.9s
@@ -61,7 +48,7 @@ subjects=[]
 neighbor person leakage not observed
 ```
 
-The immutable sidecars from that Run were then evaluated read-only. Latest accepted Replay v3:
+Latest accepted read-only Replay v3 over the immutable sidecars:
 
 ```text
 Candidate Scenes = 2
@@ -73,7 +60,7 @@ mutates_breakdown_run = false
 mutates_final_assets = false
 ```
 
-Scene1 anonymous chains are supported by the real exact-Shot evidence:
+Scene1 real anonymous chains:
 
 ```text
 white long-hair person:
@@ -85,10 +72,18 @@ gray/white curly-hair + orange floral-shirt person:
 
 Scene2 remains the accepted one-woman + one-man anonymous result.
 
-The replay-v3 policy has been promoted into versioned production E6. Historical Runs remain immutable.
-A fresh E6 production full run has not yet been executed.
+The replay-v3 policy is now production E6. Historical Runs remain immutable.
 
-Therefore:
+User-local E6/v3 targeted validation:
+
+```text
+12 tests PASS
+```
+
+Therefore **Fusion Scene/anonymous-subject quality tuning is frozen**. Do not keep changing thresholds
+without a concrete future real regression.
+
+Current acceptance state:
 
 ```text
 G1 exact-Shot focused gate = POSITIVE
@@ -96,8 +91,9 @@ G1 Scene replay gate = POSITIVE
 G1 Scene1 continuity replay gate = POSITIVE
 G1 Scene2 continuity replay gate = POSITIVE
 G1 same-Shot hard safety replay gate = POSITIVE
+E6 targeted local tests = PASS
 fresh E6 production execution = PENDING
-performance first target <30 min = FAIL on previous run
+previous performance <30 min target = FAIL
 P2.6 = NOT PASSED
 ```
 
@@ -129,6 +125,9 @@ Episode Current ShotRevision
 → Episode ASR
 → OCR
 → G1 Fast Grounded Qwen3-VL
+   ├─ Host preparation
+   │    Window clip materialization
+   │    Exact-Shot FFmpeg frame extraction
    ├─ Window Context
    │    default 24s / 25% overlap / 1 FPS / 262144 max pixels
    │    Scene + anonymous subject/prop continuity only
@@ -139,6 +138,7 @@ Episode Current ShotRevision
         default 5 Shots/batch
         visible facts only from exact frozen Shot frames
    one subprocess/model load for both stages
+   structured timing persisted in VLM metadata
 → immutable exact-Shot VLM_OUTPUT sidecar
 → P2-E6 Episode-context Fusion
    ├─ corridor-family Scene continuity + DIRECT NEW_SCENE safeguard
@@ -168,12 +168,23 @@ engine/app/breakdown_p2_fusion_episode_v6.py
 profile = breakdown-p2-fusion-episode-context-e6-v1
 ```
 
-Rollback baselines:
+Production VLM timing path:
 
 ```text
-engine/app/breakdown_p2_fusion_episode_v5.py
-engine/app/breakdown_p2_fusion_episode_v4.py
+engine/app/breakdown_p2_vlm_continuity_v1.py
+→ engine/app/breakdown_p2_vlm_runtime_v1.py
+→ engine/app/breakdown_p2_vlm_fast_grounded_instrumented_v2.py
+→ scripts/run_breakdown_vlm_fast_grounded_qwen3_timed.py
 ```
+
+Semantic base remains:
+
+```text
+engine/app/breakdown_p2_vlm_fast_grounded_v1.py
+```
+
+The timing layer changes metadata only; prompts, frame ratios, resolutions, token limits, window
+planning, batch size and exact-Shot truth rules remain unchanged.
 
 ## 5. G1 truth boundaries
 
@@ -197,58 +208,65 @@ visible events
 visible plot-relevant props
 ```
 
-Only Scene fields may conservatively inherit Window Context. Neighbor-only person/action/prop/framing
-must never become current-Shot truth.
-
-Scene rules:
-
-```text
-UNKNOWN / generic / closeup / background-poor -> inherit current Scene
-compatible specificity -> same Scene
-corridor qualifier drift alone -> same Scene
-DIRECT Window NEW_SCENE -> force cut
-strong incompatible location or INT↔EXT contradiction -> cut
-看不出来 != 换场
-```
-
-Anonymous continuity:
+Anonymous continuity hard rules:
 
 ```text
 subject_A/B = Shot-local observation labels
 LocalSubject = Scene-scoped anonymous cluster
 same-Shot observations = hard cannot-link
-explicit male/female or long-hair/short-hair contradiction blocks soft union
-stable appearance may support continuity
-co-star structure / distinctive attire may support Stage4 coherent components
+explicit male/female contradiction blocks soft union
+explicit long-hair/short-hair contradiction blocks soft union
+missing attributes are not contradictions
+stable appearance / co-star structure / distinctive attire may support anonymous continuity
 expression/emotion/action/pose/speaking/screen position/framing do not define identity
 ```
 
-## 6. Testing and real acceptance
+## 6. Performance instrumentation
 
-User-local targeted E4/E5/replay-v2 suite before v3/E6 promotion:
+Persisted VLM performance profile:
 
 ```text
-21 tests PASS
+breakdown-p2-vlm-performance-timing-v1
 ```
 
-Replay v3 then produced the 2-Scene / 2-person-per-Scene result above with zero hard conflicts.
-New v3/E6 targeted tests are present in the repository but still require a fresh local run after pull.
-Hosted GitHub Actions remain intentionally unused.
+Measured fields include:
+
+```text
+Host:
+- Window materialization total/per-window
+- Exact-Shot frame extraction total/per-shot
+- total grounding frame count
+- subprocess wall time
+
+Qwen runner:
+- model load
+- Window Context total/per-window
+- Exact-Shot total/per-top-level-batch
+- batch shot count
+- batch frame count
+- runner total
+```
+
+CUDA is synchronized around measured model stages when CUDA is available.
+
+Read-only summary after a new completed Run:
+
+```powershell
+python scripts/inspect_breakdown_vlm_performance.py --run-id <NEW_RUN_ID>
+```
 
 ## 7. Performance gate
 
 Reference target:
 
 ```text
-~60 seconds / ~30 Shots / ~2 current candidate Scenes
+~60 seconds / ~30 Shots / ~2 candidate Scenes
 first target: complete Breakdown < 30 minutes
 second target: 10..20 minute class
 5..6 hours = FAIL
 ```
 
-Authoritative whole-run elapsed is `BreakdownRun.started_at -> completed_at`.
-
-Previous full execution:
+Previous execution:
 
 ```text
 33.705 min total
@@ -257,16 +275,8 @@ OCR 265.9s
 ASR 17.1s
 ```
 
-Before another expensive full run, add detailed VLM instrumentation:
-
-```text
-model load
-Window Context total/per-window
-Exact-Shot total/per-batch
-frame/batch counts
-```
-
-Then execute one fresh E6 production run and review quality + timing together.
+Do not optimize blindly. The next full production Run is specifically for detailed measurement plus
+E6 fresh-run quality acceptance.
 
 ## 8. Character protection
 
@@ -282,16 +292,17 @@ YOLOX Person Detection
 → Final Character Gate
 ```
 
-Do not use anonymous Breakdown continuity as Final Character identity truth.
+Anonymous Breakdown continuity must never be treated as Final Character identity truth.
 
 ## 9. Next required action
 
 ```text
 1. git pull
-2. run targeted replay-v3 + E6 tests
-3. if green, freeze Fusion quality tuning
-4. add VLM detailed timing instrumentation
-5. execute one fresh E6 full real run
-6. only then decide G1/P2.6 PASS
-7. G2 / Scene Timeline UI stays blocked until that decision
+2. run cheap VLM instrumentation unit tests + py_compile
+3. if green, keep Fusion frozen
+4. execute one fresh E6 full production Breakdown Run
+5. inspect detailed timing with scripts/inspect_breakdown_vlm_performance.py
+6. optimize only the measured dominant cost center
+7. then decide G1/P2.6 PASS
+8. G2 / Scene Timeline UI stays blocked until that decision
 ```
