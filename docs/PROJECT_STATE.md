@@ -22,7 +22,8 @@ G2 Scene Narrative Core               = V1.5 / FINAL PASS / FROZEN
 G2 Local Qwen text runtime            = REAL ACCEPTED / FROZEN BASELINE
 G2 Source / Support Validator         = V1.5 / FINAL PASS / FROZEN
 G2.3/G2.4 real-model acceptance       = PASS
-G2.5 Scene Timeline API               = NOT IMPLEMENTED
+G2.5 Scene Timeline API               = V1 / FINAL PASS / FROZEN
+G2.5 Windows/CUDA local acceptance    = PASS
 G2.6 ordinary-user result UI          = NOT IMPLEMENTED
 P3 current 02 拉片 Shot-card UI        = IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
@@ -30,7 +31,7 @@ P5 Draft ↔ Character                  = PLANNED / PAUSED
 same-Shot hard safety                 = PASS / conflicts=0
 ```
 
-G1 performance/quality tuning is frozen. G2.1/G2.2 and G2.3/G2.4 are also frozen after accepted real evidence. Do not change Window-v4, Exact-Shot-v3, E6-v2, G2 Timeline truth ownership, G2 Narrative provenance rules, same-Shot cannot-link, or Character V10.1 identity gates without a new concrete regression.
+G1 performance/quality tuning is frozen. G2.1/G2.2, G2.3/G2.4 and G2.5 are frozen after accepted real evidence. Do not change Window-v4, Exact-Shot-v3, E6-v2, G2 Timeline truth ownership, G2 Narrative provenance rules, G2.5 ordinary-user API leak/fallback boundaries, same-Shot cannot-link, or Character V10.1 identity gates without a new concrete regression.
 
 ## 2. Final P2.6 production acceptance Run
 
@@ -258,14 +259,71 @@ Dialogue names cannot bind anonymous people.
 Chinese/Arabic quantities must be supported by final provenance.
 ```
 
-## 8. Next action
+## 8. G2.5 Scene Timeline API final acceptance
+
+Frozen G2.5 surface/modules:
 
 ```text
-1. keep G1 + G2.1/G2.2 + G2.3/G2.4 frozen
-2. implement G2.5 Scene Timeline API
-3. API should return direct ordinary-user Scene Timeline data, not engineering evidence
-4. preserve title/story_summary overlay without exposing support Fxxxx in primary UI
-5. implement G2.6 ordinary-user result UI after API acceptance
+engine/app/breakdown_scene_timeline_result_v1.py
+engine/app/breakdown_scene_timeline_routes_v1.py
+scripts/materialize_breakdown_g2_scene_timeline_v1.py
+engine/tests/v2/test_breakdown_scene_timeline_result_v1.py
+engine/tests/v2/test_breakdown_scene_timeline_routes_v1.py
+docs/BREAKDOWN_G2_SCENE_TIMELINE_API_V1.md
+```
+
+Primary API:
+
+```text
+GET /api/episodes/{episode_id}/scene-timeline
+GET /api/breakdown-runs/{run_id}/scene-timeline
+```
+
+Frozen API boundary:
+
+```text
+GET never starts Qwen or any model.
+Narrative is materialized explicitly into the Run workspace.
+Missing/stale/invalid Narrative falls back to deterministic G2.2 truth.
+Persisted Narrative is revalidated through frozen G2.4 before use.
+Primary API never exposes support Fxxxx, source_fingerprint, Evidence/cluster/LocalSubject IDs, provider/model diagnostics, or raw validator diagnostics.
+```
+
+User-local Windows/CUDA acceptance on the accepted production Run:
+
+```text
+python scripts/materialize_breakdown_g2_scene_timeline_v1.py BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4 --device cuda
+scene_count = 2
+accepted_title_count = 2
+accepted_summary_count = 2
+warning_count = 0
+runtime_profile = breakdown-g2-scene-narrative-qwen3-local-v1
+```
+
+New G2.5 tests:
+
+```text
+python -m pytest engine/tests/v2/test_breakdown_scene_timeline_result_v1.py engine/tests/v2/test_breakdown_scene_timeline_routes_v1.py -q
+12 passed
+```
+
+Frozen G2 regression command completed with 19 passing test dots and no failure/error output in the supplied user-local terminal result.
+
+Therefore:
+
+```text
+G2.5 Scene Timeline API = FINAL PASS / FROZEN
+G2.5 Windows/CUDA local acceptance = PASS
+```
+
+## 9. Next action
+
+```text
+1. keep G1 + G2.1/G2.2 + G2.3/G2.4 + G2.5 frozen
+2. start G2.6 ordinary-user Scene Timeline UI
+3. UI should consume the frozen G2.5 endpoints directly
+4. show direct Scene → people → Shot cards → visual/action/dialogue/props/cinematography/OCR → readable title/story_summary
+5. keep engineering evidence, support Fxxxx, internal IDs, confidence/provider/model diagnostics out of the ordinary-user page
 ```
 
 No assistant-local pytest/CUDA PASS is claimed. Hosted GitHub Actions remain intentionally unused.
