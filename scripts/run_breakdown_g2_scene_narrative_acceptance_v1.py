@@ -7,7 +7,7 @@ This script is read-only with respect to project data. It:
 3. runs the local text-only Qwen Scene Narrative once for the whole Episode;
 4. applies only validated title/story_summary overlay;
 5. verifies every Shot object is structurally unchanged;
-6. reports Scene-level safe runner diagnostics and a separate Narrative gate.
+6. reports Scene-level safe runner diagnostics, candidate previews and a separate Narrative gate.
 
 It does not open video/images and does not write Final Character/Scene/Prop assets.
 """
@@ -103,6 +103,7 @@ def main() -> int:
 
     overlay = organize_scene_timeline_narrative_v1(timeline, llm)
     diagnostics = llm.last_batch_diagnostics()
+    candidate_previews = llm.last_batch_candidate_previews()
     applied = apply_scene_narrative_overlay_v1(timeline, overlay)
     after_shots = _shot_snapshot(applied)
 
@@ -134,6 +135,7 @@ def main() -> int:
     print("run=", args.run_id)
     print("preflight=", json.dumps(preflight, ensure_ascii=False))
     print("runner_diagnostics=", json.dumps(diagnostics, ensure_ascii=False, sort_keys=True))
+    print("runner_candidate_previews=", json.dumps(candidate_previews, ensure_ascii=False, sort_keys=True))
     print("scenes=", applied.get("scene_count"), "shots=", applied.get("shot_count"))
     print("people=", [len(scene.get("people", [])) for scene in _scene_snapshot(applied)])
     print("shot1_people=", shot1.get("people"))
@@ -146,6 +148,7 @@ def main() -> int:
         narrative = overlay_by_ordinal.get(ordinal, {})
         print(f"\n[Scene {ordinal}]")
         print("dialogue_topic_terms=", _dialogue_topic_terms(before))
+        print("raw_candidate_preview=", json.dumps(candidate_previews.get(ordinal, {}), ensure_ascii=False))
         print("deterministic_title=", before.get("title"))
         print("narrative_title=", after.get("title"))
         print("deterministic_summary=", before.get("story_summary"))
