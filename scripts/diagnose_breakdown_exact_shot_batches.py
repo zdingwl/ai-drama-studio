@@ -2,11 +2,12 @@
 """Read-only selected Exact-Shot batch diagnostic for a completed Breakdown Run.
 
 This command reuses the completed Run's frozen ShotRevision and media, runs the accepted production
-Window Context once, then runs only selected top-level Exact-Shot batches through the production
-Timed Qwen3-VL runner. It writes no DB rows, no sidecars, no Draft/Final assets.
+Window Context once, then runs only selected top-level Exact-Shot batches through the configured
+timed Qwen3-VL runner. It writes no DB rows, no sidecars, no Draft/Final assets.
 
-Use it to measure real generation token counts, adaptive retry/split behavior, frame counts and
-elapsed time before changing Exact-Shot token limits, prompt shape, resolution or batch size.
+Use it to measure real generation token counts, adaptive retry/split behavior, frame counts, elapsed
+time, and a compact quality summary before changing Exact-Shot prompt shape, resolution or batch
+size.
 """
 from __future__ import annotations
 
@@ -36,6 +37,10 @@ def _seconds(value: Any) -> str:
         return f"{float(value):.3f}s"
     except (TypeError, ValueError):
         return "-"
+
+
+def _clean(value: Any, limit: int = 240) -> str:
+    return " ".join(str(value or "").strip().split())[:limit]
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -87,6 +92,49 @@ def _selected_batches(
             raise ValueError(f"batch {number} outside valid range 1..{len(batches)}")
         result.append((number, batches[number - 1]))
     return tuple(result)
+
+
+def _selected_shot_quality(
+    rows: Sequence[Mapping[str, Any]],
+    ordinal_by_id: Mapping[str, int],
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        if str(row.get("kind") or "").strip().lower() != "shot_grounding":
+            continue
+        item_id = str(row.get("revision_item_id") or "").strip()
+        if item_id not in ordinal_by_id:
+            continue
+        semantic = row.get("semantic") if isinstance(row.get("semantic"), Mapping) else {}
+        shot = semantic.get("shot") if isinstance(semantic.get("shot"), Mapping) else {}
+        subjects = semantic.get("subjects") if isinstance(semantic.get("subjects"), list) else []
+        props = semantic.get("props") if isinstance(semantic.get("props"), list) else []
+        subject_rows: list[dict[str, Any]] = []
+        for subject in subjects:
+            if not isinstance(subject, Mapping):
+                continue
+            subject_rows.append({
+                "label": _clean(subject.get("label"), 48),
+                "appearance_summary": _clean(subject.get("appearance_summary"), 160),
+                "activity_summary": _clean(subject.get("activity_summary"), 160),
+            })
+        prop_labels = [
+            _clean(prop.get("label"), 120)
+            for prop in props
+            if isinstance(prop, Mapping) and _clean(prop.get("label"), 120)
+        ]
+        result.append({
+            "revision_item_id": item_id,
+            "shot_ordinal": ordinal_by_id[item_id],
+            "status": row.get("status"),
+            "summary": _clean(shot.get("summary"), 320),
+            "visual_description": _clean(shot.get("visual_description"), 500),
+            "shot_type_hint": _clean(shot.get("shot_type_hint"), 80),
+            "subject_count": len(subject_rows),
+            "subjects": subject_rows,
+            "props": prop_labels,
+        })
+    return sorted(result, key=lambda item: int(item["shot_ordinal"]))
 
 
 def diagnose(run_id: str, batch_numbers: Sequence[int]) -> dict[str, Any]:
@@ -152,6 +200,11 @@ def diagnose(run_id: str, batch_numbers: Sequence[int]) -> dict[str, Any]:
                 "frame_count": frame_count,
             })
         host_frame_seconds = max(0.0, time.perf_counter() - host_frame_started)
+        ordinal_by_id = {
+            str(item.get("revision_item_id") or "").strip(): int(item.get("ordinal") or 0)
+            for item in grounding_payloads
+            if str(item.get("revision_item_id") or "").strip()
+        }
 
         manifest_path = root / "manifest.json"
         output_path = root / "output.jsonl"
@@ -230,6 +283,7 @@ def diagnose(run_id: str, batch_numbers: Sequence[int]) -> dict[str, Any]:
         "window_context_total_seconds": timing.get("window_context_total_seconds"),
         "exact_shot_total_seconds": timing.get("exact_shot_total_seconds"),
         "selected_batches": mapped_batches,
+        "selected_shots": _selected_shot_quality(rows, ordinal_by_id),
     }
 
 
@@ -277,6 +331,26 @@ def _summary(payload: Mapping[str, Any]) -> str:
                 if error_detail:
                     detail += f": {error_detail[:500]}"
                 lines.append(f"  -> {detail}")
+
+    shots = payload.get("selected_shots")
+    if isinstance(shots, list) and shots:
+        lines.append("")
+        lines.append("[Selected Shot quality]")
+        for row in shots:
+            if not isinstance(row, Mapping):
+                continue
+            subject_text = "; ".join(
+                f"{item.get('label')}={item.get('appearance_summary')} / {item.get('activity_summary')}"
+                for item in (row.get("subjects") or [])
+                if isinstance(item, Mapping)
+            ) or "-"
+            prop_text = ", ".join(str(item) for item in (row.get("props") or [])) or "-"
+            lines.append(
+                f"Shot {row.get('shot_ordinal')}: subjects={row.get('subject_count')} | props={prop_text} | "
+                f"summary={row.get('summary')}"
+            )
+            if subject_text != "-":
+                lines.append(f"  people: {subject_text}")
     return "\n".join(lines)
 
 
