@@ -11,7 +11,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from engine.app.breakdown_g1_fusion_replay_v1 import format_summary, replay_run
+from engine.app.breakdown_g1_fusion_replay_v1 import format_summary
+from engine.app.breakdown_g1_fusion_replay_completed_v1 import replay_completed_run
 
 
 def main() -> int:
@@ -22,7 +23,7 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="Print full JSON instead of compact summary.")
     args = parser.parse_args()
 
-    payload = replay_run(args.run_id)
+    payload = replay_completed_run(args.run_id)
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
