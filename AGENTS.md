@@ -7,15 +7,13 @@ Formal Character baseline: **Character V10.1 + explicit Shot Character Assignmen
 
 ```text
 P1/P2 implementation acceptance       = CONDITIONAL PASS
-Fast Grounded V2 baseline             = APPROVED
-Window Context                         = Segment-index v4 / real accepted / production / frozen
-Exact-Shot                             = Compact-reconstruction v3 / real accepted / production / frozen
-P2-E6 anonymous continuity Fusion     = E6-v2 production / local production regression pending
-Replay-v5 continuity                  = real accepted / Scene1=2 / Scene2=2 / conflicts=0
-Fresh production performance          = PASS / 14.098 min / <=20min
-P2.6 Windows / real-model acceptance  = NOT FINAL PASS / E6-v2 final production confirmation pending
-G2 Scene-level text LLM               = BLOCKED / NOT IMPLEMENTED
-Scene Timeline result UI              = BLOCKED / NOT IMPLEMENTED
+Fast Grounded G1                      = REAL ACCEPTED / PRODUCTION / FROZEN
+Window Context                         = Segment-index v4 / accepted / frozen
+Exact-Shot                             = Compact-reconstruction v3 / accepted / frozen
+P2-E6 anonymous continuity Fusion     = E6-v2 / real production accepted / frozen
+P2.6 Windows / real-model acceptance  = PASS
+G2 Scene-level text LLM               = UNBLOCKED / NOT IMPLEMENTED
+Scene Timeline result UI              = UNBLOCKED / NOT IMPLEMENTED
 P5 Draft ↔ Character                  = PAUSED
 ```
 
@@ -45,7 +43,7 @@ Always read repository truth before old chat/history:
 13. latest docs/sessions/*.md handoff
 ```
 
-## 3. Current production Breakdown chain
+## 3. Frozen production Breakdown chain
 
 ```text
 Episode Current ShotRevision
@@ -73,7 +71,29 @@ Fusion = breakdown-p2-fusion-episode-context-e6-v2
 Pipeline = breakdown-p2-full-v1
 ```
 
-## 4. E6-v2 continuity rules
+Do not tune this chain without a new concrete real regression.
+
+## 4. Final P2.6 accepted evidence
+
+```text
+Run = BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
+status = READY
+whole run ~= 14.017 min
+Window = 4/4 READY
+Exact-Shot = 6/6 READY
+MAXED = 0
+Scenes = 2
+Scene1 LocalSubjects = 2
+Scene2 LocalSubjects = 2
+same-Shot conflicts = 0
+Shot0001 subjects = 0
+Shot0001 props include blue roses + glass vase
+Fusion = breakdown-p2-fusion-episode-context-e6-v2
+```
+
+P2.6 is PASS. G1 is frozen.
+
+## 5. E6-v2 continuity rules
 
 ```text
 Stage1 Window hint:
@@ -92,20 +112,22 @@ Hard safety:
   missing attribute is not conflict
 ```
 
-Accepted policies:
+Policies:
 
 ```text
 window hint resolver = window-hint-positive-appearance-support-compact-alias-v2
-compact appearance   = compact-observation-stable-alias-normalization-v1
+compact appearance = compact-observation-stable-alias-normalization-v1
 ```
 
-## 5. Core semantic rules
+## 6. Core semantic rules
 
 > **先看懂，再识别，再回填。**
 
 > **Shot 是最小视觉证据与定位单位，不是连续理解的上下文上限。**
 
 > **Exact-Shot visible fact > Window Context.**
+
+> **Scene Timeline 是最终用户阅读拉片结果的主要单位。**
 
 ```text
 LocalSubject != Character
@@ -119,7 +141,7 @@ same-Shot person observations = hard cannot-link
 
 Dynamic expression/emotion/action/pose/speaking/screen position/framing are not identity keys.
 
-## 6. Character V10.1 is protected
+## 7. Character V10.1 is protected
 
 ```text
 YOLOX Person Detection
@@ -134,32 +156,16 @@ YOLOX Person Detection
 Never relax same-sample cannot-link, face conflict, >=3 independent evidence rule, ambiguity rules,
 explicit Shot assignment or Final Gate because of Breakdown hints.
 
-## 7. Current real evidence
-
-```text
-full production Run performance = 14.098 min
-Window v4 = 4/4 READY
-Exact-Shot v3 = 6/6 READY
-Shot0001 subjects=0; blue roses + glass vase props present
-Scenes=2
-E6-v1 production continuity regression = Scene1=4 / Scene2=16 / conflicts=0
-replay-v5 on same immutable sidecars = Scene1=2 / Scene2=2 / conflicts=0
-12 replay continuity tests = user-local PASS
-```
-
-Do not claim E6-v2 production regression PASS until the user reports it. Hosted GitHub Actions must
-not be used; commits use `[skip ci]`.
-
 ## 8. Next safe work
 
+G2 / Scene Timeline is now unblocked.
+
 ```text
-1. run cheap E6-v2 production regression tests
-2. if green, execute exactly one final fresh full production Breakdown
-3. require Fusion=e6-v2, Window=v4, Exact-Shot=v3
-4. require Scenes=2, Scene1 LocalSubjects=2, Scene2 LocalSubjects=2
-5. require same_shot_cluster_conflicts=0
-6. require Shot0001 subjects=0 and blue roses + glass vase props
-7. require whole-run <30min
-8. only then review P2.6 final PASS
-9. only then begin G2 / Scene Timeline work
+1. define the Scene Timeline user-facing contract
+2. build deterministic Scene Timeline assembly from accepted G1 Draft/Evidence
+3. keep raw Evidence/diagnostics out of the primary result
+4. add Scene-level pure-text LLM only for readable organization, not source truth
+5. build the Scene Timeline result UI after the contract is stable
 ```
+
+Hosted GitHub Actions must not be used; commits use `[skip ci]`.
