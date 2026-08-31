@@ -16,7 +16,12 @@ Exact-Shot visible truth is unchanged and remains authoritative for people/actio
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 from typing import Any, Mapping
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import run_breakdown_vlm_fast_grounded_qwen3 as fast
 
