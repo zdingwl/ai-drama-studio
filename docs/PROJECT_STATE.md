@@ -18,10 +18,10 @@ P2-E6 Fusion                          = E6-V2 / REAL PRODUCTION ACCEPTED / FROZE
 P2.6 Windows / real-model acceptance  = PASS
 G2 Scene Timeline Contract            = V1 / FINAL PASS / FROZEN FOUNDATION
 G2 Deterministic Assembler            = V1 / FINAL PASS / FROZEN FOUNDATION
-G2 Scene Narrative Core               = V1 / IMPLEMENTED / USER-LOCAL TEST PENDING
-G2 Local Qwen text runtime            = V1 / IMPLEMENTED / USER-LOCAL TEST PENDING
-G2 Source / Support Validator         = V1 / IMPLEMENTED / USER-LOCAL TEST PENDING
-G2.3/G2.4 real-model acceptance       = PENDING
+G2 Scene Narrative Core               = V1.5 / FINAL PASS / FROZEN
+G2 Local Qwen text runtime            = REAL ACCEPTED / FROZEN BASELINE
+G2 Source / Support Validator         = V1.5 / FINAL PASS / FROZEN
+G2.3/G2.4 real-model acceptance       = PASS
 G2.5 Scene Timeline API               = NOT IMPLEMENTED
 G2.6 ordinary-user result UI          = NOT IMPLEMENTED
 P3 current 02 拉片 Shot-card UI        = IMPLEMENTED / NOT FINAL ACCEPTED
@@ -30,11 +30,7 @@ P5 Draft ↔ Character                  = PLANNED / PAUSED
 same-Shot hard safety                 = PASS / conflicts=0
 ```
 
-G1 performance/quality tuning is frozen. Do not change Window-v4, Exact-Shot-v3, E6-v2 thresholds,
-same-Shot cannot-link, or Character V10.1 identity gates without a new concrete real regression.
-
-G2.1/G2.2 regression tests and final accepted real-Run smoke passed. They are frozen.
-G2.3/G2.4 code is implemented but is **not PASS yet**; user-local tests, runtime preflight and real text-model acceptance remain required.
+G1 performance/quality tuning is frozen. G2.1/G2.2 and G2.3/G2.4 are also frozen after accepted real evidence. Do not change Window-v4, Exact-Shot-v3, E6-v2, G2 Timeline truth ownership, G2 Narrative provenance rules, same-Shot cannot-link, or Character V10.1 identity gates without a new concrete regression.
 
 ## 2. Final P2.6 production acceptance Run
 
@@ -142,7 +138,6 @@ Acceptance evidence:
 python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
 4 passed
 
-Final Run deterministic smoke:
 scenes = 2
 shots = 30
 people = [2, 2]
@@ -158,9 +153,9 @@ G2.1 = FINAL PASS / FROZEN FOUNDATION
 G2.2 = FINAL PASS / FROZEN FOUNDATION
 ```
 
-## 6. G2.3 / G2.4 implementation
+## 6. G2.3 / G2.4 final acceptance
 
-New modules:
+Frozen modules/baseline:
 
 ```text
 engine/app/breakdown_scene_narrative_contract_v1.py
@@ -169,118 +164,108 @@ engine/app/breakdown_scene_narrative_v1.py
 engine/app/breakdown_scene_narrative_validator_v1.py
 engine/app/breakdown_scene_narrative_qwen3_v1.py
 scripts/run_breakdown_scene_narrative_qwen3.py
+scripts/run_breakdown_g2_scene_narrative_acceptance_v1.py
 engine/tests/v2/test_breakdown_scene_narrative_v1.py
 engine/tests/v2/test_breakdown_scene_narrative_qwen3_v1.py
+engine/tests/v2/test_breakdown_scene_narrative_real_regression_v1.py
 docs/BREAKDOWN_G2_SCENE_NARRATIVE_CONTRACT.md
 ```
 
-Flow:
+Prompt profile:
 
 ```text
-FINAL PASS scene-timeline-v1
-→ per-Scene Grounding Packet
-→ deterministic Fxxxx facts
-→ per-Scene SHA-256 source_fingerprint
-→ local text-only Qwen3-VL-4B-Instruct
-   one model load / Scenes sequential
-→ Narrative Candidate
-→ Source/Support Validator
-→ Validated Narrative Overlay
-→ apply title/story_summary only
+breakdown-g2-scene-narrative-zh-v1.5
 ```
 
-LLM permission is intentionally minimal:
+User-local regression evidence:
 
 ```text
-MAY write:
-  readable_title
-  story_summary
-
-MUST NOT write/own:
-  Scene/Shot timestamps or boundaries
-  people identity/count
-  Shot visual facts
-  performance/action facts
-  ASR dialogue
-  OCR
-  prop existence
-  shot type
-  composition
-  camera motion
-  Final Character / Final Scene / Final Prop
+python -m pytest engine/tests/v2/test_breakdown_scene_narrative_v1.py engine/tests/v2/test_breakdown_scene_narrative_qwen3_v1.py engine/tests/v2/test_breakdown_scene_narrative_real_regression_v1.py -q
+15 passed
 ```
 
-Each non-null claim must cite valid current-Scene `Fxxxx` support. G2.4 rejects:
+Real-model evidence on the same accepted Run:
 
 ```text
-missing/unknown support
-internal P1/P2 leakage
-人物N not in current Scene
-人物N without person-level support
-hard location/time/space/prop/shot-type/motion terms without matching support
-Final Asset / ID declarations
-stale source fingerprint
+preflight = READY / cuda / missing=[]
+runner_diagnostics = Scene1 READY, Scene2 READY
+scenes = 2
+shots = 30
+people = [2, 2]
+shot1_people = []
+shot1_props = ['遥控器', '蓝色玫瑰花束', '玻璃花瓶', '书本']
+overlay_status = READY
+warnings = []
+shot_objects_unchanged = YES
+structure_gate = PASS
+narrative_gate = PASS
+acceptance_machine_gate = PASS
 ```
 
-Bad claims fall back to deterministic title/summary. LLM/provider failures do not block the deterministic Scene Timeline.
-
-## 7. Local Qwen text runtime
-
-G2.3 uses the existing local isolated base runtime/checkpoint:
+Accepted Narrative:
 
 ```text
-.runtime/TransVLM/inference/.venv
-.runtime/TransVLM/inference/pretrained/Qwen3-VL-4B-Instruct
+Scene1 title = 走廊争花
+Scene1 summary = 老年女性质问年轻女性为何将花放在自家花瓶，年轻女性称花在走廊，双方争执并最终以给钱解决，年轻女性愤怒指责对方。
+
+Scene2 title = 客厅争执
+Scene2 summary = 人物2指责人物1对邻居偷花一事不作为，称其结婚八年从未支持过自己，人物1则表示自己会自行解决。
 ```
 
-The new runner is independent from frozen G1 inference and is **text-only**: no video/image input.
-The full Episode uses one subprocess/model load, then processes Scenes sequentially.
+Human review = PASS. Scene2 high-impact ASR content remains explicitly attributed and does not become Final identity/relationship truth. Shot objects stay unchanged.
 
-Config:
+Therefore:
 
 ```text
-AI_DRAMA_G2_LLM_PYTHON
-AI_DRAMA_G2_LLM_MODEL_PATH
-AI_DRAMA_G2_LLM_DEVICE
-AI_DRAMA_G2_LLM_MAX_NEW_TOKENS
-AI_DRAMA_G2_LLM_RUNNER
+G2.3 Scene Narrative = FINAL PASS / FROZEN
+G2.4 Source/Support Validator = FINAL PASS / FROZEN
+Local Qwen text runtime = REAL ACCEPTED / FROZEN BASELINE
 ```
 
-Python/model/device may fall back to `AI_DRAMA_P2_VLM_*`.
+## 7. G2 Narrative frozen boundaries
 
-## 8. Acceptance status and next action
+LLM MAY write only:
+
+```text
+readable_title
+story_summary
+```
+
+LLM MUST NOT own/rewrite:
+
+```text
+Scene/Shot timestamps or boundaries
+people identity/count
+Shot visual facts
+performance/action facts
+ASR dialogue
+OCR
+prop existence
+shot type
+composition
+camera motion
+Final Character / Final Scene / Final Prop
+```
+
+ASR rules:
+
+```text
+Visual/Timeline facts may be stated directly.
+Ordinary ASR claims must remain attributed speech/argument content.
+Sensitive event terms may be explicit topics or explicitly attributed statements.
+Relationship identity terms remain topic-only and cannot bind anonymous people.
+Dialogue names cannot bind anonymous people.
+Chinese/Arabic quantities must be supported by final provenance.
+```
+
+## 8. Next action
+
+```text
+1. keep G1 + G2.1/G2.2 + G2.3/G2.4 frozen
+2. implement G2.5 Scene Timeline API
+3. API should return direct ordinary-user Scene Timeline data, not engineering evidence
+4. preserve title/story_summary overlay without exposing support Fxxxx in primary UI
+5. implement G2.6 ordinary-user result UI after API acceptance
+```
 
 No assistant-local pytest/CUDA PASS is claimed. Hosted GitHub Actions remain intentionally unused.
-
-First user-local gate:
-
-```powershell
-python -m pytest engine/tests/v2/test_breakdown_scene_narrative_v1.py engine/tests/v2/test_breakdown_scene_narrative_qwen3_v1.py -q
-```
-
-Expected:
-
-```text
-8 passed
-```
-
-Then local runtime preflight:
-
-```powershell
-python -c "from engine.app.breakdown_scene_narrative_qwen3_v1 import Qwen3VLSceneTextLLM; print(Qwen3VLSceneTextLLM().runtime_preflight())"
-```
-
-Expected status: `READY`.
-
-After those pass:
-
-```text
-1. run real text-only Qwen Narrative on BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
-2. inspect two Scene titles/summaries and validator warnings
-3. verify all 30 Shot objects remain unchanged by Narrative overlay
-4. mark G2.3/G2.4 FINAL PASS only after that acceptance
-5. implement G2.5 Scene Timeline API
-6. implement G2.6 ordinary-user Scene Timeline UI last
-```
-
-If a G2.3/G2.4 regression appears, fix those layers. Do not retune frozen G1 or alter G2.1/G2.2 truth ownership to hide it.
