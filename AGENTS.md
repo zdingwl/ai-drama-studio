@@ -12,8 +12,8 @@ Window Context                         = Segment-index v4 / accepted / frozen
 Exact-Shot                             = Compact-reconstruction v3 / accepted / frozen
 P2-E6 anonymous continuity Fusion     = E6-v2 / real production accepted / frozen
 P2.6 Windows / real-model acceptance  = PASS
-G2 Scene Timeline Contract            = v1 / implemented / user-local acceptance pending
-G2 Deterministic Assembler            = v1 / implemented / user-local acceptance pending
+G2 Scene Timeline Contract            = v1 / user-local test pass / final-run acceptance pending
+G2 Deterministic Assembler            = v1 / user-local test pass / final-run acceptance pending
 G2 Scene-level text LLM               = UNBLOCKED / NOT IMPLEMENTED
 Scene Timeline result UI              = UNBLOCKED / NOT IMPLEMENTED
 P5 Draft ↔ Character                  = PAUSED
@@ -25,7 +25,7 @@ Truth priority:
 PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests = executable CURRENT
 ```
 
-G2.1/G2.2 implementation is not a PASS claim until user-local acceptance is completed.
+G2.1/G2.2 regression tests passed locally (`4 passed`). Do not call them final PASS until the accepted real-Run smoke check also passes.
 
 ## 2. Recovery order
 
@@ -176,15 +176,23 @@ engine/tests/v2/test_breakdown_scene_timeline_v1.py
 docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md
 ```
 
+User-local regression evidence:
+
+```text
+python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
+....
+4 passed
+```
+
 It does not modify the frozen G1 chain and does not create Final assets.
 
 Next safe order:
 
 ```text
-1. user-local run G2.1/G2.2 tests
-2. exercise deterministic assembler on final accepted Run
-3. verify 2 Scenes / 30 Shots / Scene-local anonymous people / Shot0001 exact truth / ASR verbatim
-4. only after PASS, implement G2.3 Scene-level pure-text LLM
+1. exercise deterministic assembler on final accepted Run
+2. verify 2 Scenes / 30 Shots / Scene-local anonymous people / Shot0001 exact truth / ASR verbatim
+3. if the real-Run smoke check passes, mark G2.1/G2.2 final PASS
+4. only then implement G2.3 Scene-level pure-text LLM
 5. add G2.4 support/source validator
 6. add G2.5 API
 7. add G2.6 ordinary-user Scene Timeline UI
