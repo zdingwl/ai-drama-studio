@@ -9,6 +9,7 @@ Validator 不判断“文采”，只负责硬边界：
 - 摘要允许有限自然语言压缩，但整体内容必须主要覆盖冻结事实；
 - ASR 可以支持“谈到/围绕/讨论某剧情话题”，但不能把对白中的姓名/关系直接绑定成匿名人物身份；
 - 高影响剧情词如果只来自 ASR，只允许作为明确的“话题表达”，不能写成已经发生的视觉事件；
+- 已通过话题表达检查的 ASR 关键词只贡献该关键词与实际话题框架的 coverage，不把整段对白加入 lexical authority；
 - 场景标题允许少量受控的高层概括词，例如“纠纷/争执/交流”；
 - 新数字必须出现在 support 中，避免凭空增加数量、时间、门牌等事实；
 - 禁止 Final Asset / database id 风格的身份声明；
@@ -91,6 +92,11 @@ _GRAMMAR_GLUE_CHARS = frozenset("的了着过在于与和并及其这那此把�
 _TITLE_ABSTRACTION_CHARS = frozenset(
     "冲突争执纠纷对话交流对峙相遇争吵质问回应交涉讨论等待离开回家谈互动矛盾关系"
 )
+# 摘要允许少量“组织语言”字符参与 coverage。它们本身不证明具体事实，只避免“双方/紧张/不满”
+# 这类合理压缩词把已经有视觉/对白 provenance 的摘要误判为完全不 grounded。
+_SUMMARY_ABSTRACTION_CHARS = frozenset(
+    "双方两人彼此冲突争执纠纷对话交流对峙争吵质问回应交涉讨论争论矛盾关系紧张不满气氛"
+)
 _SENSITIVE_PLOT_TERMS = (
     "杀死",
     "杀害",
@@ -139,6 +145,26 @@ _SENSITIVE_PLOT_TERMS = (
     "枪",
     "毒药",
 )
+# 这些词更容易被错误升级成人物关系。它们只能写成“关于丈夫的问题/谈到父亲”等显式话题，
+# 不能仅因为前面有“质问/询问”就把“丈夫”当作一个已绑定人物称谓。
+_RELATION_IDENTITY_TERMS = frozenset(
+    {
+        "丈夫",
+        "妻子",
+        "老公",
+        "老婆",
+        "父亲",
+        "母亲",
+        "爸爸",
+        "妈妈",
+        "儿子",
+        "女儿",
+        "情人",
+        "恋人",
+        "男友",
+        "女友",
+    }
+)
 _DIALOGUE_TOPIC_PREFIXES = (
     "围绕",
     "关于",
@@ -150,6 +176,14 @@ _DIALOGUE_TOPIC_PREFIXES = (
     "质问",
     "争论",
     "争执",
+)
+_RELATION_TOPIC_PREFIXES = (
+    "围绕",
+    "关于",
+    "谈到",
+    "提到",
+    "讨论",
+    "谈论",
 )
 _DIALOGUE_TOPIC_SUFFIXES = (
     "话题",
@@ -209,18 +243,28 @@ def _dialogue_facts_containing(packet: SceneGroundingPacketV1, term: str):
     return [fact for fact in packet.facts if fact.kind == "DIALOGUE" and term in fact.text]
 
 
+def _dialogue_topic_markers(text: str, term: str) -> set[str]:
+    """返回当前 claim 中真正包围该 ASR 关键词的话题标记；空集合表示被写成既成事实/人物关系。"""
+
+    markers: set[str] = set()
+    allowed_prefixes = _RELATION_TOPIC_PREFIXES if term in _RELATION_IDENTITY_TERMS else _DIALOGUE_TOPIC_PREFIXES
+    for match in re.finditer(re.escape(term), text):
+        start, end = match.span()
+        prefix = text[max(0, start - 12) : start]
+        suffix = text[end : min(len(text), end + 10)]
+        for marker in allowed_prefixes:
+            if marker in prefix:
+                markers.add(marker)
+        for marker in _DIALOGUE_TOPIC_SUFFIXES:
+            if marker in suffix:
+                markers.add(marker)
+    return markers
+
+
 def _is_dialogue_topic_expression(text: str, term: str) -> bool:
     """只允许把对白里的高影响词写成“讨论某话题”，不能写成事件已经发生。"""
 
-    for match in re.finditer(re.escape(term), text):
-        start, end = match.span()
-        prefix = text[max(0, start - 10) : start]
-        suffix = text[end : min(len(text), end + 8)]
-        if any(marker in prefix for marker in _DIALOGUE_TOPIC_PREFIXES):
-            return True
-        if any(marker in suffix for marker in _DIALOGUE_TOPIC_SUFFIXES):
-            return True
-    return False
+    return bool(_dialogue_topic_markers(text, term))
 
 
 def _dialogue_identity_names(packet: SceneGroundingPacketV1) -> set[str]:
@@ -319,13 +363,19 @@ def _validate_claim(
     claim_chars = _substantive_chars(text)
 
     if field_label == "剧情摘要":
+        # 只记录“已由 ASR 精确命中 + 已写成话题表达”的词面字符。绝不把整段对白并入 lexical authority。
+        dialogue_topic_chars: set[str] = set()
         for term in _SENSITIVE_PLOT_TERMS:
             if term not in text or term in lexical_support_text:
                 continue
             dialogue_facts = _dialogue_facts_containing(packet, term)
-            if dialogue_facts and _is_dialogue_topic_expression(text, term):
+            topic_markers = _dialogue_topic_markers(text, term)
+            if dialogue_facts and topic_markers:
                 for fact in dialogue_facts:
                     _append_support(support, fact.fact_id)
+                dialogue_topic_chars.update(_substantive_chars(term))
+                for marker in topic_markers:
+                    dialogue_topic_chars.update(_substantive_chars(marker))
                 continue
             return None, [
                 _claim_warning(
@@ -338,14 +388,15 @@ def _validate_claim(
         # 高影响词可能确定性补入 ASR support；重新构造 supported_facts，供最终 provenance 使用。
         supported_facts = [fact_by_id[fact_id] for fact_id in support]
         if claim_chars:
-            grounded_chars = claim_chars.intersection(supported_chars)
+            coverage_chars = supported_chars.union(dialogue_topic_chars).union(_SUMMARY_ABSTRACTION_CHARS)
+            grounded_chars = claim_chars.intersection(coverage_chars)
             coverage = len(grounded_chars) / len(claim_chars)
             if coverage < _MIN_SUMMARY_CHAR_COVERAGE:
                 return None, [
                     _claim_warning(
                         packet.scene_ordinal,
                         field_label,
-                        f"与来源事实的内容覆盖率过低（{coverage:.0%}）",
+                        f"与来源事实/已验证对白话题的内容覆盖率过低（{coverage:.0%}）",
                     )
                 ]
     else:
