@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.18.1
-description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6 已完成真实生产验收并冻结，G2.1/G2.2 本机回归 4/4 PASS，待最终真实 Run 只读烟测后进入最终 PASS。
+version: 3.18.2
+description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6 已冻结，G2.1 Scene Timeline Contract + G2.2 Deterministic Assembler 已完成本机回归与最终真实 Run 烟测，正式 FINAL PASS / FROZEN FOUNDATION。
 ---
 
 # AI Drama Studio — Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1
@@ -35,14 +35,15 @@ Window Context: Segment-index v4 / REAL ACCEPTED / FROZEN
 Exact-Shot: Compact-reconstruction v3 / REAL ACCEPTED / FROZEN
 P2-E6 Fusion: E6-v2 / REAL PRODUCTION ACCEPTED / FROZEN
 P2.6 Windows / real-model acceptance: PASS
-G2 Scene Timeline Contract: v1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
-G2 Deterministic Assembler: v1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
+G2 Scene Timeline Contract: v1 / FINAL PASS / FROZEN FOUNDATION
+G2 Deterministic Assembler: v1 / FINAL PASS / FROZEN FOUNDATION
 G2 Scene-level pure-text LLM: UNBLOCKED / NOT IMPLEMENTED
 Scene Timeline UI: UNBLOCKED / NOT IMPLEMENTED
 P5 Draft ↔ Character: PAUSED
 ```
 
-G2.1/G2.2 regression suite has passed locally (`4 passed`). Final PASS still requires the accepted real-Run smoke check.
+G2.1/G2.2 have passed both local regression tests and final accepted real-Run deterministic smoke acceptance.
+Do not reopen the deterministic foundation without a concrete G2 regression.
 
 ## 2. Frozen production flow
 
@@ -107,7 +108,7 @@ Therefore:
 ```text
 P2.6 = PASS
 G1 = FROZEN
-G2 / Scene Timeline = UNBLOCKED
+G2 / Scene Timeline = ACTIVE
 ```
 
 ## 4. Core semantic boundaries
@@ -176,9 +177,9 @@ YOLOX Person Detection
 
 Never weaken Character identity safety because of Breakdown anonymous hints.
 
-## 7. G2 Scene Timeline foundation
+## 7. G2 Scene Timeline frozen foundation
 
-Implemented:
+Accepted:
 
 ```text
 Contract:
@@ -226,18 +227,30 @@ python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
 4 passed
 ```
 
-This is regression PASS, not yet final real-Run acceptance.
+Final accepted real-Run smoke evidence:
+
+```text
+Run = BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
+scenes = 2
+shots = 30
+people = [2, 2]
+shot1_people = []
+shot1_props = ['遥控器', '蓝色玫瑰花束', '玻璃花瓶', '书本']
+warnings = []
+```
+
+Therefore G2.1/G2.2 are **FINAL PASS / FROZEN FOUNDATION**.
 
 ## 9. Immediate safe work
 
 ```text
-1. exercise deterministic assembler against BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
-2. verify 2 Scenes / 30 Shots / Scene-local people / Shot0001 exact props / ASR verbatim / no debug leakage
-3. if smoke check passes, mark G2.1/G2.2 final PASS
-4. only then implement G2.3 Scene-level pure-text LLM
-5. add G2.4 source/support validator
+1. implement G2.3 Scene-level pure-text LLM on top of the frozen deterministic Timeline
+2. LLM only improves organization/readability and Scene narrative summary
+3. implement G2.4 support/source validator with fail-closed fallback
+4. preserve deterministic timestamps, people refs/count, ASR dialogue, OCR text, props, shot type and composition
+5. validate G2.3/G2.4 against BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
 6. add G2.5 Scene Timeline API
 7. build G2.6 ordinary-user Scene Timeline UI last
 ```
 
-If a G2 acceptance regression appears, fix G2. Do not retune the frozen G1 chain unless the regression is proven to originate in G1.
+If a G2.3/G2.4 regression appears, fix those layers first. Do not retune the frozen G1 chain or alter the accepted G2.1/G2.2 source-truth ownership unless a concrete regression proves it necessary.
