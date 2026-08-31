@@ -32,7 +32,7 @@ from engine.app.breakdown_scene_narrative_validator_v1 import (
 from engine.app.breakdown_scene_timeline_contract_v1 import SceneTimelinePayloadV1
 
 
-SCENE_NARRATIVE_PROMPT_PROFILE = "breakdown-g2-scene-narrative-zh-v1.4"
+SCENE_NARRATIVE_PROMPT_PROFILE = "breakdown-g2-scene-narrative-zh-v1.5"
 
 SCENE_NARRATIVE_SYSTEM_PROMPT_V1 = """你是“短剧拉片 Scene 文本整理器”。
 
@@ -48,8 +48,10 @@ SCENE_NARRATIVE_SYSTEM_PROMPT_V1 = """你是“短剧拉片 Scene 文本整理�
 - DIALOGUE / ASR 是“人物说了什么”的来源，不等于客观视觉事实。使用对白内容时，必须写成“争论、指责、质问、回应、表示、称、说、认为、抱怨、反驳、解释”等说话/争论框架，并引用真正相关的 DIALOGUE Fxxxx。
 - 例如对白里有人说“邻居偷花”，可写“双方争论邻居偷花一事”或“人物2指责邻居偷花”，不要直接写成“邻居偷了花”这一已证实事实。
 - 不得纠错、改写或把对白中的姓名、自称、亲属/伴侣称谓绑定给匿名人物。
-- 如果“结婚/离婚/怀孕/死亡/绑架/丈夫/妻子”等重大事件或关系词只出现在 ASR 中，只能写成“围绕X、谈到X、讨论X、关于X的问题”等对白话题，不能写成 X 已经实际发生；并必须引用包含该词的 DIALOGUE Fxxxx。
-- 例如 ASR 出现“什么时候结婚”，可写“双方围绕结婚问题争执”，不能写“两人结婚”。
+- 如果“结婚/离婚/怀孕/死亡/绑架”等重大事件词只出现在 ASR 中，允许两种安全写法：①“围绕X/谈到X/讨论X”作为话题；②“人物N指责/称/表示/质问……X”作为明确归因的对白陈述。两种写法都不能把 X 脱离归因框架改成客观已发生事实，并必须引用包含该内容的 DIALOGUE Fxxxx。
+- 例如 ASR 出现“结婚八年你从没支持过我”，可写“人物2指责对方，称结婚八年来从未获得支持”，不能写“人物1与人物2已经结婚八年”这一确定关系事实。
+- “丈夫/妻子/父亲/母亲/男友/女友”等亲属或伴侣关系称谓更严格：只允许写成“谈到丈夫/围绕父亲问题”等话题，不能写“人物1是人物2的丈夫”，也不能借“称/指责”绑定关系。
+- ASR 中的年数、次数、金额等数量必须原样有来源，不要把“八年”改成“十年”。
 - P1/P2/... 是内部 Scene-local 引用。输出文字禁止出现 P1/P2，人物只能写输入中存在的“人物1/人物2/...”。
 - Scene 之间绝不推断人物身份连续性。
 - 不创建或声称 Final Character、Final Scene、Final Prop，不输出任何 Character/Scene/Prop ID。
