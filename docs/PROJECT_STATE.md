@@ -17,6 +17,8 @@ Exact-Shot contract                   = COMPACT-RECONSTRUCTION V3 / REAL ACCEPTE
 P2-E6 Fusion                          = E6-V2 / REAL PRODUCTION ACCEPTED / FROZEN
 Replay-v5 continuity                  = REAL ACCEPTED / promoted into E6-v2
 P2.6 Windows / real-model acceptance  = PASS
+G2 Scene Timeline Contract            = V1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+G2 Deterministic Assembler            = V1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
 G2 Scene-level text LLM               = UNBLOCKED / NOT IMPLEMENTED
 Scene Timeline result UI              = UNBLOCKED / NOT IMPLEMENTED
 P3 current 02 拉片 Shot-card UI        = IMPLEMENTED / NOT FINAL ACCEPTED
@@ -27,6 +29,8 @@ same-Shot hard safety                 = PASS / conflicts=0
 
 G1 performance/quality tuning is frozen. Do not change Window-v4, Exact-Shot-v3, E6-v2 thresholds,
 same-Shot cannot-link, or Character V10.1 identity gates without a new concrete real regression.
+
+G2.1/G2.2 code is implemented but is **not PASS yet**. User-local fixture and final-Run acceptance must happen first.
 
 ## 2. Final P2.6 production acceptance Run
 
@@ -164,6 +168,10 @@ explicit male/female contradiction blocks soft union
 explicit long-hair vs short/bald contradiction blocks soft union
 missing attribute is not a contradiction
 expression/emotion/action/pose/speaking/screen position/framing are not identity keys
+G2 Scene-local P1/P2 != Character identity
+G2 Scene Timeline != Final Character / Final Scene / Final Prop truth
+ASR-origin dialogue text must remain verbatim in G2
+OCR-origin visible text must remain verbatim in G2
 ```
 
 Character V10.1 remains protected:
@@ -178,32 +186,85 @@ YOLOX Person Detection
 → Final Character Gate
 ```
 
-## 5. Next work — G2 / Scene Timeline
+## 5. G2.1 / G2.2 implementation
 
-P2.6 no longer blocks downstream work. The next implementation stage is **G2 Scene-level text organization +
-Scene Timeline result surface**.
-
-G2 must consume accepted G1/P2 evidence; it must not replace or reinterpret source truth:
+G2 now has a read-only ordinary-user result foundation:
 
 ```text
-SceneSegmentDraft -> Scene-level organization unit
-ShotSemanticDraft -> visual Shot facts
-ASR_SEGMENT -> dialogue text truth
-OCR -> visible text evidence
-LocalSubject -> anonymous Scene-scoped people only
-DraftPropHint -> reconstruction/search hint only
+Contract:
+  engine/app/breakdown_scene_timeline_contract_v1.py
+
+Deterministic assembler:
+  engine/app/breakdown_scene_timeline_assembler_v1.py
+
+Tests:
+  engine/tests/v2/test_breakdown_scene_timeline_v1.py
+
+Contract document:
+  docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md
 ```
 
-Recommended order:
+The assembler consumes the existing `breakdown_serializer_v1` payload shape and does not modify G1.
+
+Deterministic output:
 
 ```text
-1. freeze G1 acceptance fixtures and production profiles
-2. define G2 Scene Timeline data/output contract
-3. implement deterministic Scene Timeline assembler first
-4. add Scene-level pure-text LLM only for readable summary/organization where needed
-5. build the user-facing Scene Timeline result UI
-6. keep raw Evidence/diagnostics out of the primary user result unless explicitly requested
+SceneSegmentDraft
+→ user-readable Scene info
+→ Scene-local P1/P2/... anonymous people
+→ ordered Shots
+   → Exact-Shot visual_description (summary only as same-Shot fallback)
+   → ShotLocalSubject / ACTION performance
+   → DIALOGUE only when origin=ASR, text copied verbatim
+   → current-Shot prop occurrences
+   → shot type + model_metadata.composition_hint
+   → camera motion only when G1 has a reliable non-UNKNOWN value
+   → OCR only when origin=OCR, text copied verbatim
+→ existing Scene summary as deterministic story-summary baseline
+```
+
+Primary output intentionally excludes:
+
+```text
+Evidence links / IDs
+cluster / cluster_key
+confidence
+LocalSubject database IDs
+subject_A/B observation internals
+provider/model diagnostics
+search hints
+Final Character / Scene / Prop IDs
+```
+
+Fail-closed protections include duplicate Scene/Shot ordinals, invalid ranges, Shot escaping its Scene,
+Scene ownership mismatch, and duplicate Scene-local LocalSubject identity records.
+
+G2.1/G2.2 deliberately do **not** implement a Scene LLM, persistence, API route or new frontend yet.
+
+## 6. Next work — G2 foundation acceptance, then Scene LLM
+
+Required order:
+
+```text
+1. user-local run engine/tests/v2/test_breakdown_scene_timeline_v1.py
+2. exercise G2 deterministic assembly against:
+   BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
+3. verify:
+   - Scenes=2
+   - Shots=30
+   - Scene1 people=2
+   - Scene2 people=2
+   - Scene-local P* resets and is never Character identity
+   - Shot0001 people=[]
+   - Shot0001 includes 蓝色玫瑰花束 + 玻璃花瓶
+   - dialogue text remains ASR verbatim
+   - OCR remains verbatim
+   - debug Evidence/cluster/confidence are absent from primary output
+4. only after G2.1/G2.2 PASS, implement G2.3 Scene-level pure-text LLM
+5. add G2.4 support/source validator
+6. add G2.5 Scene Timeline API
+7. finally replace the ordinary-user 02 拉片 result surface with G2.6 Scene Timeline UI
 ```
 
 No more full-model G1 reruns are required unless a new regression appears. Hosted GitHub Actions remain
-intentionally unused.
+intentionally unused. G2 regressions must be fixed inside G2 instead of retuning the frozen G1 chain.
