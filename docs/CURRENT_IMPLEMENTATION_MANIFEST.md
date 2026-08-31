@@ -17,8 +17,8 @@ Window Context: SEGMENT-INDEX V4 / REAL ACCEPTED / PRODUCTION / FROZEN
 Exact-Shot: COMPACT-RECONSTRUCTION V3 / REAL ACCEPTED / PRODUCTION / FROZEN
 P2-E6 Fusion: E6-V2 / REAL PRODUCTION ACCEPTED / FROZEN
 P2.6 Windows / real-model acceptance: PASS
-G2 Scene Timeline Contract: V1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
-G2 Deterministic Assembler: V1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+G2 Scene Timeline Contract: V1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
+G2 Deterministic Assembler: V1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
 G2 Scene-level text LLM: UNBLOCKED / NOT IMPLEMENTED
 Scene Timeline UI: UNBLOCKED / NOT IMPLEMENTED
 P3 current 02 拉片 Shot-card UI: IMPLEMENTED / NOT FINAL ACCEPTED
@@ -27,7 +27,7 @@ P5 Draft ↔ Character: PLANNED / PAUSED
 ```
 
 Do not tune G1 again without a new real regression. Character V10.1 remains protected.
-G2.1/G2.2 implementation is not a PASS claim until user-local tests are run.
+G2.1/G2.2 user-local regression tests have passed; final accepted real-Run smoke acceptance is still required before final PASS.
 
 ## Final real acceptance evidence
 
@@ -217,19 +217,27 @@ Accepted user-local evidence includes replay continuity regression PASS, real Wi
 runs, and the final E6-v2 full production Run above. Do not claim assistant-local CUDA/pytest execution.
 Hosted GitHub Actions remain unused; commits use `[skip ci]`.
 
-G2.1/G2.2 tests have been added but are **USER-LOCAL ACCEPTANCE PENDING**. Do not mark them PASS before the user runs them.
+G2.1/G2.2 user-local test evidence on 2026-08-31:
+
+```text
+python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
+....
+4 passed
+```
+
+This establishes the Contract/Assembler regression gate. Final PASS still requires the read-only smoke check against `BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4`.
 
 ## Next required action
 
-G1/P2.6 is no longer the blocker. G2.1 Contract and G2.2 deterministic assembly are implemented without touching G1.
+G1/P2.6 is no longer the blocker. G2.1/G2.2 regression tests are PASS.
 
 Next safe order:
 
 ```text
-1. user-local run engine/tests/v2/test_breakdown_scene_timeline_v1.py
-2. exercise deterministic assembler against final accepted Run BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
-3. verify 2 Scenes / 30 Shots / Scene-local anonymous people / Shot0001 no people + blue roses + glass vase / ASR verbatim
-4. only after that acceptance, begin G2.3 Scene-level pure-text LLM
+1. exercise deterministic assembler against final accepted Run BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
+2. verify 2 Scenes / 30 Shots / Scene-local anonymous people / Shot0001 no people + blue roses + glass vase / ASR verbatim
+3. if the real-Run smoke check passes, mark G2.1/G2.2 final PASS
+4. then begin G2.3 Scene-level pure-text LLM
 5. then G2.4 source/support validator
 6. then G2.5 Scene Timeline API
 7. finally G2.6 ordinary-user Scene Timeline UI
