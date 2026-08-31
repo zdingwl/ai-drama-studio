@@ -82,15 +82,10 @@ _PERSON_SUPPORT_PRIORITY = (
     "SHOT_PERFORMANCE",
     "DIALOGUE",
 )
-# Only grammatical glue is exempt from lexical provenance. Factual direction/time/space characters
-# such as 前/后/上/下/内/外 are intentionally NOT exempt.
 _GRAMMAR_GLUE_CHARS = frozenset("的了着过在于与和并及其这那此把被为是有又将所个一段里中")
-# 标题是软组织层，允许少量高层概括词；仍禁止任意自由词汇，避免从对白/OCR 偷带姓名。
 _TITLE_ABSTRACTION_CHARS = frozenset(
     "冲突争执纠纷对话交流对峙相遇争吵质问回应交涉讨论等待离开回家谈互动矛盾关系"
 )
-# 这些词会显著改变剧情、人物关系或事件性质。只要源冻结事实中没有原样出现，就必须拒绝。
-# 这是对“整体覆盖率”之外的第二道硬保护，防止在一段大体 grounded 的长摘要里夹带关键幻觉。
 _SENSITIVE_PLOT_TERMS = (
     "杀死",
     "杀害",
@@ -139,8 +134,6 @@ _SENSITIVE_PLOT_TERMS = (
     "枪",
     "毒药",
 )
-# 摘要不是 extractive copy，但至少一半实质字符必须能在其冻结来源事实中找到。
-# 低于该阈值时更像在自由续写，而不是整理/压缩。
 _MIN_SUMMARY_CHAR_COVERAGE = 0.50
 
 
@@ -223,15 +216,12 @@ def _validate_claim(
     if unknown_people:
         return None, [_claim_warning(packet.scene_ordinal, field_label, "引用了当前 Scene 不存在的人物")]
 
-    # 摘要的核心来源就是已经由 G2.2 生成的确定性 Scene summary。模型漏列该 Fxxxx 时，
-    # Validator 可以无歧义补回，不需要因为 provenance 格式小错误丢弃整段合理摘要。
     if field_label == "剧情摘要":
         for fact in packet.facts:
             if fact.kind == "SCENE_BASE_SUMMARY":
                 _append_support(support, fact.fact_id)
                 break
 
-    # 硬锚点本身已经是冻结事实。模型若原样用了地点/时间/道具等但忘了列 support，确定性补回。
     for fact in packet.facts:
         if fact.kind not in _HARD_ANCHOR_KINDS:
             continue
@@ -239,8 +229,6 @@ def _validate_claim(
         if anchor and len(anchor) <= 120 and anchor in text:
             _append_support(support, fact.fact_id)
 
-    # 人物是否属于当前 Scene 已由冻结 people 列表决定。若模型文字提到合法“人物N”但 support
-    # 漏了人物 provenance，补一个 PERSON_APPEARANCE / Shot presence 等存在性事实，而不是猜身份。
     supported_people: set[str] = set()
     for fact_id in support:
         supported_people.update(fact_by_id[fact_id].people)
@@ -272,13 +260,16 @@ def _validate_claim(
     claim_chars = _substantive_chars(text)
 
     if field_label == "剧情摘要":
-        # 高风险剧情/关系/物体词必须由冻结事实原样支持，不能靠整体相似度混过去。
         for term in _SENSITIVE_PLOT_TERMS:
             if term in text and term not in lexical_support_text:
-                return None, [_claim_warning(packet.scene_ordinal, field_label, f"包含来源未支持的关键剧情词“{term}”")]
+                return None, [
+                    _claim_warning(
+                        packet.scene_ordinal,
+                        field_label,
+                        f"包含来源未支持的新内容字符/关键剧情词“{term}”",
+                    )
+                ]
 
-        # 自然语言摘要允许“双方互不相让”“围绕手机发生争执”等有限改写，因此不再逐字符零容忍。
-        # 但主体内容仍必须主要来自 source support；覆盖率过低视为自由续写并 fail closed。
         if claim_chars:
             grounded_chars = claim_chars.intersection(supported_chars)
             coverage = len(grounded_chars) / len(claim_chars)
@@ -291,7 +282,6 @@ def _validate_claim(
                     )
                 ]
     else:
-        # 标题允许有限剧情抽象，例如“走廊纠纷”。超出来源字符 + 白名单抽象字符仍拒绝。
         allowed_title_chars = supported_chars.union(_TITLE_ABSTRACTION_CHARS)
         novel_chars = sorted(claim_chars.difference(allowed_title_chars))
         if novel_chars:
