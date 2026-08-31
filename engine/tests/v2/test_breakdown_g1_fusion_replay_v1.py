@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+import subprocess
+import sys
+
 from engine.app import breakdown_g1_fusion_replay_v1 as replay
 from engine.app import breakdown_p2_fusion_episode_v2 as e1
 from engine.app import breakdown_p2_fusion_episode_v4 as e4
@@ -56,6 +60,22 @@ def subject(label: str, appearance: str) -> dict:
         "visibility": "FULL",
         "speaking_state": "UNKNOWN",
     }
+
+
+def test_replay_script_bootstraps_repo_root_when_run_directly(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    script = repo_root / "scripts" / "replay_breakdown_g1_fusion.py"
+
+    completed = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Read-only G1 Fusion replay" in completed.stdout
 
 
 def test_corridor_qualifier_drift_does_not_split_without_direct_new_scene() -> None:
