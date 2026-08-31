@@ -1,6 +1,8 @@
 # P5 Breakdown ↔ Character Safe Bridge V1
 
-Status: **DESIGN LOCK / IMPLEMENTATION STARTING**
+Status: **IMPLEMENTED ON BRANCH / USER-LOCAL ACCEPTANCE PENDING**
+
+Branch: `p5-breakdown-character-bridge`
 
 This contract defines a one-way, fail-closed bridge from the current anonymous Breakdown to already-confirmed Final Characters.
 
@@ -39,6 +41,21 @@ Within one Scene:
 
 This deliberately prefers false negatives over false identity bindings.
 
+Examples:
+
+```text
+人物1 = Shots 2,4,7
+Character A = Shots 1,2,4,7
+Shot 1 has no LocalSubject at all
+=> compare only subject-aware Shots => exact match => may RESOLVE
+
+人物1 = Shots 2,4
+人物2 = Shots 2,4
+Character A = Shots 2,4
+Character B = Shots 2,4
+=> anonymous signatures are not distinguishable => both UNRESOLVED
+```
+
 ## Revision safety
 
 Only consume a Breakdown Run when:
@@ -61,6 +78,7 @@ P5 output is a separate read model. It does not modify frozen Breakdown data.
 Each Scene-local person result carries:
 
 ```text
+scene_person_ref = P1/P2/... aligned with frozen Scene Timeline ordering
 local_subject_id
 local_subject_ordinal
 local_display_name
@@ -70,4 +88,31 @@ support Shot IDs / ordinals
 resolution_basis
 ```
 
+Files:
+
+```text
+engine/app/breakdown_character_bridge_contract_v1.py
+engine/app/breakdown_character_bridge_v1.py
+engine/tests/v2/test_breakdown_character_bridge_v1.py
+scripts/run_breakdown_p5_character_bridge_acceptance_v1.py
+```
+
 P6 may later use this read model to render a Final Breakdown with real Character names while leaving the frozen G2 Scene Timeline unchanged.
+
+## User-local acceptance
+
+Unit / safety contract:
+
+```powershell
+python -m pytest engine/tests/v2/test_breakdown_character_bridge_v1.py -q
+```
+
+Real current Episode inspection:
+
+```powershell
+python scripts/run_breakdown_p5_character_bridge_acceptance_v1.py EPISODE_0ed6aaca0da4471db0364bd29c3d6a61
+```
+
+Acceptance is not based on maximizing `resolved_count`. A correct real result may leave ambiguous people unresolved. Review instead that every `RESOLVED` mapping is visibly correct and that always-co-occurring/ambiguous people are not guessed.
+
+Do not mark P5 FINAL PASS until user-local tests and a real Final-Character-bound project result are reviewed.
