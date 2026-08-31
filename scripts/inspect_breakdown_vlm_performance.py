@@ -34,6 +34,41 @@ def _seconds(value: Any) -> str:
         return "-"
 
 
+def _tokens(item: Mapping[str, Any]) -> str:
+    output = item.get("output_token_count_total")
+    maximum = item.get("max_new_tokens")
+    if output is None:
+        return ""
+    suffix = ""
+    try:
+        if int(item.get("maxed_out_attempt_count") or 0) > 0:
+            suffix = " MAXED"
+    except (TypeError, ValueError):
+        pass
+    return f" | tokens={output}/{maximum or '-'}{suffix}"
+
+
+def _error(item: Mapping[str, Any]) -> str:
+    error_type = str(item.get("error_type") or "").strip()
+    detail = " ".join(str(item.get("error_detail") or "").split())
+    if not error_type and not detail:
+        events = item.get("generation_events")
+        if isinstance(events, list):
+            for raw in reversed(events):
+                if not isinstance(raw, Mapping):
+                    continue
+                error_type = str(raw.get("error_type") or "").strip()
+                detail = " ".join(str(raw.get("error_detail") or "").split())
+                if error_type or detail:
+                    break
+    if not error_type and not detail:
+        return ""
+    text = error_type or "ERROR"
+    if detail:
+        text += f": {detail[:260]}"
+    return "\n    -> " + text
+
+
 def _performance(run_id: str) -> dict[str, Any]:
     bundle = completed.load_completed_fusion_inputs(run_id)
     vlm = bundle.components["VLM"].result
@@ -102,6 +137,14 @@ def _summary(payload: Mapping[str, Any]) -> str:
         f"Runner total: {_seconds(model.get('runner_total_seconds'))}",
         f"Windows: {model.get('window_count', '-')} | Grounding batches: {model.get('grounding_batch_count', '-')} | Frames: {model.get('grounding_frame_count', '-')}",
     ])
+    if model.get("generation_attempt_count") is not None:
+        lines.append(
+            "Generation: attempts={attempts} | output_tokens={tokens} | maxed={maxed}".format(
+                attempts=model.get("generation_attempt_count"),
+                tokens=model.get("generation_output_tokens_total"),
+                maxed=model.get("generation_maxed_out_attempt_count"),
+            )
+        )
 
     windows = model.get("window_timings")
     if isinstance(windows, list) and windows:
@@ -110,11 +153,13 @@ def _summary(payload: Mapping[str, Any]) -> str:
             if not isinstance(item, Mapping):
                 continue
             lines.append(
-                "{id}: shots={shots} | {elapsed} | {status}".format(
+                "{id}: shots={shots} | {elapsed} | {status}{tokens}{error}".format(
                     id=item.get("window_id"),
                     shots=item.get("shot_count"),
                     elapsed=_seconds(item.get("elapsed_seconds")),
                     status=item.get("status"),
+                    tokens=_tokens(item),
+                    error=_error(item),
                 )
             )
 
@@ -124,8 +169,10 @@ def _summary(payload: Mapping[str, Any]) -> str:
         for item in batches:
             if not isinstance(item, Mapping):
                 continue
+            attempts = item.get("generation_attempt_count")
+            attempt_text = f" | attempts={attempts}" if attempts is not None else ""
             lines.append(
-                "batch {batch}: shots={shots} ({first}-{last}) | frames={frames} | {elapsed} | {status}".format(
+                "batch {batch}: shots={shots} ({first}-{last}) | frames={frames} | {elapsed} | {status}{tokens}{attempts}{error}".format(
                     batch=item.get("batch_ordinal"),
                     shots=item.get("shot_count"),
                     first=item.get("first_shot_ordinal"),
@@ -133,6 +180,9 @@ def _summary(payload: Mapping[str, Any]) -> str:
                     frames=item.get("frame_count"),
                     elapsed=_seconds(item.get("elapsed_seconds")),
                     status=item.get("status"),
+                    tokens=_tokens(item),
+                    attempts=attempt_text,
+                    error=_error(item),
                 )
             )
     return "\n".join(lines)
