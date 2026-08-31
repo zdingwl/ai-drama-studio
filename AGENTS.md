@@ -14,10 +14,10 @@ P2-E6 anonymous continuity Fusion     = E6-v2 / real production accepted / froze
 P2.6 Windows / real-model acceptance  = PASS
 G2 Scene Timeline Contract            = v1 / FINAL PASS / FROZEN FOUNDATION
 G2 Deterministic Assembler            = v1 / FINAL PASS / FROZEN FOUNDATION
-G2 Scene Narrative Core               = v1 / IMPLEMENTED / USER-LOCAL TEST PENDING
-G2 Local Qwen text runtime            = v1 / IMPLEMENTED / USER-LOCAL TEST PENDING
-G2 Source / Support Validator         = v1 / IMPLEMENTED / USER-LOCAL TEST PENDING
-G2.3/G2.4 real-model acceptance       = PENDING
+G2 Scene Narrative Core               = v1.5 / FINAL PASS / FROZEN
+G2 Local Qwen text runtime            = REAL ACCEPTED / FROZEN BASELINE
+G2 Source / Support Validator         = v1.5 / FINAL PASS / FROZEN
+G2.3/G2.4 real-model acceptance       = PASS
 G2.5 Scene Timeline API               = NOT IMPLEMENTED
 G2.6 ordinary-user result UI          = NOT IMPLEMENTED
 P5 Draft ↔ Character                  = PAUSED
@@ -29,9 +29,7 @@ Truth priority:
 PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests = executable CURRENT
 ```
 
-G2.1/G2.2 regression tests (`4 passed`) and final accepted real-Run smoke check both passed on 2026-08-31.
-Treat the deterministic Scene Timeline foundation as frozen unless a concrete G2 regression is demonstrated.
-G2.3/G2.4 implementation is not a PASS claim until user-local tests and final real-model acceptance pass.
+G1 and G2.1/G2.2 are frozen. G2.3/G2.4 are also frozen after user-local regression + real-model acceptance on 2026-08-31. Do not reopen any frozen layer without a concrete new regression.
 
 ## 2. Recovery order
 
@@ -49,7 +47,7 @@ Always read repository truth before old chat/history:
 9. docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
 10. docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
 11. docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md
-12. docs/BREAKDOWN_G2_SCENE_NARRATIVE_CONTRACT.md when working on G2.3+
+12. docs/BREAKDOWN_G2_SCENE_NARRATIVE_CONTRACT.md
 13. Character docs when relevant
 14. current code/tests
 15. latest docs/sessions/*.md handoff
@@ -67,9 +65,6 @@ Episode Current ShotRevision
    └─ Exact-Shot compact v3
 → immutable exact-Shot VLM_OUTPUT sidecar
 → P2-E6-v2 Episode-context Fusion
-   ├─ accepted Scene policy + DIRECT NEW_SCENE safeguard
-   ├─ ASR_SEGMENT dialogue truth
-   └─ replay-v5 compact-safe anonymous continuity
 → P1 validator
 → READY / READY_WITH_WARNINGS
 ```
@@ -85,7 +80,9 @@ Pipeline = breakdown-p2-full-v1
 
 Do not tune this chain without a new concrete real regression.
 
-## 4. Final P2.6 accepted evidence
+## 4. Final accepted evidence
+
+Frozen G1/P2.6 Run:
 
 ```text
 Run = BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
@@ -99,11 +96,52 @@ Scene1 LocalSubjects = 2
 Scene2 LocalSubjects = 2
 same-Shot conflicts = 0
 Shot0001 subjects = 0
-Shot0001 props include blue roses + glass vase
+Shot0001 props include 蓝色玫瑰花束 + 玻璃花瓶
 Fusion = breakdown-p2-fusion-episode-context-e6-v2
 ```
 
-P2.6 is PASS. G1 is frozen.
+G2.1/G2.2 accepted evidence:
+
+```text
+python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
+4 passed
+
+scenes = 2
+shots = 30
+people = [2, 2]
+shot1_people = []
+shot1_props = ['遥控器', '蓝色玫瑰花束', '玻璃花瓶', '书本']
+warnings = []
+```
+
+G2.3/G2.4 final accepted evidence:
+
+```text
+python -m pytest engine/tests/v2/test_breakdown_scene_narrative_v1.py engine/tests/v2/test_breakdown_scene_narrative_qwen3_v1.py engine/tests/v2/test_breakdown_scene_narrative_real_regression_v1.py -q
+15 passed
+
+preflight = READY / cuda / missing=[]
+runner Scene1 = READY
+runner Scene2 = READY
+overlay_status = READY
+warnings = []
+shot_objects_unchanged = YES
+structure_gate = PASS
+narrative_gate = PASS
+acceptance_machine_gate = PASS
+```
+
+Accepted Narrative examples:
+
+```text
+Scene1 title = 走廊争花
+Scene1 summary = 老年女性质问年轻女性为何将花放在自家花瓶，年轻女性称花在走廊，双方争执并最终以给钱解决，年轻女性愤怒指责对方。
+
+Scene2 title = 客厅争执
+Scene2 summary = 人物2指责人物1对邻居偷花一事不作为，称其结婚八年从未支持过自己，人物1则表示自己会自行解决。
+```
+
+Human review accepted these as Scene-level Narrative: ASR claims remain explicitly attributed, no Final identity is created, and frozen Shot objects are unchanged.
 
 ## 5. Core semantic rules
 
@@ -143,54 +181,25 @@ YOLOX Person Detection
 → Final Character Gate
 ```
 
-Never relax same-sample cannot-link, face conflict, >=3 independent evidence rule, ambiguity rules,
-explicit Shot assignment or Final Gate because of Breakdown hints.
+Never relax same-sample cannot-link, face conflict, >=3 independent evidence rule, ambiguity rules, explicit Shot assignment or Final Gate because of Breakdown hints.
 
-## 7. G2.1 / G2.2 frozen foundation
+## 7. G2 frozen foundation
 
-Accepted read-only G2 foundation:
+Frozen modules include:
 
 ```text
 engine/app/breakdown_scene_timeline_contract_v1.py
 engine/app/breakdown_scene_timeline_assembler_v1.py
-engine/tests/v2/test_breakdown_scene_timeline_v1.py
-docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md
-```
-
-Accepted evidence:
-
-```text
-python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
-4 passed
-
-Run = BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
-scenes = 2
-shots = 30
-people = [2, 2]
-shot1_people = []
-shot1_props = ['遥控器', '蓝色玫瑰花束', '玻璃花瓶', '书本']
-warnings = []
-```
-
-Do not change G2.1/G2.2 truth ownership to accommodate an LLM.
-
-## 8. G2.3 / G2.4 implemented boundary
-
-Implemented modules:
-
-```text
 engine/app/breakdown_scene_narrative_contract_v1.py
 engine/app/breakdown_scene_grounding_v1.py
 engine/app/breakdown_scene_narrative_v1.py
 engine/app/breakdown_scene_narrative_validator_v1.py
 engine/app/breakdown_scene_narrative_qwen3_v1.py
 scripts/run_breakdown_scene_narrative_qwen3.py
-engine/tests/v2/test_breakdown_scene_narrative_v1.py
-engine/tests/v2/test_breakdown_scene_narrative_qwen3_v1.py
-docs/BREAKDOWN_G2_SCENE_NARRATIVE_CONTRACT.md
+scripts/run_breakdown_g2_scene_narrative_acceptance_v1.py
 ```
 
-G2.3 LLM authority is deliberately narrow:
+G2.3 LLM authority remains deliberately narrow:
 
 ```text
 LLM MAY write:
@@ -198,7 +207,7 @@ LLM MAY write:
   story_summary
 
 LLM MUST NOT own or rewrite:
-  Scene/Shot timestamps
+  Scene/Shot timestamps or boundaries
   people count or identity
   Shot visual facts
   performance/action facts
@@ -211,25 +220,16 @@ LLM MUST NOT own or rewrite:
   Final Character/Scene/Prop
 ```
 
-Every non-null Narrative claim must cite current Scene `Fxxxx` support facts. Overlay application rechecks
-Run/ShotRevision/Episode anchors and a per-Scene SHA-256 source fingerprint. Unsupported claims are discarded;
-deterministic Timeline remains usable.
+ASR may support Narrative only as attributed speech/argument content. High-impact event claims must remain attributed or explicit topics. Relationship terms such as 丈夫/妻子/父亲/男友 remain topic-only and cannot bind anonymous people. Numeric quantities must be supported by final provenance.
 
-The local model path reuses the existing isolated `Qwen3-VL-4B-Instruct` base checkpoint in **text-only** mode.
-The new G2 runner loads the model once, processes Scenes sequentially, and never opens video/images.
-
-## 9. Next safe order
+## 8. Next safe order
 
 ```text
-1. user-local run G2.3/G2.4 unit/contract tests
-2. user-local G2 local Qwen runtime preflight
-3. real text-only Qwen acceptance on BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
-4. verify Narrative only changes title/story_summary and Shot facts remain byte-for-structure unchanged
-5. mark G2.3/G2.4 FINAL PASS only after real acceptance
-6. add G2.5 API
-7. add G2.6 ordinary-user Scene Timeline UI last
+1. keep G1 + G2.1/G2.2 + G2.3/G2.4 frozen
+2. implement G2.5 Scene Timeline API
+3. validate API returns ordinary-user Scene Timeline without engineering internals
+4. implement G2.6 ordinary-user result UI
+5. keep Evidence IDs / support refs / provider diagnostics in developer diagnostics only
 ```
-
-If G2.3/G2.4 fails, fix those layers. Do not retune G1 or alter the frozen G2.1/G2.2 foundation to hide the regression.
 
 Hosted GitHub Actions must not be used; commits use `[skip ci]`.
