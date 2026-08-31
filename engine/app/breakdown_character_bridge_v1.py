@@ -251,13 +251,18 @@ def load_episode_character_resolution_v1(episode_id: str) -> BreakdownCharacterR
                 raise BreakdownCharacterBridgeError("ShotLocalSubject 无法解析到当前 Shot")
             subject_shots[subject.id].add(shot_id)
 
+        current_asset_revision = session.scalar(select(AssetRevision).where(
+            AssetRevision.project_id == episode.project_id,
+            AssetRevision.is_current.is_(True),
+        ))
+
         all_current_shot_ids = tuple(current_shots)
         bindings = list(session.scalars(
             select(ShotCharacterBinding).where(
                 ShotCharacterBinding.project_id == episode.project_id,
                 ShotCharacterBinding.shot_id.in_(all_current_shot_ids),
             )
-        ).all()) if all_current_shot_ids else []
+        ).all()) if current_asset_revision is not None and all_current_shot_ids else []
         character_ids = tuple(dict.fromkeys(binding.character_id for binding in bindings))
         characters = {
             character.id: character
@@ -273,11 +278,6 @@ def load_episode_character_resolution_v1(episode_id: str) -> BreakdownCharacterR
             if binding.character_id in characters:
                 character_shots[binding.character_id].add(binding.shot_id)
 
-        current_asset_revision = session.scalar(select(AssetRevision).where(
-            AssetRevision.project_id == episode.project_id,
-            AssetRevision.is_current.is_(True),
-        ))
-
         drafts_by_segment: dict[str, list[ShotSemanticDraft]] = defaultdict(list)
         for draft in drafts:
             drafts_by_segment[draft.scene_segment_id].append(draft)
@@ -289,7 +289,7 @@ def load_episode_character_resolution_v1(episode_id: str) -> BreakdownCharacterR
         warnings: list[str] = []
         if current_asset_revision is None:
             warnings.append("当前项目还没有可用的 Final Asset Revision，人物将保持未解析。")
-        if not bindings:
+        elif not bindings:
             warnings.append("当前剧集还没有 Final Character Shot 绑定，人物将保持未解析。")
 
         for segment in segments:
@@ -303,7 +303,7 @@ def load_episode_character_resolution_v1(episode_id: str) -> BreakdownCharacterR
                 SubjectPresenceSignature(
                     local_subject_id=subject.id,
                     local_subject_ordinal=int(subject.ordinal),
-                    local_display_name=subject.display_label or f"人物{index}",
+                    local_display_name=f"人物{index}",
                     scene_person_ref=f"P{index}",
                     shot_ids=frozenset(subject_shots.get(subject.id, set()) & scene_shot_ids),
                 )
