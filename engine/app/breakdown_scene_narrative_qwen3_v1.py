@@ -104,6 +104,7 @@ class Qwen3VLSceneTextLLM:
         self._inference_runner = inference_runner or self._run_subprocess
         self._uses_production_runner = inference_runner is None
         self._last_batch_diagnostics: dict[int, dict[str, Any]] = {}
+        self._last_batch_candidate_previews: dict[int, dict[str, str | None]] = {}
 
         if self.device not in {"auto", "cpu", "cuda"}:
             raise ValueError("G2 LLM device 只允许 auto/cpu/cuda")
@@ -145,6 +146,33 @@ class Qwen3VLSceneTextLLM:
         """返回上一批每个 Scene 的安全状态；只包含 status/error_type，不包含 prompt 或模型原文。"""
 
         return {ordinal: dict(value) for ordinal, value in self._last_batch_diagnostics.items()}
+
+    def last_batch_candidate_previews(self) -> dict[int, dict[str, str | None]]:
+        """返回上一批候选标题/摘要的截断预览，仅供本地验收诊断，不进入普通用户结果。"""
+
+        return {ordinal: dict(value) for ordinal, value in self._last_batch_candidate_previews.items()}
+
+    @staticmethod
+    def _text_preview(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        text = " ".join(value.split()).strip()
+        if not text:
+            return None
+        return text[:240]
+
+    @classmethod
+    def _candidate_preview(cls, candidate: Mapping[str, Any]) -> dict[str, str | None]:
+        def claim_text(name: str) -> str | None:
+            claim = candidate.get(name)
+            if not isinstance(claim, Mapping):
+                return None
+            return cls._text_preview(claim.get("text"))
+
+        return {
+            "readable_title": claim_text("readable_title"),
+            "story_summary": claim_text("story_summary"),
+        }
 
     @staticmethod
     def _subprocess_env(config: Qwen3SceneNarrativeRuntimeConfig) -> dict[str, str]:
@@ -251,6 +279,7 @@ class Qwen3VLSceneTextLLM:
                         "error_type": "InvalidCandidate",
                     }
                     continue
+                self._last_batch_candidate_previews[ordinal] = self._candidate_preview(candidate)
                 if ordinal not in result:
                     result[ordinal] = json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))
             return result
@@ -259,6 +288,7 @@ class Qwen3VLSceneTextLLM:
         """一次加载模型，按 Scene 顺序返回 READY candidate；单 Scene 失败时保留安全 diagnostics。"""
 
         self._last_batch_diagnostics = {}
+        self._last_batch_candidate_previews = {}
         normalized: list[dict[str, Any]] = []
         ordinals: set[int] = set()
         for item in requests:
@@ -279,13 +309,20 @@ class Qwen3VLSceneTextLLM:
                 "user_prompt": user_prompt,
             })
         result = self._inference_runner(self._config(), tuple(normalized))
-        # 自定义测试 runner 不一定会写 diagnostics；至少为成功返回补一个 READY 状态。
-        for ordinal in result:
+        # 自定义测试 runner 不一定会写 diagnostics/preview；为成功返回补最小安全诊断。
+        for ordinal, raw in result.items():
             try:
                 key = int(ordinal)
             except (TypeError, ValueError):
                 continue
             self._last_batch_diagnostics.setdefault(key, {"status": "READY"})
+            if key not in self._last_batch_candidate_previews and isinstance(raw, str):
+                try:
+                    candidate = json.loads(raw)
+                except (TypeError, ValueError):
+                    candidate = None
+                if isinstance(candidate, Mapping):
+                    self._last_batch_candidate_previews[key] = self._candidate_preview(candidate)
         return result
 
     def generate(
