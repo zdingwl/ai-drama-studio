@@ -139,6 +139,29 @@ def test_valid_materialized_overlay_applies_title_and_never_leaks_support(
     assert "F000" not in serialized
 
 
+def test_ready_with_warnings_overlay_collapses_raw_diagnostics_to_one_user_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    timeline = _timeline()
+    artifact = tmp_path / "narrative-overlay-v1.json"
+    _patch_timeline(monkeypatch, timeline)
+    _patch_artifact_path(monkeypatch, artifact)
+    overlay = _valid_overlay(timeline)
+    overlay["status"] = "READY_WITH_WARNINGS"
+    overlay["warnings"] = ["场景 1 的 LLM 输出不可用，validator detail F0001"]
+
+    result.persist_scene_narrative_overlay_v1(_draft(), overlay)
+    payload = result.build_scene_timeline_result_v1(_draft())
+
+    assert payload["scenes"][0]["title"] == "走廊争执"
+    assert payload["warnings"] == [result.NARRATIVE_PARTIAL_WARNING]
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "LLM" not in serialized
+    assert "validator" not in serialized
+    assert "F0001" not in serialized
+
+
 def test_persist_rejects_handwritten_claim_that_bypasses_g24_support_rules(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
