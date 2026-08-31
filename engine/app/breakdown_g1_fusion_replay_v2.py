@@ -2,7 +2,8 @@
 
 Scene policy is inherited from replay v1. Subject continuity adds a second conservative stage after
 Window-hint and observation-level unions: stable fragment clusters may reconnect by strong visual
-consensus or by a shared same-Shot cannot-link co-star anchor. Production E4 remains unchanged.
+consensus or by a shared same-Shot cannot-link co-star anchor. Explicit stable contradictions from
+exact-Shot observations are checked before either soft union stage. Production E4 remains unchanged.
 """
 from __future__ import annotations
 
@@ -21,6 +22,48 @@ _candidate_scene_plans = v1._candidate_scene_plans
 format_summary = v1.format_summary
 
 
+def _hair_length_classes(value: Any) -> frozenset[str]:
+    styles = {
+        feature.split(":", 1)[1]
+        for feature in e4._stable_features(value)
+        if feature.startswith("hair_style:")
+    }
+    result: set[str] = set()
+    if styles.intersection({"长发", "披肩发"}):
+        result.add("LONG")
+    if styles.intersection({"短发", "寸头"}):
+        result.add("SHORT")
+    if "光头" in styles:
+        result.add("BALD")
+    return frozenset(result)
+
+
+def _explicit_observation_conflict(
+    left: e4.SubjectObservation,
+    right: e4.SubjectObservation,
+) -> bool:
+    """Return True only for explicit stable contradictions strong enough to block a soft edge.
+
+    Missing attributes never conflict. The guard is deliberately narrow: exact-Shot male/female
+    disagreement and explicit long-hair versus short/bald disagreement are treated as stronger than
+    Window continuity hints or appearance-similarity fallback. Dynamic action/expression/framing
+    words are intentionally ignored, matching E4 identity semantics.
+    """
+
+    left_gender = e4._gender(left.appearance_summary)
+    right_gender = e4._gender(right.appearance_summary)
+    if left_gender and right_gender and left_gender != right_gender:
+        return True
+
+    left_hair = _hair_length_classes(left.appearance_summary)
+    right_hair = _hair_length_classes(right.appearance_summary)
+    if "LONG" in left_hair and right_hair.intersection({"SHORT", "BALD"}):
+        return True
+    if "LONG" in right_hair and left_hair.intersection({"SHORT", "BALD"}):
+        return True
+    return False
+
+
 def _candidate_clusters(
     segment_plan: Any,
     window_summaries: Sequence[Mapping[str, Any]],
@@ -33,7 +76,8 @@ def _candidate_clusters(
     uf = e4._UnionFind(observations)
     segment_ordinals = {item.shot_ordinal for item in observations}
 
-    # Stage 1: preserve Window Context continuity hints as the primary soft evidence.
+    # Stage 1: Window Context continuity is primary soft evidence, but exact-Shot explicit stable
+    # contradictions are stronger and must block a soft union.
     for hint in e4._window_subject_hints(window_summaries):
         raw_ordinals = hint.get("shot_ordinals")
         if not isinstance(raw_ordinals, list):
@@ -47,10 +91,15 @@ def _candidate_clusters(
         resolved = e4._resolve_hint_nodes(hint, observations, index_by_node)
         resolved = sorted(set(resolved), key=lambda index: observations[index].shot_ordinal)
         for left, right in zip(resolved, resolved[1:]):
+            if _explicit_observation_conflict(observations[left], observations[right]):
+                continue
             uf.union(left, right)
 
-    # Stage 2: keep the existing conservative observation-level appearance fallback.
+    # Stage 2: keep the accepted observation-level appearance fallback, but never let similarity
+    # override an explicit stable contradiction visible in the two exact-Shot observations.
     for left, right in v1._candidate_fallback_pairs(observations):
+        if _explicit_observation_conflict(observations[left], observations[right]):
+            continue
         uf.union(left, right)
 
     # Stage 3: reconnect already-stable fragments only when cluster-level evidence is unambiguous.
@@ -109,5 +158,6 @@ __all__ = [
     "SUBJECT_POLICY",
     "_candidate_clusters",
     "_candidate_scene_plans",
+    "_explicit_observation_conflict",
     "format_summary",
 ]
