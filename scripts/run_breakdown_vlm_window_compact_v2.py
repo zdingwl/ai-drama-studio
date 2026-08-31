@@ -42,7 +42,7 @@ def _compact_window_prompt(source_language: str, window: Mapping[str, Any]) -> s
 6. 输出必须紧凑：window_summary<=40字；appearance_summary<=40字；location_hint<=20字。
 7. subject_continuity_hints 最多8项，只保留跨>=2个 Shot 的主要重复人物。
 8. prop_continuity_hints 最多4项，只保留跨>=2个 Shot 的剧情相关重复道具。
-9. shot_scene_hints 必须覆盖窗口内每个 Shot，revision_item_id 原样复制。
+9. shot_scene_hints 必须覆盖窗口内每个 Shot，revision_item_id 原样复制且每个只出现一次。
 10. 不输出 context_note、environment_description、continuity_summary、scene_change_candidates。
 
 JSON schema：
@@ -112,14 +112,14 @@ def analyze_window(
         for shot in fast._window_shots(window)
         if str(shot.get("revision_item_id") or "").strip()
     }
-    returned_ids = {
+    returned_ids = [
         str(item.get("revision_item_id") or "").strip()
         for item in raw_hints
         if isinstance(item, Mapping) and str(item.get("revision_item_id") or "").strip()
-    }
-    if returned_ids != expected_ids:
+    ]
+    if len(returned_ids) != len(expected_ids) or set(returned_ids) != expected_ids:
         raise ValueError(
-            "compact window shot_scene_hints must cover every target Shot exactly by revision_item_id"
+            "compact window shot_scene_hints must cover every target Shot exactly once by revision_item_id"
         )
     return value
 
