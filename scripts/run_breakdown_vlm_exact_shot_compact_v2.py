@@ -88,12 +88,13 @@ Scene上下文（只可补地点/INT-EXT/时间，不能搬入邻镜人物动作
 随后图片按 ShotIndex 分组；每组图片只属于该 Shot。
 
 硬规则：
-1. visible / people / props / shot_type / camera / composition 只能来自当前 Shot 图片。
+1. visible / people / props / shot_type / composition 只能来自当前 Shot 图片。
 2. 当前 Shot 看不到的人、动作、道具绝不能从上下文补入。
 3. 不猜姓名、Character/Scene/Prop ID；people 按当前 Shot 稳定视觉顺序输出。
 4. 不转录对白/OCR；说话真相由 ASR 负责。
-5. visible<=80字；appearance<=32字；activity<=24字；composition<=24字；interaction<=20字。
-6. 每个 ShotIndex 必须且只能输出一次。不要输出 revision_item_id、subject_A/B、events、长解释。
+5. 静态采样图不能可靠判断推/拉/摇/移，因此不要输出 camera motion；程序统一记 UNKNOWN。
+6. visible<=80字；appearance<=32字；activity<=24字；composition<=24字；interaction<=20字。
+7. 每个 ShotIndex 必须且只能输出一次。不要输出 revision_item_id、subject_A/B、events、长解释。
 
 JSON schema：
 {{
@@ -102,7 +103,6 @@ JSON schema：
     "scene":{{"loc":"地点或空","ie":"INT|EXT|MIXED|UNKNOWN","tod":"白天|夜晚|未知"}},
     "visible":"当前Shot核心可见事实",
     "shot_type":"特写|近景|中景|全景|远景|空",
-    "camera":"静止|推|拉|摇|移|跟|UNKNOWN|空",
     "composition":"简短构图或空",
     "people":[{{
       "appearance":"稳定可见外观",
@@ -254,7 +254,7 @@ def expand_compact(value: Mapping[str, Any], batch: Sequence[Mapping[str, Any]])
                 "summary": visible,
                 "visual_description": visible,
                 "shot_type_hint": _clean(raw.get("shot_type"), 64),
-                "camera_motion_hint": _clean(raw.get("camera"), 64) or "UNKNOWN",
+                "camera_motion_hint": "UNKNOWN",
                 "narrative_function_hint": "",
                 "composition_hint": _clean(raw.get("composition"), 160),
             },
