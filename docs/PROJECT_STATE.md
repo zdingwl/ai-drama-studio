@@ -11,188 +11,121 @@
 
 ```text
 P1/P2 implementation acceptance       = CONDITIONAL PASS
-Fast Grounded V2 baseline             = APPROVED
+Fast Grounded V2 baseline             = APPROVED / G1 FROZEN
 Window Context contract               = SEGMENT-INDEX V4 / REAL ACCEPTED / PRODUCTION / FROZEN
 Exact-Shot contract                   = COMPACT-RECONSTRUCTION V3 / REAL ACCEPTED / PRODUCTION / FROZEN
-P2-E6 Fusion                          = E6-V2 PRODUCTION PROMOTED / LOCAL PRODUCTION REGRESSION PENDING
-Replay-v5 continuity                  = REAL ACCEPTED / Scene1=2 / Scene2=2 / conflicts=0
-Fresh production performance          = PASS / 14.098 min / <=20min YES
-Fresh production Scene boundary       = POSITIVE / 2 Scenes
-Fresh production Shot0001             = POSITIVE / subjects=0 / reconstruction props present
-Previous E6-v1 production continuity  = REGRESSION / Scene1=4 / Scene2=16
-same-Shot hard safety                 = PASS / conflicts=0
-P2.6 Windows / real-model acceptance  = NOT FINAL PASS (E6-v2 production confirmation pending)
-G2 Scene-level text LLM               = BLOCKED / NOT IMPLEMENTED
-Scene Timeline result UI              = BLOCKED / NOT IMPLEMENTED
+P2-E6 Fusion                          = E6-V2 / REAL PRODUCTION ACCEPTED / FROZEN
+Replay-v5 continuity                  = REAL ACCEPTED / promoted into E6-v2
+P2.6 Windows / real-model acceptance  = PASS
+G2 Scene-level text LLM               = UNBLOCKED / NOT IMPLEMENTED
+Scene Timeline result UI              = UNBLOCKED / NOT IMPLEMENTED
 P3 current 02 拉片 Shot-card UI        = IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character                  = PLANNED / PAUSED
+same-Shot hard safety                 = PASS / conflicts=0
 ```
 
-Performance tuning, Window-v4 and Exact-Shot-v3 are frozen. Character V10.1 is protected. Do not
-loosen same-Shot cannot-link or Final identity gates.
+G1 performance/quality tuning is frozen. Do not change Window-v4, Exact-Shot-v3, E6-v2 thresholds,
+same-Shot cannot-link, or Character V10.1 identity gates without a new concrete real regression.
 
-## 2. Latest full production Run — performance/visual truth baseline
+## 2. Final P2.6 production acceptance Run
 
 ```text
-Run = BREAKDOWNRUN_dc678fb017ba49128b7340509f02536b
+Run = BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
 Episode = EPISODE_0ed6aaca0da4471db0364bd29c3d6a61
-30 Shots
-whole run = 845.898s = 14.098 min
-ASR = 15.884s
-OCR = 264.235s
-VLM = 564.050s
+ShotRevision = SHOTREV_1462ac6d9f3948b994fc9bc575fee3a0
+Shots = 30
+status = READY
+is_current = true
+started_at = 2026-08-31T06:57:22.353834
+completed_at = 2026-08-31T07:11:23.392582
+whole run ~= 841.039s = 14.017 min
 ```
+
+Provider timings:
 
 ```text
-<30min = YES
-<=20min = YES
-Window Context = 84.910s
-Exact-Shot = 459.158s
-model load = 6.896s
-58 grounding frames
-10 generation attempts
-0 MAXED
+ASR = 15.275958s
+OCR = 264.916802s
+VLM = 559.267248s
 ```
 
-Window:
+VLM production truth:
 
 ```text
-window-0001 | 12 Shots | READY | 276/1600
-window-0002 | 12 Shots | READY | 304/1600
-window-0003 |  9 Shots | READY | 237/1600
-window-0004 |  7 Shots | READY | 233/1600
-4/4 READY
+Window profile = breakdown-p2-vlm-window-context-segment-index-zh-v4
+Exact-Shot profile = breakdown-p2-vlm-exact-shot-compact-reconstruction-zh-v3
+Window = 4/4 READY
+Exact-Shot = 6/6 READY
+Window Context = 84.3492s
+Exact-Shot = 455.284273s
+generation attempts = 10
+MAXED = 0
+missing Shot semantic = 0
+failed Window = 0
+failed Exact-Shot grounding = 0
 ```
 
-Exact-Shot:
+Fusion production truth:
 
 ```text
-batch1 |  993/4096 | READY | attempts=1
-batch2 |  763/4096 | READY | attempts=1
-batch3 | 1027/4096 | READY | attempts=1
-batch4 | 1055/4096 | READY | attempts=1
-batch5 | 1088/4096 | READY | attempts=1
-batch6 | 1061/4096 | READY | attempts=1
+Fusion profile = breakdown-p2-fusion-episode-context-e6-v2
+Fusion status = READY
+scene_segment = 2
+local_subject = 4
+cluster_count = 4
+merged_cluster_count = 4
+observation_count = 46
+same_shot_cluster_conflicts = 0
+Scene1 = Shots 1-12 / 公寓走廊 / LocalSubjects=2
+Scene2 = Shots 13-30 / 客厅 / LocalSubjects=2
 ```
 
-Shot0001:
+Shot0001 truth:
 
 ```text
-subjects=0
-props=蓝色玫瑰花束, 玻璃花瓶, 遥控器, 书本
-summary=蓝色玫瑰花束在玻璃花瓶中
-neighbor person leakage=NO
+subjects = 0
+summary = 蓝色玫瑰花束在玻璃花瓶中
+props include:
+- 蓝色玫瑰花束
+- 玻璃花瓶
+- 遥控器
+- 书本
+neighbor person leakage = NO
 ```
 
-Scene segmentation:
+Therefore the final real gate is satisfied:
 
 ```text
-Scene1 = Shots 1-12  | 公寓走廊 | INTERIOR / DAY
-Scene2 = Shots 13-30 | 客厅     | INTERIOR / DAY
-same_shot_cluster_conflicts=0
+Fusion=e6-v2                         PASS
+Window=v4                            PASS
+Exact-Shot=v3                        PASS
+Scenes=2                             PASS
+Scene1 LocalSubjects=2               PASS
+Scene2 LocalSubjects=2               PASS
+same-Shot conflicts=0                PASS
+Shot0001 subjects=0                  PASS
+Shot0001 roses + glass vase props    PASS
+whole-run <30min                     PASS
+whole-run <=20min                    PASS
 ```
 
-The same Run exposed the E6-v1 anonymous continuity regression:
+**P2.6 = PASS.**
 
-```text
-Scene1 LocalSubjects=4
-Scene2 LocalSubjects=16
-```
-
-## 3. Continuity root cause and accepted replay-v5 fix
-
-Read-only Stage diagnostics proved the dominant fault was Stage1 Window hint resolution. The legacy
-resolver auto-bound the only visible person in a Shot even when the hint appearance disagreed. This
-allowed a white-clothed-woman hint to absorb a gray-hoodie man and vice versa.
-
-Replay-v4 fixed Stage1 with evidence-gated hint resolution. Real completed-run replay became:
-
-```text
-Scene1 LocalSubjects=2
-Scene2 LocalSubjects=3
-conflicts=0
-```
-
-The remaining singleton was compact alias drift (`灰卫衣` vs `灰色连帽衫`). Replay-v5 added only a
-comparison-view canonicalization for Stages 2..4; original VLM appearance text remains unchanged and
-all accepted thresholds/hard guards remain unchanged.
-
-User-local replay-v5 evidence:
-
-```text
-12 targeted replay tests PASS
-providers_executed=[]
-mutates_breakdown_run=false
-mutates_final_assets=false
-Candidate Scenes=2
-Scene1 LocalSubjects=2
-Scene2 LocalSubjects=2
-same_shot_cluster_conflicts=0
-```
-
-Accepted continuity policies:
-
-```text
-Window hint resolver = window-hint-positive-appearance-support-compact-alias-v2
-Compact appearance   = compact-observation-stable-alias-normalization-v1
-```
-
-## 4. Current production Fusion — E6 v2
-
-Production module remains:
-
-```text
-engine/app/breakdown_p2_fusion_episode_v6.py
-```
-
-Production profile is now:
-
-```text
-breakdown-p2-fusion-episode-context-e6-v2
-```
-
-E6-v2 keeps the existing Scene/dialogue/Draft logic and promotes replay-v5 subject clustering only:
-
-```text
-Stage1 Window hint
-  -> ordinal is candidate presence only
-  -> Exact-Shot stable appearance must positively support the hint
-
-Stages2..4
-  -> compare a canonicalized compact appearance view
-  -> keep original thresholds
-  -> keep original explicit conflict guards
-
-all stages
-  -> same-Shot hard cannot-link
-  -> LocalSubject remains anonymous Scene-scoped evidence, never Character identity
-```
-
-Production metadata now records:
-
-```text
-window_hint_resolution_policy
-compact_appearance_policy
-subject_continuity_policy
-same_shot_cannot_link=hard
-promotion_source=g1-read-only-replay-v5-real-accepted
-```
-
-## 5. Current production Breakdown chain
+## 3. Accepted production chain
 
 ```text
 Episode Current ShotRevision
 → frozen PROCESSING BreakdownRun
-→ ASR
-→ OCR
-→ one-load Qwen3-VL
+→ Episode ASR (faster-whisper large-v3)
+→ OCR (RapidOCR PP-OCRv6-small)
+→ one-load Qwen3-VL Fast Grounded
    ├─ Window Segment-index v4
    └─ Exact-Shot Compact-Reconstruction v3
 → immutable VLM_OUTPUT sidecar
 → P2-E6-v2 Episode-context Fusion
-   ├─ accepted Scene policy
-   ├─ ASR_SEGMENT dialogue truth
+   ├─ corridor-family Scene policy + DIRECT NEW_SCENE safeguard
+   ├─ ASR_SEGMENT dialogue truth + Shot projection
    └─ replay-v5 compact-safe anonymous continuity
 → P1 validator
 → READY / READY_WITH_WARNINGS
@@ -207,7 +140,16 @@ Fusion = breakdown-p2-fusion-episode-context-e6-v2
 Pipeline = breakdown-p2-full-v1
 ```
 
-## 6. Hard invariants
+Continuity policies:
+
+```text
+Window hint resolver = window-hint-positive-appearance-support-compact-alias-v2
+Compact appearance = compact-observation-stable-alias-normalization-v1
+Subject continuity = compact-alias-normalized-after-evidence-gated-window-hint-plus-coherent-component-distinctive-attire-hard-same-shot-v3
+same-Shot cannot-link = hard
+```
+
+## 4. Hard invariants
 
 ```text
 Shot = smallest visual evidence/location unit
@@ -224,32 +166,44 @@ missing attribute is not a contradiction
 expression/emotion/action/pose/speaking/screen position/framing are not identity keys
 ```
 
-Character V10.1 remains unchanged:
+Character V10.1 remains protected:
 
 ```text
-YOLOX -> capture-first evidence -> mature MOT -> YoutuReID
--> RESOLVED/UNRESOLVED -> explicit Shot Assignment -> Final Gate
+YOLOX Person Detection
+→ capture-first Person Evidence
+→ mature MOT
+→ YoutuReID project identity
+→ RESOLVED / UNRESOLVED
+→ explicit Shot × known-Character Assignment
+→ Final Character Gate
 ```
 
-## 7. Next required action
+## 5. Next work — G2 / Scene Timeline
 
-Do not tune VLM or performance further.
+P2.6 no longer blocks downstream work. The next implementation stage is **G2 Scene-level text organization +
+Scene Timeline result surface**.
 
-First run the cheap E6-v2 production regression suite. If green, execute exactly one final fresh
-production Breakdown and require:
+G2 must consume accepted G1/P2 evidence; it must not replace or reinterpret source truth:
 
 ```text
-Fusion profile = breakdown-p2-fusion-episode-context-e6-v2
-Window profile = ...segment-index-zh-v4
-Exact-Shot profile = ...compact-reconstruction-zh-v3
-Scenes=2
-Scene1 LocalSubjects=2
-Scene2 LocalSubjects=2
-same_shot_cluster_conflicts=0
-Shot0001 subjects=0
-Shot0001 props include blue roses + glass vase
-whole-run <30min
+SceneSegmentDraft -> Scene-level organization unit
+ShotSemanticDraft -> visual Shot facts
+ASR_SEGMENT -> dialogue text truth
+OCR -> visible text evidence
+LocalSubject -> anonymous Scene-scoped people only
+DraftPropHint -> reconstruction/search hint only
 ```
 
-Only after this fresh production confirmation may P2.6 be reviewed for final PASS and G2 / Scene
-Timeline work begin. Hosted GitHub Actions remain intentionally unused.
+Recommended order:
+
+```text
+1. freeze G1 acceptance fixtures and production profiles
+2. define G2 Scene Timeline data/output contract
+3. implement deterministic Scene Timeline assembler first
+4. add Scene-level pure-text LLM only for readable summary/organization where needed
+5. build the user-facing Scene Timeline result UI
+6. keep raw Evidence/diagnostics out of the primary user result unless explicitly requested
+```
+
+No more full-model G1 reruns are required unless a new regression appears. Hosted GitHub Actions remain
+intentionally unused.
