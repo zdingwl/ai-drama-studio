@@ -1,8 +1,8 @@
 # G2.5 Scene Timeline API V1
 
-Status: **IMPLEMENTED ON BRANCH / USER-LOCAL ACCEPTANCE PENDING**
+Status: **FINAL PASS / FROZEN**
 
-Branch: `g2-5-scene-timeline-api`
+Merged to: `main`
 
 ## 1. Goal
 
@@ -35,7 +35,7 @@ GET /api/breakdown-runs/{run_id}/scene-timeline
 Episode behavior:
 
 ```text
-missing Episode                  -> 404
+missing Episode                        -> 404
 existing Episode, no current READY Run -> null
 current READY/READY_WITH_WARNINGS Run  -> scene-timeline-v1
 ```
@@ -149,12 +149,41 @@ User warning:
 部分场景的标题或剧情摘要使用基础拉片结果。
 ```
 
-## 6. User-local acceptance
+## 6. Final user-local acceptance
 
-New G2.5 unit boundary:
+Accepted real Run:
+
+```text
+BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
+```
+
+Narrative materialization on user-local Windows/CUDA:
+
+```powershell
+python scripts/materialize_breakdown_g2_scene_timeline_v1.py BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4 --device cuda
+```
+
+Observed result:
+
+```text
+scene_count = 2
+accepted_title_count = 2
+accepted_summary_count = 2
+warning_count = 0
+runtime_profile = breakdown-g2-scene-narrative-qwen3-local-v1
+artifact = scene-timeline/narrative-overlay-v1.json
+```
+
+New G2.5 boundary tests:
 
 ```powershell
 python -m pytest engine/tests/v2/test_breakdown_scene_timeline_result_v1.py engine/tests/v2/test_breakdown_scene_timeline_routes_v1.py -q
+```
+
+Observed:
+
+```text
+12 passed
 ```
 
 Frozen G2 regression boundary:
@@ -163,13 +192,13 @@ Frozen G2 regression boundary:
 python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py engine/tests/v2/test_breakdown_scene_narrative_v1.py engine/tests/v2/test_breakdown_scene_narrative_qwen3_v1.py engine/tests/v2/test_breakdown_scene_narrative_real_regression_v1.py -q
 ```
 
-For the previously accepted real Run:
+Observed completion:
 
-```powershell
-python scripts/materialize_breakdown_g2_scene_timeline_v1.py BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4 --device cuda
+```text
+19 tests completed with no failure/error output in the supplied terminal result.
 ```
 
-Expected API semantics after materialization:
+Accepted semantics remain:
 
 ```text
 Scene 1 title = 走廊争花
@@ -178,4 +207,11 @@ primary response contains no support Fxxxx / source_fingerprint / provider diagn
 Shot objects remain frozen and unchanged
 ```
 
-Do not mark G2.5 FINAL PASS until the user-local tests and real Run API review are observed.
+Therefore:
+
+```text
+G2.5 Scene Timeline API = FINAL PASS / FROZEN
+Next = G2.6 ordinary-user Scene Timeline UI
+```
+
+No assistant-local pytest/CUDA PASS is claimed. User-local Windows/CUDA output is the acceptance truth.
