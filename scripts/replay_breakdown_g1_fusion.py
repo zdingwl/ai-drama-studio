@@ -11,8 +11,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from engine.app.breakdown_g1_fusion_replay_v2 import format_summary
-from engine.app.breakdown_g1_fusion_replay_completed_v2 import replay_completed_run
+from engine.app.breakdown_g1_fusion_replay_v3 import format_summary
+from engine.app.breakdown_g1_fusion_replay_completed_v3 import replay_completed_run
 
 
 def main() -> int:
