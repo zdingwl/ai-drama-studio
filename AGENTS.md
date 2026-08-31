@@ -12,8 +12,8 @@ Window Context                         = Segment-index v4 / accepted / frozen
 Exact-Shot                             = Compact-reconstruction v3 / accepted / frozen
 P2-E6 anonymous continuity Fusion     = E6-v2 / real production accepted / frozen
 P2.6 Windows / real-model acceptance  = PASS
-G2 Scene Timeline Contract            = v1 / user-local test pass / final-run acceptance pending
-G2 Deterministic Assembler            = v1 / user-local test pass / final-run acceptance pending
+G2 Scene Timeline Contract            = v1 / FINAL PASS / FROZEN FOUNDATION
+G2 Deterministic Assembler            = v1 / FINAL PASS / FROZEN FOUNDATION
 G2 Scene-level text LLM               = UNBLOCKED / NOT IMPLEMENTED
 Scene Timeline result UI              = UNBLOCKED / NOT IMPLEMENTED
 P5 Draft ↔ Character                  = PAUSED
@@ -25,7 +25,8 @@ Truth priority:
 PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests = executable CURRENT
 ```
 
-G2.1/G2.2 regression tests passed locally (`4 passed`). Do not call them final PASS until the accepted real-Run smoke check also passes.
+G2.1/G2.2 regression tests (`4 passed`) and final accepted real-Run smoke check both passed on 2026-08-31.
+Treat the deterministic Scene Timeline foundation as frozen unless a concrete G2 regression is demonstrated.
 
 ## 2. Recovery order
 
@@ -102,7 +103,7 @@ P2.6 is PASS. G1 is frozen.
 
 ```text
 Stage1 Window hint:
-  listed Shot ordinal = candidate location only
+  listed Shot ordinal = candidate presence only
   Exact-Shot appearance must positively support the hint
 
 Stages2..4:
@@ -165,9 +166,9 @@ YOLOX Person Detection
 Never relax same-sample cannot-link, face conflict, >=3 independent evidence rule, ambiguity rules,
 explicit Shot assignment or Final Gate because of Breakdown hints.
 
-## 8. G2 foundation and next safe work
+## 8. G2 frozen foundation and next safe work
 
-Implemented read-only G2 foundation:
+Accepted read-only G2 foundation:
 
 ```text
 engine/app/breakdown_scene_timeline_contract_v1.py
@@ -184,18 +185,31 @@ python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
 4 passed
 ```
 
+Final real-Run smoke evidence:
+
+```text
+Run = BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
+scenes = 2
+shots = 30
+people = [2, 2]
+shot1_people = []
+shot1_props = ['遥控器', '蓝色玫瑰花束', '玻璃花瓶', '书本']
+warnings = []
+```
+
 It does not modify the frozen G1 chain and does not create Final assets.
 
 Next safe order:
 
 ```text
-1. exercise deterministic assembler on final accepted Run
-2. verify 2 Scenes / 30 Shots / Scene-local anonymous people / Shot0001 exact truth / ASR verbatim
-3. if the real-Run smoke check passes, mark G2.1/G2.2 final PASS
-4. only then implement G2.3 Scene-level pure-text LLM
-5. add G2.4 support/source validator
-6. add G2.5 API
-7. add G2.6 ordinary-user Scene Timeline UI
+1. implement G2.3 Scene-level pure-text LLM on top of frozen deterministic output
+2. implement G2.4 support/source validator and fail-closed fallback
+3. validate against the accepted real Run
+4. add G2.5 API
+5. add G2.6 ordinary-user Scene Timeline UI last
 ```
+
+G2.3/G2.4 may improve organization/readability only. They must not replace deterministic timestamps,
+people refs/count, ASR dialogue, OCR text, prop existence, shot type or composition.
 
 Hosted GitHub Actions must not be used; commits use `[skip ci]`.
