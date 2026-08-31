@@ -24,14 +24,24 @@ G2 Source / Support Validator         = V1.5 / FINAL PASS / FROZEN
 G2.3/G2.4 real-model acceptance       = PASS
 G2.5 Scene Timeline API               = V1 / FINAL PASS / FROZEN
 G2.5 Windows/CUDA local acceptance    = PASS
-G2.6 ordinary-user result UI          = NOT IMPLEMENTED
-P3 current 02 拉片 Shot-card UI        = IMPLEMENTED / NOT FINAL ACCEPTED
+G2.6 ordinary-user result UI          = IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+P3 current 02 拉片 Shot-card UI       = IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-P5 Draft ↔ Character                  = PLANNED / PAUSED
+P5 Draft ↔ Character                  = IMPLEMENTED ON PR #17 / USER-LOCAL ACCEPTANCE PENDING / NOT MERGED
 same-Shot hard safety                 = PASS / conflicts=0
 ```
 
 G1 performance/quality tuning is frozen. G2.1/G2.2, G2.3/G2.4 and G2.5 are frozen after accepted real evidence. Do not change Window-v4, Exact-Shot-v3, E6-v2, G2 Timeline truth ownership, G2 Narrative provenance rules, G2.5 ordinary-user API leak/fallback boundaries, same-Shot cannot-link, or Character V10.1 identity gates without a new concrete regression.
+
+Repository workflow truth:
+
+```text
+Documentation-only synchronization = edit main directly; no docs-only branch/PR.
+Code/behavior change = feature branch + Draft PR by default.
+Explicit user request for direct main = follow the explicit request.
+Hosted GitHub Actions = not used for acceptance.
+All commits = [skip ci].
+```
 
 ## 2. Final P2.6 production acceptance Run
 
@@ -121,6 +131,16 @@ YOLOX Person Detection
 → explicit Shot × known-Character Assignment
 → Final Character Gate
 ```
+
+P5 authority remains strictly one-way:
+
+```text
+Final ShotCharacterBinding
+→ deterministic Scene-local presence reconciliation
+→ anonymous Breakdown person may resolve only when uniquely safe
+```
+
+Breakdown prose, dialogue/ASR names, relationships, role hints and appearance text cannot create or override Character identity.
 
 ## 5. G2.1 / G2.2 final acceptance
 
@@ -316,14 +336,76 @@ G2.5 Scene Timeline API = FINAL PASS / FROZEN
 G2.5 Windows/CUDA local acceptance = PASS
 ```
 
-## 9. Next action
+## 9. G2.6 ordinary-user Scene Timeline UI
+
+Current implementation is present on `main`.
+
+Primary result path consumes:
+
+```text
+GET /api/episodes/{episode_id}/scene-timeline
+```
+
+Visible reading order:
+
+```text
+Scene navigation
+→ readable Scene title
+→ story summary
+→ Scene environment
+→ Scene people
+→ Shot cards
+   → preview / reference clip
+   → visual description
+   → people
+   → action / performance
+   → dialogue
+   → props
+   → cinematography
+   → on-screen text
+```
+
+Ordinary UI hides support Fxxxx, source_fingerprint, Evidence IDs, cluster keys, LocalSubject IDs, confidence, provider/model diagnostics and raw validator diagnostics.
+
+Current status:
+
+```text
+G2.6 = IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+```
+
+Do not mark G2.6 FINAL PASS until user-local frontend test/typecheck/build and visual review are supplied.
+
+## 10. P5 Draft ↔ Character current status
+
+P5 has resumed because the Episode-context Breakdown baseline is now accepted/frozen.
+
+Current implementation location:
+
+```text
+Draft PR #17
+branch = p5-breakdown-character-bridge
+main = does not contain P5 implementation yet
+```
+
+V1 rule:
+
+```text
+Final ShotCharacterBinding
+→ exact current ShotRevision-safe Scene-local presence signatures
+→ resolve only unique one-to-one signatures
+→ ambiguous / always-co-occurring people remain UNRESOLVED
+```
+
+P5 does not modify LocalSubject rows, Character V10.1, Final Gate or Final bindings. User-local deterministic + real-Episode acceptance is still pending.
+
+## 11. Next action
 
 ```text
 1. keep G1 + G2.1/G2.2 + G2.3/G2.4 + G2.5 frozen
-2. start G2.6 ordinary-user Scene Timeline UI
-3. UI should consume the frozen G2.5 endpoints directly
-4. show direct Scene → people → Shot cards → visual/action/dialogue/props/cinematography/OCR → readable title/story_summary
-5. keep engineering evidence, support Fxxxx, internal IDs, confidence/provider/model diagnostics out of the ordinary-user page
+2. finish G2.6 ordinary-user UI user-local acceptance when needed
+3. run P5 local deterministic test + accepted real-Episode bridge inspection
+4. merge P5 only after acceptance, unless the user explicitly asks for direct merge
+5. after accepted P5, implement P6 Final identity/asset fill-back + final Breakdown renderers
 ```
 
 No assistant-local pytest/CUDA PASS is claimed. Hosted GitHub Actions remain intentionally unused.
