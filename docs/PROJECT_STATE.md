@@ -1,6 +1,6 @@
 # AI Drama Studio — Project State
 
-> **Last synchronized:** 2026-08-30 13:30 +08:00  
+> **Last synchronized:** 2026-08-31 +08:00  
 > **Repository:** `zdingwl/ai-drama-studio`  
 > **Branch:** `main`  
 > **Architecture:** Reference Video V2 + Breakdown Fast Grounded V2  
@@ -13,7 +13,9 @@
 P1/P2 implementation acceptance       = CONDITIONAL PASS
 Fast Grounded V2 baseline             = APPROVED
 G1 Window Context + Exact-Shot Ground = IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
-P2-E4 anonymous continuity Fusion     = IMPLEMENTED / LOCAL-REAL ACCEPTANCE PENDING
+P2-E6 anonymous continuity Fusion     = IMPLEMENTED / FRESH PRODUCTION REAL-RUN PENDING
+P2-E5 Fusion                          = PRESERVED / ROLLBACK BASELINE
+P2-E4 Fusion                          = PRESERVED / OLDER ROLLBACK BASELINE
 legacy text-only per-Shot E3          = RETIRED FROM PRODUCTION / HISTORICAL ONLY
 G2 Scene-level text LLM               = PLANNED / NOT IMPLEMENTED
 Scene Timeline result UI              = PLANNED / NOT IMPLEMENTED
@@ -23,56 +25,79 @@ P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character                  = PLANNED / PAUSED
 ```
 
-## 2. Real-run status: historical baseline vs current rerun
+## 2. Latest real-run and replay truth
 
-Historical pre-Fast-Grounded rejection remains the comparison baseline:
+Historical pre-Fast-Grounded rejection baseline:
 
 ```text
 30 Shots
-21 LocalSubjects total
-old Scene04 / 19 Shots -> 14 LocalSubjects
+21 LocalSubjects
+old Scene04 / 19 Shots -> 14 temporary people
 actual visible cast -> mainly one woman + one man
 Shot0001 visible truth -> blue roses / glass vase
-old result -> leaked neighboring young woman
+old result -> neighboring woman leakage
 legacy E3 -> 30/30 TimeoutExpired fallback
-~1 minute video -> multi-hour runtime class
+~1 minute Episode -> multi-hour runtime class
 ```
 
-A new Fast Grounded V2 real rerun has already completed. Current user-visible result:
+Latest full Fast Grounded V2 execution:
 
 ```text
+Run = BREAKDOWNRUN_85be6db2faa94901a2a6db932c71ed62
 30 Shots
-4 Scenes
-Scene01 = 5 Shots
-Scene02 = 5 Shots
-Scene03 = 2 Shots
-Scene04 = 18 Shots
+formal E4 Draft at execution time = 4 Scenes
+5 / 5 / 2 / 18 Shots
+whole run = 33.705 min
+ASR = 17.1s
+OCR = 265.9s
+VLM = 1738.0s
 ```
 
-Confirmed positive G1 gate:
+Exact-Shot positive gate:
 
 ```text
-Shot0001 blue roses / glass vase = visually correct
+Shot0001 = blue roses / glass vase
 subjects=[]
-neighbor woman leakage = fixed in this observed Shot
+neighbor person leakage not observed
 ```
 
-Still pending from the same completed Run:
+The immutable sidecars from that Run were then evaluated read-only. Latest accepted Replay v3:
 
 ```text
-Scene04 anonymous subject continuity
-same-Shot cannot-link real result
-whether the current 4 Scenes are true scene changes or duplicate corridor/hallway splits
-true whole-run elapsed time
-provider ASR/OCR/VLM timings
-OCR noise recording only
+Candidate Scenes = 2
+Scene1 = Shots 1-12 / 公寓走廊 / LocalSubjects=2
+Scene2 = Shots 13-30 / 客厅 / LocalSubjects=2
+same_shot_cluster_conflicts = 0
+providers_executed = []
+mutates_breakdown_run = false
+mutates_final_assets = false
 ```
+
+Scene1 anonymous chains are supported by the real exact-Shot evidence:
+
+```text
+white long-hair person:
+2,3,4,5,7,8,9,11,12
+
+gray/white curly-hair + orange floral-shirt person:
+3,4,5,6,9,10,11
+```
+
+Scene2 remains the accepted one-woman + one-man anonymous result.
+
+The replay-v3 policy has been promoted into versioned production E6. Historical Runs remain immutable.
+A fresh E6 production full run has not yet been executed.
 
 Therefore:
 
 ```text
-Fast Grounded G1 local-real = PENDING
-P2-E4 under grounded input = PENDING
+G1 exact-Shot focused gate = POSITIVE
+G1 Scene replay gate = POSITIVE
+G1 Scene1 continuity replay gate = POSITIVE
+G1 Scene2 continuity replay gate = POSITIVE
+G1 same-Shot hard safety replay gate = POSITIVE
+fresh E6 production execution = PENDING
+performance first target <30 min = FAIL on previous run
 P2.6 = NOT PASSED
 ```
 
@@ -115,10 +140,15 @@ Episode Current ShotRevision
         visible facts only from exact frozen Shot frames
    one subprocess/model load for both stages
 → immutable exact-Shot VLM_OUTPUT sidecar
-→ P2-E4 Episode-context Fusion
-   ├─ conservative Scene continuity
+→ P2-E6 Episode-context Fusion
+   ├─ corridor-family Scene continuity + DIRECT NEW_SCENE safeguard
    ├─ ASR_SEGMENT dialogue truth/projections
-   └─ anonymous Subject Continuity Graph
+   └─ anonymous Subject Continuity
+        Stage1 Window hints + explicit exact-Shot conflict guard
+        Stage2 stable-appearance gap fallback + conflict guard
+        Stage3 mutual-best cluster bridge
+        Stage4 coherent-component bridge
+        all unions preserve same-Shot hard cannot-link
 → P1 validator
 → READY / READY_WITH_WARNINGS
 ```
@@ -131,27 +161,23 @@ profile = breakdown-p2-full-v1
 provider order = ASR → OCR → VLM
 ```
 
-Production VLM:
-
-```text
-engine/app/breakdown_p2_vlm_continuity_v1.py
-→ engine/app/breakdown_p2_vlm_runtime_v1.py
-→ engine/app/breakdown_p2_vlm_fast_grounded_v1.py
-→ scripts/run_breakdown_vlm_fast_grounded_qwen3.py
-```
-
 Production Fusion:
 
 ```text
-engine/app/breakdown_p2_fusion_episode_v4.py
-profile = breakdown-p2-fusion-episode-context-e4-v1
+engine/app/breakdown_p2_fusion_episode_v6.py
+profile = breakdown-p2-fusion-episode-context-e6-v1
 ```
 
-Legacy per-Shot text E3 is historical only.
+Rollback baselines:
+
+```text
+engine/app/breakdown_p2_fusion_episode_v5.py
+engine/app/breakdown_p2_fusion_episode_v4.py
+```
 
 ## 5. G1 truth boundaries
 
-Window Context may output only continuity/context:
+Window Context may output continuity/context only:
 
 ```text
 window_summary
@@ -171,80 +197,78 @@ visible events
 visible plot-relevant props
 ```
 
-Only Scene fields may conservatively inherit Window Context. Neighbor-only person/action/prop/framing must never become current-Shot truth.
+Only Scene fields may conservatively inherit Window Context. Neighbor-only person/action/prop/framing
+must never become current-Shot truth.
 
 Scene rules:
 
 ```text
 UNKNOWN / generic / closeup / background-poor -> inherit current Scene
 compatible specificity -> same Scene
-strong location contradiction or explicit INT↔EXT contradiction -> new Scene
+corridor qualifier drift alone -> same Scene
+DIRECT Window NEW_SCENE -> force cut
+strong incompatible location or INT↔EXT contradiction -> cut
 看不出来 != 换场
 ```
 
-E4 anonymous continuity:
+Anonymous continuity:
 
 ```text
 subject_A/B = Shot-local observation labels
 LocalSubject = Scene-scoped anonymous cluster
 same-Shot observations = hard cannot-link
+explicit male/female or long-hair/short-hair contradiction blocks soft union
 stable appearance may support continuity
+co-star structure / distinctive attire may support Stage4 coherent components
 expression/emotion/action/pose/speaking/screen position/framing do not define identity
 ```
 
-## 6. G1 real-acceptance diagnostics
+## 6. Testing and real acceptance
 
-Read-only modules now exist:
-
-```text
-engine/app/breakdown_g1_acceptance_diagnostics_v1.py
-engine/app/breakdown_g1_run_selector_v1.py
-engine/app/breakdown_g1_acceptance_summary_v1.py
-scripts/inspect_breakdown_g1_run.py
-```
-
-The selector refuses unfinished/non-Fast-Grounded Runs. `--latest` chooses the newest completed Fast Grounded Run. `--summary` prints the important evidence in one terminal screen while still writing the full JSON artifact.
-
-Recommended command for the already-completed rerun:
-
-```powershell
-git pull
-python scripts/inspect_breakdown_g1_run.py --latest --summary
-```
-
-Important: do **not** rerun the Episode just to inspect acceptance data. Rerun only after a concrete G1 change that requires new inference.
-
-## 7. Acceptance focus
-
-Review in this order:
+User-local targeted E4/E5/replay-v2 suite before v3/E6 promotion:
 
 ```text
-1. Shot0001 remains blue roses/vase with subject_count=0.
-2. Scene04 current 18 Shots: visible cast mainly one woman + one man should converge near two stable LocalSubjects.
-3. subject_A/B label swaps must not create new people.
-4. same_shot_cluster_conflicts must be empty.
-5. Review Scene01..04 boundaries, especially apartment corridor / hallway / living-room naming.
-6. Record total Run elapsed from started_at -> completed_at.
-7. Record provider ASR/OCR/VLM elapsed separately.
-8. Record short OCR noise only; do not prioritize cleanup during G1 unless it corrupts core truth.
+21 tests PASS
 ```
 
-Machine counters do not auto-PASS G1/P2.6; human review is still required.
+Replay v3 then produced the 2-Scene / 2-person-per-Scene result above with zero hard conflicts.
+New v3/E6 targeted tests are present in the repository but still require a fresh local run after pull.
+Hosted GitHub Actions remain intentionally unused.
 
-## 8. Performance gate
+## 7. Performance gate
 
 Reference target:
 
 ```text
-~60 seconds / ~30 Shots / ~4 Scenes
+~60 seconds / ~30 Shots / ~2 current candidate Scenes
 first target: complete Breakdown < 30 minutes
 second target: 10..20 minute class
 5..6 hours = FAIL
 ```
 
-Authoritative whole-run elapsed is `BreakdownRun.started_at -> completed_at`, which includes Fusion/validator/IO. `provider_metadata_json.p2_pipeline.timings_seconds` currently contains ASR/OCR/VLM only.
+Authoritative whole-run elapsed is `BreakdownRun.started_at -> completed_at`.
 
-## 9. Character protection
+Previous full execution:
+
+```text
+33.705 min total
+VLM 1738.0s dominant
+OCR 265.9s
+ASR 17.1s
+```
+
+Before another expensive full run, add detailed VLM instrumentation:
+
+```text
+model load
+Window Context total/per-window
+Exact-Shot total/per-batch
+frame/batch counts
+```
+
+Then execute one fresh E6 production run and review quality + timing together.
+
+## 8. Character protection
 
 Character V10.1 remains protected:
 
@@ -258,39 +282,16 @@ YOLOX Person Detection
 → Final Character Gate
 ```
 
-Breakdown anonymous continuity can never override Character identity gates or write Final Character/Scene/Prop/Binding truth.
+Do not use anonymous Breakdown continuity as Final Character identity truth.
 
-## 10. G2 / Scene Timeline
-
-Only after G1 real acceptance:
+## 9. Next required action
 
 ```text
-Scene
-+ exact-Shot grounded visual facts
-+ ASR truth
-+ OCR truth
-+ E4 LocalSubject continuity
-+ prop continuity
-→ pure-text LLM once per Scene
-→ Scene Timeline Breakdown
-```
-
-G2 may organize known evidence but may not invent visual facts or Final identities. Scene Timeline UI is not a substitute for G1 correctness.
-
-## 11. Testing / CI discipline
-
-Hosted GitHub Actions remain intentionally unused. Commits use `[skip ci]`. Repository test presence is not fresh local pytest/Qwen/CUDA PASS.
-
-## 12. Next safe work
-
-```text
-A. git pull
-B. python scripts/inspect_breakdown_g1_run.py --latest --summary
-C. judge Scene04 subject continuity
-D. judge current 4 Scene boundaries
-E. record whole-run and provider timings
-F. record OCR noise only
-G. if a core G1 gate fails -> fix only that G1 issue and rerun
-H. if G1 is acceptable -> begin G2 Scene-level text LLM
-I. P5 remains paused until P2.6 genuinely passes
+1. git pull
+2. run targeted replay-v3 + E6 tests
+3. if green, freeze Fusion quality tuning
+4. add VLM detailed timing instrumentation
+5. execute one fresh E6 full real run
+6. only then decide G1/P2.6 PASS
+7. G2 / Scene Timeline UI stays blocked until that decision
 ```
