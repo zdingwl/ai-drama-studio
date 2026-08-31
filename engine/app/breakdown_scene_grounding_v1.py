@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
-import re
 from collections.abc import Mapping
 from typing import Any
 
