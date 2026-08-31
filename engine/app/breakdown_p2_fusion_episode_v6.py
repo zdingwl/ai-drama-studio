@@ -1,13 +1,16 @@
-"""P2-E6 production Fusion promoted from the accepted G1 replay-v3 policy.
+"""P2-E6 production Fusion with compact-safe anonymous continuity.
 
-E6 preserves every E5 boundary and adds the replay-v3 coherent-component Stage4 that passed the
-completed real Run gate for both corridor and living-room Scenes:
+E6 v2 preserves the accepted E6 Scene/dialogue/Draft boundaries and promotes the completed-run
+replay-v5 anonymous-subject policy that fixed the compact Exact-Shot production regression:
 
 - Scene policy remains corridor-family compatible with DIRECT NEW_SCENE safeguard;
-- exact-Shot explicit gender / long-vs-short-hair contradictions stay stronger than soft edges;
-- Window hints, conservative observation fallback and mutual-best cluster bridge remain unchanged;
-- a final coherent-component bridge reconnects obvious anonymous same-person chains only when the
-  whole component is globally same-Shot safe and supported by co-star structure or distinctive attire.
+- Window subject ordinals are candidate locations only and require positive Exact-Shot appearance
+  support before Stage1 creates a soft edge;
+- compact aliases such as gray sweatshirt / white clothing / off-shoulder shorthand are normalized
+  only for Stages 2..4 comparison, while persisted source appearance text stays unchanged;
+- exact-Shot explicit gender / long-vs-short-hair contradictions remain stronger than soft edges;
+- same-Shot observations remain a hard cannot-link through every union stage;
+- accepted fallback, mutual-best cluster bridge and coherent-component thresholds stay unchanged.
 
 This module still creates Scene-scoped anonymous LocalSubjects only. LocalSubject != Character;
 Character V10.1, explicit Shot assignment and Final Asset gates remain untouched.
@@ -20,7 +23,7 @@ from typing import Any, Mapping, Sequence
 from sqlalchemy import select
 
 from engine.app import breakdown_g1_fusion_replay_v1 as accepted_scene
-from engine.app import breakdown_g1_fusion_replay_v3 as accepted_subject
+from engine.app import breakdown_g1_fusion_replay_v5 as accepted_subject
 from engine.app import breakdown_p2_fusion_episode_v2 as e1
 from engine.app import breakdown_p2_fusion_episode_v4 as e4
 from engine.app import breakdown_p2_fusion_episode_v5 as e5
@@ -35,15 +38,17 @@ from engine.app.breakdown_models_v1 import (
     ShotSemanticDraft,
 )
 
-FUSION_PROFILE = "breakdown-p2-fusion-episode-context-e6-v1"
-FUSION_VERSION = "1"
+FUSION_PROFILE = "breakdown-p2-fusion-episode-context-e6-v2"
+FUSION_VERSION = "2"
 BASE_FUSION_PROFILE = e5.FUSION_PROFILE
 SCENE_SEGMENTATION_POLICY = accepted_scene.SCENE_POLICY
 SUBJECT_CONTINUITY_POLICY = accepted_subject.SUBJECT_POLICY
 BASE_SUBJECT_CONTINUITY_POLICY = accepted_subject.BASE_SUBJECT_POLICY
+WINDOW_HINT_RESOLUTION_POLICY = accepted_subject.WINDOW_HINT_RESOLUTION_POLICY
+COMPACT_APPEARANCE_POLICY = accepted_subject.COMPACT_APPEARANCE_POLICY
 OBSERVATION_GAP_POLICY = accepted_scene.SUBJECT_POLICY
 SUBJECT_HINT_POLICY = e4.SUBJECT_HINT_POLICY
-STABLE_APPEARANCE_POLICY = "stable-appearance-gap-plus-cluster-plus-coherent-component-v3"
+STABLE_APPEARANCE_POLICY = "accepted-stage2-4-thresholds-with-compact-alias-normalization-v1"
 MAX_GAP_SHOTS = accepted_scene.MAX_GAP_SHOTS
 
 
@@ -89,7 +94,7 @@ def _build_subject_cluster_keys(
     dict[str, list[dict[str, Any]]],
     SubjectContinuityStats,
 ]:
-    """Convert accepted replay-v3 anonymous clusters into stable production keys."""
+    """Convert accepted replay-v5 anonymous clusters into stable production keys."""
 
     final_keys: dict[tuple[str, str], str] = {}
     cluster_members: dict[str, list[dict[str, Any]]] = {}
@@ -107,7 +112,7 @@ def _build_subject_cluster_keys(
         final_same_shot_conflict_count += int(conflicts)
         if conflicts:
             raise legacy.BreakdownP2FusionError(
-                "E6 fail closed：accepted replay-v3 policy produced a same-Shot cluster conflict"
+                "E6 fail closed：accepted replay-v5 policy produced a same-Shot cluster conflict"
             )
 
         if clusters:
@@ -223,6 +228,8 @@ def _rewrite_subject_metadata(
             "fusion_profile": FUSION_PROFILE,
             "link_policy": SUBJECT_CONTINUITY_POLICY,
             "base_subject_continuity_policy": BASE_SUBJECT_CONTINUITY_POLICY,
+            "window_hint_resolution_policy": WINDOW_HINT_RESOLUTION_POLICY,
+            "compact_appearance_policy": COMPACT_APPEARANCE_POLICY,
             "subject_hint_policy": SUBJECT_HINT_POLICY,
             "observation_gap_policy": OBSERVATION_GAP_POLICY,
             "stable_appearance_policy": STABLE_APPEARANCE_POLICY,
@@ -251,6 +258,8 @@ def _rewrite_e6_metadata(
         "subject_continuity": {
             "policy": SUBJECT_CONTINUITY_POLICY,
             "base_policy": BASE_SUBJECT_CONTINUITY_POLICY,
+            "window_hint_resolution_policy": WINDOW_HINT_RESOLUTION_POLICY,
+            "compact_appearance_policy": COMPACT_APPEARANCE_POLICY,
             "observation_gap_policy": OBSERVATION_GAP_POLICY,
             "observation_count": stats.observation_count,
             "cluster_count": stats.cluster_count,
@@ -273,12 +282,14 @@ def _rewrite_e6_metadata(
         "scene_segmentation_policy": SCENE_SEGMENTATION_POLICY,
         "subject_continuity_policy": SUBJECT_CONTINUITY_POLICY,
         "base_subject_continuity_policy": BASE_SUBJECT_CONTINUITY_POLICY,
+        "window_hint_resolution_policy": WINDOW_HINT_RESOLUTION_POLICY,
+        "compact_appearance_policy": COMPACT_APPEARANCE_POLICY,
         "subject_hint_policy": SUBJECT_HINT_POLICY,
         "observation_gap_policy": OBSERVATION_GAP_POLICY,
         "stable_appearance_policy": STABLE_APPEARANCE_POLICY,
         "same_shot_cannot_link": "hard",
         "local_subject_semantics": "anonymous-scene-scoped-not-character",
-        "promotion_source": "g1-read-only-replay-v3-real-accepted",
+        "promotion_source": "g1-read-only-replay-v5-real-accepted",
     })
     providers["p2_fusion"] = p2_fusion
 
@@ -296,6 +307,8 @@ def _rewrite_e6_metadata(
         metadata["fusion_profile"] = FUSION_PROFILE
         metadata["scene_context_policy"] = SCENE_SEGMENTATION_POLICY
         metadata["subject_continuity_policy"] = SUBJECT_CONTINUITY_POLICY
+        metadata["window_hint_resolution_policy"] = WINDOW_HINT_RESOLUTION_POLICY
+        metadata["compact_appearance_policy"] = COMPACT_APPEARANCE_POLICY
         draft.model_metadata_json = e1._json_text(metadata)
 
     run.component_status_json = e1._json_text(statuses)
@@ -303,7 +316,7 @@ def _rewrite_e6_metadata(
 
 
 def fuse_breakdown_run(run_id: str) -> BreakdownRun:
-    """E6 production entry: immutable ASR/OCR/VLM sidecars -> replay-v3 continuity -> P1 Draft."""
+    """E6-v2 production entry: immutable sidecars -> replay-v5 continuity -> P1 Draft."""
 
     try:
         source_bundle = legacy.load_fusion_inputs(run_id)
@@ -406,6 +419,7 @@ def fuse_breakdown_run(run_id: str) -> BreakdownRun:
 __all__ = [
     "BASE_FUSION_PROFILE",
     "BASE_SUBJECT_CONTINUITY_POLICY",
+    "COMPACT_APPEARANCE_POLICY",
     "FUSION_PROFILE",
     "FUSION_VERSION",
     "MAX_GAP_SHOTS",
@@ -414,6 +428,7 @@ __all__ = [
     "STABLE_APPEARANCE_POLICY",
     "SUBJECT_CONTINUITY_POLICY",
     "SUBJECT_HINT_POLICY",
+    "WINDOW_HINT_RESOLUTION_POLICY",
     "SubjectContinuityStats",
     "_build_subject_cluster_keys",
     "_continuity_plan_details",
