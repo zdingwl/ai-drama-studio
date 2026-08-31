@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.18.0
-description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6 已完成真实生产验收并冻结，G2.1 Scene Timeline Contract + G2.2 Deterministic Assembler 已实现待本机验收。
+version: 3.18.1
+description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6 已完成真实生产验收并冻结，G2.1/G2.2 本机回归 4/4 PASS，待最终真实 Run 只读烟测后进入最终 PASS。
 ---
 
 # AI Drama Studio — Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1
@@ -35,14 +35,14 @@ Window Context: Segment-index v4 / REAL ACCEPTED / FROZEN
 Exact-Shot: Compact-reconstruction v3 / REAL ACCEPTED / FROZEN
 P2-E6 Fusion: E6-v2 / REAL PRODUCTION ACCEPTED / FROZEN
 P2.6 Windows / real-model acceptance: PASS
-G2 Scene Timeline Contract: v1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
-G2 Deterministic Assembler: v1 / IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+G2 Scene Timeline Contract: v1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
+G2 Deterministic Assembler: v1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
 G2 Scene-level pure-text LLM: UNBLOCKED / NOT IMPLEMENTED
 Scene Timeline UI: UNBLOCKED / NOT IMPLEMENTED
 P5 Draft ↔ Character: PAUSED
 ```
 
-G2.1/G2.2 implementation must not be called PASS until user-local acceptance is completed.
+G2.1/G2.2 regression suite has passed locally (`4 passed`). Final PASS still requires the accepted real-Run smoke check.
 
 ## 2. Frozen production flow
 
@@ -218,15 +218,23 @@ Primary output intentionally excludes Evidence, cluster, confidence, LocalSubjec
 Do not claim assistant-local pytest/CUDA execution. User-local real production evidence is the P2.6
 acceptance source. Do not consume hosted GitHub Actions quota. Use `[skip ci]`.
 
-G2.1/G2.2 tests exist but remain **USER-LOCAL ACCEPTANCE PENDING** until the user runs them.
+G2.1/G2.2 user-local regression evidence:
+
+```text
+python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
+....
+4 passed
+```
+
+This is regression PASS, not yet final real-Run acceptance.
 
 ## 9. Immediate safe work
 
 ```text
-1. user-local run engine/tests/v2/test_breakdown_scene_timeline_v1.py
-2. exercise deterministic assembler against BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
-3. verify 2 Scenes / 30 Shots / Scene-local people / Shot0001 exact props / ASR verbatim / no debug leakage
-4. only after PASS, implement G2.3 Scene-level pure-text LLM
+1. exercise deterministic assembler against BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
+2. verify 2 Scenes / 30 Shots / Scene-local people / Shot0001 exact props / ASR verbatim / no debug leakage
+3. if smoke check passes, mark G2.1/G2.2 final PASS
+4. only then implement G2.3 Scene-level pure-text LLM
 5. add G2.4 source/support validator
 6. add G2.5 Scene Timeline API
 7. build G2.6 ordinary-user Scene Timeline UI last
