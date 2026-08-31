@@ -120,5 +120,5 @@ def test_loader_is_current_revision_safe_and_does_not_use_breakdown_text_as_iden
     assert "appearance_summary" not in source
     assert "role_hint" not in source
     assert "TimelineEvent" not in source
-    assert "dialogue" not in source.lower()
+    assert "content_text" not in source
     assert "nearest" not in source.lower()
