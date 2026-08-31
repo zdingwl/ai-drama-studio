@@ -1,11 +1,11 @@
 """Production continuity wrapper on top of Fast Grounded VLM.
 
-The stable Breakdown pipeline imports this module so E4 keeps a dedicated continuity-preservation
-surface. Production visual truth now comes from ``breakdown_p2_vlm_runtime_v1`` backed by Fast
-Grounded VLM: cheap Episode-window context plus exact frozen Shot frame grounding in one Qwen3-VL
-model load. The old text-only per-Shot E3 stage is retired from production.
+The stable Breakdown pipeline imports this module so Episode-context Fusion keeps a dedicated
+continuity-preservation surface. Production visual truth now uses the accepted Window-v4 +
+reconstruction-safe Exact-Shot compact-v3 provider in one Qwen3-VL model load. The old text-only
+per-Shot E3 stage is retired from production.
 
-This wrapper keeps window-level subject/prop continuity hints normalized for the E4 anonymous
+This wrapper keeps window-level subject/prop continuity hints normalized for the anonymous
 continuity graph. Those hints remain soft Draft evidence only: they never create Final
 Character/Scene/Prop IDs and never make Shot-local ``subject_A`` labels global identities.
 """
@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from engine.app import breakdown_p2_vlm_episode_v2 as e2
+from engine.app import breakdown_p2_vlm_fast_grounded_instrumented_v3 as production
 from engine.app import breakdown_p2_vlm_runtime_v1 as runtime
 
 VLM_CONTINUITY_PRESERVATION_PROFILE = "breakdown-p2-vlm-window-continuity-preservation-e4-v1"
@@ -138,8 +139,8 @@ def _normalize_prop_hints(raw: Any, window: e2.EpisodeVLMWindow) -> list[dict[st
     return result
 
 
-class Qwen3VLSemanticProvider(runtime.Qwen3VLSemanticProvider):
-    """Fast-grounded production provider with E4 continuity-hint normalization."""
+class Qwen3VLSemanticProvider(production.Qwen3VLSemanticProvider):
+    """Production provider: Window v4 + Exact-Shot compact v3 + continuity normalization."""
 
     def _normalize_window_summary(
         self,
@@ -157,21 +158,23 @@ class Qwen3VLSemanticProvider(runtime.Qwen3VLSemanticProvider):
         return normalized
 
 
-DEFAULT_WINDOW_OVERLAP_RATIO = runtime.DEFAULT_WINDOW_OVERLAP_RATIO
-DEFAULT_WINDOW_SECONDS = runtime.DEFAULT_WINDOW_SECONDS
-DEFAULT_WINDOW_CONTEXT_FPS = runtime.DEFAULT_WINDOW_CONTEXT_FPS
-DEFAULT_WINDOW_MAX_PIXELS = runtime.DEFAULT_WINDOW_MAX_PIXELS
-DEFAULT_EXACT_SHOT_MAX_PIXELS = runtime.DEFAULT_EXACT_SHOT_MAX_PIXELS
-DEFAULT_GROUNDING_BATCH_SIZE = runtime.DEFAULT_GROUNDING_BATCH_SIZE
+DEFAULT_WINDOW_OVERLAP_RATIO = production.DEFAULT_WINDOW_OVERLAP_RATIO
+DEFAULT_WINDOW_SECONDS = production.DEFAULT_WINDOW_SECONDS
+DEFAULT_WINDOW_CONTEXT_FPS = production.DEFAULT_WINDOW_CONTEXT_FPS
+DEFAULT_WINDOW_MAX_PIXELS = production.DEFAULT_WINDOW_MAX_PIXELS
+DEFAULT_EXACT_SHOT_MAX_PIXELS = production.DEFAULT_EXACT_SHOT_MAX_PIXELS
+DEFAULT_GROUNDING_BATCH_SIZE = production.DEFAULT_GROUNDING_BATCH_SIZE
+VLM_WINDOW_PROMPT_PROFILE = production.WINDOW_PROMPT_PROFILE
+VLM_EXACT_SHOT_PROMPT_PROFILE = production.EXACT_SHOT_PROMPT_PROFILE
 VLM_DRAFT_TEXT_LANGUAGE = runtime.VLM_DRAFT_TEXT_LANGUAGE
-VLM_EPISODE_WINDOW_PROFILE = runtime.VLM_EPISODE_WINDOW_PROFILE
-VLM_FAST_GROUNDED_PROFILE = runtime.VLM_FAST_GROUNDED_PROFILE
-VLM_EXACT_SHOT_GROUNDING_PROFILE = runtime.VLM_EXACT_SHOT_GROUNDING_PROFILE
+VLM_EPISODE_WINDOW_PROFILE = production.WINDOW_CONTEXT_PROFILE
+VLM_FAST_GROUNDED_PROFILE = production.FAST_GROUNDED_PROFILE
+VLM_EXACT_SHOT_GROUNDING_PROFILE = production.EXACT_SHOT_GROUNDING_PROFILE
 VLM_PROMPT_PROFILE = runtime.VLM_PROMPT_PROFILE
-VLM_WINDOW_SCHEMA = runtime.VLM_WINDOW_SCHEMA
+VLM_WINDOW_SCHEMA = production.FAST_GROUNDED_SCHEMA
 VLM_CONTEXTUAL_REFINEMENT_PROFILE = runtime.VLM_CONTEXTUAL_REFINEMENT_PROFILE
 VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE = runtime.VLM_CONTEXTUAL_REFINEMENT_PROMPT_PROFILE
-VLM_CONTEXTUAL_GROUNDING_POLICY = runtime.VLM_CONTEXTUAL_GROUNDING_POLICY
+VLM_CONTEXTUAL_GROUNDING_POLICY = production.VISUAL_TRUTH_POLICY
 VLM_CONTEXTUAL_FAILURE_POLICY = runtime.VLM_CONTEXTUAL_FAILURE_POLICY
 VLMRuntimeConfig = runtime.VLMRuntimeConfig
 
@@ -192,8 +195,10 @@ __all__ = [
     "VLM_DRAFT_TEXT_LANGUAGE",
     "VLM_EPISODE_WINDOW_PROFILE",
     "VLM_EXACT_SHOT_GROUNDING_PROFILE",
+    "VLM_EXACT_SHOT_PROMPT_PROFILE",
     "VLM_FAST_GROUNDED_PROFILE",
     "VLM_PROMPT_PROFILE",
+    "VLM_WINDOW_PROMPT_PROFILE",
     "VLM_WINDOW_SCHEMA",
     "VLMRuntimeConfig",
 ]
