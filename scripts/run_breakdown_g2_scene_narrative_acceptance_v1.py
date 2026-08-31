@@ -14,7 +14,15 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
+import sys
 from typing import Any
+
+# Allow direct execution from repository root, e.g.
+# ``python scripts/run_breakdown_g2_scene_narrative_acceptance_v1.py``.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from engine.app.breakdown_scene_narrative_qwen3_v1 import Qwen3VLSceneTextLLM
 from engine.app.breakdown_scene_narrative_v1 import (
