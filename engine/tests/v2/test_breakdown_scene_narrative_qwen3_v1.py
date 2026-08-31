@@ -78,7 +78,7 @@ def test_local_qwen_adapter_batches_scene_requests_without_real_model() -> None:
                 {
                     "scene_ordinal": int(request["scene_ordinal"]),
                     "readable_title": {
-                        "text": "公寓走廊整理",
+                        "text": "公寓走廊",
                         "support": [location["fact_id"]],
                     },
                     "story_summary": {
@@ -97,5 +97,5 @@ def test_local_qwen_adapter_batches_scene_requests_without_real_model() -> None:
 
     assert len(calls) == 1
     assert overlay["status"] == "READY"
-    assert overlay["scenes"][0]["readable_title"]["text"] == "公寓走廊整理"
+    assert overlay["scenes"][0]["readable_title"]["text"] == "公寓走廊"
     assert overlay["scenes"][0]["story_summary"]["text"] == "人物1停留在公寓走廊。"
