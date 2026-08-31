@@ -24,10 +24,10 @@ G2 Source / Support Validator         = V1.5 / FINAL PASS / FROZEN
 G2.3/G2.4 real-model acceptance       = PASS
 G2.5 Scene Timeline API               = V1 / FINAL PASS / FROZEN
 G2.5 Windows/CUDA local acceptance    = PASS
-G2.6 ordinary-user result UI          = IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+G2.6 ordinary-user result UI          = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 P3 current 02 拉片 Shot-card UI       = IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-P5 Draft ↔ Character                  = IMPLEMENTED ON PR #17 / USER-LOCAL ACCEPTANCE PENDING / NOT MERGED
+P5 Draft ↔ Character                  = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 same-Shot hard safety                 = PASS / conflicts=0
 ```
 
@@ -370,21 +370,19 @@ Ordinary UI hides support Fxxxx, source_fingerprint, Evidence IDs, cluster keys,
 Current status:
 
 ```text
-G2.6 = IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+G2.6 = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 ```
 
 Do not mark G2.6 FINAL PASS until user-local frontend test/typecheck/build and visual review are supplied.
 
 ## 10. P5 Draft ↔ Character current status
 
-P5 has resumed because the Episode-context Breakdown baseline is now accepted/frozen.
-
-Current implementation location:
+P5 has been merged into `main` from PR #17.
 
 ```text
-Draft PR #17
-branch = p5-breakdown-character-bridge
-main = does not contain P5 implementation yet
+PR = #17 / merged=true / closed
+merge_commit = ab4b11716f5c1c5ead7367119d1b2d787defe8f9
+status = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 ```
 
 V1 rule:
@@ -396,7 +394,7 @@ Final ShotCharacterBinding
 → ambiguous / always-co-occurring people remain UNRESOLVED
 ```
 
-P5 does not modify LocalSubject rows, Character V10.1, Final Gate or Final bindings. User-local deterministic + real-Episode acceptance is still pending.
+P5 does not modify LocalSubject rows, Character V10.1, Final Gate or Final bindings. User-local deterministic + real-Episode acceptance is still pending, so P5 is not FINAL PASS.
 
 ## 11. Next action
 
@@ -404,7 +402,7 @@ P5 does not modify LocalSubject rows, Character V10.1, Final Gate or Final bindi
 1. keep G1 + G2.1/G2.2 + G2.3/G2.4 + G2.5 frozen
 2. finish G2.6 ordinary-user UI user-local acceptance when needed
 3. run P5 local deterministic test + accepted real-Episode bridge inspection
-4. merge P5 only after acceptance, unless the user explicitly asks for direct merge
+4. do not mark P5 FINAL PASS without user-local evidence
 5. after accepted P5, implement P6 Final identity/asset fill-back + final Breakdown renderers
 ```
 
