@@ -197,6 +197,27 @@ def test_validator_accepts_supported_scene_text_and_rejects_fake_support() -> No
     assert any("不存在的事实" in item for item in warnings_bad)
 
 
+def test_validator_requires_support_for_hard_anchor_terms() -> None:
+    packet = build_scene_grounding_packet_v1(_timeline(), 2)
+    bad = {
+        "scene_ordinal": 2,
+        "readable_title": {
+            "text": "夜晚客厅",
+            "support": [_fact_id(packet, "SCENE_LOCATION")],
+        },
+        "story_summary": None,
+    }
+    accepted_bad, warnings_bad = validate_scene_narrative_v1(packet, bad)
+    assert accepted_bad["readable_title"] is None
+    assert any("夜晚" in item and "support" in item for item in warnings_bad)
+
+    good = deepcopy(bad)
+    good["readable_title"]["support"].append(_fact_id(packet, "SCENE_TIME"))
+    accepted_good, warnings_good = validate_scene_narrative_v1(packet, good)
+    assert warnings_good == []
+    assert accepted_good["readable_title"]["text"] == "夜晚客厅"
+
+
 def test_validator_rejects_internal_or_unknown_people_without_breaking_other_claims() -> None:
     packet = build_scene_grounding_packet_v1(_timeline(), 1)
     base_support = [_fact_id(packet, "SCENE_BASE_SUMMARY")]
@@ -285,7 +306,10 @@ def test_apply_overlay_changes_only_title_summary_and_rejects_stale_fingerprint(
         json.dumps(
             {
                 "scene_ordinal": 2,
-                "readable_title": {"text": "夜晚客厅", "support": [_fact_id(packet2, "SCENE_LOCATION")]},
+                "readable_title": {
+                    "text": "夜晚客厅",
+                    "support": [_fact_id(packet2, "SCENE_LOCATION"), _fact_id(packet2, "SCENE_TIME")],
+                },
                 "story_summary": {
                     "text": "人物1独自在客厅停留。",
                     "support": [_fact_id(packet2, "SCENE_BASE_SUMMARY")],
