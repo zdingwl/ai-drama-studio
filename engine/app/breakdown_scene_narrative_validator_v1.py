@@ -331,7 +331,7 @@ def _validate_claim(
                 _claim_warning(
                     packet.scene_ordinal,
                     field_label,
-                    f"包含来源未支持或被写成既成事件的关键剧情词“{term}”",
+                    f"包含来源未支持的新内容字符/关键剧情词“{term}”或被写成既成事件",
                 )
             ]
 
