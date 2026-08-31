@@ -1,4 +1,4 @@
-"""G2.3 local Qwen3-VL text-only Adapter.
+"""G2.3 local Qwen3-VL text-only Adapter。
 
 This adapter reuses the already accepted isolated Qwen3-VL-4B-Instruct runtime/checkpoint. It is
 strictly local and synchronous: one subprocess loads the model once and handles all Scene prompts
@@ -103,6 +103,7 @@ class Qwen3VLSceneTextLLM:
         self.max_new_tokens = int(raw_tokens)
         self._inference_runner = inference_runner or self._run_subprocess
         self._uses_production_runner = inference_runner is None
+        self._last_batch_diagnostics: dict[int, dict[str, Any]] = {}
 
         if self.device not in {"auto", "cpu", "cuda"}:
             raise ValueError("G2 LLM device 只允许 auto/cpu/cuda")
@@ -140,14 +141,17 @@ class Qwen3VLSceneTextLLM:
             "missing": missing,
         }
 
+    def last_batch_diagnostics(self) -> dict[int, dict[str, Any]]:
+        """返回上一批每个 Scene 的安全状态；只包含 status/error_type，不包含 prompt 或模型原文。"""
+
+        return {ordinal: dict(value) for ordinal, value in self._last_batch_diagnostics.items()}
+
     @staticmethod
     def _subprocess_env(config: Qwen3SceneNarrativeRuntimeConfig) -> dict[str, str]:
         env = os.environ.copy()
         env.setdefault("HF_HUB_OFFLINE", "1")
         env.setdefault("TRANSFORMERS_OFFLINE", "1")
         if os.name == "nt":
-            # Use parent/parent instead of indexed ``parents`` so even a custom shallow relative
-            # executable path cannot raise IndexError while constructing the environment.
             runtime_root = config.python_executable.parent.parent
             torch_lib = runtime_root / "Lib" / "site-packages" / "torch" / "lib"
             if torch_lib.is_dir():
@@ -222,22 +226,39 @@ class Qwen3VLSceneTextLLM:
                     row = json.loads(line)
                 except (TypeError, ValueError):
                     continue
-                if not isinstance(row, Mapping) or str(row.get("status") or "") != "READY":
-                    continue
-                candidate = row.get("candidate")
-                if not isinstance(candidate, Mapping):
+                if not isinstance(row, Mapping):
                     continue
                 try:
                     ordinal = int(row.get("scene_ordinal") or 0)
                 except (TypeError, ValueError):
                     continue
-                if ordinal > 0 and ordinal not in result:
+                if ordinal < 1:
+                    continue
+
+                status = str(row.get("status") or "UNKNOWN").strip().upper() or "UNKNOWN"
+                diagnostic: dict[str, Any] = {"status": status}
+                error_type = str(row.get("error_type") or "").strip()
+                if error_type:
+                    diagnostic["error_type"] = error_type[:120]
+                self._last_batch_diagnostics[ordinal] = diagnostic
+
+                if status != "READY":
+                    continue
+                candidate = row.get("candidate")
+                if not isinstance(candidate, Mapping):
+                    self._last_batch_diagnostics[ordinal] = {
+                        "status": "FAILED",
+                        "error_type": "InvalidCandidate",
+                    }
+                    continue
+                if ordinal not in result:
                     result[ordinal] = json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))
             return result
 
     def generate_many(self, requests: Sequence[Mapping[str, Any]]) -> Mapping[int, str]:
-        """一次加载模型，按 Scene 顺序返回 READY candidate；单 Scene 失败时该 ordinal 缺席。"""
+        """一次加载模型，按 Scene 顺序返回 READY candidate；单 Scene 失败时保留安全 diagnostics。"""
 
+        self._last_batch_diagnostics = {}
         normalized: list[dict[str, Any]] = []
         ordinals: set[int] = set()
         for item in requests:
@@ -257,7 +278,15 @@ class Qwen3VLSceneTextLLM:
                 "system_prompt": system_prompt,
                 "user_prompt": user_prompt,
             })
-        return self._inference_runner(self._config(), tuple(normalized))
+        result = self._inference_runner(self._config(), tuple(normalized))
+        # 自定义测试 runner 不一定会写 diagnostics；至少为成功返回补一个 READY 状态。
+        for ordinal in result:
+            try:
+                key = int(ordinal)
+            except (TypeError, ValueError):
+                continue
+            self._last_batch_diagnostics.setdefault(key, {"status": "READY"})
+        return result
 
     def generate(
         self,
