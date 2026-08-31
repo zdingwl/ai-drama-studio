@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.19.0
-description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6、G2.1-G2.5 已真实验收并冻结，G2.6 已实现待用户本机验收，P5 已在 PR #17 实现待验收/合并。
+version: 3.19.1
+description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6、G2.1-G2.5 已真实验收并冻结，G2.6 与 P5 已在 main 实现，均待对应用户本机验收。
 ---
 
 # AI Drama Studio — Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1
@@ -53,9 +53,9 @@ G2 Source/Support Validator: v1.5 / FINAL PASS / FROZEN
 G2.3/G2.4 real-model acceptance: PASS
 G2.5 Scene Timeline API: v1 / FINAL PASS / FROZEN
 G2.5 Windows/CUDA local acceptance: PASS
-G2.6 ordinary-user Scene Timeline UI: IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+G2.6 ordinary-user Scene Timeline UI: IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 P4 Draft-guided Scene/Prop: IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-P5 Draft ↔ Character: IMPLEMENTED ON PR #17 / USER-LOCAL ACCEPTANCE PENDING / NOT MERGED
+P5 Draft ↔ Character: IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 ```
 
 Do not reopen G1 or any accepted G2 layer through G2.5 without a concrete new regression.
@@ -310,12 +310,39 @@ Engineering evidence IDs/support/confidence/provider/model diagnostics are not p
 Status remains:
 
 ```text
-IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 ```
 
 Do not claim FINAL PASS until user-local frontend test/typecheck/build and visual review are supplied.
 
-## 10. Testing / CI discipline
+## 10. P5 current state
+
+P5 was merged from PR #17 into `main` with merge commit:
+
+```text
+ab4b11716f5c1c5ead7367119d1b2d787defe8f9
+```
+
+Its implementation files are now part of `main`:
+
+```text
+engine/app/breakdown_character_bridge_contract_v1.py
+engine/app/breakdown_character_bridge_v1.py
+engine/tests/v2/test_breakdown_character_bridge_v1.py
+scripts/run_breakdown_p5_character_bridge_acceptance_v1.py
+docs/P5_BREAKDOWN_CHARACTER_BRIDGE_V1.md
+docs/sessions/2026-08-31_P5_breakdown-character-bridge-implementation.md
+```
+
+Status remains:
+
+```text
+IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+```
+
+Do not claim P5 FINAL PASS until the user-local deterministic test and real-Episode bridge inspection are supplied.
+
+## 11. Testing / CI discipline
 
 Do not claim assistant-local pytest/CUDA execution. User-local evidence is acceptance truth. Hosted GitHub Actions must not be used; commits use `[skip ci]`.
 
@@ -326,12 +353,12 @@ python -m pytest engine/tests/v2/test_breakdown_scene_narrative_v1.py engine/tes
 Expected accepted baseline: 15 passed
 ```
 
-## 11. Immediate safe work
+## 12. Immediate safe work
 
 ```text
 1. keep G1 + G2.1-G2.5 frozen
 2. finish G2.6 user-local acceptance when needed
-3. P5 implementation currently lives on Draft PR #17; run its local deterministic + real-Episode acceptance
-4. do not merge P5 before acceptance unless the user explicitly asks for direct merge
+3. run P5 deterministic test + accepted real-Episode inspection
+4. do not mark P5 FINAL PASS without user-local evidence
 5. after accepted P5, implement P6 Final identity/asset fill-back + final Breakdown renderers
 ```
