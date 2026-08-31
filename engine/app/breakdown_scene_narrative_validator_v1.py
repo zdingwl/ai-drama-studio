@@ -8,10 +8,11 @@ Validator 不判断“文采”，只负责硬边界：
 - 剧情摘要自动补 Scene 基础摘要与必要的人物存在 support，避免模型漏列 provenance 导致误拒绝；
 - 视觉/Timeline 事实可以直接陈述；ASR 只允许作为“说了什么/争论什么/指责什么”的受限 Narrative 来源；
 - 摘要若使用仅来自 ASR 的普通词面，所在分句必须有争论/指责/称/表示/质问/回应等对白框架，并补对应 DIALOGUE support；
-- 高影响剧情词如果只来自 ASR，只允许作为明确的“话题表达”，不能写成已经发生的视觉事件；
-- 对白中的姓名、亲属/伴侣称谓不能被升级成匿名人物身份绑定；
+- 仅来自 ASR 的高影响事件词可以作为明确话题，或位于明确归因分句中；不能脱离归因框架写成客观既成事实；
+- 亲属/伴侣等关系称谓仍只能作为话题，不允许借“称/指责”等框架绑定匿名人物身份；
+- 对白中的姓名不能被升级成匿名人物身份绑定；
+- 中英文数字/数量必须来自最终已补齐的 support，避免模型把“八年”改成“十年”等；
 - 场景标题允许少量受控的高层概括词，例如“纠纷/争执/交流”；
-- 新数字必须出现在 support 中，避免凭空增加数量、时间、门牌等事实；
 - 禁止 Final Asset / database id 风格的身份声明；
 - 任一 claim 失败时只丢弃该 claim，不修改冻结 Timeline。
 
@@ -39,6 +40,9 @@ class SceneNarrativeValidationError(ValueError):
 _INTERNAL_PERSON_REF_RE = re.compile(r"(?<![A-Za-z0-9_])P[1-9][0-9]*(?![A-Za-z0-9_])")
 _DISPLAY_PERSON_RE = re.compile(r"人物[1-9][0-9]*")
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+_CHINESE_NUMBER_WITH_UNIT_RE = re.compile(
+    r"[零〇一二两三四五六七八九十百千万亿]+(?:年|月|天|岁|次|个|块|元|小时|分钟|秒|句)"
+)
 _CLAUSE_SPLIT_RE = re.compile(r"[，,；;。！？!?]+")
 _DIALOGUE_IDENTITY_NAME_RE = re.compile(
     r"(?:改名成|名字是|名叫|叫|我是|他是|她是)\s*([\u4e00-\u9fff]{2,4})"
@@ -174,7 +178,7 @@ _SENSITIVE_PLOT_TERMS = (
     "毒药",
 )
 # 这些词更容易被错误升级成人物关系。它们只能写成“关于丈夫的问题/谈到父亲”等显式话题，
-# 不能仅因为前面有“质问/询问”就把“丈夫”当作一个已绑定人物称谓。
+# 不能仅因为前面有“称/指责/质问”就把“丈夫”当作一个已绑定人物称谓。
 _RELATION_IDENTITY_TERMS = frozenset(
     {
         "丈夫",
@@ -246,9 +250,12 @@ def _substantive_chars(text: str) -> set[str]:
 
 
 def _numeric_literals(text: str) -> set[str]:
-    """人物1/人物2 的编号不是剧情数字，不参与新数字事实检查。"""
+    """人物1/人物2 的编号不是剧情数字；同时检查阿拉伯数字和带单位的中文数量。"""
 
-    return set(_NUMBER_RE.findall(_DISPLAY_PERSON_RE.sub("", text)))
+    scrubbed = _DISPLAY_PERSON_RE.sub("", text)
+    values = set(_NUMBER_RE.findall(scrubbed))
+    values.update(_CHINESE_NUMBER_WITH_UNIT_RE.findall(scrubbed))
+    return values
 
 
 def _append_support(support: list[str], fact_id: str) -> None:
@@ -274,7 +281,7 @@ def _dialogue_facts_containing(packet: SceneGroundingPacketV1, term: str):
 
 
 def _dialogue_topic_markers(text: str, term: str) -> set[str]:
-    """返回当前 claim 中真正包围该 ASR 关键词的话题标记；空集合表示被写成既成事实/人物关系。"""
+    """返回当前 claim 中真正包围该 ASR 关键词的话题标记；空集合表示没有明确话题框架。"""
 
     markers: set[str] = set()
     is_relation_term = term in _RELATION_IDENTITY_TERMS
@@ -313,6 +320,16 @@ def _dialogue_identity_names(packet: SceneGroundingPacketV1) -> set[str]:
 
 def _dialogue_reporting_markers(text: str) -> set[str]:
     return {marker for marker in _DIALOGUE_REPORTING_MARKERS if marker in text}
+
+
+def _reporting_markers_for_term(text: str, term: str) -> set[str]:
+    """只看包含该 term 的同一分句，避免借用前后别的分句中的“称/指责”来放行。"""
+
+    markers: set[str] = set()
+    for clause in (item.strip() for item in _CLAUSE_SPLIT_RE.split(text)):
+        if clause and term in clause:
+            markers.update(_dialogue_reporting_markers(clause))
+    return markers
 
 
 def _ground_dialogue_claims(
@@ -444,11 +461,6 @@ def _validate_claim(
     ):
         return None, [_claim_warning(packet.scene_ordinal, field_label, "缺少剧情/画面/动作类 support")]
 
-    supported_text = " ".join(fact.text for fact in supported_facts)
-    unsupported_numbers = sorted(_numeric_literals(text).difference(_numeric_literals(supported_text)))
-    if unsupported_numbers:
-        return None, [_claim_warning(packet.scene_ordinal, field_label, "包含来源未支持的新数字")]
-
     lexical_support_text = "".join(
         fact.text for fact in supported_facts if fact.kind in _LEXICAL_SOURCE_KINDS
     )
@@ -456,25 +468,32 @@ def _validate_claim(
     claim_chars = _substantive_chars(text)
 
     if field_label == "剧情摘要":
-        # 高影响词有单独更严格的 gate：即使 ASR 真出现，也只能作为“谈到/围绕 X”的话题。
+        # 高影响事件词如果来自 ASR，可以是“围绕 X”的话题，也可以位于明确的归因分句中；
+        # 但丈夫/妻子等关系称谓仍只允许话题表达，不能借“称/指责”等框架绑定匿名人物身份。
         dialogue_topic_chars: set[str] = set()
         for term in _SENSITIVE_PLOT_TERMS:
             if term not in text or term in lexical_support_text:
                 continue
             dialogue_facts = _dialogue_facts_containing(packet, term)
             topic_markers = _dialogue_topic_markers(text, term)
-            if dialogue_facts and topic_markers:
+            reporting_markers = (
+                set()
+                if term in _RELATION_IDENTITY_TERMS
+                else _reporting_markers_for_term(text, term)
+            )
+            accepted_markers = topic_markers.union(reporting_markers)
+            if dialogue_facts and accepted_markers:
                 for fact in dialogue_facts:
                     _append_support(support, fact.fact_id)
                 dialogue_topic_chars.update(_substantive_chars(term))
-                for marker in topic_markers:
+                for marker in accepted_markers:
                     dialogue_topic_chars.update(_substantive_chars(marker))
                 continue
             return None, [
                 _claim_warning(
                     packet.scene_ordinal,
                     field_label,
-                    f"包含来源未支持的新内容字符/关键剧情词“{term}”或被写成既成事件",
+                    f"包含来源未支持的新内容字符/关键剧情词“{term}”或被写成未归因的既成事件/关系",
                 )
             ]
 
@@ -488,7 +507,14 @@ def _validate_claim(
         if dialogue_reason is not None:
             return None, [_claim_warning(packet.scene_ordinal, field_label, dialogue_reason)]
 
+        # 所有自动补齐的 DIALOGUE support 都完成之后再检查数量，避免真实 ASR“八年/一句”被提前误拒；
+        # 同时防止模型把来源中的“八年”改成“十年”。
         supported_facts = [fact_by_id[fact_id] for fact_id in support]
+        supported_text = " ".join(fact.text for fact in supported_facts)
+        unsupported_numbers = sorted(_numeric_literals(text).difference(_numeric_literals(supported_text)))
+        if unsupported_numbers:
+            return None, [_claim_warning(packet.scene_ordinal, field_label, "包含来源未支持的新数字/数量")]
+
         if claim_chars:
             coverage_chars = (
                 supported_chars
@@ -507,6 +533,11 @@ def _validate_claim(
                     )
                 ]
     else:
+        supported_text = " ".join(fact.text for fact in supported_facts)
+        unsupported_numbers = sorted(_numeric_literals(text).difference(_numeric_literals(supported_text)))
+        if unsupported_numbers:
+            return None, [_claim_warning(packet.scene_ordinal, field_label, "包含来源未支持的新数字/数量")]
+
         allowed_title_chars = supported_chars.union(_TITLE_ABSTRACTION_CHARS)
         novel_chars = sorted(claim_chars.difference(allowed_title_chars))
         if novel_chars:
