@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.18.4
-description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6、G2.1/G2.2、G2.3/G2.4 均已真实验收并冻结，下一阶段为 G2.5 Scene Timeline API。
+version: 3.19.0
+description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6、G2.1-G2.5 已真实验收并冻结，G2.6 已实现待用户本机验收，P5 已在 PR #17 实现待验收/合并。
 ---
 
 # AI Drama Studio — Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1
@@ -25,6 +25,15 @@ AGENTS.md
 
 Executable CURRENT = `PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests`.
 
+### Git workflow
+
+```text
+文档同步 / 状态文档修正：默认直接修改 main，不为纯文档单独创建分支或 PR。
+代码/行为修改：默认 feature branch + Draft PR。
+如果用户明确要求直接修改或合并到 main，则按用户明确指令执行。
+所有提交使用 [skip ci]；Hosted GitHub Actions 不作为本项目验收手段。
+```
+
 ## 1. Current baseline
 
 ```text
@@ -42,12 +51,14 @@ G2 Scene Narrative Core: v1.5 / FINAL PASS / FROZEN
 G2 Local Qwen text runtime: REAL ACCEPTED / FROZEN BASELINE
 G2 Source/Support Validator: v1.5 / FINAL PASS / FROZEN
 G2.3/G2.4 real-model acceptance: PASS
-G2.5 Scene Timeline API: NOT IMPLEMENTED
-G2.6 ordinary-user Scene Timeline UI: NOT IMPLEMENTED
-P5 Draft ↔ Character: PAUSED
+G2.5 Scene Timeline API: v1 / FINAL PASS / FROZEN
+G2.5 Windows/CUDA local acceptance: PASS
+G2.6 ordinary-user Scene Timeline UI: IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+P4 Draft-guided Scene/Prop: IMPLEMENTED / LOCAL ACCEPTANCE PENDING
+P5 Draft ↔ Character: IMPLEMENTED ON PR #17 / USER-LOCAL ACCEPTANCE PENDING / NOT MERGED
 ```
 
-Do not reopen G1 or any accepted G2 layer without a concrete new regression.
+Do not reopen G1 or any accepted G2 layer through G2.5 without a concrete new regression.
 
 ## 2. Frozen production flow
 
@@ -133,6 +144,16 @@ YOLOX Person Detection
 ```
 
 Never weaken Character identity safety because of Breakdown anonymous hints.
+
+P5 is only a one-way read-only reconciliation layer:
+
+```text
+Final ShotCharacterBinding
+→ Scene-local deterministic presence-signature reconciliation
+→ resolve anonymous Breakdown person only when uniquely safe
+```
+
+P5 MUST NOT use dialogue names, ASR speaker labels, relationship terms, role hints or appearance prose as identity authority. Ambiguous/always-co-occurring people remain UNRESOLVED.
 
 ## 6. G2.1 / G2.2 frozen Scene Timeline foundation
 
@@ -229,16 +250,72 @@ Scene2: 客厅争执
 
 Human review: PASS. Sensitive ASR claims remain attributed; no anonymous-person relationship binding is created; frozen Shot objects remain unchanged.
 
-## 8. Local text-only Qwen runtime
+## 8. G2.5 frozen ordinary-user API
+
+Primary endpoints:
 
 ```text
-.runtime/TransVLM/inference/.venv
-.runtime/TransVLM/inference/pretrained/Qwen3-VL-4B-Instruct
+GET /api/episodes/{episode_id}/scene-timeline
+GET /api/breakdown-runs/{run_id}/scene-timeline
 ```
 
-The G2 runner is text-only, offline, loads the model once and processes Scenes sequentially.
+Frozen rules:
 
-## 9. Testing / CI discipline
+```text
+GET never starts Qwen or any model.
+Narrative is materialized explicitly.
+Missing/stale/invalid Narrative falls back to deterministic G2.2.
+Persisted Narrative is replay-validated through frozen G2.4.
+Primary API hides support Fxxxx, source_fingerprint, Evidence/cluster/LocalSubject IDs, confidence, provider/model diagnostics and raw validator diagnostics.
+```
+
+User-local acceptance:
+
+```text
+python -m pytest engine/tests/v2/test_breakdown_scene_timeline_result_v1.py engine/tests/v2/test_breakdown_scene_timeline_routes_v1.py -q
+12 passed
+
+materialization on accepted Run:
+scene_count = 2
+accepted_title_count = 2
+accepted_summary_count = 2
+warning_count = 0
+```
+
+Therefore G2.5 is FINAL PASS / FROZEN.
+
+## 9. G2.6 current UI
+
+G2.6 is implemented on `main` and uses G2.5 directly.
+
+Visible ordinary-user order:
+
+```text
+Scene title
+→ story summary
+→ Scene environment / people
+→ Shot cards
+   → preview/reference clip
+   → visual
+   → people
+   → action/performance
+   → dialogue
+   → props
+   → cinematography
+   → OCR/on-screen text
+```
+
+Engineering evidence IDs/support/confidence/provider/model diagnostics are not part of the ordinary result UI.
+
+Status remains:
+
+```text
+IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+```
+
+Do not claim FINAL PASS until user-local frontend test/typecheck/build and visual review are supplied.
+
+## 10. Testing / CI discipline
 
 Do not claim assistant-local pytest/CUDA execution. User-local evidence is acceptance truth. Hosted GitHub Actions must not be used; commits use `[skip ci]`.
 
@@ -249,12 +326,12 @@ python -m pytest engine/tests/v2/test_breakdown_scene_narrative_v1.py engine/tes
 Expected accepted baseline: 15 passed
 ```
 
-## 10. Immediate safe work
+## 11. Immediate safe work
 
 ```text
-1. keep G1 + G2.1/G2.2 + G2.3/G2.4 frozen
-2. implement G2.5 Scene Timeline API
-3. expose direct user-readable Scene Timeline result
-4. keep support Fxxxx / model/provider diagnostics out of ordinary UI
-5. implement G2.6 ordinary-user UI after API acceptance
+1. keep G1 + G2.1-G2.5 frozen
+2. finish G2.6 user-local acceptance when needed
+3. P5 implementation currently lives on Draft PR #17; run its local deterministic + real-Episode acceptance
+4. do not merge P5 before acceptance unless the user explicitly asks for direct merge
+5. after accepted P5, implement P6 Final identity/asset fill-back + final Breakdown renderers
 ```
