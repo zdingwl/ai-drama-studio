@@ -1,0 +1,82 @@
+export interface SceneTimelineSceneInfo {
+  location: string | null
+  interior_exterior: string | null
+  time_of_day: string | null
+  environment: string | null
+}
+
+export interface SceneTimelinePerson {
+  ref: string
+  display_name: string
+  appearance: string | null
+}
+
+export interface SceneTimelinePerformance {
+  text: string
+  people: string[]
+}
+
+export interface SceneTimelineDialogue {
+  start_us: number
+  end_us: number
+  text: string
+  speakers: string[]
+}
+
+export interface SceneTimelineOnScreenText {
+  start_us: number
+  end_us: number
+  text: string
+}
+
+export interface SceneTimelineProp {
+  label: string
+  interaction: string | null
+}
+
+export interface SceneTimelineCinematography {
+  shot_type: string | null
+  composition: string | null
+  camera_motion: string | null
+}
+
+export interface SceneTimelineShot {
+  ordinal: number
+  start_us: number
+  end_us: number
+  duration_us: number
+  thumbnail_url: string | null
+  reference_url: string | null
+  visual_description: string | null
+  people: string[]
+  performance: SceneTimelinePerformance[]
+  dialogue: SceneTimelineDialogue[]
+  props: SceneTimelineProp[]
+  cinematography: SceneTimelineCinematography
+  on_screen_text: SceneTimelineOnScreenText[]
+}
+
+export interface SceneTimelineScene {
+  ordinal: number
+  start_us: number
+  end_us: number
+  duration_us: number
+  title: string
+  scene_info: SceneTimelineSceneInfo
+  people: SceneTimelinePerson[]
+  story_summary: string | null
+  shots: SceneTimelineShot[]
+}
+
+export interface SceneTimelinePayload {
+  schema_version: 'scene-timeline-v1'
+  source_breakdown_run_id: string
+  source_shot_revision_id: string
+  episode_id: string
+  status: string
+  is_current: boolean
+  scene_count: number
+  shot_count: number
+  warnings: string[]
+  scenes: SceneTimelineScene[]
+}
