@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Timed Fast Grounded candidate: accepted Window v4 + reconstruction-safe Exact-Shot compact v3.
+"""Production timed Fast Grounded entry: accepted Window v4 + Exact-Shot compact v3.
 
-Diagnostic-only until selected-batch real acceptance. Production provider routing is unchanged.
+Window Context uses the accepted local-index Segment Contract v4. Exact-Shot uses the accepted
+reconstruction-safe compact Contract v3. Timing instrumentation and all frame/resolution/batch
+settings remain inherited from the existing timed runner.
 """
 from __future__ import annotations
 
