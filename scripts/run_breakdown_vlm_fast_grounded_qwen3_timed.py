@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Timed single-load Qwen3-VL runner for Fast Grounded Breakdown.
 
-This runner preserves the existing Fast Grounded semantic behavior and only adds structured timing
-and generation diagnostics. It measures model load, every Window Context inference, every top-level
-Exact-Shot batch, aggregate runner time, actual generated token counts, max-token hits and parse
-failures. CUDA is synchronized around measured stages when available.
+This runner keeps the existing Exact-Shot grounding semantics and adds structured timing/generation
+diagnostics. Window Context now uses the compact v2 prompt proven necessary by the real 1600-token
+truncation diagnostic. Exact-Shot visible truth remains unchanged.
 """
 from __future__ import annotations
 
@@ -16,6 +15,7 @@ from typing import Any, Mapping
 
 import run_breakdown_vlm_fast_grounded_qwen3 as fast
 import run_breakdown_vlm_qwen3 as base
+import run_breakdown_vlm_window_compact_v2 as compact
 
 TIMING_PROFILE = "breakdown-p2-vlm-performance-timing-v1"
 
@@ -168,7 +168,11 @@ def main() -> int:
             if not window_id:
                 continue
             generation_context.clear()
-            generation_context.update({"stage": "window_context", "window_id": window_id})
+            generation_context.update({
+                "stage": "window_context",
+                "window_id": window_id,
+                "prompt_profile": compact.WINDOW_CONTEXT_PROMPT_PROFILE,
+            })
             generation_start = len(generation_events)
             _sync_cuda()
             started = time.perf_counter()
@@ -176,7 +180,7 @@ def main() -> int:
             error_type: str | None = None
             error_detail: str | None = None
             try:
-                semantic = fast._analyze_window(
+                semantic = compact.analyze_window(
                     model=model,
                     processor=processor,
                     window=window,
@@ -213,6 +217,7 @@ def main() -> int:
                 "status": status,
                 "error_type": error_type,
                 "error_detail": error_detail,
+                "prompt_profile": compact.WINDOW_CONTEXT_PROMPT_PROFILE,
                 "max_new_tokens": int(args.window_max_new_tokens),
                 **_generation_rollup(stage_events),
             })
@@ -293,6 +298,7 @@ def main() -> int:
         total_frame_count = sum(int(row["frame_count"]) for row in grounding_timings)
         timing = {
             "profile": TIMING_PROFILE,
+            "window_prompt_profile": compact.WINDOW_CONTEXT_PROMPT_PROFILE,
             "timing_clock": "time.perf_counter",
             "gpu_sync_policy": "cuda-synchronize-around-measured-stages",
             "device_resolved": str(device),
