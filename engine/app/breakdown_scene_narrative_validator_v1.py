@@ -5,6 +5,7 @@ Validator 不判断“文采”，只负责硬边界：
 - 每个标题/摘要必须引用当前 Grounding Packet 中真实存在的 Fxxxx；
 - 不能泄漏内部 P1/P2 引用；普通文本只能使用当前 Scene 已存在的“人物N”；
 - 文本提到某个“人物N”时，其 support facts 中必须至少有一条确实关联该人物；
+- 文本直接出现地点/时间/道具/景别等冻结硬锚点时，support 中必须有真正包含该锚点的事实；
 - 禁止 Final Asset / database id 风格的身份声明；
 - 任一 claim 失败时只丢弃该 claim，不修改冻结 Timeline。
 
@@ -41,6 +42,14 @@ _FORBIDDEN_IDENTITY_MARKERS = (
     "场景id",
     "道具id",
 )
+_HARD_ANCHOR_KINDS = {
+    "SCENE_LOCATION",
+    "SCENE_SPACE",
+    "SCENE_TIME",
+    "PROP",
+    "SHOT_TYPE",
+    "CAMERA_MOTION",
+}
 
 
 def _claim_warning(scene_ordinal: int, field: str, reason: str) -> str:
@@ -81,12 +90,28 @@ def _validate_claim(
     if unknown_people:
         return None, [_claim_warning(packet.scene_ordinal, field_label, "引用了当前 Scene 不存在的人物")]
 
+    supported_facts = [fact_by_id[fact_id] for fact_id in support]
     supported_people: set[str] = set()
-    for fact_id in support:
-        supported_people.update(fact_by_id[fact_id].people)
+    for fact in supported_facts:
+        supported_people.update(fact.people)
     for display_name in mentioned_people:
         if display_to_ref[display_name] not in supported_people:
             return None, [_claim_warning(packet.scene_ordinal, field_label, f"{display_name} 缺少人物级 support")]
+
+    # 对已经存在于冻结 Timeline 的硬词做可判定覆盖检查。比如输出直接写“夜晚客厅”，
+    # support 不能只引用“客厅”而不引用任何包含“夜晚”的事实。
+    anchors: list[str] = []
+    for fact in packet.facts:
+        if fact.kind not in _HARD_ANCHOR_KINDS:
+            continue
+        anchor = fact.text.strip()
+        if not anchor or len(anchor) > 120 or anchor in anchors:
+            continue
+        if anchor in text:
+            anchors.append(anchor)
+    for anchor in anchors:
+        if not any(anchor in fact.text for fact in supported_facts):
+            return None, [_claim_warning(packet.scene_ordinal, field_label, f"硬事实“{anchor}”缺少对应 support")]
 
     accepted = SceneNarrativeClaimV1(text=text, support=support)
     return accepted, []
