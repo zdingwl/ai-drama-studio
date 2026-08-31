@@ -234,7 +234,7 @@ def test_validator_rejects_internal_or_unknown_people_without_breaking_other_cla
 
     internal_candidate = {
         "scene_ordinal": 1,
-        "readable_title": {"text": "走廊交流", "support": [_fact_id(packet, "SCENE_LOCATION")]},
+        "readable_title": {"text": "走廊", "support": [_fact_id(packet, "SCENE_LOCATION")]},
         "story_summary": {"text": "P1 走向人物2。", "support": base_support},
     }
     accepted_internal, warnings_internal = validate_scene_narrative_v1(packet, internal_candidate)
