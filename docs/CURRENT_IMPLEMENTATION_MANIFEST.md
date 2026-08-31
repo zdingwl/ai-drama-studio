@@ -25,13 +25,23 @@ G2 Source / Support Validator: V1.5 / FINAL PASS / FROZEN
 G2.3/G2.4 real-model acceptance: PASS
 G2.5 Scene Timeline API: V1 / FINAL PASS / FROZEN
 G2.5 Windows/CUDA local acceptance: PASS
-G2.6 ordinary-user Scene Timeline UI: NOT IMPLEMENTED
+G2.6 ordinary-user Scene Timeline UI: IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
 P3 current 02 拉片 Shot-card UI: IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop: IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-P5 Draft ↔ Character: PLANNED / PAUSED
+P5 Draft ↔ Character: IMPLEMENTED ON PR #17 / USER-LOCAL ACCEPTANCE PENDING / NOT MERGED
 ```
 
 G1 and all accepted G2 layers through G2.5 are frozen until a concrete regression appears. Character V10.1 remains protected.
+
+Repository workflow:
+
+```text
+Documentation-only synchronization -> direct main, no docs-only branch/PR.
+Code/behavior changes -> feature branch + Draft PR by default.
+Explicit user request for direct main -> follow the explicit request.
+Hosted GitHub Actions -> not acceptance evidence.
+All commits -> [skip ci].
+```
 
 ## Final real acceptance evidence — G1 / G2.1 / G2.2
 
@@ -142,6 +152,16 @@ Character V10.1 remains unchanged:
 YOLOX -> capture-first evidence -> mature MOT -> YoutuReID
 -> RESOLVED/UNRESOLVED -> explicit Shot Assignment -> Final Gate
 ```
+
+P5 identity authority is one-way only:
+
+```text
+Final ShotCharacterBinding
+-> deterministic Scene-local presence reconciliation
+-> anonymous Breakdown display resolution when uniquely safe
+```
+
+Breakdown prose, dialogue/ASR names, relationship terms, role hints and appearance text cannot create or override Character identity.
 
 ## G2 frozen Scene Timeline behavior
 
@@ -340,6 +360,88 @@ G2.5 Scene Timeline API = FINAL PASS / FROZEN
 G2.5 Windows/CUDA local acceptance = PASS
 ```
 
+## G2.6 ordinary-user Scene Timeline UI
+
+Implementation is present on `main`.
+
+Primary modules:
+
+```text
+frontend/src/api/scene-timeline.ts
+frontend/src/components/BreakdownStageV1.vue
+frontend/src/components/SceneTimelineResultsV1.vue
+frontend/src/types/scene-timeline.ts
+frontend/src/utils/sceneTimelineUi.ts
+frontend/src/utils/sceneTimelineUi.test.ts
+frontend/src/scene-timeline-g2-6-overrides.css
+```
+
+Primary result path consumes frozen G2.5 directly:
+
+```text
+GET /api/episodes/{episode_id}/scene-timeline
+```
+
+Visible order:
+
+```text
+Scene title/story summary
+→ Scene environment / people
+→ Shot cards
+   → preview/reference clip
+   → visual
+   → people
+   → action/performance
+   → dialogue
+   → props
+   → cinematography
+   → OCR/on-screen text
+```
+
+Engineering evidence/support/internal IDs/confidence/provider/model diagnostics are excluded from the ordinary page.
+
+Status:
+
+```text
+G2.6 = IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+```
+
+No FINAL PASS is claimed until the user supplies frontend test/typecheck/build and visual acceptance.
+
+## P5 Draft ↔ Character implementation frontier
+
+P5 implementation currently exists on Draft PR #17 and is not in `main`.
+
+Implementation files on that PR:
+
+```text
+engine/app/breakdown_character_bridge_contract_v1.py
+engine/app/breakdown_character_bridge_v1.py
+engine/tests/v2/test_breakdown_character_bridge_v1.py
+scripts/run_breakdown_p5_character_bridge_acceptance_v1.py
+docs/P5_BREAKDOWN_CHARACTER_BRIDGE_V1.md
+docs/sessions/2026-08-31_P5_breakdown-character-bridge-implementation.md
+```
+
+V1 rule:
+
+```text
+current READY Breakdown + exact current ShotRevision anchors
++ current Final Asset Revision
++ Final ShotCharacterBinding only
+→ Scene-local exact presence signatures
+→ unique one-to-one match = RESOLVED
+→ ambiguous / duplicate / partial mismatch = UNRESOLVED
+```
+
+P5 does not write LocalSubject, Character, Final bindings or Character V10.1 identity state. Dialogue, ASR names, relationship terms, role hints and appearance prose are excluded from identity authority.
+
+Status:
+
+```text
+IMPLEMENTED ON PR #17 / USER-LOCAL ACCEPTANCE PENDING / NOT MERGED
+```
+
 ## Testing / CI discipline
 
 Do not claim assistant-local pytest/CUDA execution. User-local results are acceptance truth. Hosted GitHub Actions remain unused; commits use `[skip ci]`.
@@ -347,9 +449,9 @@ Do not claim assistant-local pytest/CUDA execution. User-local results are accep
 ## Next required action
 
 ```text
-1. start G2.6 ordinary-user Scene Timeline UI
-2. consume the frozen G2.5 endpoints directly
-3. present Scene info -> people -> Shot cards -> visual/action/dialogue/props/cinematography/OCR -> readable title/story_summary
-4. hide engineering evidence, support Fxxxx, internal IDs, confidence/provider/model diagnostics
-5. do not reopen frozen G1/G2.1-G2.5 or Character V10.1 without a concrete regression
+1. keep G1 + G2.1-G2.5 frozen
+2. finish G2.6 user-local frontend acceptance when needed
+3. run P5 deterministic test + accepted real-Episode inspection
+4. merge P5 only after acceptance unless the user explicitly asks for direct main
+5. after accepted P5, implement P6 Final identity/asset fill-back + final Breakdown renderers
 ```
