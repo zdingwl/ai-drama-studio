@@ -5,14 +5,15 @@ Validator 不判断“文采”，只负责硬边界：
 - 每个标题/摘要必须引用当前 Grounding Packet 中真实存在的 Fxxxx；
 - 不能泄漏内部 P1/P2 引用；普通文本只能使用当前 Scene 已存在的“人物N”；
 - 文本提到某个“人物N”时，其 support facts 中必须至少有一条确实关联该人物；
-- 文本直接出现地点/时间/道具/景别等冻结硬锚点时，support 中必须有真正包含该锚点的事实；
-- 新标题/摘要的实质字符必须来自所引用的非 ASR/OCR 冻结事实，只放行少量语法连接字；
-- 剧情摘要必须至少引用一条 Scene summary / Shot visual / performance / prop interaction 事实，禁止只靠对白猜剧情；
+- 地点/时间/室内外/道具/景别等冻结硬锚点一旦出现在文本中，会确定性补齐对应 support；
+- 剧情摘要仍使用保守 lexical guard，禁止“真实 support id + 新编动作/姓名/剧情”；
+- 场景标题允许少量受控的高层概括词，例如“纠纷/争执/交流”，但不能借 ASR/OCR 引入姓名；
+- 新数字必须出现在 support 中，避免凭空增加数量、时间、门牌等事实；
 - 禁止 Final Asset / database id 风格的身份声明；
 - 任一 claim 失败时只丢弃该 claim，不修改冻结 Timeline。
 
-这是故意保守的 fail-closed validator：宁可拒绝自由改写并回退确定性 Timeline，也不允许
-“support id 真实，但文字偷偷加入新动作/姓名/剧情”的伪 grounded 输出。
+标题是软 Narrative 标签，允许有限概括；剧情摘要仍然更严格。无论 Narrative 是否通过，
+Shot/人物/对白/OCR/道具/镜头语言等冻结事实都不由本 Validator 或 LLM 改写。
 """
 from __future__ import annotations
 
@@ -34,6 +35,7 @@ class SceneNarrativeValidationError(ValueError):
 
 _INTERNAL_PERSON_REF_RE = re.compile(r"(?<![A-Za-z0-9_])P[1-9][0-9]*(?![A-Za-z0-9_])")
 _DISPLAY_PERSON_RE = re.compile(r"人物[1-9][0-9]*")
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 _FORBIDDEN_IDENTITY_MARKERS = (
     "character_id",
     "scene_id",
@@ -54,7 +56,7 @@ _HARD_ANCHOR_KINDS = {
     "CAMERA_MOTION",
 }
 # Dialogue/OCR may help the model understand context, but cannot introduce new lexical facts/names into
-# accepted user prose. This blocks a subtitle/dialogue string from silently becoming an identity claim.
+# accepted summary prose. This blocks a subtitle/dialogue string from silently becoming an identity claim.
 _LEXICAL_SOURCE_KINDS = {
     "SCENE_LOCATION",
     "SCENE_SPACE",
@@ -76,9 +78,13 @@ _NARRATIVE_SOURCE_KINDS = {
     "SHOT_PERFORMANCE",
     "PROP_INTERACTION",
 }
-# Only grammatical glue is exempt from lexical provenance. Factual direction/time/space characters
-# such as 前/后/上/下/内/外 are intentionally NOT exempt.
+# Only grammatical glue is exempt from summary lexical provenance. Factual direction/time/space
+# characters such as 前/后/上/下/内/外 are intentionally NOT exempt.
 _GRAMMAR_GLUE_CHARS = frozenset("的了着过在于与和并及其这那此把被为是有又将所个一段里中")
+# 标题是软组织层，允许少量高层概括词；仍禁止任意自由词汇，避免从对白/OCR 偷带姓名。
+_TITLE_ABSTRACTION_CHARS = frozenset(
+    "冲突争执纠纷对话交流对峙相遇争吵质问回应交涉讨论等待离开回家谈互动矛盾关系"
+)
 
 
 def _claim_warning(scene_ordinal: int, field: str, reason: str) -> str:
@@ -100,6 +106,12 @@ def _substantive_chars(text: str) -> set[str]:
         if _is_han(char) or char.isalnum():
             result.add(char)
     return result
+
+
+def _numeric_literals(text: str) -> set[str]:
+    """人物1/人物2 的编号不是剧情数字，不参与新数字事实检查。"""
+
+    return set(_NUMBER_RE.findall(_DISPLAY_PERSON_RE.sub("", text)))
 
 
 def _validate_claim(
@@ -136,6 +148,15 @@ def _validate_claim(
     if unknown_people:
         return None, [_claim_warning(packet.scene_ordinal, field_label, "引用了当前 Scene 不存在的人物")]
 
+    # 硬锚点本身已经是冻结事实。模型若在文本中原样用了它但忘了列 support，Validator 可以
+    # 无歧义地把对应事实补回，而不是把整段可用文字丢掉。
+    for fact in packet.facts:
+        if fact.kind not in _HARD_ANCHOR_KINDS:
+            continue
+        anchor = fact.text.strip()
+        if anchor and len(anchor) <= 120 and anchor in text and fact.fact_id not in support:
+            support.append(fact.fact_id)
+
     supported_facts = [fact_by_id[fact_id] for fact_id in support]
     supported_people: set[str] = set()
     for fact in supported_facts:
@@ -149,32 +170,31 @@ def _validate_claim(
     ):
         return None, [_claim_warning(packet.scene_ordinal, field_label, "缺少剧情/画面/动作类 support")]
 
-    # 对已经存在于冻结 Timeline 的硬词做可判定覆盖检查。比如输出直接写“夜晚客厅”，
-    # support 不能只引用“客厅”而不引用任何包含“夜晚”的事实。
-    anchors: list[str] = []
-    for fact in packet.facts:
-        if fact.kind not in _HARD_ANCHOR_KINDS:
-            continue
-        anchor = fact.text.strip()
-        if not anchor or len(anchor) > 120 or anchor in anchors:
-            continue
-        if anchor in text:
-            anchors.append(anchor)
-    for anchor in anchors:
-        if not any(anchor in fact.text for fact in supported_facts):
-            return None, [_claim_warning(packet.scene_ordinal, field_label, f"硬事实“{anchor}”缺少对应 support")]
+    supported_text = " ".join(fact.text for fact in supported_facts)
+    unsupported_numbers = sorted(_numeric_literals(text).difference(_numeric_literals(supported_text)))
+    if unsupported_numbers:
+        return None, [_claim_warning(packet.scene_ordinal, field_label, "包含来源未支持的新数字")]
 
-    # 防止“真实 support id + 新编剧情文字”。只允许 claim 使用其 support 中非 ASR/OCR 事实已经出现的
-    # 实质字符；少量语法连接字放行。该规则很保守，合法的自由同义改写也可能被拒绝，但会安全回退。
     lexical_support_text = "".join(
         fact.text for fact in supported_facts if fact.kind in _LEXICAL_SOURCE_KINDS
     )
     supported_chars = _substantive_chars(lexical_support_text)
     claim_chars = _substantive_chars(text)
-    novel_chars = sorted(claim_chars.difference(supported_chars))
-    if novel_chars:
-        preview = "".join(novel_chars[:8])
-        return None, [_claim_warning(packet.scene_ordinal, field_label, f"包含来源未支持的新内容字符“{preview}”")]
+
+    if field_label == "剧情摘要":
+        # 摘要仍保持保守：真实 support id 不能成为编造新动作/姓名/剧情的外壳。
+        novel_chars = sorted(claim_chars.difference(supported_chars))
+        if novel_chars:
+            preview = "".join(novel_chars[:8])
+            return None, [_claim_warning(packet.scene_ordinal, field_label, f"包含来源未支持的新内容字符“{preview}”")]
+    else:
+        # 标题允许有限的剧情抽象，例如“走廊纠纷”。超出来源字符 + 白名单抽象字符仍拒绝，
+        # 因此 ASR/OCR 里的姓名不会因为标题权限放宽而自动进入用户结果。
+        allowed_title_chars = supported_chars.union(_TITLE_ABSTRACTION_CHARS)
+        novel_chars = sorted(claim_chars.difference(allowed_title_chars))
+        if novel_chars:
+            preview = "".join(novel_chars[:8])
+            return None, [_claim_warning(packet.scene_ordinal, field_label, f"包含来源未支持的新标题字符“{preview}”")]
 
     accepted = SceneNarrativeClaimV1(text=text, support=support)
     return accepted, []
