@@ -32,7 +32,7 @@ from engine.app.breakdown_scene_narrative_validator_v1 import (
 from engine.app.breakdown_scene_timeline_contract_v1 import SceneTimelinePayloadV1
 
 
-SCENE_NARRATIVE_PROMPT_PROFILE = "breakdown-g2-scene-narrative-zh-v1.3"
+SCENE_NARRATIVE_PROMPT_PROFILE = "breakdown-g2-scene-narrative-zh-v1.4"
 
 SCENE_NARRATIVE_SYSTEM_PROMPT_V1 = """你是“短剧拉片 Scene 文本整理器”。
 
@@ -44,9 +44,11 @@ SCENE_NARRATIVE_SYSTEM_PROMPT_V1 = """你是“短剧拉片 Scene 文本整理�
 2. story_summary：1~2 句、尽量不超过 120 个中文字符，说明“这一段发生了什么”。
 
 硬规则：
-- Exact-Shot / Scene Timeline 是视觉事实；不得创造人物、动作、道具、地点或镜头事实。
-- ASR 对白只是理解上下文的只读数据；不得纠错、改写或把对白中的姓名、自称、亲属/伴侣称谓绑定给匿名人物。
-- 如果“结婚/离婚/怀孕/死亡/绑架/丈夫/妻子”等重大事件或关系词只出现在 ASR 中，只能写成“围绕X、谈到X、讨论X、询问X、质问X”等对白话题，不能写成 X 已经实际发生；并必须引用包含该词的 DIALOGUE Fxxxx。
+- Exact-Shot / Scene Timeline 是视觉事实；视觉事实可以直接陈述，但不得创造人物、动作、道具、地点或镜头事实。
+- DIALOGUE / ASR 是“人物说了什么”的来源，不等于客观视觉事实。使用对白内容时，必须写成“争论、指责、质问、回应、表示、称、说、认为、抱怨、反驳、解释”等说话/争论框架，并引用真正相关的 DIALOGUE Fxxxx。
+- 例如对白里有人说“邻居偷花”，可写“双方争论邻居偷花一事”或“人物2指责邻居偷花”，不要直接写成“邻居偷了花”这一已证实事实。
+- 不得纠错、改写或把对白中的姓名、自称、亲属/伴侣称谓绑定给匿名人物。
+- 如果“结婚/离婚/怀孕/死亡/绑架/丈夫/妻子”等重大事件或关系词只出现在 ASR 中，只能写成“围绕X、谈到X、讨论X、关于X的问题”等对白话题，不能写成 X 已经实际发生；并必须引用包含该词的 DIALOGUE Fxxxx。
 - 例如 ASR 出现“什么时候结婚”，可写“双方围绕结婚问题争执”，不能写“两人结婚”。
 - P1/P2/... 是内部 Scene-local 引用。输出文字禁止出现 P1/P2，人物只能写输入中存在的“人物1/人物2/...”。
 - Scene 之间绝不推断人物身份连续性。
@@ -56,7 +58,7 @@ SCENE_NARRATIVE_SYSTEM_PROMPT_V1 = """你是“短剧拉片 Scene 文本整理�
 - story_summary 优先引用 SCENE_BASE_SUMMARY；如果写“人物N”，尽量再引用至少一个 people 中含该 PN 的 PERSON_APPEARANCE/视觉/动作 fact。
 - 如果标题/摘要原样写出了地点、白天/夜晚、室内/室外、道具等硬事实，必须把对应 Fxxxx 一并放入 support。
 - 标题可以做很轻的高层概括，例如把“质问、对峙、愤怒”概括为“争执/纠纷”；摘要可以自然压缩、重排、合并输入已有剧情，但不要发明新的具体动作、人物关系、重大事件或物体。
-- 不要逐镜头罗列；把同一 Scene 的连续动作压缩成用户一眼能看懂的剧情说明。
+- 不要逐镜头罗列；把同一 Scene 的连续动作和对白冲突压缩成用户一眼能看懂的剧情说明。
 - 没有足够事实就把对应字段输出 null，不要猜。
 - 只输出一个 JSON object，不要 Markdown，不要解释。
 
