@@ -20,9 +20,13 @@ from typing import Any
 from pydantic import ValidationError
 
 from engine.app import studio_v2
+from engine.app.breakdown_scene_grounding_v1 import build_scene_grounding_packet_v1
 from engine.app.breakdown_scene_narrative_contract_v1 import SceneNarrativeOverlayPayloadV1
 from engine.app.breakdown_scene_narrative_v1 import apply_scene_narrative_overlay_v1
-from engine.app.breakdown_scene_narrative_validator_v1 import SceneNarrativeValidationError
+from engine.app.breakdown_scene_narrative_validator_v1 import (
+    SceneNarrativeValidationError,
+    validate_scene_narrative_v1,
+)
 from engine.app.breakdown_scene_timeline_assembler_v1 import assemble_scene_timeline_v1
 from engine.app.breakdown_scene_timeline_contract_v1 import SceneTimelinePayloadV1
 
@@ -93,25 +97,65 @@ def _append_user_warning(timeline: Mapping[str, Any], warning: str) -> dict[str,
     return SceneTimelinePayloadV1.model_validate(result).model_dump(mode="json")
 
 
+def _revalidate_overlay_v1(
+    timeline: Mapping[str, Any],
+    overlay: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Prove that persisted claims are still exactly what frozen G2.4 accepts for this Timeline.
+
+    ``SceneNarrativeOverlayPayloadV1`` proves shape, not provenance. Replaying each stored claim through
+    the frozen validator prevents a hand-written artifact with a correct fingerprint from bypassing
+    the G2.4 support/ASR-authority rules.
+    """
+
+    normalized_timeline = SceneTimelinePayloadV1.model_validate(timeline).model_dump(mode="json")
+    normalized_overlay = SceneNarrativeOverlayPayloadV1.model_validate(overlay)
+
+    # Frozen apply gate checks Run/ShotRevision/Episode anchors, scene ordinals and fingerprints.
+    apply_scene_narrative_overlay_v1(normalized_timeline, normalized_overlay)
+
+    for scene in normalized_overlay.scenes:
+        packet = build_scene_grounding_packet_v1(normalized_timeline, scene.scene_ordinal)
+        candidate = {
+            "scene_ordinal": scene.scene_ordinal,
+            "readable_title": (
+                scene.readable_title.model_dump(mode="json")
+                if scene.readable_title is not None
+                else None
+            ),
+            "story_summary": (
+                scene.story_summary.model_dump(mode="json")
+                if scene.story_summary is not None
+                else None
+            ),
+        }
+        accepted, warnings = validate_scene_narrative_v1(packet, candidate)
+        expected = scene.model_dump(mode="json")
+        if warnings or accepted != expected:
+            raise SceneNarrativeArtifactError("Scene Narrative artifact 未通过 G2.4 一致性复核")
+
+    return normalized_overlay.model_dump(mode="json")
+
+
 def persist_scene_narrative_overlay_v1(
     draft: Mapping[str, Any],
     overlay: Mapping[str, Any],
 ) -> Path:
-    """Atomically materialize one already-validated G2.3/G2.4 overlay for future read-only API use.
+    """Atomically materialize one G2.4-accepted overlay for future read-only API use.
 
-    The overlay is never trusted merely because a JSON file exists. Before writing, this function
-    assembles the frozen deterministic Timeline and calls the frozen overlay application gate. That
-    rechecks Run/ShotRevision/Episode anchors plus every Scene source fingerprint. The raw artifact
+    Before writing, this function assembles the frozen deterministic Timeline, replays every claim
+    through the frozen G2.4 validator, and calls the frozen overlay application gate. The raw artifact
     may retain developer-only support references, but it is never returned by the primary API.
     """
 
     assert_scene_timeline_ready_draft_v1(draft)
     timeline = assemble_scene_timeline_v1(draft)
     try:
-        normalized = SceneNarrativeOverlayPayloadV1.model_validate(overlay).model_dump(mode="json")
-        apply_scene_narrative_overlay_v1(timeline, normalized)
-    except (ValidationError, SceneNarrativeValidationError, ValueError) as exc:
-        raise SceneNarrativeArtifactError("Scene Narrative overlay 未通过当前 Timeline 锚点校验") from exc
+        normalized = _revalidate_overlay_v1(timeline, overlay)
+    except (ValidationError, SceneNarrativeValidationError, SceneNarrativeArtifactError, ValueError) as exc:
+        if isinstance(exc, SceneNarrativeArtifactError):
+            raise
+        raise SceneNarrativeArtifactError("Scene Narrative overlay 未通过当前 Timeline 校验") from exc
 
     path = scene_narrative_artifact_path_v1(draft)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -154,8 +198,9 @@ def build_scene_timeline_result_v1(draft: Mapping[str, Any]) -> dict[str, Any]:
         return _append_user_warning(timeline, NARRATIVE_MISSING_WARNING)
 
     try:
-        applied = apply_scene_narrative_overlay_v1(timeline, overlay)
-    except (ValidationError, SceneNarrativeValidationError, ValueError):
+        normalized_overlay = _revalidate_overlay_v1(timeline, overlay)
+        applied = apply_scene_narrative_overlay_v1(timeline, normalized_overlay)
+    except (ValidationError, SceneNarrativeValidationError, SceneNarrativeArtifactError, ValueError):
         return _append_user_warning(timeline, NARRATIVE_FALLBACK_WARNING)
 
     # The frozen strict contract is the final leak guard: raw support/provenance cannot survive here.
