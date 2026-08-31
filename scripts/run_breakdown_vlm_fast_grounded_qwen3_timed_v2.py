@@ -7,6 +7,13 @@ therefore byte-for-byte the same code path as the previous timed runner.
 """
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 import run_breakdown_vlm_fast_grounded_qwen3_timed as timed
 import run_breakdown_vlm_window_segment_v3 as segment
 
