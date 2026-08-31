@@ -36,6 +36,7 @@ SCENE_NARRATIVE_ARTIFACT_FILENAME = "narrative-overlay-v1.json"
 READY_STATUSES = frozenset({"READY", "READY_WITH_WARNINGS"})
 NARRATIVE_MISSING_WARNING = "场景标题与剧情摘要暂未完成可读整理，当前展示基础拉片结果。"
 NARRATIVE_FALLBACK_WARNING = "场景可读整理与当前拉片结果不一致，当前展示基础拉片结果。"
+NARRATIVE_PARTIAL_WARNING = "部分场景的标题或剧情摘要使用基础拉片结果。"
 
 
 class SceneTimelineResultError(RuntimeError):
@@ -110,6 +111,11 @@ def _revalidate_overlay_v1(
 
     normalized_timeline = SceneTimelinePayloadV1.model_validate(timeline).model_dump(mode="json")
     normalized_overlay = SceneNarrativeOverlayPayloadV1.model_validate(overlay)
+
+    expected_ordinals = {int(scene["ordinal"]) for scene in normalized_timeline["scenes"]}
+    actual_ordinals = {scene.scene_ordinal for scene in normalized_overlay.scenes}
+    if actual_ordinals != expected_ordinals:
+        raise SceneNarrativeArtifactError("Scene Narrative artifact 未覆盖当前 Timeline 的全部 Scene")
 
     # Frozen apply gate checks Run/ShotRevision/Episode anchors, scene ordinals and fingerprints.
     apply_scene_narrative_overlay_v1(normalized_timeline, normalized_overlay)
@@ -203,6 +209,10 @@ def build_scene_timeline_result_v1(draft: Mapping[str, Any]) -> dict[str, Any]:
     except (ValidationError, SceneNarrativeValidationError, SceneNarrativeArtifactError, ValueError):
         return _append_user_warning(timeline, NARRATIVE_FALLBACK_WARNING)
 
+    # Never expose raw organizer/validator warnings; collapse them to one ordinary-user fallback note.
+    if normalized_overlay["status"] == "READY_WITH_WARNINGS":
+        applied = _append_user_warning(applied, NARRATIVE_PARTIAL_WARNING)
+
     # The frozen strict contract is the final leak guard: raw support/provenance cannot survive here.
     return SceneTimelinePayloadV1.model_validate(applied).model_dump(mode="json")
 
@@ -210,6 +220,7 @@ def build_scene_timeline_result_v1(draft: Mapping[str, Any]) -> dict[str, Any]:
 __all__ = [
     "NARRATIVE_FALLBACK_WARNING",
     "NARRATIVE_MISSING_WARNING",
+    "NARRATIVE_PARTIAL_WARNING",
     "READY_STATUSES",
     "SCENE_NARRATIVE_ARTIFACT_FILENAME",
     "SCENE_TIMELINE_RESULT_PROFILE",
