@@ -1,16 +1,11 @@
 """Instrumented Fast Grounded VLM provider.
 
-This is a thin production-compatible layer on top of ``breakdown_p2_vlm_fast_grounded_v1``.
-Semantic behavior and sidecar Evidence remain unchanged. The only added behavior is structured
-performance provenance for the next real acceptance run:
+This is a production-compatible layer on top of ``breakdown_p2_vlm_fast_grounded_v1``. Exact-Shot
+semantic behavior stays unchanged. Window Context is executed by the timed runner with the compact
+v2 prompt after real acceptance proved the previous prose-heavy prompt truncated 3/4 windows at the
+1600-token limit.
 
-- host Window clip materialization time, per Window;
-- host Exact-Shot frame extraction time, per Shot;
-- isolated Qwen runner subprocess wall time;
-- model load time from the timed runner;
-- Window Context total/per-window inference times;
-- Exact-Shot total/per-top-level-batch inference times with shot/frame counts.
-
+The provider persists structured performance provenance and the active Window prompt profile.
 No Character/Scene/Prop Final assets are touched by this module.
 """
 from __future__ import annotations
@@ -28,6 +23,7 @@ from engine.app import breakdown_p2_vlm_fast_grounded_v1 as fast
 from engine.app import breakdown_p2_vlm_v1 as legacy
 
 PERFORMANCE_PROFILE = "breakdown-p2-vlm-performance-timing-v1"
+WINDOW_PROMPT_PROFILE = "breakdown-p2-vlm-window-context-compact-zh-v2"
 
 
 def _round_elapsed(started: float) -> float:
@@ -35,7 +31,7 @@ def _round_elapsed(started: float) -> float:
 
 
 class Qwen3VLSemanticProvider(fast.Qwen3VLSemanticProvider):
-    """Fast Grounded provider with read-only timing provenance added to metadata."""
+    """Fast Grounded provider with timing provenance and compact Window Context routing."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         repo_root = Path(__file__).resolve().parents[2]
@@ -137,6 +133,7 @@ class Qwen3VLSemanticProvider(fast.Qwen3VLSemanticProvider):
             manifest_path.write_text(json.dumps({
                 "schema_version": fast.FAST_GROUNDED_SCHEMA,
                 "profile": fast.FAST_GROUNDED_PROFILE,
+                "window_prompt_profile": WINDOW_PROMPT_PROFILE,
                 "model": config.model_name,
                 "source_language": config.source_language,
                 "windows": window_payloads,
@@ -178,6 +175,7 @@ class Qwen3VLSemanticProvider(fast.Qwen3VLSemanticProvider):
                 )
                 self._last_host_timing = {
                     "profile": PERFORMANCE_PROFILE,
+                    "window_prompt_profile": WINDOW_PROMPT_PROFILE,
                     "window_materialization_total_seconds": window_materialization_total,
                     "grounding_frame_materialization_total_seconds": frame_materialization_total,
                     "manifest_write_seconds": manifest_seconds,
@@ -206,6 +204,7 @@ class Qwen3VLSemanticProvider(fast.Qwen3VLSemanticProvider):
             unified_total_seconds = _round_elapsed(unified_started)
             host_timing = {
                 "profile": PERFORMANCE_PROFILE,
+                "window_prompt_profile": WINDOW_PROMPT_PROFILE,
                 "window_materialization_total_seconds": window_materialization_total,
                 "grounding_frame_materialization_total_seconds": frame_materialization_total,
                 "manifest_write_seconds": manifest_seconds,
@@ -249,8 +248,10 @@ class Qwen3VLSemanticProvider(fast.Qwen3VLSemanticProvider):
             failed_grounding_count=failed_grounding_count,
             error_type=error_type,
         )
+        result["window_prompt_profile"] = WINDOW_PROMPT_PROFILE
         result["performance"] = {
             "profile": PERFORMANCE_PROFILE,
+            "window_prompt_profile": WINDOW_PROMPT_PROFILE,
             "provider_runner_wall_seconds": self._last_runner_wall_seconds,
             "host": dict(self._last_host_timing),
             "model_runner": dict(self._last_runtime_timing),
@@ -258,7 +259,7 @@ class Qwen3VLSemanticProvider(fast.Qwen3VLSemanticProvider):
         return result
 
 
-# Re-export the stable v1 constants so the production runtime can switch imports without changing
+# Re-export stable semantic constants so the production runtime can switch imports without changing
 # public compatibility surfaces.
 DEFAULT_WINDOW_SECONDS = fast.DEFAULT_WINDOW_SECONDS
 DEFAULT_WINDOW_OVERLAP_RATIO = fast.DEFAULT_WINDOW_OVERLAP_RATIO
@@ -294,5 +295,6 @@ __all__ = [
     "Qwen3VLSemanticProvider",
     "VISUAL_TRUTH_POLICY",
     "WINDOW_CONTEXT_PROFILE",
+    "WINDOW_PROMPT_PROFILE",
     "frame_sample_ratios",
 ]
