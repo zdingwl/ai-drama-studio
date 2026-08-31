@@ -1,8 +1,8 @@
 # P5 Breakdown ↔ Character Safe Bridge V1
 
-Status: **IMPLEMENTED ON BRANCH / USER-LOCAL ACCEPTANCE PENDING**
+Status: **IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING**
 
-Branch: `p5-breakdown-character-bridge`
+Merged from PR #17. Merge commit: `ab4b11716f5c1c5ead7367119d1b2d787defe8f9`.
 
 This contract defines a one-way, fail-closed bridge from the current anonymous Breakdown to already-confirmed Final Characters.
 
@@ -88,7 +88,7 @@ support Shot IDs / ordinals
 resolution_basis
 ```
 
-Files:
+Files on `main`:
 
 ```text
 engine/app/breakdown_character_bridge_contract_v1.py
