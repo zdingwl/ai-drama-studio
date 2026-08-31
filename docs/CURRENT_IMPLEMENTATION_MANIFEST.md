@@ -23,14 +23,15 @@ G2 Scene Narrative Core: V1.5 / FINAL PASS / FROZEN
 G2 Local Qwen text runtime: REAL ACCEPTED / FROZEN BASELINE
 G2 Source / Support Validator: V1.5 / FINAL PASS / FROZEN
 G2.3/G2.4 real-model acceptance: PASS
-G2.5 Scene Timeline API: NOT IMPLEMENTED
+G2.5 Scene Timeline API: V1 / FINAL PASS / FROZEN
+G2.5 Windows/CUDA local acceptance: PASS
 G2.6 ordinary-user Scene Timeline UI: NOT IMPLEMENTED
 P3 current 02 拉片 Shot-card UI: IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop: IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character: PLANNED / PAUSED
 ```
 
-G1 and all accepted G2 layers are frozen until a concrete regression appears. Character V10.1 remains protected.
+G1 and all accepted G2 layers through G2.5 are frozen until a concrete regression appears. Character V10.1 remains protected.
 
 ## Final real acceptance evidence — G1 / G2.1 / G2.2
 
@@ -265,6 +266,80 @@ G2.4 = FINAL PASS / FROZEN
 Local Qwen text runtime = REAL ACCEPTED / FROZEN BASELINE
 ```
 
+## G2.5 frozen Scene Timeline API
+
+Modules / contract:
+
+```text
+Scene Timeline result resolver        engine/app/breakdown_scene_timeline_result_v1.py
+Scene Timeline read routes            engine/app/breakdown_scene_timeline_routes_v1.py
+Narrative materializer                scripts/materialize_breakdown_g2_scene_timeline_v1.py
+Result tests                          engine/tests/v2/test_breakdown_scene_timeline_result_v1.py
+Route tests                           engine/tests/v2/test_breakdown_scene_timeline_routes_v1.py
+API contract                          docs/BREAKDOWN_G2_SCENE_TIMELINE_API_V1.md
+```
+
+Primary endpoints:
+
+```text
+GET /api/episodes/{episode_id}/scene-timeline
+GET /api/breakdown-runs/{run_id}/scene-timeline
+```
+
+Formal G2.5 flow:
+
+```text
+READY/READY_WITH_WARNINGS Breakdown Run
+→ frozen deterministic G2.2 Scene Timeline
+→ optional materialized validated Narrative artifact
+→ Run/Revision/Scene fingerprint check
+→ frozen G2.4 claim replay/revalidation
+→ title/story_summary overlay only
+→ strict scene-timeline-v1 leak guard
+→ ordinary-user read response
+```
+
+Frozen G2.5 rules:
+
+```text
+GET is read-only and never starts Qwen or any model.
+Narrative generation is explicit and materialized into the Run workspace.
+Missing Narrative -> deterministic G2.2 fallback + user-readable warning.
+Stale/invalid Narrative -> deterministic G2.2 fallback + user-readable warning.
+Raw validator/model diagnostics never enter the primary response.
+Primary API never exposes support Fxxxx, source_fingerprint, Evidence IDs, cluster keys, LocalSubject DB IDs, confidence, provider/model metadata, or Final Asset IDs.
+```
+
+## G2.5 final user-local acceptance evidence
+
+Real Run materialization:
+
+```text
+python scripts/materialize_breakdown_g2_scene_timeline_v1.py BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4 --device cuda
+scene_count = 2
+accepted_title_count = 2
+accepted_summary_count = 2
+warning_count = 0
+artifact = scene-timeline/narrative-overlay-v1.json
+runtime_profile = breakdown-g2-scene-narrative-qwen3-local-v1
+```
+
+New G2.5 test boundary:
+
+```text
+python -m pytest engine/tests/v2/test_breakdown_scene_timeline_result_v1.py engine/tests/v2/test_breakdown_scene_timeline_routes_v1.py -q
+12 passed
+```
+
+Frozen G2 regression command completed with 19 passing test dots and no failure/error output in the supplied user-local terminal result.
+
+Therefore:
+
+```text
+G2.5 Scene Timeline API = FINAL PASS / FROZEN
+G2.5 Windows/CUDA local acceptance = PASS
+```
+
 ## Testing / CI discipline
 
 Do not claim assistant-local pytest/CUDA execution. User-local results are acceptance truth. Hosted GitHub Actions remain unused; commits use `[skip ci]`.
@@ -272,9 +347,9 @@ Do not claim assistant-local pytest/CUDA execution. User-local results are accep
 ## Next required action
 
 ```text
-1. implement G2.5 Scene Timeline API
-2. return the accepted user-readable Scene Timeline + Narrative overlay
-3. hide support Fxxxx / Evidence IDs / model diagnostics from ordinary API/UI surfaces
-4. test API determinism and fallback behavior
-5. implement G2.6 ordinary-user Scene Timeline UI after API acceptance
+1. start G2.6 ordinary-user Scene Timeline UI
+2. consume the frozen G2.5 endpoints directly
+3. present Scene info -> people -> Shot cards -> visual/action/dialogue/props/cinematography/OCR -> readable title/story_summary
+4. hide engineering evidence, support Fxxxx, internal IDs, confidence/provider/model diagnostics
+5. do not reopen frozen G1/G2.1-G2.5 or Character V10.1 without a concrete regression
 ```
