@@ -99,3 +99,10 @@ def test_local_qwen_adapter_batches_scene_requests_without_real_model() -> None:
     assert overlay["status"] == "READY"
     assert overlay["scenes"][0]["readable_title"]["text"] == "公寓走廊"
     assert overlay["scenes"][0]["story_summary"]["text"] == "人物1停留在公寓走廊。"
+    assert llm.last_batch_diagnostics() == {1: {"status": "READY"}}
+    assert llm.last_batch_candidate_previews() == {
+        1: {
+            "readable_title": "公寓走廊",
+            "story_summary": "人物1停留在公寓走廊。",
+        }
+    }
