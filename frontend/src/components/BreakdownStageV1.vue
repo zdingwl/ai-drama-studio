@@ -2,8 +2,8 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import type { BreakdownRunSummary } from '../types/breakdown'
 import type { BackgroundTask, Episode } from '../types/studio'
-import BreakdownResultsV1 from './BreakdownResultsV1.vue'
 import BreakdownTaskBarV1 from './BreakdownTaskBarV1.vue'
+import SceneTimelineResultsV1 from './SceneTimelineResultsV1.vue'
 import ShotCacheManagerV51 from './ShotCacheManagerV51.vue'
 import ShotWorkbenchV4 from './ShotWorkbenchV4.vue'
 
@@ -63,7 +63,7 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
         </button>
         <button :class="{ active: mode === 'draft' }" type="button" @click="mode = 'draft'">
           <b>拉片结果</b>
-          <small>查看镜头内容</small>
+          <small>直接查看场景与镜头内容</small>
         </button>
       </div>
     </div>
@@ -88,7 +88,7 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
         :episodes="episodes"
         :run="currentDraftRun"
       />
-      <BreakdownResultsV1
+      <SceneTimelineResultsV1
         :key="draftRefreshToken"
         :episodes="episodes"
         :selected-episode-id="selectedEpisodeId"
