@@ -1,9 +1,8 @@
-"""Cluster-level bridge policy for read-only G1 anonymous subject replay.
+"""Cluster-level bridge policy shared by accepted G1 replay and production E5 Fusion.
 
-This module is deliberately NOT wired into production E4 Fusion. It only strengthens the read-only
-candidate replay after the existing Window-hint + conservative observation-level unions have formed
-short anonymous fragments. Every merge still passes through E4's UnionFind, so the transitive
-same-Shot hard cannot-link remains authoritative.
+This policy was first proven in read-only G1 replay against the completed real Run, then promoted
+unchanged into E5. Production E4 remains preserved as the rollback baseline. Every merge still
+passes through E4's UnionFind, so the transitive same-Shot hard cannot-link remains authoritative.
 """
 from __future__ import annotations
 
