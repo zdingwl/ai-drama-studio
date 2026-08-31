@@ -17,8 +17,8 @@ Window Context: SEGMENT-INDEX V4 / REAL ACCEPTED / PRODUCTION / FROZEN
 Exact-Shot: COMPACT-RECONSTRUCTION V3 / REAL ACCEPTED / PRODUCTION / FROZEN
 P2-E6 Fusion: E6-V2 / REAL PRODUCTION ACCEPTED / FROZEN
 P2.6 Windows / real-model acceptance: PASS
-G2 Scene Timeline Contract: V1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
-G2 Deterministic Assembler: V1 / USER-LOCAL TEST PASS / FINAL-RUN ACCEPTANCE PENDING
+G2 Scene Timeline Contract: V1 / FINAL PASS / FROZEN FOUNDATION
+G2 Deterministic Assembler: V1 / FINAL PASS / FROZEN FOUNDATION
 G2 Scene-level text LLM: UNBLOCKED / NOT IMPLEMENTED
 Scene Timeline UI: UNBLOCKED / NOT IMPLEMENTED
 P3 current 02 拉片 Shot-card UI: IMPLEMENTED / NOT FINAL ACCEPTED
@@ -27,7 +27,7 @@ P5 Draft ↔ Character: PLANNED / PAUSED
 ```
 
 Do not tune G1 again without a new real regression. Character V10.1 remains protected.
-G2.1/G2.2 user-local regression tests have passed; final accepted real-Run smoke acceptance is still required before final PASS.
+G2.1/G2.2 regression tests and the final accepted real-Run smoke check both passed; the deterministic Scene Timeline foundation is now frozen unless a concrete G2 regression appears.
 
 ## Final real acceptance evidence
 
@@ -128,7 +128,7 @@ Compact appearance normalizer      engine/app/breakdown_g1_compact_appearance_no
 Orchestrator                       engine/app/breakdown_p2_pipeline_v1.py
 ```
 
-G2 foundation modules:
+G2 frozen foundation modules:
 
 ```text
 Scene Timeline Contract v1          engine/app/breakdown_scene_timeline_contract_v1.py
@@ -143,7 +143,7 @@ Continuity semantics:
 
 ```text
 Stage1 Window hint:
-  listed Shot ordinal = candidate location only
+  listed Shot ordinal = candidate presence only
   Exact-Shot appearance must positively support the hint
 
 Stages2..4:
@@ -217,7 +217,7 @@ Accepted user-local evidence includes replay continuity regression PASS, real Wi
 runs, and the final E6-v2 full production Run above. Do not claim assistant-local CUDA/pytest execution.
 Hosted GitHub Actions remain unused; commits use `[skip ci]`.
 
-G2.1/G2.2 user-local test evidence on 2026-08-31:
+G2.1/G2.2 user-local regression evidence on 2026-08-31:
 
 ```text
 python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
@@ -225,22 +225,38 @@ python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
 4 passed
 ```
 
-This establishes the Contract/Assembler regression gate. Final PASS still requires the read-only smoke check against `BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4`.
+Final accepted real-Run deterministic smoke evidence on 2026-08-31:
+
+```text
+Run = BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
+scenes = 2
+shots = 30
+people = [2, 2]
+shot1_people = []
+shot1_props = ['遥控器', '蓝色玫瑰花束', '玻璃花瓶', '书本']
+warnings = []
+```
+
+Therefore:
+
+```text
+G2.1 Scene Timeline Contract = FINAL PASS / FROZEN FOUNDATION
+G2.2 Deterministic Assembler = FINAL PASS / FROZEN FOUNDATION
+```
 
 ## Next required action
 
-G1/P2.6 is no longer the blocker. G2.1/G2.2 regression tests are PASS.
+G1/P2.6 and the deterministic G2 foundation are now accepted and frozen.
 
 Next safe order:
 
 ```text
-1. exercise deterministic assembler against final accepted Run BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
-2. verify 2 Scenes / 30 Shots / Scene-local anonymous people / Shot0001 no people + blue roses + glass vase / ASR verbatim
-3. if the real-Run smoke check passes, mark G2.1/G2.2 final PASS
-4. then begin G2.3 Scene-level pure-text LLM
-5. then G2.4 source/support validator
-6. then G2.5 Scene Timeline API
-7. finally G2.6 ordinary-user Scene Timeline UI
+1. implement G2.3 Scene-level pure-text LLM on top of the frozen deterministic Scene Timeline
+2. implement G2.4 source/support validator and fail-closed fallback
+3. validate LLM output against the accepted real Run without changing G1/G2.1/G2.2 truth
+4. then add G2.5 Scene Timeline API
+5. finally build G2.6 ordinary-user Scene Timeline UI
 ```
 
+The LLM may organize and improve readability only. It must not own timestamps, people identity/count, dialogue text, OCR text, props existence, shot type or composition.
 Do not add an LLM, API or UI workaround to hide a deterministic assembler regression. Fix G2 only; do not retune frozen G1 without a new concrete G1 regression.
