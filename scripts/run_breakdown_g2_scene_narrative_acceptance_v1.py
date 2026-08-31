@@ -35,6 +35,12 @@ from engine.app.breakdown_serializer_v1 import get_breakdown_run
 
 
 DEFAULT_RUN_ID = "BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4"
+_DIALOGUE_TOPIC_TERMS = (
+    "杀死", "杀害", "死亡", "自杀", "绑架", "枪击", "开枪", "报警",
+    "怀孕", "生子", "结婚", "离婚", "亲吻", "接吻", "丈夫", "妻子",
+    "老公", "老婆", "父亲", "母亲", "爸爸", "妈妈", "儿子", "女儿",
+    "情人", "恋人", "男友", "女友",
+)
 
 
 def _shot_snapshot(timeline: dict[str, Any]) -> list[dict[str, Any]]:
@@ -48,6 +54,18 @@ def _shot_snapshot(timeline: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _scene_snapshot(timeline: dict[str, Any]) -> list[dict[str, Any]]:
     return [scene for scene in timeline.get("scenes", []) if isinstance(scene, dict)]
+
+
+def _dialogue_topic_terms(scene: dict[str, Any]) -> list[str]:
+    texts: list[str] = []
+    for shot in scene.get("shots", []):
+        if not isinstance(shot, dict):
+            continue
+        for item in shot.get("dialogue", []):
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                texts.append(item["text"])
+    joined = "\n".join(texts)
+    return [term for term in _DIALOGUE_TOPIC_TERMS if term in joined]
 
 
 def main() -> int:
@@ -127,6 +145,7 @@ def main() -> int:
         ordinal = int(before["ordinal"])
         narrative = overlay_by_ordinal.get(ordinal, {})
         print(f"\n[Scene {ordinal}]")
+        print("dialogue_topic_terms=", _dialogue_topic_terms(before))
         print("deterministic_title=", before.get("title"))
         print("narrative_title=", after.get("title"))
         print("deterministic_summary=", before.get("story_summary"))
