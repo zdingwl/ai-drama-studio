@@ -1,6 +1,6 @@
 # P5 Breakdown ↔ Character Safe Bridge V1
 
-Status: **IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING**
+Status: **IMPLEMENTED ON MAIN / UNIT CONTRACT PASS / REAL ACCEPTANCE BLOCKED BY MISSING FINAL CHARACTER SHOT BINDINGS**
 
 Merged from PR #17. Merge commit: `ab4b11716f5c1c5ead7367119d1b2d787defe8f9`.
 
@@ -107,12 +107,34 @@ Unit / safety contract:
 python -m pytest engine/tests/v2/test_breakdown_character_bridge_v1.py -q
 ```
 
+Observed user-local result on 2026-08-31:
+
+```text
+7 passed
+```
+
+Therefore the deterministic/fail-closed P5 unit contract is PASS.
+
 Real current Episode inspection:
 
 ```powershell
 python scripts/run_breakdown_p5_character_bridge_acceptance_v1.py EPISODE_0ed6aaca0da4471db0364bd29c3d6a61
 ```
 
+Observed twice on the accepted Episode/Breakdown Run:
+
+```text
+status = READY
+scene_count = 2
+person_count = 4
+resolved_count = 0
+unresolved_count = 4
+warning = 当前剧集还没有 Final Character Shot 绑定，人物将保持未解析。
+all four people = UNRESOLVED / NO_MATCHING_FINAL_CHARACTER_SIGNATURE
+```
+
+This is a correct fail-closed P5 result, not a P5 identity guess/regression. Real P5 acceptance is currently blocked upstream because the target Episode has zero usable Final `ShotCharacterBinding` rows. Character V10.1 Shot assignment / Final Gate materialization must be diagnosed and real-video accepted first.
+
 Acceptance is not based on maximizing `resolved_count`. A correct real result may leave ambiguous people unresolved. Review instead that every `RESOLVED` mapping is visibly correct and that always-co-occurring/ambiguous people are not guessed.
 
-Do not mark P5 FINAL PASS until user-local tests and a real Final-Character-bound project result are reviewed.
+Do not mark P5 FINAL PASS until a real Final-Character-bound project result is reviewed. Do not start P6 while this upstream binding blocker remains.
