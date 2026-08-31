@@ -6,7 +6,9 @@ Validator 不判断“文采”，只负责硬边界：
 - 不能泄漏内部 P1/P2 引用；普通文本只能使用当前 Scene 已存在的“人物N”；
 - 地点/时间/室内外/道具/景别等冻结硬锚点一旦出现在文本中，会确定性补齐对应 support；
 - 剧情摘要自动补 Scene 基础摘要与必要的人物存在 support，避免模型漏列 provenance 导致误拒绝；
-- 摘要允许有限自然语言压缩，但整体内容必须主要覆盖冻结事实，且高风险剧情词不能凭空出现；
+- 摘要允许有限自然语言压缩，但整体内容必须主要覆盖冻结事实；
+- ASR 可以支持“谈到/围绕/讨论某剧情话题”，但不能把对白中的姓名/关系直接绑定成匿名人物身份；
+- 高影响剧情词如果只来自 ASR，只允许作为明确的“话题表达”，不能写成已经发生的视觉事件；
 - 场景标题允许少量受控的高层概括词，例如“纠纷/争执/交流”；
 - 新数字必须出现在 support 中，避免凭空增加数量、时间、门牌等事实；
 - 禁止 Final Asset / database id 风格的身份声明；
@@ -36,6 +38,9 @@ class SceneNarrativeValidationError(ValueError):
 _INTERNAL_PERSON_REF_RE = re.compile(r"(?<![A-Za-z0-9_])P[1-9][0-9]*(?![A-Za-z0-9_])")
 _DISPLAY_PERSON_RE = re.compile(r"人物[1-9][0-9]*")
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+_DIALOGUE_IDENTITY_NAME_RE = re.compile(
+    r"(?:改名成|名字是|名叫|叫|我是|他是|她是)\s*([\u4e00-\u9fff]{2,4})"
+)
 _FORBIDDEN_IDENTITY_MARKERS = (
     "character_id",
     "scene_id",
@@ -134,6 +139,24 @@ _SENSITIVE_PLOT_TERMS = (
     "枪",
     "毒药",
 )
+_DIALOGUE_TOPIC_PREFIXES = (
+    "围绕",
+    "关于",
+    "谈到",
+    "提到",
+    "讨论",
+    "谈论",
+    "询问",
+    "质问",
+    "争论",
+    "争执",
+)
+_DIALOGUE_TOPIC_SUFFIXES = (
+    "话题",
+    "问题",
+    "一事",
+    "事情",
+)
 _MIN_SUMMARY_CHAR_COVERAGE = 0.50
 
 
@@ -182,6 +205,38 @@ def _first_person_support_fact(packet: SceneGroundingPacketV1, person_ref: str):
     return None
 
 
+def _dialogue_facts_containing(packet: SceneGroundingPacketV1, term: str):
+    return [fact for fact in packet.facts if fact.kind == "DIALOGUE" and term in fact.text]
+
+
+def _is_dialogue_topic_expression(text: str, term: str) -> bool:
+    """只允许把对白里的高影响词写成“讨论某话题”，不能写成事件已经发生。"""
+
+    for match in re.finditer(re.escape(term), text):
+        start, end = match.span()
+        prefix = text[max(0, start - 10) : start]
+        suffix = text[end : min(len(text), end + 8)]
+        if any(marker in prefix for marker in _DIALOGUE_TOPIC_PREFIXES):
+            return True
+        if any(marker in suffix for marker in _DIALOGUE_TOPIC_SUFFIXES):
+            return True
+    return False
+
+
+def _dialogue_identity_names(packet: SceneGroundingPacketV1) -> set[str]:
+    """从对白中的显式身份/改名句抽取候选姓名；这些词不能进入匿名人物 Narrative。"""
+
+    names: set[str] = set()
+    for fact in packet.facts:
+        if fact.kind != "DIALOGUE":
+            continue
+        for match in _DIALOGUE_IDENTITY_NAME_RE.finditer(fact.text):
+            name = match.group(1).strip()
+            if name:
+                names.add(name)
+    return names
+
+
 def _validate_claim(
     packet: SceneGroundingPacketV1,
     claim: SceneNarrativeClaimV1 | None,
@@ -209,6 +264,10 @@ def _validate_claim(
     lowered = text.casefold()
     if any(marker in lowered for marker in _FORBIDDEN_IDENTITY_MARKERS):
         return None, [_claim_warning(packet.scene_ordinal, field_label, "包含 Final Asset / ID 身份声明")]
+
+    leaked_dialogue_names = sorted(name for name in _dialogue_identity_names(packet) if name in text)
+    if leaked_dialogue_names:
+        return None, [_claim_warning(packet.scene_ordinal, field_label, "包含对白中的未绑定姓名")]
 
     display_to_ref = {item.display_name: item.ref for item in packet.people}
     mentioned_people = set(_DISPLAY_PERSON_RE.findall(text))
@@ -261,15 +320,23 @@ def _validate_claim(
 
     if field_label == "剧情摘要":
         for term in _SENSITIVE_PLOT_TERMS:
-            if term in text and term not in lexical_support_text:
-                return None, [
-                    _claim_warning(
-                        packet.scene_ordinal,
-                        field_label,
-                        f"包含来源未支持的新内容字符/关键剧情词“{term}”",
-                    )
-                ]
+            if term not in text or term in lexical_support_text:
+                continue
+            dialogue_facts = _dialogue_facts_containing(packet, term)
+            if dialogue_facts and _is_dialogue_topic_expression(text, term):
+                for fact in dialogue_facts:
+                    _append_support(support, fact.fact_id)
+                continue
+            return None, [
+                _claim_warning(
+                    packet.scene_ordinal,
+                    field_label,
+                    f"包含来源未支持或被写成既成事件的关键剧情词“{term}”",
+                )
+            ]
 
+        # 高影响词可能确定性补入 ASR support；重新构造 supported_facts，供最终 provenance 使用。
+        supported_facts = [fact_by_id[fact_id] for fact_id in support]
         if claim_chars:
             grounded_chars = claim_chars.intersection(supported_chars)
             coverage = len(grounded_chars) / len(claim_chars)
