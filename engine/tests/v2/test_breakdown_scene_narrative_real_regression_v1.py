@@ -249,3 +249,49 @@ def test_dialogue_claims_need_attribution_and_can_ground_real_scene2_style_summa
     rejected, rejected_warnings = validate_scene_narrative_v1(packet, unframed)
     assert rejected["story_summary"] is None
     assert any("缺少争论/指责/称/表示等对白框架" in item for item in rejected_warnings)
+
+
+def test_sensitive_event_can_be_reported_with_attribution_and_chinese_quantity_must_match() -> None:
+    packet = _packet()
+    packet["facts"].append(
+        {
+            "fact_id": "F0005",
+            "kind": "DIALOGUE",
+            "shot_ordinal": 21,
+            "people": ["P2"],
+            "text": "我们结婚八年了，你从来没帮我说过一句支持的话。",
+        }
+    )
+
+    attributed = {
+        "scene_ordinal": 2,
+        "readable_title": None,
+        "story_summary": {
+            "text": "人物2指责对方，称结婚八年从未帮自己说过一句支持的话。",
+            "support": ["F0004"],
+        },
+    }
+    accepted, warnings = validate_scene_narrative_v1(packet, attributed)
+    assert warnings == []
+    assert accepted["story_summary"] is not None
+    assert "F0005" in accepted["story_summary"]["support"]
+
+    # 去掉归因框架后，结婚不能被升级成两个匿名人物之间的客观既成事实。
+    unframed = deepcopy(attributed)
+    unframed["story_summary"] = {
+        "text": "人物1与人物2结婚八年，从未互相支持。",
+        "support": ["F0004"],
+    }
+    rejected, rejected_warnings = validate_scene_narrative_v1(packet, unframed)
+    assert rejected["story_summary"] is None
+    assert any("结婚" in item and "既成事件" in item for item in rejected_warnings)
+
+    # 数量也必须有真实 ASR 来源：来源是“八年”，模型不能改成“十年”。
+    wrong_quantity = deepcopy(attributed)
+    wrong_quantity["story_summary"] = {
+        "text": "人物2指责对方，称结婚十年从未帮自己说过一句支持的话。",
+        "support": ["F0004"],
+    }
+    rejected_number, number_warnings = validate_scene_narrative_v1(packet, wrong_quantity)
+    assert rejected_number["story_summary"] is None
+    assert any("新数字/数量" in item for item in number_warnings)
