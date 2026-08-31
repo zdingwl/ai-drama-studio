@@ -95,23 +95,39 @@ def test_real_regression_summary_still_rejects_unsupported_major_plot_event() ->
     assert any("杀死" in item and "关键剧情词" in item for item in warnings)
 
 
-def test_dialogue_sensitive_term_is_allowed_only_as_grounded_topic() -> None:
+def test_dialogue_sensitive_terms_are_allowed_only_as_grounded_topics() -> None:
     packet = _packet()
-    packet["facts"].append(
-        {
-            "fact_id": "F0005",
-            "kind": "DIALOGUE",
-            "shot_ordinal": 18,
-            "people": ["P2"],
-            "text": "你到底什么时候跟我结婚？",
-        }
+    packet["facts"].extend(
+        [
+            {
+                "fact_id": "F0005",
+                "kind": "DIALOGUE",
+                "shot_ordinal": 18,
+                "people": ["P2"],
+                "text": "你到底什么时候跟我结婚？",
+            },
+            {
+                "fact_id": "F0006",
+                "kind": "DIALOGUE",
+                "shot_ordinal": 19,
+                "people": ["P2"],
+                "text": "你还算我丈夫吗？",
+            },
+            {
+                "fact_id": "F0007",
+                "kind": "DIALOGUE",
+                "shot_ordinal": 20,
+                "people": ["P2"],
+                "text": "再这样我就报警。",
+            },
+        ]
     )
 
     candidate = {
         "scene_ordinal": 2,
         "readable_title": None,
         "story_summary": {
-            "text": "人物1与人物2围绕结婚问题发生争执。",
+            "text": "人物1与人物2围绕结婚、丈夫和报警问题发生争执。",
             "support": ["F0004"],
         },
     }
@@ -121,6 +137,18 @@ def test_dialogue_sensitive_term_is_allowed_only_as_grounded_topic() -> None:
     assert warnings == []
     assert accepted["story_summary"] is not None
     assert "F0005" in accepted["story_summary"]["support"]
+    assert "F0006" in accepted["story_summary"]["support"]
+    assert "F0007" in accepted["story_summary"]["support"]
+
+    # 即使这些关系词确实来自对白，也不能把它们升级成匿名人物之间的确定身份关系。
+    relation_binding = deepcopy(candidate)
+    relation_binding["story_summary"] = {
+        "text": "人物1是人物2的丈夫，双方围绕结婚问题发生争执。",
+        "support": ["F0004"],
+    }
+    rejected, rejected_warnings = validate_scene_narrative_v1(packet, relation_binding)
+    assert rejected["story_summary"] is None
+    assert any("丈夫" in item and "既成事件" in item for item in rejected_warnings)
 
 
 def test_dialogue_sensitive_term_cannot_be_promoted_to_occurred_event() -> None:
