@@ -247,7 +247,8 @@ def _dialogue_topic_markers(text: str, term: str) -> set[str]:
     """返回当前 claim 中真正包围该 ASR 关键词的话题标记；空集合表示被写成既成事实/人物关系。"""
 
     markers: set[str] = set()
-    allowed_prefixes = _RELATION_TOPIC_PREFIXES if term in _RELATION_IDENTITY_TERMS else _DIALOGUE_TOPIC_PREFIXES
+    is_relation_term = term in _RELATION_IDENTITY_TERMS
+    allowed_prefixes = _RELATION_TOPIC_PREFIXES if is_relation_term else _DIALOGUE_TOPIC_PREFIXES
     for match in re.finditer(re.escape(term), text):
         start, end = match.span()
         prefix = text[max(0, start - 12) : start]
@@ -256,8 +257,13 @@ def _dialogue_topic_markers(text: str, term: str) -> set[str]:
             if marker in prefix:
                 markers.add(marker)
         for marker in _DIALOGUE_TOPIC_SUFFIXES:
-            if marker in suffix:
-                markers.add(marker)
+            marker_pos = suffix.find(marker)
+            if marker_pos < 0:
+                continue
+            # 关系词的后缀必须紧跟该关系词，不能借用后面另一个词的“问题/话题”。
+            if is_relation_term and marker_pos > 2:
+                continue
+            markers.add(marker)
     return markers
 
 
