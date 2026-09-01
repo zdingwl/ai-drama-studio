@@ -2,99 +2,161 @@
 
 > Status: **IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING**  
 > Date: 2026-09-01 +08:00  
-> Scope: final ordinary-user Breakdown identity/asset display composition only.
+> Scope: ordinary-user Breakdown read model + Final Character / Scene / Prop display fill-back only.
 
-## 1. Why P6 exists
+## 1. P6 role
 
-G2 Scene Timeline already owns the readable Scene / Shot / dialogue / OCR / prop / cinematography facts. P5 already owns the only accepted bridge from anonymous Scene-local people to existing Final Characters.
-
-P6 does **not** add another recognition system. It only composes those frozen truths for the ordinary-user reading surface:
+P6 does not add another recognition system. It only composes already-owned truth:
 
 ```text
 Frozen G2 Scene Timeline
         +
-Frozen P5 Breakdown ↔ Character resolution
+Frozen P5 Character resolution
         +
-Current Final Character display asset
+Current Final ShotSceneBinding / ShotPropBinding
+        +
+Current Final Character / Scene / Prop display assets
         ↓
-P6 final Breakdown read model
+P6 final ordinary-user Breakdown read model
 ```
 
-## 2. Authority direction
+Ownership remains unchanged:
 
-The only allowed identity path is:
+```text
+G2 owns Scene/Shot/dialogue/OCR/action/prop-observation/cinematography facts.
+P5 owns the only safe anonymous P* -> Final Character bridge.
+Final ShotSceneBinding owns Shot -> Final Scene truth.
+Final ShotPropBinding owns Shot -> Final Prop truth.
+P6 only reads and displays them.
+```
+
+## 2. Character authority
+
+Only this path may produce a Final Character display:
 
 ```text
 G2 Scene-local P*
-→ same Episode
-→ same current BreakdownRun
-→ same ShotRevision
-→ same Scene ordinal
-→ same P* ref / anonymous display row
+→ same Episode / BreakdownRun / ShotRevision / Scene / P* row
 → P5 status = RESOLVED
-→ P5 Character id/name
 → same current AssetRevision
 → existing Final Character id/name/cover
 → ordinary-user display
 ```
 
-Any mismatch fails closed and keeps the G2 anonymous name (`人物N`).
+`UNRESOLVED` stays `人物N`.
 
-P6 never uses the following as identity authority:
+P6 never uses Breakdown prose, ASR names, OCR, speaker labels, relationships, role hints, appearance summaries, action/emotion/pose, P1/P2 labels themselves, or `subject_A/B` as identity authority.
+
+## 3. Final Scene authority
+
+Final Scene fill-back never uses G2 title/location text similarity.
+
+For one G2 Scene:
 
 ```text
-Breakdown prose
-ASR dialogue text
-OCR text
-speaker labels
-relationship words
-role hints
-appearance summaries
-action / pose / emotion
-P1/P2 labels by themselves
-subject_A/B
+exact current ShotRevision mapping
+→ collect Final ShotSceneBinding for every Shot in that G2 Scene
+→ every Shot must have a binding
+→ every binding must point to the same existing Final Scene
+→ only then expose final_scene
 ```
 
-## 3. Frozen-data rule
+If one Shot is missing a Scene binding or different Shots point to different Final Scenes:
 
-The backend response keeps the complete G2 payload under `timeline` and puts identity in a separate `identity` overlay:
+```text
+final_scene = null
+G2 Scene title / summary / scene_info remain unchanged
+```
+
+This is an intentional conservative rule. P6 never guesses which Final Scene is “closest”.
+
+## 4. Final Prop authority
+
+Final Prop fill-back is Shot-local:
+
+```text
+current Shot
+→ Final ShotPropBinding
+→ existing Final Prop id/name/cover
+→ final_props[]
+```
+
+G2 `props[]` remains a separate visual observation list. P6 never turns a G2 label such as `花瓶` into a specific Final Prop by name/string similarity.
+
+Ordinary UI therefore keeps both concepts separate:
+
+```text
+最终道具 = Final ShotPropBinding assets
+道具观察 = frozen G2 visible prop / interaction facts
+```
+
+## 5. Independent fail-closed domains
+
+Character and Scene/Prop overlays fail closed independently.
+
+```text
+Character bridge invalid
+→ people become anonymous
+→ safe Final Scene/Prop may still display
+
+Scene/Prop asset surface invalid
+→ final_scene/final_props cleared
+→ safe Final Character display remains
+```
+
+The Scene/Prop overlay additionally verifies:
+
+```text
+current AssetRevision
+exact current source ShotRevision
+every Timeline Shot ordinal maps one-to-one to a current Shot
+no duplicate Shot/Scene overlay keys
+Final Scene/Prop IDs exist in the current project
+no duplicate Final Prop in one Shot
+frontend Scene/Shot overlay surface exactly matches frozen Timeline
+```
+
+A corrupt Scene/Prop overlay is reduced to an empty asset overlay plus a user-readable warning; it does not make the whole Breakdown endpoint unavailable.
+
+## 6. Frozen Timeline rule
+
+Backend response keeps the full G2 object untouched under `timeline`:
 
 ```json
 {
   "schema_version": "breakdown-read-model-v1",
   "timeline": { "schema_version": "scene-timeline-v1" },
-  "identity": {
+  "identity": { "scenes": [] },
+  "assets": {
     "asset_revision_id": "...",
-    "resolved_count": 1,
-    "unresolved_count": 3,
-    "warnings": [],
-    "scenes": []
+    "scenes": [],
+    "shots": []
   }
 }
 ```
 
-P6 is forbidden from rewriting G2 timestamps, Scene boundaries, Shot boundaries, visual descriptions, performance facts, ASR dialogue, OCR text, props, cinematography, or P* Shot membership.
+P6 must never rewrite:
 
-The service contains an explicit equality guard that rejects any successful composition which changes the normalized frozen Timeline object.
+```text
+timestamps
+Scene/Shot boundaries
+G2 Scene title / scene_info / story_summary
+visual_description
+action/performance facts
+ASR dialogue
+OCR text
+G2 props / interaction
+cinematography
+P* Shot membership
+```
 
-## 4. Fail-closed checks
+The real acceptance runner independently rebuilds frozen G2 and requires:
 
-Before one Final Character name is rendered, P6 verifies:
+```text
+timeline_preserved = true
+```
 
-1. Episode id matches.
-2. BreakdownRun id matches the G2 source run.
-3. ShotRevision id matches the G2 source revision.
-4. P5 `asset_revision_id` is still the current project AssetRevision.
-5. P5 aggregate Scene/person/resolved/unresolved counts are internally consistent.
-6. Scene ordinal sets match exactly and contain no duplicates.
-7. Every Scene P* ref set matches exactly and contains no duplicates.
-8. P5 anonymous `local_display_name` matches the G2 anonymous display row.
-9. Every P5 `RESOLVED` Character still exists in the current project.
-10. Current Character id/name matches the P5 resolved Character id/name.
-
-If any check fails, the **whole identity overlay** for the Episode is rendered anonymously. P6 never applies a questionable partial mapping.
-
-## 5. Current implementation
+## 7. Implementation
 
 Backend:
 
@@ -102,16 +164,15 @@ Backend:
 engine/app/breakdown_read_model_contract_v1.py
 engine/app/breakdown_read_model_v1.py
 engine/app/breakdown_read_model_routes_v1.py
+engine/app/breakdown_final_asset_overlay_v1.py
 engine/app/main.py
 ```
 
-Endpoint:
+Read endpoint:
 
 ```http
 GET /api/episodes/{episode_id}/breakdown-read-model
 ```
-
-The endpoint is read-only. It does not start a model, create a Character, update a binding, or write an AssetRevision.
 
 Frontend:
 
@@ -119,154 +180,169 @@ Frontend:
 frontend/src/types/breakdown-read-model.ts
 frontend/src/types/scene-timeline.ts
 frontend/src/utils/breakdownReadModelUi.ts
-frontend/src/utils/breakdownReadModelUi.test.ts
 frontend/src/utils/sceneTimelineUi.ts
-frontend/src/utils/sceneTimelineUi.test.ts
 frontend/src/api/scene-timeline.ts
 frontend/src/components/SceneTimelineResultsV1.vue
 ```
 
-Ordinary Episode reading uses the P6 endpoint. Historical/debug Run reading still uses the frozen G2.5 Run endpoint, so current Final Character assets cannot be accidentally projected onto a historical run.
+Ordinary Episode reading uses P6. Historical/debug Run reading remains frozen G2.5, so current Final assets are never projected onto historical Breakdown runs.
 
-The frontend applies a second fail-closed validation before projecting display names. Existing G2.6 rendering then uses the Final Character name wherever it resolves a Scene-local P* for:
+## 8. Ordinary-user rendering
 
-```text
-本场人物
-Shot 人物
-performance 人物标签
-dialogue speaker label when G2 already has a speaker ref
-```
-
-Final Character `cover_url` is now rendered directly in the ordinary-user reading page for:
+### Character
 
 ```text
-本场人物
-右侧镜头详情 -> 人物
+RESOLVED -> Final Character cover + name
+UNRESOLVED -> text avatar + 人物N
+missing/broken cover -> text avatar fallback
 ```
 
-If a person is anonymous, has no Final Character cover, or the cover image fails to load, the renderer falls back to a compact text avatar derived from the visible display name. It does not expose identity status, Character IDs, P* refs or technical resolution labels to the ordinary user.
-
-The renderer reads only the P6 display-only `final_character` object. It does not mutate the frozen G2 Timeline or P5 resolution.
-
-## 6. Ordinary-user behavior
-
-Resolved:
+Rendered in:
 
 ```text
-G2: 人物2
-P5: RESOLVED -> Character CHAR1 / 人物001
-P6 display: [Final Character cover] 人物001
+Scene hero -> 本场人物
+Shot inspector -> 人物
 ```
 
-Unresolved:
+### Scene
+
+When the exact unanimous ShotSceneBinding rule succeeds:
 
 ```text
-G2: 人物1
-P5: UNRESOLVED
-P6 display: [text avatar] 人物1
+Scene hero -> 独立“最终场景”卡片：cover + Final Scene name
 ```
 
-Missing/broken cover:
+The G2 Scene title remains visible as the actual Breakdown reading title and is not overwritten.
+
+### Prop
+
+When Final ShotPropBinding exists:
 
 ```text
-Final Character name is safely resolved but cover_url is empty or image load fails
-→ keep Final Character display name
-→ fall back to text avatar
+Shot inspector -> “最终道具”：Final Prop cover/name cards
+Shot inspector -> “道具观察”：original G2 labels/interactions
 ```
 
-Stale/mismatched:
+No technical IDs, P* refs, resolution basis, confidence or evidence internals are exposed in ordinary UI.
 
-```text
-P5 or AssetRevision no longer matches current G2/current assets
-→ all people remain anonymous
-→ user-safe warning only
-```
+## 9. Tests added
 
-## 7. Tests and real acceptance runner
-
-Backend deterministic coverage:
+Backend:
 
 ```text
 engine/tests/v2/test_breakdown_read_model_v1.py
 engine/tests/v2/test_breakdown_read_model_routes_v1.py
+engine/tests/v2/test_breakdown_final_asset_overlay_v1.py
+engine/tests/v2/test_breakdown_read_model_asset_independence_v1.py
 ```
 
-The tests cover:
+Coverage includes:
 
 ```text
-RESOLVED-only Final Character display
-UNRESOLVED remains anonymous
-verbatim G2 Timeline preservation
-BreakdownRun mismatch
-ShotRevision mismatch
-AssetRevision mismatch
+RESOLVED-only Character display
+UNRESOLVED stays anonymous
+verbatim Timeline preservation
+Run / ShotRevision / AssetRevision mismatch
 Scene/P* mismatch
-Character snapshot missing/name mismatch
+Character snapshot mismatch
 invalid aggregate counts
-duplicate Scene/P* refs
-safe HTTP 404/409 behavior
-GET-only route registration
+exact Final Scene unanimous binding
+Scene binding conflict -> only that Scene unresolved
+Shot-local Final Prop projection
+no G2 label fallback to Final Prop
+invalid asset surface -> only asset overlay cleared
+invalid Character bridge -> safe Scene/Prop retained
+invalid Scene/Prop overlay -> safe Character retained
+safe HTTP 404/409 and GET-only route
 ```
 
-Frontend deterministic coverage:
+Frontend:
 
 ```text
 frontend/src/utils/breakdownReadModelUi.test.ts
+frontend/src/utils/breakdownReadModelAssetsUi.test.ts
 frontend/src/utils/sceneTimelineUi.test.ts
 ```
 
-It covers safe name/asset projection, anonymous fallback, mismatch handling, input immutability, preservation of dialogue/OCR/Shot facts, existing `subject_A/B` display sanitization, person ref lookup and avatar fallback text.
+Coverage includes Character projection, independent Scene/Prop projection, malformed overlay fallback, input immutability, verbatim dialogue/OCR/Shot fact preservation, G2 prop observation preservation, `subject_A/B` display sanitization, person lookup and avatar fallback.
 
-Real Episode runner:
+## 10. Real Episode runner
 
 ```text
 scripts/run_breakdown_p6_read_model_acceptance_v1.py
 ```
 
-The runner prints the real Episode/Run/ShotRevision/AssetRevision, resolved vs anonymous people, Final Character id/name/cover URL and warnings. It also independently rebuilds the frozen G2 Scene Timeline and requires exact equality with P6 `timeline`; otherwise it exits with `FAILED_TIMELINE_MUTATION_GUARD`.
+It prints:
 
-## 8. Acceptance status
+```text
+Episode / BreakdownRun / ShotRevision
+identity AssetRevision / final asset AssetRevision
+resolved vs anonymous people
+Final Character id/name/cover
+G2 Scene title + Final Scene id/name/cover
+G2 prop observations + Final Prop bindings per Shot
+identity / asset warnings
+timeline_preserved
+```
 
-Implemented code and Final Character cover rendering are on `main`.
+Any Timeline mutation exits with `FAILED_TIMELINE_MUTATION_GUARD`.
 
-Isolated strict TypeScript checks of the P6 frontend projection core and the new person avatar helpers passed in the assistant execution environment.
+## 11. Acceptance status
 
-This is **not** full project acceptance. The execution environment cannot resolve `github.com`, so the current repository cannot be cloned there for full pytest/Vitest/Vue build execution. The Vue renderer therefore still requires user-local typecheck/build plus visual review.
+Implementation is on `main`.
 
-Required user-local acceptance remains:
+Assistant-environment evidence only:
+
+```text
+P6 pure TypeScript display types/projection logic -> isolated `tsc --strict` PASS
+person avatar helper -> isolated `tsc --strict` PASS
+```
+
+This is **not** full project acceptance. The assistant execution environment has no installed `vue`, `@vue/compiler-sfc` or `vue-tsc`, and cannot clone/install the project through GitHub DNS, so full pytest/Vitest/Vue typecheck/build are not claimed.
+
+Required user-local acceptance:
 
 ```bash
 python -m pytest \
   engine/tests/v2/test_breakdown_read_model_v1.py \
-  engine/tests/v2/test_breakdown_read_model_routes_v1.py -q
+  engine/tests/v2/test_breakdown_read_model_routes_v1.py \
+  engine/tests/v2/test_breakdown_final_asset_overlay_v1.py \
+  engine/tests/v2/test_breakdown_read_model_asset_independence_v1.py -q
 
 python scripts/run_breakdown_p6_read_model_acceptance_v1.py <EPISODE_ID>
 
 cd frontend
 npm install
-npm test -- src/utils/breakdownReadModelUi.test.ts src/utils/sceneTimelineUi.test.ts
+npm test -- \
+  src/utils/breakdownReadModelUi.test.ts \
+  src/utils/breakdownReadModelAssetsUi.test.ts \
+  src/utils/sceneTimelineUi.test.ts
 npm run typecheck
 npm run build
 ```
 
-Expected real runner safety signal:
+Expected runner safety signal:
 
 ```text
 status = READY
 timeline_preserved = true
-RESOLVED people may show existing Final Character name/assets
-all other people remain ANONYMOUS
+RESOLVED Character may show Final Character asset
+UNRESOLVED Character remains anonymous
+Final Scene only appears under exact unanimous ShotSceneBinding
+Final Props only appear from ShotPropBinding
 ```
 
-Ordinary-user visual review should additionally confirm:
+Visual review must confirm:
 
 ```text
-resolved person -> cover + Final Character name
-anonymous person -> text avatar + 人物N
-broken/missing cover -> text avatar, no broken-image UI
-Scene / Shot / dialogue / OCR contents unchanged
+Final Character -> cover/name; broken cover -> fallback
+Final Scene -> separate card, G2 Scene title remains unchanged
+Final Props -> separate from G2 “道具观察”
+no broken-image UI
+Scene / Shot / dialogue / OCR / G2 prop facts unchanged
+console = 0 errors
 ```
 
-`npm install` is also expected to synchronize the existing TypeScript `6.0.3` `package.json` change into `package-lock.json`.
+`npm install` is also expected to synchronize the existing TypeScript `6.0.3` `package.json` change into `package-lock.json` if that lockfile has not yet been regenerated locally.
 
-Do not mark P6 FINAL PASS until the user-local commands and ordinary-user visual review are supplied.
+Do not mark P6 FINAL PASS until these user-local commands and visual review are supplied.
