@@ -5,7 +5,10 @@ import type {
   SceneLocalizationMapping,
   ScenePolicy,
   TargetCharacter,
+  TargetDialogue,
+  TargetDialogueBundle,
   TargetLocalizationBundle,
+  TtsRuntimeStatus,
 } from '../types/remake'
 import type { BackgroundTask } from '../types/studio'
 
@@ -65,4 +68,19 @@ export const remakeApi = {
     body: JSON.stringify(payload),
   }),
   deleteSceneLocalization: (id: string) => request<void>(`/api/scene-localization-mappings/${id}`, { method: 'DELETE' }),
+  getTargetDialogue: (projectId: string) => request<TargetDialogueBundle>(`/api/projects/${projectId}/target-dialogue`),
+  generateTargetDialogue: (projectId: string, synthesizeAudio = true) => request<TargetDialogueBundle>(`/api/projects/${projectId}/target-dialogue/generate`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify({ synthesize_audio: synthesizeAudio }),
+  }),
+  generateTargetDialogueText: (projectId: string) => request<TargetDialogueBundle>(`/api/projects/${projectId}/target-dialogue/generate-text`, { method: 'POST' }),
+  materializeTargetDialogueAudio: (projectId: string) => request<TargetDialogueBundle>(`/api/projects/${projectId}/target-dialogue/materialize-audio`, { method: 'POST' }),
+  updateTargetDialogue: (id: string, payload: { translated_text?: string | null; localized_text?: string | null; final_text: string }) => request<TargetDialogue>(`/api/target-dialogues/${id}`, {
+    method: 'PATCH',
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  }),
+  targetDialogueAudioUrl: (id: string) => `/api/target-dialogues/${id}/audio`,
+  getTtsRuntimeStatus: () => request<TtsRuntimeStatus>('/api/tts/runtime-status'),
 }
