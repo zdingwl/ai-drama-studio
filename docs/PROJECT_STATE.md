@@ -29,6 +29,7 @@ P3 current 02 拉片 Shot-card UI       = IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character                  = V1 / FINAL PASS / FROZEN
 P6 Final Breakdown read model         = V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+P6 Character cover renderer           = IMPLEMENTED ON MAIN / USER-LOCAL VISUAL ACCEPTANCE PENDING
 same-Shot hard safety                 = PASS / conflicts=0
 ```
 
@@ -211,6 +212,8 @@ engine/app/breakdown_read_model_v1.py
 engine/app/breakdown_read_model_routes_v1.py
 GET /api/episodes/{episode_id}/breakdown-read-model
 frontend/src/utils/breakdownReadModelUi.ts
+frontend/src/utils/sceneTimelineUi.ts
+frontend/src/components/SceneTimelineResultsV1.vue
 frontend ordinary episode reading -> P6 endpoint
 ```
 
@@ -224,7 +227,9 @@ Breakdown prose/ASR/OCR -> never becomes identity authority
 G2 Timeline object -> never mutated by backend P6
 ```
 
-Tests have been added for backend composition/route and frontend projection, but they are not yet user-local accepted. An isolated `tsc --strict` compile of the new frontend P6 type/projection core passed in the assistant execution environment; full repository clone/test was not possible there because `github.com` DNS was unavailable.
+Ordinary-user rendering now shows Final Character cover + name in the Scene person strip and selected Shot person block. Anonymous people or missing/broken covers use a text-avatar fallback; the UI does not expose P* refs, Character IDs or technical identity status.
+
+Tests have been added for backend composition/route and frontend projection/avatar helpers, but they are not yet user-local accepted. Isolated `tsc --strict` checks of the new frontend P6 projection core and avatar helper logic passed in the assistant execution environment; full repository clone/test was not possible there because `github.com` DNS was unavailable.
 
 Detailed boundary and acceptance commands: `docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md`.
 
@@ -232,6 +237,7 @@ Status:
 
 ```text
 P6 = V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+P6 cover renderer = IMPLEMENTED ON MAIN / USER-LOCAL VISUAL ACCEPTANCE PENDING
 ```
 
 Do not mark P6 FINAL PASS until Python tests, frontend Vitest/typecheck/build, lockfile synchronization, and ordinary-user visual review are supplied.
@@ -242,8 +248,8 @@ Do not mark P6 FINAL PASS until Python tests, frontend Vitest/typecheck/build, l
 1. keep G1 + G2.1-G2.5 + P5 frozen
 2. finish G2.6 ordinary-user UI local acceptance when needed
 3. P4 Draft-guided Scene/Prop still needs local acceptance
-4. finish P6 user-local acceptance and final visual asset rendering polish
-5. P6 must continue to compose frozen G2 + frozen P5 without mutating either
+4. finish P6 user-local tests/build + real Episode runner + ordinary-user visual review
+5. after P6 acceptance, continue final Scene/Prop asset fill-back without weakening Draft != Final Asset boundaries
 ```
 
 No assistant-local full pytest/CUDA PASS is claimed. Hosted GitHub Actions remain intentionally unused.
