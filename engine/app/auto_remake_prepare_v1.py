@@ -18,6 +18,7 @@ from engine.app.breakdown_serializer_v1 import get_current_breakdown
 from engine.app.character_review_issue_sync_v1 import sync_character_review_issues
 from engine.app.media_v2 import detect_episode_shots, preprocess_episode
 from engine.app.review_issue_sync_v1 import sync_asset_review_issues, sync_shot_review_issues
+from engine.app.source_drama_review_issue_sync_v1 import sync_source_drama_speaker_issues
 from engine.app.source_drama_snapshot_v1 import load_project_source_drama_snapshot_v1
 from engine.app.studio_v2 import get_episode, list_episode_records
 from engine.app.task_progress_v2 import fail_task, finish_task, start_task, update_task
@@ -193,7 +194,6 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
         shot_issue_count = sync_shot_review_issues(project_id)
         character_issue_count = sync_character_review_issues(project_id, run_id)
         asset_issue_count = sync_asset_review_issues(project_id, workspace)
-        review_issue_count = shot_issue_count + character_issue_count + asset_issue_count
 
         update_task(
             task_id,
@@ -203,6 +203,13 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             message="正在把 Scene / Shot / 人物 / 场景 / 道具 / 对白 / Reference Video 收敛为 SourceDramaSnapshot",
         )
         source_snapshot = load_project_source_drama_snapshot_v1(project_id)
+        speaker_issue_count = sync_source_drama_speaker_issues(project_id, source_snapshot)
+        review_issue_count = (
+            shot_issue_count
+            + character_issue_count
+            + asset_issue_count
+            + speaker_issue_count
+        )
 
         warnings = []
         unresolved = int((analysis.get("counts") or {}).get("unresolved_character_candidates") or character_issue_count)
@@ -212,6 +219,8 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             warnings.append("场景 / 道具语义验证存在降级")
         if source_snapshot.get("status") == "READY_WITH_WARNINGS":
             warnings.append("SourceDramaSnapshot 已形成，但仍包含需要下游尊重的源片警告")
+        if speaker_issue_count:
+            warnings.append(f"{speaker_issue_count} 条对白需要确认说话人")
 
         result = {
             "project_id": project_id,
@@ -221,6 +230,7 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             "shot_review_issue_count": shot_issue_count,
             "character_review_issue_count": character_issue_count,
             "asset_review_issue_count": asset_issue_count,
+            "speaker_review_issue_count": speaker_issue_count,
             "unresolved_character_evidence": unresolved,
             "semantic": semantic_result,
             "source_snapshot": {
@@ -239,7 +249,7 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             message=(
                 f"原短剧理解完成并形成 SourceDramaSnapshot：{review_issue_count} 项需要人工确认"
                 if review_issue_count
-                else "原短剧理解完成并形成 SourceDramaSnapshot：当前没有镜头/人物/资产问题需要人工确认"
+                else "原短剧理解完成并形成 SourceDramaSnapshot：当前没有镜头/人物/资产/说话人问题需要人工确认"
             ),
             status="READY_WITH_WARNINGS" if warnings or review_issue_count else "READY",
         )
