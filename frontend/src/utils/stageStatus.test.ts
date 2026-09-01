@@ -175,7 +175,33 @@ describe('deriveStageStates', () => {
     expect(states[3]).toBe('review')
   })
 
-  it('keeps assets in review while any evidence remains low-confidence', () => {
+  it('keeps actionable low-confidence evidence in review until the suggested final asset is confirmed', () => {
+    const states = deriveStageStates({
+      episodes: [{ id: 'E1', shot_count: 12, preprocess_status: 'READY' }],
+      tasks: [],
+      analysis: { status: 'READY', counts: { unresolved_character_candidates: 0 } },
+      breakdownRuns: [],
+      assetWorkspace: {
+        status: 'READY',
+        stale: false,
+        revision: { id: 'REV1' },
+        bindings_by_shot: {
+          S1: { character_ids: [], scene_id: null, prop_ids: [] },
+        },
+        evidence_by_shot: {
+          S1: {
+            characters: [{ confidence: 0.62, final_asset_id: 'CHAR_A' }],
+            scene: null,
+            props: [],
+          },
+        },
+      },
+    })
+
+    expect(states[3]).toBe('review')
+  })
+
+  it('clears low-confidence review after a human confirms the same final asset', () => {
     const states = deriveStageStates({
       episodes: [{ id: 'E1', shot_count: 12, preprocess_status: 'READY' }],
       tasks: [],
@@ -198,7 +224,7 @@ describe('deriveStageStates', () => {
       },
     })
 
-    expect(states[3]).toBe('review')
+    expect(states[3]).toBe('completed')
   })
 
   it('marks assets complete only with a READY non-stale final revision, no unresolved evidence, and no inbox review work', () => {
