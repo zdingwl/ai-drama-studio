@@ -1,21 +1,30 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { remakeApi } from '../api/remake'
-import type { SceneLocalizationMapping, TargetCharacter, TargetLocalizationBundle } from '../types/remake'
+import type {
+  SceneLocalizationMapping,
+  TargetCharacter,
+  TargetDialogue,
+  TargetDialogueBundle,
+  TargetLocalizationBundle,
+} from '../types/remake'
 
 const props = defineProps<{ projectId: string }>()
 const emit = defineEmits<{ changed: [] }>()
 
 const bundle = ref<TargetLocalizationBundle | null>(null)
+const dialogueBundle = ref<TargetDialogueBundle | null>(null)
 const loading = ref(false)
 const error = ref('')
 const savingId = ref('')
 const characterDrafts = reactive<Record<string, { target_name: string; appearance_profile: string; generation_prompt: string }>>({})
 const sceneDrafts = reactive<Record<string, { decision: 'KEEP' | 'LOCALIZE'; target_label: string; target_description: string; reason: string }>>({})
+const dialogueDrafts = reactive<Record<string, { translated_text: string; localized_text: string; final_text: string }>>({})
 
 const reviewCharacters = computed(() => bundle.value?.target_characters.filter((item) => item.status === 'REVIEW') ?? [])
 const reviewScenes = computed(() => bundle.value?.scene_mappings.filter((item) => item.status === 'REVIEW') ?? [])
-const hasReview = computed(() => reviewCharacters.value.length + reviewScenes.value.length > 0)
+const reviewDialogues = computed(() => dialogueBundle.value?.dialogues.filter((item) => item.status === 'REVIEW' && item.target_character_id) ?? [])
+const hasReview = computed(() => reviewCharacters.value.length + reviewScenes.value.length + reviewDialogues.value.length > 0)
 
 function syncDrafts(): void {
   for (const item of bundle.value?.target_characters ?? []) {
@@ -33,6 +42,13 @@ function syncDrafts(): void {
       reason: item.reason ?? '',
     }
   }
+  for (const item of dialogueBundle.value?.dialogues ?? []) {
+    dialogueDrafts[item.id] = {
+      translated_text: item.translated_text ?? '',
+      localized_text: item.localized_text ?? '',
+      final_text: item.final_text ?? '',
+    }
+  }
 }
 
 async function load(): Promise<void> {
@@ -40,10 +56,16 @@ async function load(): Promise<void> {
   loading.value = true
   try {
     bundle.value = await remakeApi.getTargetLocalization(props.projectId)
+    try {
+      dialogueBundle.value = await remakeApi.getTargetDialogue(props.projectId)
+    } catch {
+      // TargetDialogue may legitimately not exist yet while R4 issues are still being fixed.
+      dialogueBundle.value = null
+    }
     syncDrafts()
     error.value = ''
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '目标人物/场景方案读取失败'
+    error.value = err instanceof Error ? err.message : '目标人物/场景/对白读取失败'
   } finally {
     loading.value = false
   }
@@ -53,13 +75,23 @@ async function regenerate(): Promise<void> {
   loading.value = true
   try {
     bundle.value = await remakeApi.generateTargetLocalization(props.projectId)
+    dialogueBundle.value = await remakeApi.generateTargetDialogue(props.projectId, true)
     syncDrafts()
     error.value = ''
     emit('changed')
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '自动生成目标人物/场景方案失败'
+    error.value = err instanceof Error ? err.message : '自动重新生成出海方案失败'
   } finally {
     loading.value = false
+  }
+}
+
+async function refreshDialogueDownstream(): Promise<void> {
+  try {
+    dialogueBundle.value = await remakeApi.generateTargetDialogue(props.projectId, true)
+  } catch {
+    // Remaining upstream review items can keep part of TargetDialogue unavailable; the
+    // authoritative upstream edit is still saved and the next automatic run will continue.
   }
 }
 
@@ -72,6 +104,7 @@ async function saveCharacter(item: TargetCharacter): Promise<void> {
   savingId.value = item.id
   try {
     await remakeApi.updateTargetCharacter(item.id, draft)
+    await refreshDialogueDownstream()
     await load()
     emit('changed')
   } catch (err) {
@@ -129,6 +162,38 @@ async function removeScene(item: SceneLocalizationMapping): Promise<void> {
   }
 }
 
+async function saveDialogue(item: TargetDialogue): Promise<void> {
+  const draft = dialogueDrafts[item.id]
+  if (!draft?.final_text.trim()) {
+    error.value = '最终目标对白不能为空'
+    return
+  }
+  savingId.value = item.id
+  try {
+    await remakeApi.updateTargetDialogue(item.id, {
+      translated_text: draft.translated_text.trim() || null,
+      localized_text: draft.localized_text.trim() || null,
+      final_text: draft.final_text.trim(),
+    })
+    try {
+      dialogueBundle.value = await remakeApi.materializeTargetDialogueAudio(props.projectId)
+    } catch {
+      // TTS runtime unavailable is infrastructure state, not another human-review task.
+    }
+    await load()
+    emit('changed')
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '目标对白保存失败'
+  } finally {
+    savingId.value = ''
+  }
+}
+
+function sourceDuration(item: TargetDialogue): string {
+  const seconds = Math.max(0, item.source_end_us - item.source_start_us) / 1_000_000
+  return `${seconds.toFixed(2)}s`
+}
+
 watch(() => props.projectId, () => void load())
 onMounted(() => void load())
 </script>
@@ -137,14 +202,14 @@ onMounted(() => void load())
   <section v-if="loading || hasReview || error" class="target-review">
     <header>
       <div>
-        <small>出海人物 / 场景</small>
+        <small>出海人物 / 场景 / 对白</small>
         <strong>只显示自动方案无法安全确定的内容</strong>
       </div>
       <button :disabled="loading" @click="regenerate">重新自动判断</button>
     </header>
 
     <p v-if="error" class="error">{{ error }}</p>
-    <p v-if="loading && !bundle" class="empty">正在读取目标人物/场景方案…</p>
+    <p v-if="loading && !bundle" class="empty">正在读取出海方案…</p>
 
     <div v-if="reviewCharacters.length" class="group">
       <h3>目标人物 · {{ reviewCharacters.length }}</h3>
@@ -205,6 +270,32 @@ onMounted(() => void load())
         </div>
       </article>
     </div>
+
+    <div v-if="reviewDialogues.length" class="group">
+      <h3>目标对白 · {{ reviewDialogues.length }}</h3>
+      <article v-for="item in reviewDialogues" :key="item.id" class="card dialogue-card">
+        <div class="source">
+          <small>原对白 · 原说话区间 {{ sourceDuration(item) }}</small>
+          <strong>{{ item.source_text }}</strong>
+          <span>{{ item.target_language }} · {{ item.target_region }} · 当前只确认文本，时长优化由下一阶段自动处理</span>
+        </div>
+        <label>
+          <span>忠实翻译</span>
+          <textarea v-model="dialogueDrafts[item.id].translated_text" rows="2" placeholder="保留原剧情事实和信息量" />
+        </label>
+        <label>
+          <span>当地自然表达</span>
+          <textarea v-model="dialogueDrafts[item.id].localized_text" rows="2" placeholder="符合目标地区真实说话方式" />
+        </label>
+        <label>
+          <span>最终成片对白</span>
+          <textarea v-model="dialogueDrafts[item.id].final_text" rows="3" placeholder="这句将进入 TTS 和后续口型/时长规划" />
+        </label>
+        <div class="actions">
+          <button class="primary" :disabled="savingId === item.id" @click="saveDialogue(item)">确认对白</button>
+        </div>
+      </article>
+    </div>
   </section>
 </template>
 
@@ -218,6 +309,7 @@ onMounted(() => void load())
 .group { display: grid; gap: 8px; }
 .group h3 { margin: 2px 0; color: #506177; font-size: 11px; }
 .card { display: grid; gap: 9px; padding: 12px; border: 1px solid #e4e8ee; border-radius: 10px; background: #fbfcfe; }
+.dialogue-card { border-color: #e7dcc4; background: #fffdf8; }
 .source { display: grid; gap: 2px; }
 .source span { color: #8b96a5; font-size: 9px; }
 label { display: grid; gap: 4px; }
