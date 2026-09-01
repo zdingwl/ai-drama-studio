@@ -1,8 +1,8 @@
-"""R7.2 local MiniMax H3 runtime client.
+"""Local MiniMax H3 SGLang runtime client.
 
-The application does not import H3 model weights into the FastAPI process. Official H3
-SGLang services stay isolated on local endpoints (FL2VA / Ref2VA), while this adapter owns
-health checks, request validation, submission, polling and atomic output download.
+The FastAPI process never imports H3 model weights. FL2VA and Ref2VA stay isolated in
+local SGLang services while this adapter owns health checks, validated async submission,
+status polling and atomic output download.
 """
 from __future__ import annotations
 
@@ -40,8 +40,12 @@ class H3RuntimeManager:
                 base_url=os.getenv("AI_DRAMA_H3_REF2VA_URL", "http://127.0.0.1:30011").rstrip("/"),
             ),
         }
+        self._model_name = os.getenv("AI_DRAMA_H3_MODEL", "MiniMaxAI/MiniMax-H3").strip() or "MiniMaxAI/MiniMax-H3"
         self._request_timeout = max(5.0, float(os.getenv("AI_DRAMA_H3_REQUEST_TIMEOUT", "30")))
         self._download_timeout = max(60.0, float(os.getenv("AI_DRAMA_H3_DOWNLOAD_TIMEOUT", "900")))
+        self._num_inference_steps = max(1, int(os.getenv("AI_DRAMA_H3_NUM_INFERENCE_STEPS", "50")))
+        self._flow_shift = float(os.getenv("AI_DRAMA_H3_FLOW_SHIFT", "12.0"))
+        self._audio_flow_shift = float(os.getenv("AI_DRAMA_H3_AUDIO_FLOW_SHIFT", "3.0"))
 
     def config(self, mode: H3Mode) -> H3EndpointConfig:
         try:
@@ -81,7 +85,8 @@ class H3RuntimeManager:
         fl2va = self._health_one("FL2VA")
         ref2va = self._health_one("REF2VA")
         return {
-            "runtime_profile": "MINIMAX_H3_SGLANG_LOCAL_V1",
+            "runtime_profile": "MINIMAX_H3_SGLANG_LOCAL_V2",
+            "model": self._model_name,
             "ready": bool(fl2va["ready"] and ref2va["ready"]),
             "fl2va": fl2va,
             "ref2va": ref2va,
@@ -104,9 +109,55 @@ class H3RuntimeManager:
                 raise ValueError("FL2VA 只接受 0-2 张 keyframe image")
             if image_count > 2:
                 raise ValueError("FL2VA 最多接受两张 keyframe image")
+        frame_indices: list[int] = []
         for item in conditions:
             if not str(item.get("uri") or "").strip():
                 raise ValueError("H3 condition.uri 不能为空")
+            item_type = str(item.get("type") or "")
+            frame_index = item.get("frame_index")
+            if frame_index is not None:
+                if item_type != "image" or int(frame_index) not in {-1, 0}:
+                    raise ValueError("H3 frame_index 只允许 image 的 0/-1")
+                frame_indices.append(int(frame_index))
+            start_time = item.get("start_time_seconds")
+            if start_time is not None:
+                if item_type not in {"video", "audio"} or float(start_time) < 0:
+                    raise ValueError("H3 start_time_seconds 只允许非负 video/audio seek")
+        if mode == "FL2VA" and len(frame_indices) != len(set(frame_indices)):
+            raise ValueError("FL2VA first/last frame_index 不能重复")
+
+    def _request_body(
+        self,
+        *,
+        mode: H3Mode,
+        prompt: str,
+        conditions: list[Mapping[str, Any]],
+        duration_seconds: int,
+        short_edge: int,
+        aspect_ratio: str,
+        seed: int,
+    ) -> dict[str, Any]:
+        normalized_conditions = [dict(item) for item in conditions]
+        self._validate_conditions(mode, normalized_conditions)
+        image_count = sum(str(item.get("type") or "") == "image" for item in normalized_conditions)
+        task = "ref2va" if mode == "REF2VA" else "fl2va" if image_count else "t2va"
+        return {
+            "model": self._model_name,
+            "prompt": prompt,
+            "seconds": float(duration_seconds),
+            "task": task,
+            "conditions": normalized_conditions,
+            "target": {
+                "short_edge": int(short_edge),
+                "aspect_ratio": aspect_ratio or "auto",
+                "duration_seconds": float(duration_seconds),
+            },
+            "num_outputs_per_prompt": 1,
+            "num_inference_steps": self._num_inference_steps,
+            "flow_shift": self._flow_shift,
+            "audio_flow_shift": self._audio_flow_shift,
+            "seed": int(seed),
+        }
 
     def submit_video(
         self,
@@ -124,22 +175,18 @@ class H3RuntimeManager:
             raise ValueError("H3 prompt 不能为空")
         if not 4 <= duration_seconds <= 15:
             raise ValueError("H3 duration_seconds 必须为 4-15 秒")
-        if short_edge < 256:
-            raise ValueError("H3 short_edge 过小")
-        normalized_conditions = [dict(item) for item in conditions]
-        self._validate_conditions(mode, normalized_conditions)
+        if short_edge != 768:
+            raise ValueError("MiniMax H3 当前正式 768p runtime 要求 short_edge=768")
+        body = self._request_body(
+            mode=mode,
+            prompt=clean_prompt,
+            conditions=conditions,
+            duration_seconds=duration_seconds,
+            short_edge=short_edge,
+            aspect_ratio=aspect_ratio,
+            seed=seed,
+        )
         config = self.config(mode)
-        body = {
-            "task": mode.lower(),
-            "prompt": clean_prompt,
-            "conditions": normalized_conditions,
-            "target": {
-                "short_edge": int(short_edge),
-                "aspect_ratio": aspect_ratio or "auto",
-                "duration_seconds": int(duration_seconds),
-            },
-            "seed": int(seed),
-        }
         try:
             with httpx.Client(timeout=self._request_timeout) as client:
                 response = client.post(f"{config.base_url}/v1/videos", json=body)
