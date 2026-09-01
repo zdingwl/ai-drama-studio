@@ -37,11 +37,12 @@ class EpisodeSubtitleEventV1(_StrictModel):
 
 class EpisodeOutputSegmentV1(_StrictModel):
     generation_segment_id: str = Field(min_length=1)
+    postproduction_status: str = Field(min_length=1)
     postproduction_fingerprint: str = Field(min_length=64, max_length=64)
     target_start_us: int = Field(ge=0)
     target_end_us: int = Field(ge=1)
     target_duration_us: int = Field(ge=1)
-    output_path: str = Field(min_length=1)
+    output_path: str | None = None
 
 
 class EpisodeOutputV1(_StrictModel):
