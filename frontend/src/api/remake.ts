@@ -1,10 +1,13 @@
 import type {
+  EpisodeOutputPlan,
   GenerationAttemptSummary,
   GenerationQualityCheck,
   GenerationQualitySummary,
   GenerationSegmentPlan,
   GenerationSelection,
   H3RuntimeStatus,
+  LipSyncRuntimeStatus,
+  PostProductionPlan,
   ProjectRemakePolicy,
   RemakeEpisodeTimeline,
   RemakeProjectTimeline,
@@ -114,4 +117,12 @@ export const remakeApi = {
   selectGenerationAttempt: (attemptId: string) => request<GenerationSelection>(`/api/generation-attempts/${attemptId}/select`, { method: 'POST' }),
   retryH3Segment: (projectId: string, segmentId: string) => requestTask(`/api/projects/${projectId}/generation-segments/${segmentId}/tasks/h3-qc-retry`),
   selectedGenerationVideoUrl: (projectId: string, segmentId: string) => `/api/generation-segments/${segmentId}/selected-video?project_id=${encodeURIComponent(projectId)}`,
+
+  getLipSyncRuntimeStatus: () => request<LipSyncRuntimeStatus>('/api/lip-sync/runtime'),
+  getPostProduction: (projectId: string) => request<PostProductionPlan>(`/api/projects/${projectId}/postproduction`),
+  getEpisodeOutputs: (projectId: string) => request<EpisodeOutputPlan>(`/api/projects/${projectId}/outputs`),
+  startPostProduction: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/postproduction`),
+  postProductionSegmentVideoUrl: (projectId: string, segmentId: string) => `/api/postproduction-segments/${segmentId}/video?project_id=${encodeURIComponent(projectId)}`,
+  episodeFinalVideoUrl: (projectId: string, episodeId: string) => `/api/episodes/${episodeId}/final-video?project_id=${encodeURIComponent(projectId)}`,
+  episodeSubtitleUrl: (projectId: string, episodeId: string) => `/api/episodes/${episodeId}/subtitles?project_id=${encodeURIComponent(projectId)}`,
 }
