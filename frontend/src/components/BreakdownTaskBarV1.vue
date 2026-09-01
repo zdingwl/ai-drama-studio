@@ -25,9 +25,9 @@ const hasAnyExistingShots = computed(() => props.episodes.some((episode) => epis
 const episodeActionLabel = computed(() => props.run ? '重新拉片本集' : '开始拉片本集')
 const confirmationText = computed(() => {
   if (confirmationMode.value === 'batch') {
-    return '将启动项目批量拉片流程。已有镜头或拉片结果的剧集可能再次计算；任务会按后端既定顺序执行并占用本地 GPU/CPU 时间。'
+    return '会按照当前剧集顺序逐集重新生成拉片结果。已经有结果的剧集也可能重新计算，处理时间会明显增加。'
   }
-  return '将创建新的完整拉片 Run。不会修改已经确认的镜头切点；新 Run 成为 Current 后，会替换本集当前 Scene / Shot 阅读结果。任务会重新占用本地 GPU/CPU，通常需要数分钟或更久。'
+  return '会重新生成本集的场景与镜头内容。已经人工确认的镜头切点不会被修改；完成后，新结果会成为本集默认查看的拉片结果。'
 })
 
 watch(() => props.selectedEpisodeId, () => {
@@ -112,7 +112,7 @@ async function startBatch(): Promise<void> {
       <span>剧集</span>
       <select :value="selectedEpisodeId" :disabled="starting || !episodes.length" @change="onEpisodeChange">
         <option v-for="episode in episodes" :key="episode.id" :value="episode.id">
-          E{{ String(episode.sort_order).padStart(2, '0') }} · {{ episode.title }} · {{ episode.shot_count }} 个镜头
+          第{{ String(episode.sort_order).padStart(2, '0') }}集 · {{ episode.title }} · {{ episode.shot_count }} 个镜头
         </option>
       </select>
     </label>
@@ -134,18 +134,18 @@ async function startBatch(): Promise<void> {
 
     <div v-if="confirmationMode" class="rerun-confirmation" role="alert">
       <div>
-        <strong>{{ confirmationMode === 'batch' ? '确认启动批量拉片？' : '确认重新拉片本集？' }}</strong>
+        <strong>{{ confirmationMode === 'batch' ? '确认重新处理这些剧集？' : '确认重新拉片本集？' }}</strong>
         <p>{{ confirmationText }}</p>
-        <small>影响范围：拉片结果与后续读取；不直接修改镜头切点。计算成本：本地 GPU / CPU 时间。</small>
+        <small>会影响：场景与镜头阅读结果。不会直接修改：已经确认的镜头切点。重新处理会占用本机计算时间。</small>
       </div>
       <div class="confirm-actions">
         <button type="button" @click="confirmationMode = null">取消</button>
-        <button type="button" class="confirm-danger" :disabled="starting" @click="confirmStart">确认启动</button>
+        <button type="button" class="confirm-danger" :disabled="starting" @click="confirmStart">确认开始</button>
       </div>
     </div>
 
     <div v-if="error || notice" :class="['task-notice', { error: Boolean(error) }]">
-      {{ error || `${notice} · 进度可在后台任务栏查看` }}
+      {{ error || `${notice} · 进度可在顶部后台任务中查看` }}
     </div>
   </section>
 </template>
