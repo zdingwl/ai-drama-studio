@@ -1,8 +1,8 @@
-"""R7.3 provider boundary for local/remote video generation backends.
+"""Provider boundary for video generation backends.
 
-Business code must depend on this contract instead of importing MiniMax/SGLang directly.
-The first production implementation is MINIMAX_H3_LOCAL, but the boundary intentionally
-keeps provider-specific job payloads out of remake planning.
+Business code depends on this contract instead of importing MiniMax/SGLang directly.
+Provider-specific defaults stay inside the provider/runtime adapter; remake planning only
+passes stable prompt, media conditions, duration, aspect ratio and seed.
 """
 from __future__ import annotations
 
@@ -25,6 +25,20 @@ class VideoGenerationConditionV1(_StrictModel):
     type: VideoConditionType
     uri: str = Field(min_length=1, max_length=4096)
     role: str | None = Field(default=None, max_length=80)
+    # SGLang MiniMax-H3 supports first/last frame indices for FL2VA and a
+    # non-negative seek offset for reference video/audio conditions.
+    frame_index: int | None = Field(default=None, ge=-1)
+    start_time_seconds: float | None = Field(default=None, ge=0.0, le=86_400.0)
+
+    @model_validator(mode="after")
+    def _condition_fields_match_type(self) -> "VideoGenerationConditionV1":
+        if self.frame_index is not None and self.type != "image":
+            raise ValueError("frame_index 只允许用于 image condition")
+        if self.frame_index is not None and self.frame_index not in {-1, 0}:
+            raise ValueError("MiniMax H3 FL2VA frame_index 只支持 0 或 -1")
+        if self.start_time_seconds is not None and self.type not in {"video", "audio"}:
+            raise ValueError("start_time_seconds 只允许用于 video/audio condition")
+        return self
 
 
 class VideoGenerationRequestV1(_StrictModel):
@@ -45,6 +59,9 @@ class VideoGenerationRequestV1(_StrictModel):
         if self.mode == "FL2VA":
             if video_count or audio_count or image_count > 2:
                 raise ValueError("FL2VA 仅允许 0-2 张 image 条件")
+            frame_indices = [item.frame_index for item in self.conditions if item.type == "image" and item.frame_index is not None]
+            if len(frame_indices) != len(set(frame_indices)):
+                raise ValueError("FL2VA first/last frame_index 不能重复")
         else:
             if image_count > 9 or video_count > 3 or audio_count > 3:
                 raise ValueError("REF2VA 条件超过 H3 官方数量限制")
