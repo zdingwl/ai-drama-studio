@@ -26,6 +26,8 @@ class LocalizationDraftEditV1(_StrictLocalizationDraftModel):
     """Target-side state for one immutable P7 source_key.
 
     No source_text field exists by design, so API writes cannot overwrite ASR/OCR truth.
+    DRAFT may save partial translated/localized/final layers; review readiness is checked
+    by the revision workflow rather than this per-entry transport model.
     """
 
     source_key: str = Field(min_length=1)
@@ -37,8 +39,6 @@ class LocalizationDraftEditV1(_StrictLocalizationDraftModel):
 
     @model_validator(mode="after")
     def _validate_decision(self) -> "LocalizationDraftEditV1":
-        if self.decision == "LOCALIZE" and not (self.final_text or "").strip():
-            raise ValueError("LOCALIZE 必须填写 final_text")
         if self.decision in {"KEEP_SOURCE", "OMIT"} and self.final_text not in {None, ""}:
             raise ValueError("KEEP_SOURCE / OMIT 不应写入 final_text")
         return self
@@ -65,10 +65,9 @@ class LocalizationDraftEntryV1(_StrictLocalizationDraftModel):
         if self.end_us < self.start_us:
             raise ValueError("Localization entry 时间范围非法")
         if self.decision == "LOCALIZE":
-            if not (self.final_text or "").strip():
-                raise ValueError("LOCALIZE entry 缺少 final_text")
-            if self.effective_final_text != self.final_text:
-                raise ValueError("LOCALIZE effective_final_text 必须等于 final_text")
+            expected = (self.final_text or "").strip() or None
+            if self.effective_final_text != expected:
+                raise ValueError("LOCALIZE effective_final_text 必须与 final_text 一致")
         elif self.decision == "KEEP_SOURCE":
             if self.final_text not in {None, ""} or self.effective_final_text != self.source_text:
                 raise ValueError("KEEP_SOURCE 必须直接使用 source_text")
