@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -65,6 +66,9 @@ def test_episode_timeline_rejects_unexplained_gap() -> None:
 
 
 def test_episode_media_normalization_and_concat(tmp_path: Path) -> None:
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("FFmpeg/FFprobe are not installed in this lightweight test environment")
+
     source_one = tmp_path / "source-1.mp4"
     source_two = tmp_path / "source-2.mp4"
     episode_output._run([
