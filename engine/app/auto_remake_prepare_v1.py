@@ -1,8 +1,9 @@
-"""One-click automatic source understanding + target asset localization for remake.
+"""One-click automatic source understanding + target localization for remake.
 
-Accepted internal modules remain hidden behind one task.  A successful run composes the
-stable SourceDramaSnapshot, then automatically creates TargetCharacter and scene
-localization plans. Only uncertain results are surfaced as ReviewIssue rows.
+Accepted internal modules remain hidden behind one task. A successful run composes the
+stable SourceDramaSnapshot, creates TargetCharacter / SceneLocalizationMapping, then
+localizes target dialogue and materializes target-character speech when local Qwen3-TTS
+is available. Only uncertain content is surfaced as ReviewIssue rows.
 """
 from __future__ import annotations
 
@@ -16,9 +17,11 @@ from engine.app.breakdown_serializer_v1 import get_current_breakdown
 from engine.app.character_review_issue_sync_v1 import sync_character_review_issues
 from engine.app.media_v2 import detect_episode_shots, preprocess_episode
 from engine.app.review_issue_sync_v1 import sync_asset_review_issues, sync_shot_review_issues
+from engine.app.review_issue_v1 import list_review_issues
 from engine.app.source_drama_review_issue_sync_v1 import sync_source_drama_speaker_issues
 from engine.app.source_drama_snapshot_v1 import load_project_source_drama_snapshot_v1
 from engine.app.studio_v2 import get_episode, list_episode_records
+from engine.app.target_dialogue_v1 import generate_target_dialogue_v1
 from engine.app.target_localization_v1 import generate_target_localization_v1
 from engine.app.task_progress_v2 import fail_task, finish_task, start_task, update_task
 
@@ -42,10 +45,10 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             task_id,
             stage_key="auto_prepare",
             stage_label="自动理解并本土化原短剧",
-            message="将按剧集顺序自动完成素材准备、镜头理解、资产识别和目标人物/场景规划",
+            message="将按剧集顺序自动完成素材、拉片、目标人物/场景、目标对白和可用的本地 TTS",
         )
 
-        # 0-72%: episodes. Each episode owns an equal slice and internally runs media + Breakdown.
+        # 0-72%: episode media + source understanding.
         for index, episode_record in enumerate(episodes, start=1):
             episode = get_episode(episode_record.id)
             if episode is None:
@@ -196,7 +199,7 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
 
         update_task(
             task_id,
-            progress_percent=98.0,
+            progress_percent=97.5,
             stage_key="auto_source_snapshot",
             stage_label="形成统一原片快照",
             message="正在把 Scene / Shot / 人物 / 场景 / 道具 / 对白 / Reference Video 收敛为 SourceDramaSnapshot",
@@ -206,22 +209,27 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
 
         update_task(
             task_id,
-            progress_percent=99.0,
+            progress_percent=98.3,
             stage_key="auto_target_localization",
             stage_label="自动设计目标人物与场景",
             message="正在按目标语言、目标地区和场景策略生成 TargetCharacter / SceneLocalizationMapping",
         )
         target_localization = generate_target_localization_v1(project_id)
         target_review_count = int(target_localization.get("review_count") or 0)
-        review_issue_count = (
-            shot_issue_count
-            + character_issue_count
-            + asset_issue_count
-            + speaker_issue_count
-            + target_review_count
-        )
 
-        warnings = []
+        update_task(
+            task_id,
+            progress_percent=99.0,
+            stage_key="auto_target_dialogue",
+            stage_label="自动生成目标对白与声音",
+            message="正在翻译/本土化对白；本地 Qwen3-TTS 可用时同时生成固定角色声音和真实语音时长",
+        )
+        target_dialogue = generate_target_dialogue_v1(project_id, synthesize_audio=True)
+        dialogue_review_count = int(target_dialogue.get("review_count") or 0)
+        open_issues = list_review_issues(project_id, status="OPEN")
+        review_issue_count = len(open_issues)
+
+        warnings: list[str] = []
         unresolved = int((analysis.get("counts") or {}).get("unresolved_character_candidates") or character_issue_count)
         if unresolved:
             warnings.append(f"{unresolved} 个人物 Evidence 尚未形成安全身份，需要在人物复核中处理")
@@ -233,6 +241,10 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             warnings.append(f"{speaker_issue_count} 条对白需要确认说话人")
         if target_review_count:
             warnings.append(f"{target_review_count} 项目标人物/场景本土化需要人工确认")
+        if dialogue_review_count:
+            warnings.append(f"{dialogue_review_count} 条目标对白尚未形成安全可用文本")
+        if target_dialogue.get("status") == "TEXT_READY_AUDIO_PENDING":
+            warnings.append("目标对白文本已就绪，但部分/全部 TTS 音频尚未生成")
 
         result = {
             "project_id": project_id,
@@ -243,7 +255,8 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             "character_review_issue_count": character_issue_count,
             "asset_review_issue_count": asset_issue_count,
             "speaker_review_issue_count": speaker_issue_count,
-            "target_localization_review_issue_count": target_review_count,
+            "target_localization_review_item_count": target_review_count,
+            "target_dialogue_review_item_count": dialogue_review_count,
             "unresolved_character_evidence": unresolved,
             "semantic": semantic_result,
             "source_snapshot": {
@@ -262,14 +275,22 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
                 "scene_mapping_count": target_localization["scene_mapping_count"],
                 "review_count": target_review_count,
             },
+            "target_dialogue": {
+                "schema_version": target_dialogue["schema_version"],
+                "status": target_dialogue["status"],
+                "voice_profile_count": target_dialogue["voice_profile_count"],
+                "dialogue_count": target_dialogue["dialogue_count"],
+                "review_count": dialogue_review_count,
+                "audio_ready_count": target_dialogue["audio_ready_count"],
+            },
         }
         finish_task(
             task_id,
             result=result,
             message=(
-                f"原短剧理解与目标人物/场景规划完成：{review_issue_count} 项需要人工确认"
+                f"原片理解、目标人物/场景和目标对白已自动处理：{review_issue_count} 项需要人工确认"
                 if review_issue_count
-                else "原短剧理解与目标人物/场景规划完成：当前无需人工确认"
+                else "原片理解、目标人物/场景和目标对白已自动处理：当前无需人工确认"
             ),
             status="READY_WITH_WARNINGS" if warnings or review_issue_count else "READY",
         )
