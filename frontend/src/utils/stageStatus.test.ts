@@ -15,7 +15,7 @@ describe('deriveStageStates', () => {
     expect(states[4]).toBe('planned')
   })
 
-  it('uses the latest relevant breakdown task instead of old failures', () => {
+  it('uses the latest successful breakdown task instead of old failures', () => {
     const states = deriveStageStates({
       episodes: [{ shot_count: 12, preprocess_status: 'READY' }],
       tasks: [
@@ -28,10 +28,23 @@ describe('deriveStageStates', () => {
     expect(states[2]).toBe('completed')
   })
 
-  it('keeps generated shots in review until a successful breakdown task is known', () => {
+  it('keeps generated shots in review until a successful breakdown task is current', () => {
     const states = deriveStageStates({
       episodes: [{ shot_count: 12, preprocess_status: 'READY' }],
-      tasks: [],
+      tasks: [{ task_type: 'EPISODE_SHOTS', status: 'READY', created_at: '2026-09-01T10:00:00Z' }],
+      analysis: null,
+    })
+
+    expect(states[2]).toBe('review')
+  })
+
+  it('returns to review when shots are regenerated after an older successful breakdown', () => {
+    const states = deriveStageStates({
+      episodes: [{ shot_count: 12, preprocess_status: 'READY' }],
+      tasks: [
+        { task_type: 'EPISODE_BREAKDOWN_P2', status: 'READY', created_at: '2026-09-01T09:00:00Z' },
+        { task_type: 'EPISODE_SHOTS', status: 'READY', created_at: '2026-09-01T10:00:00Z' },
+      ],
       analysis: null,
     })
 
@@ -49,5 +62,15 @@ describe('deriveStageStates', () => {
     })
 
     expect(states[3]).toBe('review')
+  })
+
+  it('shows an active asset extraction task as processing', () => {
+    const states = deriveStageStates({
+      episodes: [{ shot_count: 12, preprocess_status: 'READY' }],
+      tasks: [{ task_type: 'ASSET_EXTRACTION_V3', status: 'PROCESSING', created_at: '2026-09-01T10:00:00Z' }],
+      analysis: { status: 'READY', counts: {} },
+    })
+
+    expect(states[3]).toBe('processing')
   })
 })
