@@ -1,4 +1,4 @@
-"""R10 postproduction HTTP APIs and background execution."""
+"""R10 postproduction, subtitle and episode-output HTTP APIs."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,10 +6,17 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 
+from engine.app.episode_output_contract_v1 import EpisodeOutputPlanV1
+from engine.app.episode_output_v1 import (
+    assemble_ready_episodes_v1,
+    compile_episode_outputs_v1,
+    episode_output_subtitle_v1,
+    episode_output_video_v1,
+    get_episode_output_v1,
+)
 from engine.app.latentsync_provider_v1 import get_lip_sync_provider_v1
 from engine.app.postproduction_contract_v1 import LipSyncRuntimeStatusV1, PostProductionPlanV1
 from engine.app.postproduction_v1 import (
-    PostProductionError,
     compile_postproduction_plan_v1,
     get_postproduction_segment_v1,
     postproduction_output_v1,
@@ -55,15 +62,15 @@ def _run_task(task_id: str, project_id: str) -> None:
         start_task(
             task_id,
             stage_key="postproduction",
-            stage_label="口型与最终目标音轨",
+            stage_label="口型、最终音轨与整集成片",
             message="正在处理 R10 Selected Output 后期",
         )
 
-        def progress(current: int, total: int, message: str) -> None:
+        def post_progress(current: int, total: int, message: str) -> None:
             update_task(
                 task_id,
                 progress_mode="determinate",
-                progress_percent=(current - 1) / max(1, total) * 96.0,
+                progress_percent=(current - 1) / max(1, total) * 68.0,
                 stage_key="postproduction",
                 stage_label="口型与最终目标音轨",
                 current_item=message,
@@ -72,21 +79,48 @@ def _run_task(task_id: str, project_id: str) -> None:
                 message=message,
             )
 
-        result = run_ready_postproduction_v1(project_id, progress=progress)
-        plan = result.get("plan") or {}
-        failed = list(result.get("failed") or [])
-        review_count = int(plan.get("review_count") or 0)
-        waiting_count = int(plan.get("waiting_count") or 0)
-        warning_count = len(failed) + review_count + waiting_count
+        post_result = run_ready_postproduction_v1(project_id, progress=post_progress)
+
+        def assembly_progress(current: int, total: int, message: str) -> None:
+            update_task(
+                task_id,
+                progress_mode="determinate",
+                progress_percent=70.0 + (current - 1) / max(1, total) * 28.0,
+                stage_key="episode_output",
+                stage_label="字幕与整集成片",
+                current_item=message,
+                current_index=current,
+                total_items=total,
+                message=message,
+            )
+
+        assembly_result = assemble_ready_episodes_v1(project_id, progress=assembly_progress)
+        post_plan = post_result.get("plan") or {}
+        output_plan = assembly_result.get("plan") or {}
+        post_failed = list(post_result.get("failed") or [])
+        assembly_failed = list(assembly_result.get("failed") or [])
+        review_count = int(post_plan.get("review_count") or 0)
+        waiting_count = int(post_plan.get("waiting_count") or 0)
+        output_waiting = int(output_plan.get("waiting_count") or 0)
+        warning_count = len(post_failed) + len(assembly_failed) + review_count + waiting_count + output_waiting
+        result = {
+            "project_id": project_id,
+            "postproduction": post_result,
+            "episode_outputs": assembly_result,
+        }
         finish_task(
             task_id,
             result=result,
             status="READY_WITH_WARNINGS" if warning_count else "READY",
             message=(
-                f"R10 后期完成：{result.get('succeeded_now', 0)} 段新完成，"
-                f"{review_count} 段需确认，{waiting_count} 段等待上游/本地模型"
+                f"R10 完成：{post_result.get('succeeded_now', 0)} 段新后期，"
+                f"{assembly_result.get('succeeded_now', 0)} 集新成片，"
+                f"{review_count} 段需确认，{waiting_count + output_waiting} 项等待"
                 if warning_count
-                else f"R10 后期完成：{result.get('succeeded_now', 0)} 段新完成"
+                else (
+                    f"R10 完成：{post_result.get('succeeded_now', 0)} 段新后期，"
+                    f"{assembly_result.get('succeeded_now', 0)} 集新成片"
+                )
             ),
         )
     except Exception as exc:
@@ -114,33 +148,44 @@ def api_get_postproduction(project_id: str):
         raise _error(exc) from exc
 
 
+@router.get("/projects/{project_id}/outputs", response_model=EpisodeOutputPlanV1)
+def api_get_episode_outputs(project_id: str):
+    try:
+        return compile_episode_outputs_v1(project_id)
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
 @router.post("/projects/{project_id}/tasks/postproduction", status_code=202)
 def api_start_postproduction(project_id: str, background: BackgroundTasks):
     if get_project(project_id) is None:
         raise HTTPException(status_code=404, detail="项目不存在")
     try:
-        plan = compile_postproduction_plan_v1(project_id)
+        post_plan = compile_postproduction_plan_v1(project_id)
+        output_plan = compile_episode_outputs_v1(project_id)
     except Exception as exc:
         raise _error(exc) from exc
 
-    ready = [
+    ready_segments = [
         segment
-        for episode in plan.get("episodes") or []
+        for episode in post_plan.get("episodes") or []
         for segment in episode.get("segments") or []
         if segment.get("status") == "READY"
     ]
-    if not ready:
-        raise HTTPException(status_code=409, detail="当前没有可执行的 R10 PostProductionSegment")
+    ready_episodes = [episode for episode in output_plan.get("episodes") or [] if episode.get("status") == "READY"]
+    if not ready_segments and not ready_episodes:
+        raise HTTPException(status_code=409, detail="当前没有可执行的 R10 后期或整集拼接任务")
+
     needs_lip_sync = any(
         segment.get("lip_sync_mode") in {"LATENTSYNC_FULL_SEGMENT", "LATENTSYNC_TARGET_FACE_ROI"}
-        for segment in ready
+        for segment in ready_segments
     )
     if needs_lip_sync:
         runtime = get_lip_sync_provider_v1().status()
         if not runtime.get("ready"):
             raise HTTPException(
                 status_code=409,
-                detail="LatentSync 1.6 Runtime 尚未 READY；无可见对白的分段不需要它，但当前计划包含可见对白口型任务",
+                detail="LatentSync 1.6 Runtime 尚未 READY；当前计划包含可见对白口型任务",
             )
 
     active = [
@@ -157,9 +202,9 @@ def api_start_postproduction(project_id: str, background: BackgroundTasks):
     task = create_task(
         project_id=project_id,
         task_type=POSTPRODUCTION_TASK_TYPE,
-        title="口型与最终音轨后期",
+        title="口型、字幕与整集成片",
         progress_mode="indeterminate",
-        total_items=len(ready),
+        total_items=len(ready_segments) + len(ready_episodes),
         deduplicate_active=False,
     )
     background.add_task(_run_task, task["id"], project_id)
@@ -175,6 +220,30 @@ def api_postproduction_video(segment_id: str, project_id: str):
     if path is None:
         raise HTTPException(status_code=409, detail="当前 PostProductionSegment 尚无成功输出")
     return FileResponse(path, media_type="video/mp4", filename=Path(path).name)
+
+
+@router.get("/episodes/{episode_id}/final-video")
+def api_episode_final_video(episode_id: str, project_id: str):
+    row = get_episode_output_v1(project_id, episode_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="EpisodeOutput 不存在")
+    path = episode_output_video_v1(project_id, episode_id)
+    if path is None:
+        raise HTTPException(status_code=409, detail="当前剧集尚无成功成片")
+    safe_name = f"{row['episode_title']}.mp4".replace("/", "_").replace("\\", "_")
+    return FileResponse(path, media_type="video/mp4", filename=safe_name)
+
+
+@router.get("/episodes/{episode_id}/subtitles")
+def api_episode_subtitles(episode_id: str, project_id: str):
+    row = get_episode_output_v1(project_id, episode_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="EpisodeOutput 不存在")
+    path = episode_output_subtitle_v1(project_id, episode_id)
+    if path is None:
+        raise HTTPException(status_code=409, detail="当前剧集尚无字幕文件")
+    safe_name = f"{row['episode_title']}.srt".replace("/", "_").replace("\\", "_")
+    return FileResponse(path, media_type="application/x-subrip; charset=utf-8", filename=safe_name)
 
 
 __all__ = ["POSTPRODUCTION_TASK_TYPE", "router"]
