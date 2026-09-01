@@ -32,6 +32,7 @@ G2.6 ordinary-user Scene Timeline UI: IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANC
 P3 current 02 拉片 Shot-card UI: IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop: IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character: V1 / FINAL PASS / FROZEN
+P6 Final Breakdown read model: V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 ```
 
 Executable CURRENT = `PROJECT_STATE + this manifest + current code/tests`.
@@ -198,13 +199,83 @@ AssetRevision = revision 14 / AUTO
 
 Status: **P5 V1 / FINAL PASS / FROZEN**.
 
+## P6 Final Breakdown read model
+
+P6 is a separate read-only composition layer. It does not change G2 or P5 ownership.
+
+Implementation:
+
+```text
+engine/app/breakdown_read_model_contract_v1.py
+engine/app/breakdown_read_model_v1.py
+engine/app/breakdown_read_model_routes_v1.py
+engine/tests/v2/test_breakdown_read_model_v1.py
+engine/tests/v2/test_breakdown_read_model_routes_v1.py
+frontend/src/types/breakdown-read-model.ts
+frontend/src/types/scene-timeline.ts
+frontend/src/utils/breakdownReadModelUi.ts
+frontend/src/utils/breakdownReadModelUi.test.ts
+frontend/src/api/scene-timeline.ts
+docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md
+```
+
+Read endpoint:
+
+```text
+GET /api/episodes/{episode_id}/breakdown-read-model
+```
+
+Composition direction:
+
+```text
+Frozen G2 Scene Timeline
++
+Frozen P5 current Scene-local resolution
++
+current AssetRevision + existing Final Character id/name/cover
+→ P6 identity overlay
+→ ordinary-user display projection
+```
+
+Fail-closed gates include:
+
+```text
+same Episode
+same BreakdownRun
+same ShotRevision
+same current AssetRevision
+consistent P5 aggregate counts
+exact Scene ordinal set
+exact Scene-local P* set
+matching anonymous display row
+current Character id/name matches P5 resolution
+```
+
+Any mismatch keeps the whole Episode identity display anonymous. `UNRESOLVED` P5 people always remain `人物N`.
+
+Backend response preserves the entire frozen G2 payload under `timeline`; identity is a separate overlay. The frontend ordinary Episode reader consumes P6 and changes display-only person names/assets after a second validation gate. Historical Run reading continues to use frozen G2.5 without current Character projection.
+
+Acceptance evidence currently available:
+
+```text
+P6 backend deterministic tests = added / NOT USER-LOCAL RUN YET
+P6 route tests = added / NOT USER-LOCAL RUN YET
+P6 frontend Vitest = added / NOT USER-LOCAL RUN YET
+isolated new frontend P6 core `tsc --strict` = PASS in assistant execution environment
+full repository clone/test = unavailable in assistant environment (github.com DNS resolution failed)
+```
+
+Status: **P6 V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING**.
+
+Do not mark P6 FINAL PASS before Python tests, frontend Vitest/typecheck/build, lockfile synchronization, and visual review.
+
 ## Current frontier
 
 ```text
 1. keep G1 + G2.1-G2.5 + P5 frozen
 2. finish G2.6 local UI acceptance when needed
 3. P4 Scene/Prop local acceptance remains pending
-4. next code frontier = P6 Final identity/asset fill-back + final Breakdown renderer/read model
+4. finish P6 user-local acceptance and final visual asset rendering polish
 ```
 
-P6 must be a separate composition layer. It may render Final Character names/assets only for P5 `RESOLVED` people; `UNRESOLVED` people remain `人物N`. It must not mutate frozen G2, P5, ASR/OCR truth, or Final Character bindings.
+P6 must remain a separate composition layer. It may render Final Character names/assets only for P5 `RESOLVED` people; `UNRESOLVED` people remain `人物N`. It must not mutate frozen G2, P5, ASR/OCR truth, or Final Character bindings.
