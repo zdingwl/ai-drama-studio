@@ -1,6 +1,9 @@
 import type {
   GenerationAttemptSummary,
+  GenerationQualityCheck,
+  GenerationQualitySummary,
   GenerationSegmentPlan,
+  GenerationSelection,
   H3RuntimeStatus,
   ProjectRemakePolicy,
   RemakeEpisodeTimeline,
@@ -106,4 +109,9 @@ export const remakeApi = {
   listGenerationAttempts: (projectId: string) => request<GenerationAttemptSummary>(`/api/projects/${projectId}/generation-attempts`),
   startH3Generation: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/h3-generate-ready`),
   generationAttemptVideoUrl: (attemptId: string) => `/api/generation-attempts/${attemptId}/video`,
+  getH3Quality: (projectId: string) => request<GenerationQualitySummary>(`/api/projects/${projectId}/h3-quality`),
+  checkGenerationAttempt: (attemptId: string) => request<GenerationQualityCheck>(`/api/generation-attempts/${attemptId}/quality-check`, { method: 'POST' }),
+  selectGenerationAttempt: (attemptId: string) => request<GenerationSelection>(`/api/generation-attempts/${attemptId}/select`, { method: 'POST' }),
+  retryH3Segment: (projectId: string, segmentId: string) => requestTask(`/api/projects/${projectId}/generation-segments/${segmentId}/tasks/h3-qc-retry`),
+  selectedGenerationVideoUrl: (projectId: string, segmentId: string) => `/api/generation-segments/${segmentId}/selected-video?project_id=${encodeURIComponent(projectId)}`,
 }
