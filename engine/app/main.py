@@ -2,7 +2,7 @@
 
 当前可用范围：
 多剧集管理、自动初始化 + 拉片、Shot 人工修正、Final Asset / Shot Binding、
-项目重制策略、统一人工复核队列，以及统一后台 Task / Progress API。
+项目重制策略、统一人工复核队列、一键自动理解原短剧，以及统一后台 Task / Progress API。
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from engine.app.asset_batch_routes_v4 import router as asset_batch_router
 from engine.app.asset_routes_v3 import router as asset_router
+from engine.app.auto_remake_routes_v1 import router as auto_remake_router
 from engine.app.breakdown_read_model_routes_v1 import router as breakdown_read_model_router
 from engine.app.breakdown_routes_v1 import router as breakdown_router
 from engine.app.breakdown_scene_timeline_routes_v1 import router as scene_timeline_router
@@ -79,6 +80,7 @@ app.include_router(asset_batch_router)
 app.include_router(character_gallery_router)
 app.include_router(remake_router)
 app.include_router(review_issue_router)
+app.include_router(auto_remake_router)
 
 
 class ProjectCreate(BaseModel):
