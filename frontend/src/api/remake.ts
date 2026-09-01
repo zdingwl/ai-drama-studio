@@ -1,4 +1,12 @@
-import type { ProjectRemakePolicy, ReviewIssue, ReviewIssueStatus, ScenePolicy } from '../types/remake'
+import type {
+  ProjectRemakePolicy,
+  ReviewIssue,
+  ReviewIssueStatus,
+  SceneLocalizationMapping,
+  ScenePolicy,
+  TargetCharacter,
+  TargetLocalizationBundle,
+} from '../types/remake'
 import type { BackgroundTask } from '../types/studio'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -43,4 +51,18 @@ export const remakeApi = {
     headers: jsonHeaders,
     body: JSON.stringify({ status, resolution }),
   }),
+  getTargetLocalization: (projectId: string) => request<TargetLocalizationBundle>(`/api/projects/${projectId}/target-localization`),
+  generateTargetLocalization: (projectId: string) => request<TargetLocalizationBundle>(`/api/projects/${projectId}/target-localization/generate`, { method: 'POST' }),
+  updateTargetCharacter: (id: string, payload: Pick<TargetCharacter, 'target_name' | 'appearance_profile' | 'generation_prompt'>) => request<TargetCharacter>(`/api/target-characters/${id}`, {
+    method: 'PATCH',
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  }),
+  deleteTargetCharacter: (id: string) => request<void>(`/api/target-characters/${id}`, { method: 'DELETE' }),
+  updateSceneLocalization: (id: string, payload: { decision: 'KEEP' | 'LOCALIZE'; target_label?: string | null; target_description?: string | null; reason?: string | null }) => request<SceneLocalizationMapping>(`/api/scene-localization-mappings/${id}`, {
+    method: 'PATCH',
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  }),
+  deleteSceneLocalization: (id: string) => request<void>(`/api/scene-localization-mappings/${id}`, { method: 'DELETE' }),
 }
