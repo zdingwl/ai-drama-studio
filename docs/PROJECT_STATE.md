@@ -36,9 +36,9 @@ Frozen layers must not be reopened without a concrete regression.
 Repository workflow:
 
 ```text
-Documentation-only synchronization = edit main directly; no docs-only branch/PR.
-Code/behavior change = feature branch + Draft PR by default.
-Explicit user request for direct main = follow the explicit request.
+Documentation-only synchronization = edit main directly; do not create a branch or PR.
+Code/behavior change = edit main directly by default; do not create a feature branch or PR by default.
+Only create/use a branch or PR when the user explicitly asks for one.
 Hosted GitHub Actions = not used for acceptance.
 All commits = [skip ci].
 ```
