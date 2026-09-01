@@ -3,7 +3,8 @@
 This intentionally reuses the already accepted internal modules instead of exposing them
 as separate product pages. The user starts one job; preprocessing, shot detection,
 Breakdown and asset extraction run sequentially. Only uncertain results are surfaced as
-ReviewIssue records.
+ReviewIssue records. A successful run finishes by composing the stable SourceDramaSnapshot
+that all future remake modules consume.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from engine.app.breakdown_serializer_v1 import get_current_breakdown
 from engine.app.character_review_issue_sync_v1 import sync_character_review_issues
 from engine.app.media_v2 import detect_episode_shots, preprocess_episode
 from engine.app.review_issue_sync_v1 import sync_asset_review_issues, sync_shot_review_issues
+from engine.app.source_drama_snapshot_v1 import load_project_source_drama_snapshot_v1
 from engine.app.studio_v2 import get_episode, list_episode_records
 from engine.app.task_progress_v2 import fail_task, finish_task, start_task, update_task
 
@@ -193,12 +195,23 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
         asset_issue_count = sync_asset_review_issues(project_id, workspace)
         review_issue_count = shot_issue_count + character_issue_count + asset_issue_count
 
+        update_task(
+            task_id,
+            progress_percent=98.0,
+            stage_key="auto_source_snapshot",
+            stage_label="形成统一原片快照",
+            message="正在把 Scene / Shot / 人物 / 场景 / 道具 / 对白 / Reference Video 收敛为 SourceDramaSnapshot",
+        )
+        source_snapshot = load_project_source_drama_snapshot_v1(project_id)
+
         warnings = []
         unresolved = int((analysis.get("counts") or {}).get("unresolved_character_candidates") or character_issue_count)
         if unresolved:
             warnings.append(f"{unresolved} 个人物 Evidence 尚未形成安全身份，需要在人物复核中处理")
         if semantic_result.get("status") in {"FAILED", "READY_WITH_WARNINGS", "NOT_CONFIGURED"}:
             warnings.append("场景 / 道具语义验证存在降级")
+        if source_snapshot.get("status") == "READY_WITH_WARNINGS":
+            warnings.append("SourceDramaSnapshot 已形成，但仍包含需要下游尊重的源片警告")
 
         result = {
             "project_id": project_id,
@@ -210,14 +223,23 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             "asset_review_issue_count": asset_issue_count,
             "unresolved_character_evidence": unresolved,
             "semantic": semantic_result,
+            "source_snapshot": {
+                "schema_version": source_snapshot["schema_version"],
+                "status": source_snapshot["status"],
+                "source_fingerprint": source_snapshot["source_fingerprint"],
+                "scene_count": source_snapshot["scene_count"],
+                "shot_count": source_snapshot["shot_count"],
+                "resolved_character_count": source_snapshot["resolved_character_count"],
+                "source_dialogue_count": source_snapshot["source_dialogue_count"],
+            },
         }
         finish_task(
             task_id,
             result=result,
             message=(
-                f"自动理解完成：{review_issue_count} 项需要人工确认"
+                f"原短剧理解完成并形成 SourceDramaSnapshot：{review_issue_count} 项需要人工确认"
                 if review_issue_count
-                else "自动理解完成：当前没有镜头/人物/资产问题需要人工确认"
+                else "原短剧理解完成并形成 SourceDramaSnapshot：当前没有镜头/人物/资产问题需要人工确认"
             ),
             status="READY_WITH_WARNINGS" if warnings or review_issue_count else "READY",
         )
