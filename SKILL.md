@@ -26,9 +26,9 @@ Executable CURRENT = `PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current 
 ### Git workflow
 
 ```text
-文档同步 / 状态文档修正：直接修改 main，不为纯文档单独创建分支或 PR。
-代码/行为修改：默认 feature branch + Draft PR。
-用户明确要求直接 main/merge 时按明确指令执行。
+文档同步 / 状态文档修正：默认直接修改 main，不新建分支或 PR。
+代码/行为修改：默认直接修改 main，不新建 feature branch 或 PR。
+只有用户明确要求使用分支或 PR 时，才创建/使用分支或 PR。
 所有提交使用 [skip ci]；Hosted GitHub Actions 不作为本项目验收手段。
 ```
 
