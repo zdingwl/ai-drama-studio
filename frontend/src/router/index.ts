@@ -1,12 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import ProjectList from '../views/ProjectList.vue'
-import ProjectStudioV3 from '../views/ProjectStudioV3.vue'
+import ProjectListV4 from '../views/ProjectListV4.vue'
+import ProjectStudioV4 from '../views/ProjectStudioV4.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'projects', component: ProjectList },
-    { path: '/projects/:projectId', name: 'studio', component: ProjectStudioV3 },
+    { path: '/', name: 'projects', component: ProjectListV4 },
+    { path: '/projects/:projectId', name: 'studio', component: ProjectStudioV4 },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
