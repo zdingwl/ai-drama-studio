@@ -157,9 +157,11 @@ def _load_current_character_snapshots(
         if not character_ids:
             return True, {}
 
-        rows = list(session.scalars(select(Character).where(
-            Character.project_id == project_id,
-            Character.id.in_(tuple(sorted(character_ids))),
+        rows = list(session.scalars(
+            select(Character).where(
+                Character.project_id == project_id,
+                Character.id.in_(tuple(sorted(character_ids))),
+            )
         ).all())
         snapshots: dict[str, dict[str, str | None]] = {}
         for character in rows:
