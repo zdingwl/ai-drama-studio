@@ -22,7 +22,7 @@ G2.5 Scene Timeline API               = v1 / FINAL PASS / FROZEN
 G2.5 Windows/CUDA local acceptance    = PASS
 G2.6 ordinary-user result UI          = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-P5 Draft ↔ Character                  = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+P5 Draft ↔ Character                  = v1 / FINAL PASS / FROZEN
 ```
 
 Truth priority:
@@ -31,7 +31,7 @@ Truth priority:
 PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests = executable CURRENT
 ```
 
-G1 and G2.1/G2.2 are frozen. G2.3/G2.4 and G2.5 are also frozen after user-local regression + real-model acceptance on 2026-08-31. Do not reopen any frozen layer without a concrete new regression.
+Do not reopen any frozen layer without a concrete regression.
 
 ### Repository workflow
 
@@ -58,17 +58,10 @@ Always read repository truth before old chat/history:
 2. SKILL.md
 3. docs/PROJECT_STATE.md
 4. docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-5. docs/BREAKDOWN_FAST_GROUNDED_V2_PLAN.md
-6. docs/BREAKDOWN_EPISODE_CONTEXT_PLAN.md
-7. docs/BREAKDOWN_FIRST_ASSET_PIPELINE_PLAN.md
-8. docs/BREAKDOWN_DRAFT_DATA_CONTRACT.md
-9. docs/BREAKDOWN_P2_SIDECAR_CONTRACT.md
-10. docs/BREAKDOWN_P2_LOCAL_ACCEPTANCE.md
-11. docs/BREAKDOWN_G2_SCENE_TIMELINE_CONTRACT.md
-12. docs/BREAKDOWN_G2_SCENE_NARRATIVE_CONTRACT.md
-13. Character docs when relevant
-14. current code/tests
-15. latest docs/sessions/*.md handoff
+5. relevant Breakdown plans/contracts
+6. Character docs when relevant
+7. current code/tests
+8. latest docs/sessions/*.md handoff
 ```
 
 ## 3. Frozen production Breakdown chain
@@ -96,86 +89,19 @@ Fusion = breakdown-p2-fusion-episode-context-e6-v2
 Pipeline = breakdown-p2-full-v1
 ```
 
-Do not tune this chain without a new concrete real regression.
-
-## 4. Final accepted evidence
-
-Frozen G1/P2.6 Run:
+Accepted production reference:
 
 ```text
 Run = BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
-status = READY
-whole run ~= 14.017 min
-Window = 4/4 READY
-Exact-Shot = 6/6 READY
-MAXED = 0
+Episode = EPISODE_0ed6aaca0da4471db0364bd29c3d6a61
+ShotRevision = SHOTREV_1462ac6d9f3948b994fc9bc575fee3a0
+Shots = 30
 Scenes = 2
-Scene1 LocalSubjects = 2
-Scene2 LocalSubjects = 2
+LocalSubjects = 4
 same-Shot conflicts = 0
-Shot0001 subjects = 0
-Shot0001 props include 蓝色玫瑰花束 + 玻璃花瓶
-Fusion = breakdown-p2-fusion-episode-context-e6-v2
 ```
 
-G2.1/G2.2 accepted evidence:
-
-```text
-python -m pytest engine/tests/v2/test_breakdown_scene_timeline_v1.py -q
-4 passed
-
-scenes = 2
-shots = 30
-people = [2, 2]
-shot1_people = []
-shot1_props = ['遥控器', '蓝色玫瑰花束', '玻璃花瓶', '书本']
-warnings = []
-```
-
-G2.3/G2.4 final accepted evidence:
-
-```text
-python -m pytest engine/tests/v2/test_breakdown_scene_narrative_v1.py engine/tests/v2/test_breakdown_scene_narrative_qwen3_v1.py engine/tests/v2/test_breakdown_scene_narrative_real_regression_v1.py -q
-15 passed
-
-preflight = READY / cuda / missing=[]
-runner Scene1 = READY
-runner Scene2 = READY
-overlay_status = READY
-warnings = []
-shot_objects_unchanged = YES
-structure_gate = PASS
-narrative_gate = PASS
-acceptance_machine_gate = PASS
-```
-
-Accepted Narrative examples:
-
-```text
-Scene1 title = 走廊争花
-Scene1 summary = 老年女性质问年轻女性为何将花放在自家花瓶，年轻女性称花在走廊，双方争执并最终以给钱解决，年轻女性愤怒指责对方。
-
-Scene2 title = 客厅争执
-Scene2 summary = 人物2指责人物1对邻居偷花一事不作为，称其结婚八年从未支持过自己，人物1则表示自己会自行解决。
-```
-
-Human review accepted these as Scene-level Narrative: ASR claims remain explicitly attributed, no Final identity is created, and frozen Shot objects are unchanged.
-
-G2.5 accepted evidence:
-
-```text
-python -m pytest engine/tests/v2/test_breakdown_scene_timeline_result_v1.py engine/tests/v2/test_breakdown_scene_timeline_routes_v1.py -q
-12 passed
-
-materialize accepted Run:
-scene_count = 2
-accepted_title_count = 2
-accepted_summary_count = 2
-warning_count = 0
-runtime_profile = breakdown-g2-scene-narrative-qwen3-local-v1
-```
-
-## 5. Core semantic rules
+## 4. Core semantic rules
 
 > **先看懂，再识别，再回填。**
 
@@ -195,13 +121,13 @@ subject_A/B = Shot-local labels only
 same-Shot person observations = hard cannot-link
 G2 Scene-local P1/P2 refs != Character identity
 G2 Scene Timeline != Final Character / Final Scene / Final Prop truth
-ASR-origin DIALOGUE text is verbatim source truth
-OCR-origin text is verbatim source truth
+ASR-origin DIALOGUE text = verbatim source truth
+OCR-origin text = verbatim source truth
 ```
 
 Dynamic expression/emotion/action/pose/speaking/screen position/framing are not identity keys.
 
-## 6. Character V10.1 is protected
+## 5. Character V10.1 is protected
 
 ```text
 YOLOX Person Detection
@@ -213,38 +139,37 @@ YOLOX Person Detection
 → Final Character Gate
 ```
 
-Never relax same-sample cannot-link, face conflict, >=3 independent evidence rule, ambiguity rules, explicit Shot assignment or Final Gate because of Breakdown hints.
+Never relax same-sample cannot-link, face conflict, >=3 independent evidence/images, ambiguity rules, explicit Shot assignment or Final Gate because of Breakdown hints.
 
-P5 identity reconciliation is one-way only:
+## 6. P5 frozen identity bridge
+
+Frozen direction only:
 
 ```text
 Final ShotCharacterBinding
-→ deterministic Scene-local presence reconciliation
+→ deterministic Scene-local exact presence reconciliation
 → resolve Breakdown anonymous display when uniquely safe
 ```
 
-Breakdown dialogue, ASR names, relationship terms, appearance prose and role hints must never become Character identity authority.
+P5 never uses Breakdown prose, ASR names/speaker labels, relationship terms, role hints, appearance summaries or P1/P2 labels as identity authority.
+
+Accepted user-local evidence:
+
+```text
+unit tests = 7 passed
+real runner = READY
+people = 4
+resolved = 1
+unresolved = 3
+warnings = []
+Scene1 P2 -> 人物 001 / FINAL_SHOT_BINDING_SIGNATURE_V1
+```
+
+The other three anonymous people correctly remain unresolved. **P5 = FINAL PASS / FROZEN.**
 
 ## 7. G2 frozen foundation
 
-Frozen modules include:
-
-```text
-engine/app/breakdown_scene_timeline_contract_v1.py
-engine/app/breakdown_scene_timeline_assembler_v1.py
-engine/app/breakdown_scene_narrative_contract_v1.py
-engine/app/breakdown_scene_grounding_v1.py
-engine/app/breakdown_scene_narrative_v1.py
-engine/app/breakdown_scene_narrative_validator_v1.py
-engine/app/breakdown_scene_narrative_qwen3_v1.py
-engine/app/breakdown_scene_timeline_result_v1.py
-engine/app/breakdown_scene_timeline_routes_v1.py
-scripts/run_breakdown_scene_narrative_qwen3.py
-scripts/run_breakdown_g2_scene_narrative_acceptance_v1.py
-scripts/materialize_breakdown_g2_scene_timeline_v1.py
-```
-
-G2.3 LLM authority remains deliberately narrow:
+G2.1 through G2.5 are frozen. G2.3 LLM authority remains deliberately narrow:
 
 ```text
 LLM MAY write:
@@ -265,22 +190,25 @@ LLM MUST NOT own or rewrite:
   Final Character/Scene/Prop
 ```
 
-ASR may support Narrative only as attributed speech/argument content. High-impact event claims must remain attributed or explicit topics. Relationship terms such as 丈夫/妻子/父亲/男友 remain topic-only and cannot bind anonymous people. Numeric quantities must be supported by final provenance.
+G2.6 is present on `main` and consumes frozen G2.5, but remains user-local acceptance pending.
 
 ## 8. Current implementation frontier
 
-G2.6 is present on `main` and consumes the frozen G2.5 Scene Timeline API. It is not FINAL PASS until user-local frontend commands and visual review are observed.
+```text
+1. keep G1 + G2.1-G2.5 + P5 frozen
+2. finish G2.6 UI acceptance when needed
+3. P4 Draft-guided Scene/Prop local acceptance is still pending
+4. next code frontier = P6 Final identity/asset fill-back + final Breakdown read model/renderers
+```
 
-P5 is now present on `main` through merged PR #17. Merge commit: `ab4b11716f5c1c5ead7367119d1b2d787defe8f9`. P5 is still **USER-LOCAL ACCEPTANCE PENDING** and is not FINAL PASS.
-
-Current safe order:
+P6 rules:
 
 ```text
-1. keep G1 + G2.1/G2.2 + G2.3/G2.4 + G2.5 frozen
-2. finish user-local G2.6 UI acceptance when needed
-3. run P5 user-local deterministic + real-Episode acceptance
-4. do not mark P5 FINAL PASS without user-local evidence
-5. after accepted P5, implement P6 Final identity/asset fill-back + final Breakdown renderers
+RESOLVED P5 person -> may render existing Final Character name/assets
+UNRESOLVED P5 person -> remain anonymous 人物N
+P6 must compose, not mutate, frozen G2/P5
+ASR/OCR/frozen Shot facts remain unchanged
+no prose/speaker/name fallback for identity
 ```
 
 Hosted GitHub Actions must not be used; commits use `[skip ci]`.
