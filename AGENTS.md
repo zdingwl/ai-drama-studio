@@ -1,6 +1,6 @@
 # AI Drama Studio — Agent Entry Rules
 
-Current product architecture: **Localized Remake V1 + local MiniMax H3 target runtime**.
+Current product architecture: **Localized Remake V1 + local MiniMax H3**.
 
 Rollback snapshot:
 
@@ -11,36 +11,29 @@ commit: 37944c693a08c6ff292b08e1f73b1249812cabae
 
 ## 1. Highest product definition
 
-AI Drama Studio receives an existing short drama, understands its content/directing structure, and remakes a localized short drama for the Project target language and target region.
-
-Source drama provides:
+Input an existing short drama, understand its story/directing structure, then remake a localized drama for the Project target language/region.
 
 ```text
-story
-shot/edit structure
-actions/performance
-blocking/composition/camera
-Reference Video
-dialogue relationships
+source story / shots / actions / camera / Reference Video
+→ localized characters
+→ KEEP / LOCALIZE target scenes
+→ target-language dialogue / voice / lip
+→ timing-adjusted remake timeline
+→ local MiniMax H3
+→ final episode
 ```
 
-Target drama changes:
+Characters must be replaced. Scene policy is AUTO / KEEP / LOCALIZE. Target speech must not be forced into source timing with unnatural speed/slow-motion.
+
+**UX rule:** automatic work is background work, not a page. Only uncertainty/conflict/high-risk/repeated failure enters Review Center.
+
+## 2. User surface
 
 ```text
-characters -> localized Target Characters (required)
-scene -> KEEP / LOCALIZE / AUTO
-language -> target language
-voice -> Target Character voice
-lip movement -> final target audio
-timeline -> may extend/trim/reflow for target speech duration
-video generation -> local MiniMax H3
+Project
+Review Center
+Output
 ```
-
-**Product rule:** automatic work is background work, not a page. Only uncertain/conflicting/high-risk/repeatedly failed items enter Review Center.
-
-Detailed architecture: `docs/PRODUCT_REMAKE_ARCHITECTURE_V1.md`.
-
-## 2. Current ordinary-user UI
 
 Formal UI:
 
@@ -49,36 +42,24 @@ ProjectListV4
 ProjectStudioV4
 ```
 
-Primary work areas:
-
-```text
-Project
-Review Center
-Output
-```
-
-Legacy Stage 01-06 / P/G UIs are compatibility/advanced tools only.
+Old Stage/P/G screens are compatibility/advanced only.
 
 ## 3. Current automatic workflow
 
-One-click task:
-
 ```text
 AUTO_REMAKE_PREP_V1
-```
 
-Current executable scope:
-
-```text
 Project/Episodes
-→ automatic preprocess when needed
-→ Current Shot detection / Reference Clips when needed
-→ Breakdown ASR + OCR + Qwen3-VL + Fusion
-→ Character V10.1 / Scene / Prop extraction
-→ Final Asset application under existing safety rules
-→ Shot / Character / Asset ReviewIssue sync
-→ project SourceDramaSnapshot
-→ Speaker ReviewIssue sync
+→ preprocess
+→ Shot / Reference Clip
+→ ASR / OCR / Qwen3-VL Breakdown / Fusion
+→ Character V10.1 / Scene / Prop
+→ Final Asset
+→ source ReviewIssues
+→ SourceDramaSnapshot
+→ Speaker ReviewIssues
+→ TargetCharacter / SceneLocalizationMapping
+→ target ReviewIssues
 ```
 
 Current ReviewIssue producers:
@@ -88,6 +69,8 @@ SHOT_BOUNDARY
 CHARACTER_IDENTITY
 ASSET_BINDING
 SPEAKER
+TARGET_CHARACTER
+SCENE_LOCALIZATION
 ```
 
 Future producers:
@@ -99,127 +82,138 @@ H3_QC
 LIP_SYNC_QC
 ```
 
-## 4. SourceDramaSnapshot is now the downstream source boundary
+## 4. SourceDramaSnapshot boundary
 
-R2 is implemented on `main`.
+R2 is implemented.
 
-Future remake modules must consume:
-
-```text
-SourceDramaSnapshot
-```
-
-instead of directly depending on G2/P5/P6/P7 product naming.
-
-APIs:
+All new downstream remake modules must consume SourceDramaSnapshot, not direct G2/P5/P6/P7 product names.
 
 ```text
 GET /api/episodes/{episode_id}/source-drama-snapshot
 GET /api/projects/{project_id}/source-drama-snapshot
 ```
 
-The Snapshot is a deterministic current read facade, not a duplicate truth database. Downstream persisted models must anchor its `source_fingerprint`.
+It is deterministic source-only current read truth with `source_fingerprint`, not another source DB.
 
-It contains source-only facts. Target dialogue, TargetCharacter, target scene, TTS, target timing and H3 output are forbidden from this Contract.
+Spec: `docs/SOURCE_DRAMA_SNAPSHOT_V1.md`.
 
-Read `docs/SOURCE_DRAMA_SNAPSHOT_V1.md` before changing downstream remake models.
+## 5. Target localization boundary
 
-## 5. Existing accepted internals remain usable
+R4 is implemented.
 
-Do not delete or weaken accepted internals merely because their old names are no longer product concepts.
+Target-side persistent models:
 
-Still valuable:
+```text
+TargetCharacter
+SceneLocalizationMapping
+```
+
+Source and target assets are strictly separate.
+
+### TargetCharacter
+
+```text
+one source Character in one Project
+→ one TargetCharacter
+```
+
+Stores target-region name, stable appearance profile, generation prompt, future reference assets and confidence/review state.
+
+### SceneLocalizationMapping
+
+Same Final Scene across episodes must share one target scene decision:
+
+```text
+Final Scene SCENE_X
+→ canonical key ASSET:SCENE_X
+→ one KEEP / LOCALIZE mapping
+```
+
+Anonymous source scenes remain occurrence-local.
+
+Project policy rules:
+
+```text
+KEEP     -> automatic KEEP
+LOCALIZE -> target description required
+AUTO     -> AI KEEP/LOCALIZE; low confidence -> REVIEW
+```
+
+R4 reuses the configured local Qwen3-VL OpenAI-compatible endpoint. Do not create another model server for the same planning work without a concrete need.
+
+Spec: `docs/TARGET_LOCALIZATION_V1.md`.
+
+## 6. Freshness rules
+
+Downstream target data must fail closed when stale.
+
+```text
+SourceDramaSnapshot fingerprint change
+local source Character signature change
+canonical source Scene signature change
+Project scene policy change
+Project target language/region change
+```
+
+Manual target decisions survive ordinary reruns only while their relevant local source signature remains unchanged.
+
+## 7. Existing internals to preserve
 
 ```text
 FFmpeg / FFprobe
-Source PTS authority
+Source PTS
 ShotRevision + manual Shot edits
-TransVLM/current shot runtime + cache
-frame-exact Reference Clip rendering
-Faster-Whisper ASR
+TransVLM shot runtime/cache
+Reference Clip
+Faster-Whisper
 RapidOCR
 Qwen3-VL Breakdown
-Window Context / Exact Shot
-Scene Timeline structured facts
-Character V10.1 Person Evidence / tracking / ReID
+Window / Exact Shot
+Scene Timeline
+Character V10.1
 Final Character/Scene/Prop + Shot bindings
 AssetRevision
-P5/P6 compatibility layers while SourceDramaSnapshot still consumes them
-Localization revision safety where legacy code still depends on it
+P5/P6 compatibility while required by SourceDramaSnapshot
 BackgroundTask / progress
 ```
 
-Previously accepted G1/G2/P5 behavior stays fail-closed unless a concrete regression or deliberate migration requires change.
+Do not weaken accepted Character identity gates to reduce ReviewIssues.
 
-## 6. Semantic safety rules
+## 8. Semantic invariants
 
 ```text
 LocalSubject != Character
 SceneSegmentDraft != Final Scene
 DraftPropHint != Final Prop
 ASR speaker != Character
-raw Evidence != Final binding truth
-same-Shot person observations = hard cannot-link
-ASR source text = immutable source truth
-OCR source text = immutable source truth
-SourceDramaSnapshot target-side fields = forbidden
+Source Character != TargetCharacter
+Source Scene != Target Scene decision
+same-Shot observations = hard cannot-link
+ASR source text = immutable
+OCR source text = immutable
+SourceDramaSnapshot contains no target truth
+ReviewIssue is attention state, not domain truth
 ```
 
-Character V10.1 identity safety must not be relaxed to reduce ReviewIssues. Ambiguity belongs in Review Center.
+## 9. Development frontier
 
-## 7. Current product data foundations
-
-### ProjectRemakePolicy
+Do not resume old Stage 05 planning.
 
 ```text
-scene_policy = AUTO | KEEP | LOCALIZE
-character_policy = LOCALIZE
-generation_engine = MINIMAX_H3_LOCAL
-```
-
-### ReviewIssue
-
-Unified attention queue; not a second source of domain truth.
-
-### SourceDramaSnapshot
-
-Single downstream source-read boundary with stable source keys and `source_fingerprint`.
-
-## 8. Next development frontier
-
-Do **not** continue the old Stage 05 plan.
-
-Current order:
-
-```text
-R2 SourceDramaSnapshot                  = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-R4 TargetCharacter + SceneLocalizationMapping = NEXT
-R5 automatic target dialogue + TTS
+R2 SourceDramaSnapshot                       = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
+R4 TargetCharacter + SceneLocalizationMapping = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
+R5 TargetDialogue + TTS/Voice                = NEXT
 R6 Dialogue Timing Engine + RemakeTimeline
 R7 local MiniMax H3 RuntimeManager
 R8 H3 ContextCompiler + GenerationSegment
-R9 automatic generation QC / retry
-R10 Lip Sync + audio/subtitle/episode assembly
-R11 legacy cleanup after dependencies are migrated
+R9 H3 QC / retry
+R10 Lip Sync + subtitle/audio/assembly/export
+R11 legacy cleanup
 ```
 
-`Shot != GenerationSegment` must be preserved.
-
-## 9. Git workflow
-
-```text
-Documentation-only change -> main directly
-Code/behavior change -> main directly by default
-Only create/use another branch or PR when the user explicitly asks
-All commits -> [skip ci]
-Hosted GitHub Actions -> not acceptance evidence
-```
-
-The backup branch is rollback-only.
+`Shot != GenerationSegment` remains mandatory.
 
 ## 10. Recovery order
-
-Always read repository truth before old chat/history:
 
 ```text
 1. AGENTS.md
@@ -227,7 +221,18 @@ Always read repository truth before old chat/history:
 3. docs/PRODUCT_REMAKE_ARCHITECTURE_V1.md
 4. docs/PROJECT_STATE.md
 5. docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-6. docs/SOURCE_DRAMA_SNAPSHOT_V1.md when working downstream
-7. relevant current code/tests
-8. old P/G docs only when maintaining those internals
+6. docs/SOURCE_DRAMA_SNAPSHOT_V1.md
+7. docs/TARGET_LOCALIZATION_V1.md
+8. relevant current code/tests
+9. old P/G docs only for internal maintenance
+```
+
+## 11. Git discipline
+
+```text
+main = active development
+backup branch = rollback-only
+code/docs -> main directly unless user explicitly asks otherwise
+all commits -> [skip ci]
+hosted GitHub Actions != acceptance evidence
 ```
