@@ -2,12 +2,15 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { breakdownApi } from '../api/breakdown'
+import { localizationApi } from '../api/localization'
 import AssetStageV4 from '../components/AssetStageV4.vue'
 import BreakdownStageV1 from '../components/BreakdownStageV1.vue'
 import EpisodeManagerV3 from '../components/EpisodeManagerV3.vue'
+import LocalizationStageV1 from '../components/LocalizationStageV1.vue'
 import TaskProgressDock from '../components/TaskProgressDock.vue'
 import { api } from '../api/client'
 import type { BreakdownRunSummary } from '../types/breakdown'
+import type { LocalizationDraftView } from '../types/localization'
 import type { AssetWorkspace, BackgroundTask, ContentAnalysisRun, Episode, Project } from '../types/studio'
 import { deriveStageStates, stageStateLabels } from '../utils/stageStatus'
 
@@ -19,6 +22,7 @@ const tasks = ref<BackgroundTask[]>([])
 const analysis = ref<ContentAnalysisRun | null>(null)
 const breakdownRuns = ref<BreakdownRunSummary[]>([])
 const assetWorkspace = ref<AssetWorkspace | null>(null)
+const localizationDrafts = ref<LocalizationDraftView[]>([])
 const loading = ref(true)
 const error = ref('')
 const shotRefreshToken = ref(0)
@@ -27,8 +31,8 @@ const stages = [
   { id: 1, title: '源片与剧集', subtitle: '导入 / 排序 / 素材准备', implemented: true },
   { id: 2, title: '剧情与镜头', subtitle: '镜头管理 / 拉片结果', implemented: true },
   { id: 3, title: '人物·场景·道具', subtitle: '资产确认 / 镜头绑定', implemented: true },
-  { id: 4, title: '本土化剧本', subtitle: '对白 / 动作 / 结构化剧本', implemented: false },
-  { id: 5, title: '镜头重制方案', subtitle: '本土化 / 镜头规格 / 生成计划', implemented: false },
+  { id: 4, title: '本土化剧本', subtitle: '翻译 / 本土化 / 送审定稿', implemented: true },
+  { id: 5, title: '镜头重制方案', subtitle: '镜头规格 / 生成计划', implemented: false },
   { id: 6, title: '生成·质检·交付', subtitle: '视频 / 语音 / 质检 / 导出', implemented: false },
 ]
 
@@ -44,6 +48,7 @@ const stageStates = computed(() => deriveStageStates({
   analysis: analysis.value,
   breakdownRuns: breakdownRuns.value,
   assetWorkspace: assetWorkspace.value,
+  localizationDrafts: localizationDrafts.value,
 }))
 
 function stageState(stageId: number) {
@@ -56,13 +61,13 @@ const currentEpisode = computed(() => {
   const requestedId = String(route.query.episode || '')
   return episodes.find((episode) => episode.id === requestedId) ?? episodes[0] ?? null
 })
-const reviewStageIds = computed(() => [1, 2, 3].filter((stageId) => {
+const reviewStageIds = computed(() => [1, 2, 3, 4].filter((stageId) => {
   const state = stageState(stageId)
   return state === 'review' || state === 'blocked'
 }))
 
 const overallStatus = computed(() => {
-  const states = [1, 2, 3].map((stageId) => stageState(stageId))
+  const states = [1, 2, 3, 4].map((stageId) => stageState(stageId))
   if (states.includes('blocked')) return { label: '存在阻塞', tone: 'blocked' }
   if (states.includes('processing')) return { label: '处理中', tone: 'processing' }
   if (states.includes('review')) return { label: '待复核', tone: 'review' }
@@ -73,15 +78,16 @@ const overallStatus = computed(() => {
 
 const nextStep = computed(() => {
   if ((project.value?.episodes.length ?? 0) === 0) return { stageId: 1, label: '先导入源片' }
-  for (const stageId of [1, 2, 3]) {
+  for (const stageId of [1, 2, 3, 4]) {
     const state = stageState(stageId)
     const stage = stages.find((item) => item.id === stageId)!
     if (state === 'blocked') return { stageId, label: `处理「${stage.title}」阻塞` }
     if (state === 'processing') return { stageId, label: `查看「${stage.title}」进度` }
     if (state === 'review') return { stageId, label: `复核「${stage.title}」` }
+    if (state === 'editing') return { stageId, label: `继续「${stage.title}」` }
     if (state === 'not_started') return { stageId, label: `开始「${stage.title}」` }
   }
-  return { stageId: 3, label: '当前可用流程已完成' }
+  return { stageId: 4, label: '当前可用流程已完成' }
 })
 
 async function readBreakdownRuns(episodes: Episode[]): Promise<BreakdownRunSummary[]> {
@@ -89,21 +95,28 @@ async function readBreakdownRuns(episodes: Episode[]): Promise<BreakdownRunSumma
   return results.flatMap((result) => result.status === 'fulfilled' ? result.value : [])
 }
 
+async function readLocalizationDrafts(episodes: Episode[]): Promise<LocalizationDraftView[]> {
+  const results = await Promise.allSettled(episodes.map((episode) => localizationApi.getCurrentDraft(episode.id)))
+  return results.flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : [])
+}
+
 async function refreshProject(): Promise<void> {
   if (!projectId.value) return
   try {
     const nextProject = await api.getProject(projectId.value)
     project.value = nextProject
-    const [taskResult, analysisResult, runsResult, workspaceResult] = await Promise.allSettled([
+    const [taskResult, analysisResult, runsResult, workspaceResult, localizationResult] = await Promise.allSettled([
       api.listProjectTasks(projectId.value, 30),
       api.getCurrentContentAnalysis(projectId.value),
       readBreakdownRuns(nextProject.episodes),
       api.getAssetWorkspace(projectId.value),
+      readLocalizationDrafts(nextProject.episodes),
     ])
     if (taskResult.status === 'fulfilled') tasks.value = taskResult.value
     if (analysisResult.status === 'fulfilled') analysis.value = analysisResult.value
     if (runsResult.status === 'fulfilled') breakdownRuns.value = runsResult.value
     if (workspaceResult.status === 'fulfilled') assetWorkspace.value = workspaceResult.value
+    if (localizationResult.status === 'fulfilled') localizationDrafts.value = localizationResult.value
     error.value = ''
   } catch (err) {
     error.value = err instanceof Error ? err.message : '项目读取失败'
@@ -166,11 +179,26 @@ function stageQuery(stageId: number): Record<string, string | string[] | null | 
     return query
   }
 
+  if (stageId === 3) {
+    delete query.breakdown_view
+    delete query.episode
+    delete query.scene
+    delete query.shot
+    query.asset_tab = 'inbox'
+    return query
+  }
+
   delete query.breakdown_view
-  delete query.episode
   delete query.scene
   delete query.shot
-  query.asset_tab = 'inbox'
+  delete query.asset_tab
+  delete query.asset_episode
+  delete query.asset_filter
+  delete query.asset_shot
+  const episodes = project.value?.episodes ?? []
+  const requestedId = String(query.episode || '')
+  const episode = episodes.find((item) => item.id === requestedId) ?? episodes[0] ?? null
+  if (episode) query.episode = episode.id
   return query
 }
 
@@ -230,7 +258,7 @@ onUnmounted(() => {
       </nav>
       <div class="sidebar-footer">
         <span>本地处理</span>
-        <small>{{ project.episodes.length }} 集 · 01–03 当前可用</small>
+        <small>{{ project.episodes.length }} 集 · 01–04 当前可用</small>
       </div>
     </aside>
 
@@ -266,7 +294,7 @@ onUnmounted(() => {
         </div>
       </header>
 
-      <main :class="['studio-main', { 'shot-stage-main': activeStage === 2, 'asset-stage-main': activeStage === 3 }]">
+      <main :class="['studio-main', { 'shot-stage-main': activeStage === 2, 'asset-stage-main': activeStage === 3, 'localization-stage-main': activeStage === 4 }]">
         <EpisodeManagerV3 v-if="activeStage === 1" :project="project" @refresh="refreshProject" />
         <BreakdownStageV1
           v-else-if="activeStage === 2"
@@ -276,6 +304,7 @@ onUnmounted(() => {
           @refresh-project="refreshProject"
         />
         <AssetStageV4 v-else-if="activeStage === 3" :project-id="project.id" :episodes="project.episodes" />
+        <LocalizationStageV1 v-else-if="activeStage === 4" :project="project" />
       </main>
     </section>
   </div>
@@ -294,6 +323,7 @@ onUnmounted(() => {
 }
 .stage-item .stage-dot { background: #a9b2bf; }
 .stage-item.stage-state-processing .stage-dot { background: #4f7ee0; box-shadow: 0 0 0 4px rgba(79, 126, 224, .12); }
+.stage-item.stage-state-editing .stage-dot { background: #7a63d8; box-shadow: 0 0 0 4px rgba(122, 99, 216, .12); }
 .stage-item.stage-state-review .stage-dot { background: #d89a28; box-shadow: 0 0 0 4px rgba(216, 154, 40, .12); }
 .stage-item.stage-state-completed .stage-dot { background: #25a56a; box-shadow: 0 0 0 4px rgba(37, 165, 106, .1); }
 .stage-item.stage-state-blocked .stage-dot { background: #d75b5b; box-shadow: 0 0 0 4px rgba(215, 91, 91, .1); }
@@ -315,7 +345,8 @@ onUnmounted(() => {
   overflow: auto;
 }
 .studio-workspace-shell > .studio-main.shot-stage-main,
-.studio-workspace-shell > .studio-main.asset-stage-main {
+.studio-workspace-shell > .studio-main.asset-stage-main,
+.studio-workspace-shell > .studio-main.localization-stage-main {
   height: 100%;
 }
 .project-command-bar {
