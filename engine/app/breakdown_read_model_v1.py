@@ -1,11 +1,16 @@
-"""P6：冻结 Scene Timeline + P5 Final Character 的最终用户阅读组合层。
+"""P6：冻结 Scene Timeline + Final Asset display overlays 的最终用户阅读组合层。
 
-本模块绝不做身份推断。唯一允许的链路是：
+本模块不做新的识别或资产推断：
 
+Character:
     G2 Scene-local P* --(same run/revision + same scene/ref)--> P5 RESOLVED
         --> current AssetRevision --> existing Final Character
 
-任何锚点、人物编号或当前资产版本不一致时都 fail closed：保留完整 G2 Timeline，人物继续匿名。
+Scene / Prop:
+    exact current ShotRevision mapping --> current Final ShotSceneBinding / ShotPropBinding
+        --> existing Final Scene / Prop
+
+人物 identity 与 Scene/Prop asset overlay 独立 fail-closed。任何 overlay 都不得改写冻结 G2 Timeline。
 """
 from __future__ import annotations
 
@@ -21,8 +26,10 @@ from engine.app.breakdown_character_bridge_v1 import (
     BreakdownCharacterBridgeError,
     load_episode_character_resolution_v1,
 )
+from engine.app.breakdown_final_asset_overlay_v1 import load_episode_final_asset_overlay_v1
 from engine.app.breakdown_read_model_contract_v1 import (
     BREAKDOWN_READ_MODEL_SCHEMA_VERSION,
+    BreakdownReadAssetOverlayV1,
     BreakdownReadIdentityOverlayV1,
     BreakdownReadModelV1,
 )
@@ -38,7 +45,7 @@ IDENTITY_STALE_WARNING = "人物资产与当前拉片版本暂不一致，当前
 
 
 class BreakdownReadModelError(RuntimeError):
-    """P6 自身 Contract 无法安全组合；不会用于放宽 G2/P5。"""
+    """P6 自身 Contract 无法安全组合；不会用于放宽 G2/P5/Final Binding。"""
 
 
 def _metadata(raw: str | None) -> dict[str, Any]:
@@ -73,14 +80,24 @@ def _anonymous_identity(
     )
 
 
+def _asset_overlay(
+    value: Mapping[str, Any] | BreakdownReadAssetOverlayV1 | None,
+) -> BreakdownReadAssetOverlayV1 | None:
+    if value is None:
+        return None
+    return value if isinstance(value, BreakdownReadAssetOverlayV1) else BreakdownReadAssetOverlayV1.model_validate(value)
+
+
 def _anonymous_result(
     timeline: SceneTimelinePayloadV1,
     *,
     warning: str,
+    asset_overlay: BreakdownReadAssetOverlayV1 | None = None,
 ) -> dict[str, Any]:
     return BreakdownReadModelV1(
         timeline=timeline,
         identity=_anonymous_identity(timeline, warning=warning),
+        assets=asset_overlay,
     ).model_dump(mode="json")
 
 
@@ -90,7 +107,7 @@ def _load_current_character_snapshots(
     expected_asset_revision_id: str | None,
     character_ids: set[str],
 ) -> tuple[bool, dict[str, dict[str, str | None]]]:
-    """Verify P5 still points at the current asset revision, then load display-only Character fields."""
+    """Verify P5 still points at current AssetRevision, then load display-only Character fields."""
 
     if expected_asset_revision_id is None:
         return False, {}
@@ -109,7 +126,7 @@ def _load_current_character_snapshots(
         rows = list(session.scalars(select(Character).where(
             Character.project_id == project_id,
             Character.id.in_(tuple(sorted(character_ids))),
-        ).all())
+        )).all())
         snapshots: dict[str, dict[str, str | None]] = {}
         for character in rows:
             metadata = _metadata(character.metadata_json)
@@ -128,12 +145,14 @@ def compose_breakdown_read_model_v1(
     *,
     current_asset_revision_matches: bool = True,
     character_snapshots: Mapping[str, Mapping[str, str | None]] | None = None,
+    asset_overlay: Mapping[str, Any] | BreakdownReadAssetOverlayV1 | None = None,
     unavailable_warning: str = IDENTITY_PENDING_WARNING,
 ) -> dict[str, Any]:
-    """Pure P6 composition gate used by API and deterministic tests.
+    """Pure P6 Character composition plus an independently validated Scene/Prop overlay.
 
-    ``timeline`` is validated then embedded unchanged. Identity overlay is accepted only when every
-    version anchor and every Scene-local P* row agrees with frozen G2/P5.
+    ``timeline`` is validated then embedded unchanged. Character identity is accepted only when every
+    version anchor and every Scene-local P* row agrees with frozen G2/P5. ``asset_overlay`` never
+    participates in Character resolution and therefore cannot make a safe Character anonymous.
     """
 
     timeline = (
@@ -142,6 +161,7 @@ def compose_breakdown_read_model_v1(
         else SceneTimelinePayloadV1.model_validate(timeline_payload)
     )
     normalized_timeline = timeline.model_dump(mode="json")
+    assets = _asset_overlay(asset_overlay)
 
     if resolution_payload is None:
         identity = _anonymous_identity(timeline, warning=unavailable_warning)
@@ -149,6 +169,7 @@ def compose_breakdown_read_model_v1(
             schema_version=BREAKDOWN_READ_MODEL_SCHEMA_VERSION,
             timeline=timeline,
             identity=identity,
+            assets=assets,
         ).model_dump(mode="json")
 
     resolution = (
@@ -165,7 +186,7 @@ def compose_breakdown_read_model_v1(
         and resolution.asset_revision_id is not None
     )
     if not anchors_match:
-        return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
+        return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING, asset_overlay=assets)
 
     # P5 contract is intentionally permissive about aggregate counters. P6 treats any mismatch as stale
     # instead of letting malformed bridge data selectively resolve a person.
@@ -182,7 +203,7 @@ def compose_breakdown_read_model_v1(
         or resolution.resolved_count != bridge_resolved_count
         or resolution.unresolved_count != bridge_people_count - bridge_resolved_count
     ):
-        return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
+        return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING, asset_overlay=assets)
 
     timeline_scenes = {scene.ordinal: scene for scene in timeline.scenes}
     resolution_scenes = {scene.scene_ordinal: scene for scene in resolution.scenes}
@@ -191,7 +212,7 @@ def compose_breakdown_read_model_v1(
         or len(resolution_scenes) != len(resolution.scenes)
         or set(timeline_scenes) != set(resolution_scenes)
     ):
-        return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
+        return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING, asset_overlay=assets)
 
     snapshots = character_snapshots or {}
     overlay_scenes: list[dict[str, object]] = []
@@ -211,11 +232,11 @@ def compose_breakdown_read_model_v1(
             or bridge_scene.unresolved_count != len(bridge_scene.people) - bridge_scene_resolved
             or set(timeline_people) != set(bridge_people)
         ):
-            return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
+            return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING, asset_overlay=assets)
         for ref, person in timeline_people.items():
             bridge_person = bridge_people[ref]
             if bridge_person.local_display_name != person.display_name:
-                return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
+                return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING, asset_overlay=assets)
             if bridge_person.status == "RESOLVED":
                 character_id = str(bridge_person.character_id or "")
                 snapshot = snapshots.get(character_id)
@@ -224,7 +245,7 @@ def compose_breakdown_read_model_v1(
                     or snapshot.get("id") != character_id
                     or snapshot.get("name") != bridge_person.character_name
                 ):
-                    return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
+                    return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING, asset_overlay=assets)
 
     for scene in timeline.scenes:
         bridge_people = {
@@ -264,7 +285,11 @@ def compose_breakdown_read_model_v1(
         warnings=warnings,
         scenes=overlay_scenes,
     )
-    result = BreakdownReadModelV1(timeline=timeline, identity=identity).model_dump(mode="json")
+    result = BreakdownReadModelV1(
+        timeline=timeline,
+        identity=identity,
+        assets=assets,
+    ).model_dump(mode="json")
 
     # Explicit leak/mutation guard: P6 may never rewrite any frozen Timeline value.
     if result["timeline"] != normalized_timeline:
@@ -273,7 +298,7 @@ def compose_breakdown_read_model_v1(
 
 
 def load_episode_breakdown_read_model_v1(episode_id: str) -> dict[str, Any] | None:
-    """Read current user-facing G2 result and safely add current Final Character display identity."""
+    """Read current G2 result and safely add current Final Character/Scene/Prop display overlays."""
 
     draft = get_current_breakdown(episode_id)
     if draft is None:
@@ -303,11 +328,17 @@ def load_episode_breakdown_read_model_v1(episode_id: str) -> dict[str, Any] | No
         expected_asset_revision_id=resolution.asset_revision_id,
         character_ids=resolved_character_ids,
     )
+    assets = load_episode_final_asset_overlay_v1(
+        timeline,
+        project_id=resolution.project_id,
+        expected_asset_revision_id=resolution.asset_revision_id,
+    )
     return compose_breakdown_read_model_v1(
         timeline,
         resolution,
         current_asset_revision_matches=revision_matches,
         character_snapshots=snapshots,
+        asset_overlay=assets,
     )
 
 
