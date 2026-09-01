@@ -18,7 +18,6 @@ from engine.app.target_dialogue_pipeline_v1 import (
 from engine.app.target_dialogue_v1 import (
     TargetDialogue,
     TargetDialogueError,
-    generate_target_dialogue_text_v1,
     get_target_dialogue_v1,
     materialize_target_dialogue_audio_v1,
     update_target_dialogue_v1,
@@ -68,7 +67,7 @@ def api_generate_target_dialogue(project_id: str, payload: TargetDialogueGenerat
 @router.post("/projects/{project_id}/target-dialogue/generate-text", response_model=TargetDialogueBundleV1)
 def api_generate_target_dialogue_text(project_id: str):
     try:
-        return generate_target_dialogue_text_v1(project_id)
+        return run_target_dialogue_pipeline_v1(project_id, synthesize_audio=False)
     except Exception as exc:
         raise _error(exc) from exc
 
