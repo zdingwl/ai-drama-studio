@@ -1,9 +1,8 @@
 """AI Drama Studio V2 FastAPI 入口。
 
-当前可用范围：
-多剧集管理、自动初始化 + 拉片、Shot 人工修正、Final Asset / Shot Binding、
-项目重制策略、统一人工复核队列、一键自动理解原短剧、SourceDramaSnapshot、
-TargetCharacter / SceneLocalizationMapping，以及统一后台 Task / Progress API。
+当前正式范围：多剧集管理、拉片/Reference Clip、SourceDramaSnapshot、目标人物/场景/
+对白本土化、真实 TTS Timing、GenerationSegment，以及本地 MiniMax H3 Context /
+GenerationAttempt 执行。自动工作继续隐藏在 Project / Review / Output 三个产品区域背后。
 """
 from __future__ import annotations
 
@@ -31,6 +30,9 @@ from engine.app.content_analysis_v2 import (
     run_content_analysis,
 )
 from engine.app.content_models_v2 import ContentModelError, prepare_models
+from engine.app.generation_attempt_v1 import recover_interrupted_generation_attempts_v1
+from engine.app.generation_segment_routes_v1 import router as generation_segment_router
+from engine.app.h3_generation_routes_v1 import router as h3_generation_router
 from engine.app.media_v2 import MediaPipelineError, detect_episode_shots, preprocess_episode
 from engine.app.remake_routes_v1 import router as remake_router
 from engine.app.review_issue_routes_v1 import router as review_issue_router
@@ -61,6 +63,7 @@ async def lifespan(_: FastAPI):
     # 不改写已有本地数据库表结构。
     init_database()
     recover_interrupted_tasks()
+    recover_interrupted_generation_attempts_v1()
     yield
 
 
@@ -86,6 +89,8 @@ app.include_router(remake_router)
 app.include_router(review_issue_router)
 app.include_router(auto_remake_router)
 app.include_router(target_localization_router)
+app.include_router(generation_segment_router)
+app.include_router(h3_generation_router)
 
 
 class ProjectCreate(BaseModel):
