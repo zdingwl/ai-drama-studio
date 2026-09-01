@@ -123,13 +123,105 @@ describe('deriveStageStates', () => {
     expect(states[3]).toBe('review')
   })
 
-  it('marks assets complete only with a READY non-stale final revision and no unresolved evidence', () => {
+  it('keeps assets in review when AI evidence conflicts with the current final binding', () => {
     const states = deriveStageStates({
       episodes: [{ id: 'E1', shot_count: 12, preprocess_status: 'READY' }],
       tasks: [],
       analysis: { status: 'READY', counts: { unresolved_character_candidates: 0 } },
       breakdownRuns: [],
-      assetWorkspace: { status: 'READY', stale: false, revision: { id: 'REV1' } },
+      assetWorkspace: {
+        status: 'READY',
+        stale: false,
+        revision: { id: 'REV1' },
+        bindings_by_shot: {
+          S1: { character_ids: ['CHAR_A'], scene_id: 'SCENE_A', prop_ids: [] },
+        },
+        evidence_by_shot: {
+          S1: {
+            characters: [{ confidence: 0.95, final_asset_id: 'CHAR_B' }],
+            scene: { confidence: 0.95, final_asset_id: 'SCENE_A' },
+            props: [],
+          },
+        },
+      },
+    })
+
+    expect(states[3]).toBe('review')
+  })
+
+  it('keeps assets in review when high-confidence evidence has not been bound', () => {
+    const states = deriveStageStates({
+      episodes: [{ id: 'E1', shot_count: 12, preprocess_status: 'READY' }],
+      tasks: [],
+      analysis: { status: 'READY', counts: { unresolved_character_candidates: 0 } },
+      breakdownRuns: [],
+      assetWorkspace: {
+        status: 'READY',
+        stale: false,
+        revision: { id: 'REV1' },
+        bindings_by_shot: {
+          S1: { character_ids: [], scene_id: null, prop_ids: [] },
+        },
+        evidence_by_shot: {
+          S1: {
+            characters: [],
+            scene: { confidence: 0.92, final_asset_id: 'SCENE_A' },
+            props: [],
+          },
+        },
+      },
+    })
+
+    expect(states[3]).toBe('review')
+  })
+
+  it('keeps assets in review while any evidence remains low-confidence', () => {
+    const states = deriveStageStates({
+      episodes: [{ id: 'E1', shot_count: 12, preprocess_status: 'READY' }],
+      tasks: [],
+      analysis: { status: 'READY', counts: { unresolved_character_candidates: 0 } },
+      breakdownRuns: [],
+      assetWorkspace: {
+        status: 'READY',
+        stale: false,
+        revision: { id: 'REV1' },
+        bindings_by_shot: {
+          S1: { character_ids: ['CHAR_A'], scene_id: null, prop_ids: [] },
+        },
+        evidence_by_shot: {
+          S1: {
+            characters: [{ confidence: 0.62, final_asset_id: 'CHAR_A' }],
+            scene: null,
+            props: [],
+          },
+        },
+      },
+    })
+
+    expect(states[3]).toBe('review')
+  })
+
+  it('marks assets complete only with a READY non-stale final revision, no unresolved evidence, and no inbox review work', () => {
+    const states = deriveStageStates({
+      episodes: [{ id: 'E1', shot_count: 12, preprocess_status: 'READY' }],
+      tasks: [],
+      analysis: { status: 'READY', counts: { unresolved_character_candidates: 0 } },
+      breakdownRuns: [],
+      assetWorkspace: {
+        status: 'READY',
+        stale: false,
+        revision: { id: 'REV1' },
+        bindings_by_shot: {
+          S1: { character_ids: ['CHAR_A'], scene_id: 'SCENE_A', prop_ids: ['PROP_A'] },
+        },
+        evidence_by_shot: {
+          S1: {
+            characters: [{ confidence: 0.95, final_asset_id: 'CHAR_A' }],
+            scene: { confidence: 0.95, final_asset_id: 'SCENE_A' },
+            props: [{ confidence: 0.9, final_asset_id: 'PROP_A' }],
+          },
+        },
+      },
     })
 
     expect(states[3]).toBe('completed')
