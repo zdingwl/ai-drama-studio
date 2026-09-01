@@ -18,6 +18,7 @@ from engine.app.h3_context_contract_v1 import (
     GenerationAttemptProjectSummaryV1,
     H3CompiledContextV1,
 )
+from engine.app.minimax_h3_provider_v1 import get_video_generation_provider_v1
 from engine.app.studio_v2 import get_project
 from engine.app.task_progress_v2 import (
     ACTIVE_TASK_STATUSES,
@@ -119,6 +120,9 @@ def api_compile_h3_context(segment_id: str, project_id: str):
 def api_start_h3_generate_ready(project_id: str, background: BackgroundTasks):
     if get_project(project_id) is None:
         raise HTTPException(status_code=404, detail="项目不存在")
+    runtime = get_video_generation_provider_v1("MINIMAX_H3_LOCAL").status()
+    if not runtime.get("ready"):
+        raise HTTPException(status_code=409, detail="本地 MiniMax H3 Runtime 尚未 READY，请先启动 FL2VA / Ref2VA 服务")
     try:
         plan = get_generation_segments_v1(project_id)
     except Exception as exc:
