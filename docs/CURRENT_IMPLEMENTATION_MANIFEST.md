@@ -33,7 +33,8 @@ P3 current 02 拉片 Shot-card UI: IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop: IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character: V1 / FINAL PASS / FROZEN
 P6 Final Breakdown read model: V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
-P6 Character cover renderer: IMPLEMENTED ON MAIN / USER-LOCAL VISUAL ACCEPTANCE PENDING
+P6 Final Character renderer: IMPLEMENTED ON MAIN / USER-LOCAL VISUAL ACCEPTANCE PENDING
+P6 Final Scene/Prop fill-back: IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 ```
 
 Executable CURRENT = `PROJECT_STATE + this manifest + current code/tests`.
@@ -131,12 +132,6 @@ G2.6 ordinary-user UI is implemented on `main` but still needs user-local fronte
 
 ## P5 Breakdown ↔ Character safe bridge
 
-PR #17 merged and closed. Merge commit:
-
-```text
-ab4b11716f5c1c5ead7367119d1b2d787defe8f9
-```
-
 Frozen implementation:
 
 ```text
@@ -168,8 +163,6 @@ appearance summaries
 P1/P2 labels themselves
 ```
 
-P5 is read-only and fail-closed. It does not create identity, modify Character V10.1, modify Final Gate, rewrite LocalSubject, or write Final bindings.
-
 Accepted user-local evidence:
 
 ```text
@@ -180,47 +173,53 @@ people = 4
 resolved = 1
 unresolved = 3
 warnings = []
-
 Scene1 P2 -> 人物 001 / FINAL_SHOT_BINDING_SIGNATURE_V1
-Scene1 P1 -> UNRESOLVED
-Scene2 P1 -> UNRESOLVED
-Scene2 P2 -> UNRESOLVED
-```
-
-The accepted resolved signature is exact on Shots `3,4,5,6,9,10,11`; unresolved people correctly remain anonymous.
-
-Upstream real Character data used by this acceptance:
-
-```text
-resolved CharacterCandidates = 3
-Final Characters = 3
-Episode Final ShotCharacterBindings = 29
-AssetRevision = revision 14 / AUTO
 ```
 
 Status: **P5 V1 / FINAL PASS / FROZEN**.
 
 ## P6 Final Breakdown read model
 
-P6 is a separate read-only composition layer. It does not change G2 or P5 ownership.
+P6 is a separate read-only composition layer:
 
-Implementation:
+```text
+Frozen G2 Scene Timeline
++
+Frozen P5 Character resolution
++
+current Final ShotSceneBinding / ShotPropBinding
++
+current Final Character / Scene / Prop display assets
+→ independent P6 display overlays
+→ ordinary-user result
+```
+
+Backend implementation:
 
 ```text
 engine/app/breakdown_read_model_contract_v1.py
 engine/app/breakdown_read_model_v1.py
 engine/app/breakdown_read_model_routes_v1.py
+engine/app/breakdown_final_asset_overlay_v1.py
 engine/tests/v2/test_breakdown_read_model_v1.py
 engine/tests/v2/test_breakdown_read_model_routes_v1.py
+engine/tests/v2/test_breakdown_final_asset_overlay_v1.py
+engine/tests/v2/test_breakdown_read_model_asset_independence_v1.py
+scripts/run_breakdown_p6_read_model_acceptance_v1.py
+```
+
+Frontend implementation:
+
+```text
 frontend/src/types/breakdown-read-model.ts
 frontend/src/types/scene-timeline.ts
 frontend/src/utils/breakdownReadModelUi.ts
 frontend/src/utils/breakdownReadModelUi.test.ts
+frontend/src/utils/breakdownReadModelAssetsUi.test.ts
 frontend/src/utils/sceneTimelineUi.ts
 frontend/src/utils/sceneTimelineUi.test.ts
 frontend/src/api/scene-timeline.ts
 frontend/src/components/SceneTimelineResultsV1.vue
-docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md
 ```
 
 Read endpoint:
@@ -229,69 +228,75 @@ Read endpoint:
 GET /api/episodes/{episode_id}/breakdown-read-model
 ```
 
-Composition direction:
+Character rule:
 
 ```text
-Frozen G2 Scene Timeline
-+
-Frozen P5 current Scene-local resolution
-+
-current AssetRevision + existing Final Character id/name/cover
-→ P6 identity overlay
-→ ordinary-user display projection
+P5 RESOLVED + exact current anchors -> existing Final Character id/name/cover
+P5 UNRESOLVED -> 人物N
 ```
 
-Fail-closed gates include:
+Final Scene rule:
 
 ```text
-same Episode
-same BreakdownRun
-same ShotRevision
-same current AssetRevision
-consistent P5 aggregate counts
-exact Scene ordinal set
-exact Scene-local P* set
-matching anonymous display row
-current Character id/name matches P5 resolution
+exact current ShotRevision
+→ every Shot inside one G2 Scene has ShotSceneBinding
+→ all bindings point to the same existing Final Scene
+→ display-only final_scene
+otherwise final_scene = null
 ```
 
-Any mismatch keeps the whole Episode identity display anonymous. `UNRESOLVED` P5 people always remain `人物N`.
-
-Backend response preserves the entire frozen G2 payload under `timeline`; identity is a separate overlay. The frontend ordinary Episode reader consumes P6 and changes display-only person names/assets after a second validation gate. Historical Run reading continues to use frozen G2.5 without current Character projection.
-
-The ordinary-user renderer now consumes the display-only `final_character.cover_url` in two direct result surfaces:
+Final Prop rule:
 
 ```text
-Scene hero -> 本场人物
-Shot inspector -> 人物
+current ShotPropBinding -> display-only final_props[] for that Shot
+G2 props[] remains independent visible-observation truth
+no Draft/G2 string similarity is an asset binding authority
 ```
 
-Resolved people with a usable cover show the Final Character cover + name. Anonymous people, Final Characters without a cover, and failed image loads use a text-avatar fallback. No P* ref, Character ID, resolution basis or technical identity status is shown to ordinary users.
+Fail-closed domains are independent:
+
+```text
+bad Character overlay -> people anonymous, safe Final Scene/Prop retained
+bad Scene/Prop overlay -> final_scene/final_props cleared, safe Character retained
+```
+
+Backend preserves frozen G2 under `timeline`. Frontend applies a second exact Scene/Shot overlay check before adding display-only `final_character`, `final_scene`, `final_props`. Historical Run reading remains frozen G2.5 and never receives current Final assets.
+
+Ordinary-user renderer:
+
+```text
+Scene hero -> 本场人物: Character cover/name
+Shot inspector -> 人物: Character cover/name
+Scene hero -> 最终场景: Final Scene cover/name card
+Shot inspector -> 最终道具: Final Prop cards
+Shot inspector -> 道具观察: original frozen G2 prop facts
+```
 
 Acceptance evidence currently available:
 
 ```text
-P6 backend deterministic tests = added / NOT USER-LOCAL RUN YET
-P6 route tests = added / NOT USER-LOCAL RUN YET
-P6 frontend Vitest = added / NOT USER-LOCAL RUN YET
-isolated new frontend P6 projection core `tsc --strict` = PASS in assistant execution environment
-isolated person avatar helper `tsc --strict` = PASS in assistant execution environment
-full Vue component typecheck/build = NOT USER-LOCAL RUN YET
-full repository clone/test = unavailable in assistant environment (github.com DNS resolution failed)
+backend/route/asset-overlay/independence tests = ADDED / NOT USER-LOCAL RUN YET
+frontend Character/Scene/Prop projection tests = ADDED / NOT USER-LOCAL RUN YET
+isolated P6 TypeScript display types/projection `tsc --strict` = PASS in assistant environment
+isolated avatar helper `tsc --strict` = PASS in assistant environment
+full Vue typecheck/build = NOT RUN; vue/compiler-sfc/vue-tsc unavailable in assistant environment
+full repository pytest/Vitest = NOT CLAIMED
 ```
+
+Real runner reports Character + Final Scene + G2 Prop vs Final Prop and requires `timeline_preserved=true`.
 
 Status: **P6 V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING**.
 
-Do not mark P6 FINAL PASS before Python tests, frontend Vitest/typecheck/build, lockfile synchronization, and visual review.
+Do not mark P6 FINAL PASS before Python tests, real Episode runner, frontend Vitest/typecheck/build, lockfile synchronization and ordinary-user visual review.
 
 ## Current frontier
 
 ```text
 1. keep G1 + G2.1-G2.5 + P5 frozen
-2. finish G2.6 local UI acceptance when needed
-3. P4 Scene/Prop local acceptance remains pending
-4. finish P6 user-local tests/build + real Episode runner + ordinary-user visual review
-5. after P6 acceptance, continue final Scene/Prop asset fill-back while preserving Draft != Final Asset boundaries
+2. user-local accept P6 end-to-end
+3. close G2.6 visual acceptance together with P6 result-page review
+4. P4 Draft-guided Scene/Prop local acceptance remains separately pending
+5. then continue the next product workflow stage without reopening frozen recognition layers
 ```
 
-P6 must remain a separate composition layer. It may render Final Character names/assets only for P5 `RESOLVED` people; `UNRESOLVED` people remain `人物N`. It must not mutate frozen G2, P5, ASR/OCR truth, or Final Character bindings.
+P6 remains composition only. Final Character uses P5 RESOLVED authority; Final Scene/Prop use explicit Final Shot bindings. It must not mutate frozen G2, P5, ASR/OCR truth or Final bindings.
