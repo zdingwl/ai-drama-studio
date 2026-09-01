@@ -2,8 +2,10 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { breakdownApi } from '../api/breakdown'
+import { localizationApi } from '../api/localization'
 import { api } from '../api/client'
 import type { BreakdownRunSummary } from '../types/breakdown'
+import type { LocalizationDraftView } from '../types/localization'
 import type { AssetWorkspace, BackgroundTask, ContentAnalysisRun, Episode, Project } from '../types/studio'
 import { deriveStageStates, stageStateLabels, type StudioStageState } from '../utils/stageStatus'
 
@@ -31,11 +33,16 @@ const languageOptions = [
 const regionOptions = [
   ['US', '美国'], ['GB', '英国'], ['CA', '加拿大'], ['AU', '澳大利亚'], ['JP', '日本'], ['KR', '韩国'], ['SG', '新加坡'], ['BR', '巴西'],
 ]
-const stageNames: Record<number, string> = { 1: '源片', 2: '剧情与镜头', 3: '人物·场景·道具' }
+const stageNames: Record<number, string> = { 1: '源片', 2: '剧情与镜头', 3: '人物·场景·道具', 4: '本土化剧本' }
 
 async function readBreakdownRuns(episodes: Episode[]): Promise<BreakdownRunSummary[]> {
   const results = await Promise.allSettled(episodes.map((episode) => breakdownApi.listRuns(episode.id)))
   return results.flatMap((result) => result.status === 'fulfilled' ? result.value : [])
+}
+
+async function readLocalizationDrafts(episodes: Episode[]): Promise<LocalizationDraftView[]> {
+  const results = await Promise.allSettled(episodes.map((episode) => localizationApi.getCurrentDraft(episode.id)))
+  return results.flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : [])
 }
 
 function makeOverview(
@@ -44,9 +51,17 @@ function makeOverview(
   analysis: ContentAnalysisRun | null,
   breakdownRuns: BreakdownRunSummary[],
   workspace: AssetWorkspace | null,
+  localizationDrafts: LocalizationDraftView[],
 ): ProjectOverview {
-  const states = deriveStageStates({ episodes: project.episodes, tasks, analysis, breakdownRuns, assetWorkspace: workspace })
-  const currentStates = [states[1], states[2], states[3]]
+  const states = deriveStageStates({
+    episodes: project.episodes,
+    tasks,
+    analysis,
+    breakdownRuns,
+    assetWorkspace: workspace,
+    localizationDrafts,
+  })
+  const currentStates = [states[1], states[2], states[3], states[4]]
   const reviewCount = currentStates.filter((state) => state === 'review' || state === 'blocked').length
   const activeTaskCount = tasks.filter((task) => task.status === 'QUEUED' || task.status === 'PROCESSING').length
 
@@ -67,33 +82,38 @@ function makeOverview(
   } else if (currentStates.every((state) => state === 'completed')) {
     overallLabel = '当前流程完成'
     overallTone = 'completed'
+  } else if (currentStates.includes('editing')) {
+    overallLabel = '本土化编辑中'
   }
 
   if (!project.episodes.length) {
     return { states, overallLabel, overallTone, reviewCount, activeTaskCount, nextStage: 1, nextLabel: '导入源片' }
   }
-  for (const stageId of [1, 2, 3]) {
+  for (const stageId of [1, 2, 3, 4]) {
     const state = states[stageId]
     if (state === 'blocked') return { states, overallLabel, overallTone, reviewCount, activeTaskCount, nextStage: stageId, nextLabel: `处理${stageNames[stageId]}阻塞` }
     if (state === 'processing') return { states, overallLabel, overallTone, reviewCount, activeTaskCount, nextStage: stageId, nextLabel: `查看${stageNames[stageId]}进度` }
     if (state === 'review') return { states, overallLabel, overallTone, reviewCount, activeTaskCount, nextStage: stageId, nextLabel: `复核${stageNames[stageId]}` }
+    if (state === 'editing') return { states, overallLabel, overallTone, reviewCount, activeTaskCount, nextStage: stageId, nextLabel: `继续${stageNames[stageId]}` }
     if (state === 'not_started') return { states, overallLabel, overallTone, reviewCount, activeTaskCount, nextStage: stageId, nextLabel: `开始${stageNames[stageId]}` }
   }
-  return { states, overallLabel, overallTone, reviewCount, activeTaskCount, nextStage: 3, nextLabel: '查看最终资产' }
+  return { states, overallLabel, overallTone, reviewCount, activeTaskCount, nextStage: 4, nextLabel: '查看本土化定稿' }
 }
 
 async function loadOverview(project: Project): Promise<void> {
-  const [taskResult, analysisResult, runsResult, workspaceResult] = await Promise.allSettled([
+  const [taskResult, analysisResult, runsResult, workspaceResult, localizationResult] = await Promise.allSettled([
     api.listProjectTasks(project.id, 30),
     api.getCurrentContentAnalysis(project.id),
     readBreakdownRuns(project.episodes),
     api.getAssetWorkspace(project.id),
+    readLocalizationDrafts(project.episodes),
   ])
   const tasks = taskResult.status === 'fulfilled' ? taskResult.value : []
   const analysis = analysisResult.status === 'fulfilled' ? analysisResult.value : null
   const breakdownRuns = runsResult.status === 'fulfilled' ? runsResult.value : []
   const workspace = workspaceResult.status === 'fulfilled' ? workspaceResult.value : null
-  overviews[project.id] = makeOverview(project, tasks, analysis, breakdownRuns, workspace)
+  const localizationDrafts = localizationResult.status === 'fulfilled' ? localizationResult.value : []
+  overviews[project.id] = makeOverview(project, tasks, analysis, breakdownRuns, workspace, localizationDrafts)
 }
 
 async function loadProjects() {
@@ -138,6 +158,9 @@ function openProject(project: Project): void {
     if (episode) query.episode = episode.id
   } else if (stage === 3) {
     query.asset_tab = 'inbox'
+  } else if (stage === 4) {
+    const episode = project.episodes[0]
+    if (episode) query.episode = episode.id
   }
 
   void router.push({ path: `/projects/${project.id}`, query })
@@ -157,7 +180,7 @@ onMounted(loadProjects)
       <div>
         <div class="eyebrow">短剧本地化重制</div>
         <h1>从原片到可重制镜头</h1>
-        <p>新建项目后，按顺序完成源片、剧情与镜头、人物场景道具确认。首页会直接告诉你每个项目下一步该做什么。</p>
+        <p>按顺序完成源片、剧情与镜头、人物场景道具、本土化剧本。首页会直接告诉你每个项目下一步该做什么。</p>
       </div>
     </section>
 
@@ -193,7 +216,7 @@ onMounted(loadProjects)
             <div class="project-locale">{{ project.source_language }} <span>→</span> {{ project.target_language }} · {{ project.target_region }}</div>
 
             <div class="project-stage-progress">
-              <div v-for="stageId in [1, 2, 3]" :key="stageId" :class="['project-stage-chip', `state-${overviews[project.id]?.states[stageId] || 'loading'}`]">
+              <div v-for="stageId in [1, 2, 3, 4]" :key="stageId" :class="['project-stage-chip', `state-${overviews[project.id]?.states[stageId] || 'loading'}`]">
                 <span>{{ String(stageId).padStart(2, '0') }}</span>
                 <strong>{{ stageNames[stageId] }}</strong>
                 <small>{{ stateLabel(project.id, stageId) }}</small>
@@ -237,7 +260,7 @@ onMounted(loadProjects)
 .project-overall-pill.tone-completed { background: #eaf8f2; color: #16835b !important; }
 .project-stage-progress {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 7px;
   margin-top: 2px;
 }
@@ -269,6 +292,8 @@ onMounted(loadProjects)
 .project-stage-chip > small { color: #8a95a6; font-size: 9px; }
 .project-stage-chip.state-processing { border-color: #cdd9f8; background: #f4f7ff; }
 .project-stage-chip.state-processing > small { color: #315ec4; }
+.project-stage-chip.state-editing { border-color: #d8cff5; background: #f8f5ff; }
+.project-stage-chip.state-editing > small { color: #6f55c5; }
 .project-stage-chip.state-review { border-color: #eedca7; background: #fffaf0; }
 .project-stage-chip.state-review > small { color: #96630e; }
 .project-stage-chip.state-blocked { border-color: #efcccc; background: #fff6f6; }
