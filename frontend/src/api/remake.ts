@@ -1,4 +1,5 @@
 import type { ProjectRemakePolicy, ReviewIssue, ReviewIssueStatus, ScenePolicy } from '../types/remake'
+import type { BackgroundTask } from '../types/studio'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options)
@@ -16,6 +17,14 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function requestTask(url: string): Promise<BackgroundTask> {
+  const task = await request<BackgroundTask>(url, { method: 'POST' })
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('studio-task-created', { detail: task }))
+  }
+  return task
+}
+
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
 export const remakeApi = {
@@ -25,6 +34,7 @@ export const remakeApi = {
     headers: jsonHeaders,
     body: JSON.stringify({ scene_policy: scenePolicy, generation_engine: 'MINIMAX_H3_LOCAL' }),
   }),
+  startAutoPrepare: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/auto-remake-prepare`),
   listReviewIssues: (projectId: string, status: ReviewIssueStatus | '' = 'OPEN') => request<ReviewIssue[]>(
     `/api/projects/${projectId}/review-issues${status ? `?status=${status}` : '?status='}`,
   ),
