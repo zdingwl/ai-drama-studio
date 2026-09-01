@@ -40,10 +40,6 @@ function dismissedStorageKey(targetProjectId: string): string {
   return `${DISMISSED_STORAGE_PREFIX}${encodeURIComponent(targetProjectId)}`
 }
 
-/**
- * 职责：恢复用户已经主动关闭过的失败/警告提示。
- * 边界：这里只保存“提示已读”状态，不删除 BackgroundTask，也不修改后端任务状态。
- */
 function loadDismissedTaskIds(targetProjectId: string): string[] {
   if (!targetProjectId) return []
   try {
@@ -67,7 +63,7 @@ function persistDismissedTaskIds(targetProjectId: string, taskIds: string[]): vo
     if (normalized.length) window.localStorage.setItem(key, JSON.stringify(normalized))
     else window.localStorage.removeItem(key)
   } catch {
-    // localStorage 不可用时退化为当前页面内隐藏，不影响任务轮询和业务结果。
+    // localStorage 不可用时只影响“已读提示”持久化，不影响任务本身。
   }
 }
 
@@ -76,31 +72,31 @@ function replaceDismissedTaskIds(taskIds: string[]): void {
   persistDismissedTaskIds(projectId.value, dismissedTaskIds.value)
 }
 
-function isFinished(task: BackgroundTask) {
+function isFinished(task: BackgroundTask): boolean {
   return ['READY', 'READY_WITH_WARNINGS', 'FAILED', 'CANCELLED'].includes(task.status)
 }
 
-function statusLabel(task: BackgroundTask) {
+function statusLabel(task: BackgroundTask): string {
   const labels: Record<string, string> = {
-    QUEUED: '等待中', PROCESSING: '处理中', READY: '已完成', READY_WITH_WARNINGS: '完成但有失败项', FAILED: '失败', CANCELLED: '已取消',
+    QUEUED: '等待开始',
+    PROCESSING: '处理中',
+    READY: '已完成',
+    READY_WITH_WARNINGS: '已完成 · 需要检查',
+    FAILED: '没有完成',
+    CANCELLED: '已取消',
   }
   return labels[task.status] || task.status
 }
 
-function percentLabel(task: BackgroundTask) {
-  if (task.status === 'FAILED') return '失败'
-  if (task.status === 'READY_WITH_WARNINGS') return '有警告'
+function percentLabel(task: BackgroundTask): string {
+  if (task.status === 'FAILED') return '未完成'
+  if (task.status === 'READY_WITH_WARNINGS') return '需检查'
   if (task.status === 'CANCELLED') return '已取消'
   if (task.status === 'READY') return '100%'
   if (task.progress_mode === 'indeterminate' || task.progress_percent === null) return '处理中'
   return `${Math.round(task.progress_percent)}%`
 }
 
-/**
- * 职责：识别“数据库仍写 PROCESSING，但后台长时间没有任何心跳”的任务。
- * 输入：BackgroundTask.updated_at；输出：是否需要警告。
- * 为什么：长模型任务不能无限显示“处理中”而不给用户判断它是否卡住的依据。
- */
 function isStalled(task: BackgroundTask): boolean {
   if (task.status !== 'PROCESSING') return false
   const updated = Date.parse(task.updated_at)
@@ -109,9 +105,9 @@ function isStalled(task: BackgroundTask): boolean {
 
 function stallLabel(task: BackgroundTask): string {
   const updated = Date.parse(task.updated_at)
-  if (!Number.isFinite(updated)) return '长时间无进度更新'
+  if (!Number.isFinite(updated)) return '长时间没有新的进度'
   const minutes = Math.max(2, Math.floor((Date.now() - updated) / 60_000))
-  return `${minutes} 分钟无进度更新，可能卡住`
+  return `${minutes} 分钟没有新的进度`
 }
 
 function itemProgressLabel(task: BackgroundTask): string {
@@ -121,10 +117,27 @@ function itemProgressLabel(task: BackgroundTask): string {
   return ''
 }
 
-/**
- * 关闭当前已经存在的失败/警告提示，而不是删除任务。
- * 这样同一批历史失败不会一条接一条重新顶上来；未来新 Task 使用新 ID，仍会正常提示。
- */
+function summaryText(task: BackgroundTask): string {
+  if (isStalled(task)) return `${stallLabel(task)}，建议检查本地处理是否仍在运行`
+  if (task.status === 'FAILED') return '任务没有完成，展开后可查看处理建议'
+  if (task.status === 'READY_WITH_WARNINGS') return '任务已经完成，但有部分内容需要检查'
+  if (task.status === 'CANCELLED') return '任务已取消'
+
+  const parts = [task.stage_label || statusLabel(task)]
+  if (task.current_item) parts.push(task.current_item)
+  if (itemProgressLabel(task)) parts.push(itemProgressLabel(task))
+  return parts.join(' · ')
+}
+
+function userTaskMessage(task: BackgroundTask): string {
+  if (isStalled(task)) return '这个任务长时间没有更新。如果本地处理已经停止，可以回到对应阶段重新执行。'
+  if (task.status === 'FAILED') return '这次任务没有完成。先回到对应阶段重新执行；如果重复失败，再展开“技术详情”查看原始错误。'
+  if (task.status === 'READY_WITH_WARNINGS') return '主要结果已经生成，但有部分内容需要人工检查。进入对应阶段查看待处理项即可。'
+  if (task.status === 'READY') return '任务已完成，正式结果已经可以在对应阶段查看。'
+  if (task.status === 'CANCELLED') return '任务已取消，没有继续处理。'
+  return task.message || summaryText(task)
+}
+
 function dismissAttentionTasks(): void {
   const ids = tasks.value
     .filter((task) => task.status === 'FAILED' || task.status === 'READY_WITH_WARNINGS')
@@ -133,12 +146,7 @@ function dismissAttentionTasks(): void {
   expanded.value = false
 }
 
-/**
- * 职责：读取当前 Project 的后台任务，并检测任务是否刚刚结束。
- * 输入：当前 projectId；输出：更新 tasks / error，并在任务结束时派发 studio-task-finished。
- * 为什么：业务页面需要在后台任务完成后刷新 Shot / Asset 等正式结果；失败任务必须保留错误而不是瞬间隐藏。
- */
-async function refresh() {
+async function refresh(): Promise<void> {
   if (!projectId.value) {
     tasks.value = []
     return
@@ -150,9 +158,7 @@ async function refresh() {
     for (const task of tasks.value) {
       const oldStatus = before.get(task.id)
       if (oldStatus && oldStatus !== task.status && isFinished(task)) {
-        if (task.status === 'FAILED' || task.status === 'READY_WITH_WARNINGS') {
-          expanded.value = true
-        }
+        if (task.status === 'FAILED' || task.status === 'READY_WITH_WARNINGS') expanded.value = true
         window.dispatchEvent(new CustomEvent('studio-task-finished', { detail: task }))
       }
     }
@@ -161,11 +167,6 @@ async function refresh() {
   }
 }
 
-/**
- * 职责：根据当前状态决定下一次任务查询时间。
- * 输入：页面可见性 + 是否存在 QUEUED/PROCESSING Task；输出：下一次轮询延迟。
- * 为什么：运行中的任务需要 1 秒级进度，无任务时没必要持续刷 SQLite 和后端日志。
- */
 function nextPollDelay(): number {
   if (document.hidden) return HIDDEN_POLL_MS
   return activeTasks.value.length > 0 ? ACTIVE_POLL_MS : IDLE_POLL_MS
@@ -178,11 +179,6 @@ function clearTimer(): void {
   }
 }
 
-/**
- * 职责：安排一次“请求完成后再计时”的自适应轮询。
- * 输入：可选立即执行标记；输出：无。
- * 为什么：setInterval 可能在接口变慢时产生重叠请求；setTimeout 串行调度不会堆积 Fetch。
- */
 function schedulePoll(immediate = false): void {
   clearTimer()
   if (disposed || !projectId.value) return
@@ -200,7 +196,6 @@ async function pollOnce(): Promise<void> {
   }
 }
 
-/** Project 切换时清理旧运行态，并恢复这个 Project 已经关闭过的任务提示。 */
 function restartPolling(): void {
   clearTimer()
   tasks.value = []
@@ -210,10 +205,6 @@ function restartPolling(): void {
   schedulePoll(true)
 }
 
-/**
- * 职责：业务工作区创建 BackgroundTask 后立即把它放进 Dock。
- * 输入：studio-task-created 的 BackgroundTask；输出：立即显示任务，并切换到活动任务 1 秒轮询。
- */
 function onTaskCreated(event: Event): void {
   const task = (event as CustomEvent<BackgroundTask>).detail
   if (!task || task.project_id !== projectId.value) return
@@ -226,7 +217,6 @@ function onTaskCreated(event: Event): void {
   schedulePoll(false)
 }
 
-/** 标签页重新可见时立即刷新；退到后台后自动进入低频轮询。 */
 function onVisibilityChange(): void {
   schedulePoll(!document.hidden)
 }
@@ -259,38 +249,34 @@ onUnmounted(() => {
     }"
   >
     <div v-if="displayTask" class="task-dock-summary-row">
-      <button class="task-dock-summary" @click="expanded = !expanded">
+      <button class="task-dock-summary" type="button" @click="expanded = !expanded">
         <span :class="['task-state-dot', displayTask.status.toLowerCase()]" />
         <span class="task-dock-copy">
           <strong>{{ displayTask.title }}</strong>
-          <small v-if="isStalled(displayTask)" class="task-stall-copy">⚠ {{ stallLabel(displayTask) }}</small>
-          <small v-else-if="displayTask.status === 'FAILED'" class="task-failed-copy">
-            {{ displayTask.error_message || displayTask.message || '任务执行失败' }}
-          </small>
-          <small v-else>
-            {{ displayTask.stage_label || statusLabel(displayTask) }}
-            <template v-if="displayTask.current_item"> · {{ displayTask.current_item }}</template>
-            <template v-if="itemProgressLabel(displayTask)"> · {{ itemProgressLabel(displayTask) }}</template>
+          <small :class="{ 'task-stall-copy': isStalled(displayTask), 'task-failed-copy': displayTask.status === 'FAILED' }">
+            {{ summaryText(displayTask) }}
           </small>
         </span>
         <span class="task-dock-percent">{{ percentLabel(displayTask) }}</span>
         <span v-if="currentTask" class="task-dock-count">进行中 {{ activeTasks.length }}</span>
-        <span v-else class="task-dock-count">点击查看错误</span>
+        <span v-else class="task-dock-count">查看详情</span>
       </button>
       <button
         v-if="!currentTask && attentionTask"
         class="task-dock-dismiss"
-        title="关闭当前错误/警告提示（刷新后保持关闭，新任务仍会提示）"
+        type="button"
+        title="关闭当前已读提示；未来新任务仍会正常显示"
+        aria-label="关闭当前任务提示"
         @click="dismissAttentionTasks"
       >×</button>
     </div>
 
     <div v-else class="task-dock-summary-row">
-      <button class="task-dock-summary" @click="expanded = !expanded">
+      <button class="task-dock-summary" type="button" @click="expanded = !expanded">
         <span class="task-state-dot idle" />
         <span class="task-dock-copy">
           <strong>后台任务</strong>
-          <small>{{ recentTasks.length ? '当前无运行任务 · 可查看最近任务' : '当前空闲' }}</small>
+          <small>{{ recentTasks.length ? '当前空闲 · 可查看最近任务' : '当前没有后台任务' }}</small>
         </span>
         <span class="task-dock-percent">—</span>
         <span class="task-dock-count">{{ recentTasks.length ? `最近 ${recentTasks.length}` : '空闲' }}</span>
@@ -307,26 +293,46 @@ onUnmounted(() => {
     </div>
 
     <div v-if="expanded" class="task-dock-panel">
-      <div class="task-panel-head"><strong>后台任务</strong><span>页面切换或刷新不会丢失</span></div>
-      <p v-if="error" class="task-panel-error">{{ error }}</p>
+      <div class="task-panel-head">
+        <div><strong>后台任务</strong><small>{{ activeTasks.length ? `${activeTasks.length} 个正在处理` : '当前空闲' }}</small></div>
+        <span>页面切换或刷新不会丢失</span>
+      </div>
+
+      <p v-if="error" class="task-panel-error">任务列表暂时无法更新：{{ error }}</p>
+
       <div v-if="recentTasks.length" class="task-panel-list">
         <article
           v-for="task in recentTasks"
           :key="task.id"
           class="task-panel-item"
-          :class="{ 'task-item-stalled': isStalled(task), 'task-item-failed': task.status === 'FAILED' }"
+          :class="{
+            'task-item-stalled': isStalled(task),
+            'task-item-failed': task.status === 'FAILED',
+            'task-item-warning': task.status === 'READY_WITH_WARNINGS',
+          }"
         >
           <div class="task-item-head">
             <span :class="['task-state-dot', task.status.toLowerCase()]" />
-            <div><strong>{{ task.title }}</strong><small>{{ task.stage_label || statusLabel(task) }}<template v-if="task.current_item"> · {{ task.current_item }}</template></small></div>
+            <div>
+              <strong>{{ task.title }}</strong>
+              <small>{{ statusLabel(task) }}<template v-if="itemProgressLabel(task)"> · {{ itemProgressLabel(task) }}</template></small>
+            </div>
             <b>{{ percentLabel(task) }}</b>
           </div>
-          <div v-if="task.progress_mode === 'determinate' && task.progress_percent !== null && (task.status === 'PROCESSING' || task.status === 'QUEUED')" class="task-mini-track"><span :style="{ width: `${task.progress_percent}%` }" /></div>
+
+          <div
+            v-if="task.progress_mode === 'determinate' && task.progress_percent !== null && (task.status === 'PROCESSING' || task.status === 'QUEUED')"
+            class="task-mini-track"
+          ><span :style="{ width: `${task.progress_percent}%` }" /></div>
           <div v-else-if="task.status === 'PROCESSING' || task.status === 'QUEUED'" class="task-mini-track indeterminate"><span /></div>
-          <p>{{ task.message || statusLabel(task) }}</p>
-          <small v-if="itemProgressLabel(task)">{{ itemProgressLabel(task) }} 项</small>
-          <small v-if="isStalled(task)" class="task-stall-detail">⚠ {{ stallLabel(task) }}。如果后端进程仍在运行，请查看控制台；重启后该旧任务会被标记为中断，可重新执行。</small>
-          <pre v-if="task.error_message" class="task-error-detail task-error-pre">{{ task.error_message }}</pre>
+
+          <p class="task-user-message">{{ userTaskMessage(task) }}</p>
+          <small v-if="task.current_item && (task.status === 'QUEUED' || task.status === 'PROCESSING')" class="task-current-item">当前：{{ task.current_item }}</small>
+
+          <details v-if="task.error_message" class="task-technical-details">
+            <summary>技术详情</summary>
+            <pre>{{ task.error_message }}</pre>
+          </details>
         </article>
       </div>
       <div v-else class="task-panel-empty">还没有后台任务记录。</div>
@@ -335,5 +341,59 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.task-dock-summary-row{display:flex;align-items:stretch}.task-dock-summary-row>.task-dock-summary{flex:1;min-width:0}.task-dock-dismiss{width:38px;border:0;border-left:1px solid #ead0d0;background:#fff6f6;color:#a33b3b;font-size:20px;cursor:pointer}.task-dock.failed{border-color:#e4aaaa}.task-dock.failed .task-dock-summary-row{background:#fff7f7}.task-dock.warning .task-dock-summary-row{background:#fffaf0}.task-dock.stalled .task-progress-track,.task-item-stalled .task-mini-track{opacity:.65}.task-stall-copy{color:#a35c00!important;font-weight:700}.task-failed-copy{display:block;max-width:900px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#b33b3b!important;font-weight:700}.task-stall-detail{display:block;margin-top:5px;color:#9a6400;line-height:1.45}.task-item-stalled{background:#fffaf0}.task-item-failed{background:#fff8f8}.task-state-dot.idle{background:#7fb493;box-shadow:0 0 0 3px #edf7f1}.task-panel-empty{padding:18px 8px;color:#8490a2;text-align:center;font-size:11px}.task-error-pre{display:block;margin:7px 0 0;padding:8px 10px;max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #efcaca;border-radius:7px;background:#fff;color:#a92828;font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+.task-dock-summary-row { display: flex; align-items: stretch; }
+.task-dock-summary-row > .task-dock-summary { flex: 1; min-width: 0; }
+.task-dock-dismiss {
+  width: 38px;
+  border: 0;
+  border-left: 1px solid #e4e8ef;
+  background: #fff;
+  color: #7f8a9a;
+  font-size: 20px;
+  cursor: pointer;
+}
+.task-dock-dismiss:hover { background: #f7f9fc; color: #4b5870; }
+.task-dock.failed { border-color: #e4aaaa; }
+.task-dock.failed .task-dock-summary-row { background: #fff7f7; }
+.task-dock.warning .task-dock-summary-row { background: #fffaf0; }
+.task-dock.stalled .task-progress-track,
+.task-item-stalled .task-mini-track { opacity: .65; }
+.task-stall-copy { color: #9a6400 !important; font-weight: 700; }
+.task-failed-copy { color: #b33b3b !important; font-weight: 700; }
+.task-item-stalled { border-color: #ead59d; background: #fffaf0; }
+.task-item-failed { border-color: #efcaca; background: #fff8f8; }
+.task-item-warning { border-color: #eadcae; background: #fffdf6; }
+.task-state-dot.idle { background: #7fb493; box-shadow: 0 0 0 3px #edf7f1; }
+.task-panel-head > div { display: grid; gap: 1px; }
+.task-panel-head > div small { color: #8994a4; font-size: 10px; }
+.task-user-message { margin: 7px 0 0 !important; color: #59687d !important; line-height: 1.55; }
+.task-current-item { display: block; margin-top: 4px; color: #7c899b !important; }
+.task-technical-details {
+  margin-top: 8px;
+  border-top: 1px solid #e8ecf2;
+  padding-top: 7px;
+}
+.task-technical-details > summary {
+  width: fit-content;
+  color: #7b8798;
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.task-technical-details pre {
+  display: block;
+  margin: 7px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid #efcaca;
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: #fff;
+  color: #a92828;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.task-panel-error { border-radius: 7px; padding: 7px 9px; background: #fff5f5; }
+.task-panel-empty { padding: 18px 8px; color: #8490a2; text-align: center; font-size: 11px; }
 </style>
