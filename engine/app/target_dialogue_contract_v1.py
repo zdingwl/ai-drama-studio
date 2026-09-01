@@ -52,6 +52,7 @@ class TargetDialogueV1(_StrictModel):
     decision_source: Literal["AI", "MANUAL"]
     status: Literal["READY", "REVIEW"]
     audio_status: Literal["PENDING", "READY", "NOT_CONFIGURED", "UNSUPPORTED_LANGUAGE", "FAILED"]
+    audio_input_signature: str | None = Field(default=None, min_length=64, max_length=64)
     audio_path: str | None = None
     speech_duration_us: int | None = Field(default=None, ge=1)
     tts_runtime_profile: str | None = None
@@ -69,8 +70,8 @@ class TargetDialogueV1(_StrictModel):
             if not self.final_text:
                 raise ValueError("READY TargetDialogue needs final_text")
         if self.audio_status == "READY":
-            if not self.audio_path or not self.speech_duration_us or not self.target_voice_profile_id:
-                raise ValueError("READY dialogue audio needs path/duration/voice")
+            if not self.audio_path or not self.speech_duration_us or not self.target_voice_profile_id or not self.audio_input_signature:
+                raise ValueError("READY dialogue audio needs signature/path/duration/voice")
         return self
 
 
