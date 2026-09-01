@@ -11,11 +11,11 @@ from engine.app.qwen3_tts_runtime_v1 import runtime_status
 from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError
 from engine.app.studio_v2 import get_session
 from engine.app.target_dialogue_contract_v1 import TargetDialogueBundleV1, TargetDialogueV1
+from engine.app.target_dialogue_pipeline_v1 import run_target_dialogue_pipeline_v1
 from engine.app.target_dialogue_v1 import (
     TargetDialogue,
     TargetDialogueError,
     generate_target_dialogue_text_v1,
-    generate_target_dialogue_v1,
     get_target_dialogue_v1,
     materialize_target_dialogue_audio_v1,
     update_target_dialogue_v1,
@@ -57,7 +57,7 @@ def api_tts_runtime_status():
 @router.post("/projects/{project_id}/target-dialogue/generate", response_model=TargetDialogueBundleV1)
 def api_generate_target_dialogue(project_id: str, payload: TargetDialogueGenerateRequest):
     try:
-        return generate_target_dialogue_v1(project_id, synthesize_audio=payload.synthesize_audio)
+        return run_target_dialogue_pipeline_v1(project_id, synthesize_audio=payload.synthesize_audio)
     except Exception as exc:
         raise _error(exc) from exc
 
