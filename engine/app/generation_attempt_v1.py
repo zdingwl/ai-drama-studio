@@ -1,7 +1,9 @@
 """R8 real local H3 execution and GenerationAttempt persistence.
 
 One GenerationAttempt records one immutable execution of one current GenerationSegment
-context.  Provider-specific HTTP details remain behind VideoGenerationProvider.
+context. Provider-specific HTTP details remain behind VideoGenerationProvider. H3's
+4-second minimum is treated as a render constraint only: the selected attempt output is
+finalized back to the exact GenerationSegment target duration before downstream assembly.
 """
 from __future__ import annotations
 
@@ -9,13 +11,14 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import subprocess
 import time
 from typing import Any, Callable, Mapping
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, select
 from sqlalchemy.orm import Mapped, mapped_column
 
-from engine.app.generation_segment_v1 import GenerationSegment, compile_generation_segments_v1, get_generation_segments_v1
+from engine.app.generation_segment_v1 import compile_generation_segments_v1, get_generation_segments_v1
 from engine.app.h3_context_compiler_v1 import H3ContextCompilerError, compile_h3_context_v1
 from engine.app.h3_context_contract_v1 import GenerationAttemptProjectSummaryV1, GenerationAttemptV1
 from engine.app.h3_reference_assets_v1 import ensure_target_character_references_v1, ensure_target_scene_references_v1
@@ -126,6 +129,31 @@ def _mark_stale_attempts(project_id: str, current_segments: Mapping[str, Mapping
     return changed
 
 
+def recover_interrupted_generation_attempts_v1() -> int:
+    """Fail local executor attempts left active by a Studio process restart.
+
+    H3 runs in a separate local service, so an external job may still finish after the Studio
+    process disappears. We intentionally do not silently claim that orphaned result: the user
+    can submit a new immutable attempt and the old row remains auditable.
+    """
+
+    recovered = 0
+    now = utcnow()
+    with get_session() as session:
+        rows = session.scalars(
+            select(GenerationAttempt).where(GenerationAttempt.status.in_(["PLANNED", "SUBMITTED", "RUNNING"]))
+        ).all()
+        for row in rows:
+            row.status = "FAILED"
+            row.error_message = "STUDIO_PROCESS_RESTART_INTERRUPTED_LOCAL_H3_EXECUTOR"
+            row.completed_at = now
+            row.updated_at = now
+            recovered += 1
+        if recovered:
+            session.commit()
+    return recovered
+
+
 def _summary(project_id: str, rows: list[GenerationAttempt]) -> dict[str, Any]:
     payloads = [_serialize(row) for row in rows]
     return GenerationAttemptProjectSummaryV1.model_validate({
@@ -163,7 +191,7 @@ def get_generation_attempt_v1(attempt_id: str) -> dict[str, Any] | None:
 def latest_successful_generation_output_v1(project_id: str, segment_id: str) -> Path | None:
     try:
         current = _current_segment(project_id, segment_id)
-    except (LookupError, Exception):
+    except Exception:
         return None
     fingerprint = str(current.get("input_fingerprint") or "")
     with get_session() as session:
@@ -194,7 +222,12 @@ def _next_attempt_number(segment_id: str) -> int:
     return int(value or 0) + 1
 
 
-def _reuse_current_success(project_id: str, segment_id: str, context_fingerprint: str, segment_input_fingerprint: str) -> dict[str, Any] | None:
+def _reuse_current_success(
+    project_id: str,
+    segment_id: str,
+    context_fingerprint: str,
+    segment_input_fingerprint: str,
+) -> dict[str, Any] | None:
     with get_session() as session:
         rows = session.scalars(
             select(GenerationAttempt)
@@ -211,6 +244,58 @@ def _reuse_current_success(project_id: str, segment_id: str, context_fingerprint
             if row.output_path and Path(row.output_path).is_file() and Path(row.output_path).stat().st_size > 0:
                 return _serialize(row)
     return None
+
+
+def _run_ffmpeg(command: list[str], *, timeout_seconds: int = 1200) -> None:
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout_seconds)
+    except FileNotFoundError as exc:
+        raise GenerationAttemptError("找不到 ffmpeg，无法把 H3 输出收口到目标镜头时长") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GenerationAttemptError("H3 输出收口处理超时") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()[-3500:]
+        raise GenerationAttemptError(f"H3 输出收口处理失败：{detail}") from exc
+
+
+def _finalize_downloaded_output(
+    raw_output: Path,
+    final_output: Path,
+    *,
+    post_trim_duration_us: int | None,
+) -> Path:
+    """Publish the exact segment duration, not the H3 minimum render window."""
+
+    if not raw_output.is_file() or raw_output.stat().st_size <= 0:
+        raise GenerationAttemptError("H3 原始输出文件为空")
+    final_output.parent.mkdir(parents=True, exist_ok=True)
+    if post_trim_duration_us is None:
+        raw_output.replace(final_output)
+        return final_output
+
+    duration_seconds = int(post_trim_duration_us) / 1_000_000
+    if duration_seconds <= 0:
+        raise GenerationAttemptError("GenerationSegment post_trim_duration_us 非法")
+    temp = final_output.with_name(f".{final_output.stem}.finalizing{final_output.suffix}")
+    try:
+        _run_ffmpeg([
+            "ffmpeg", "-y", "-i", str(raw_output),
+            "-t", f"{duration_seconds:.6f}",
+            "-map", "0:v:0", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+            str(temp),
+        ])
+        if not temp.is_file() or temp.stat().st_size <= 0:
+            raise GenerationAttemptError("H3 裁剪后的目标输出为空")
+        temp.replace(final_output)
+        return final_output
+    finally:
+        if temp.exists() and temp != final_output:
+            try:
+                temp.unlink()
+            except OSError:
+                pass
 
 
 def execute_generation_segment_v1(
@@ -253,7 +338,7 @@ def execute_generation_segment_v1(
             provider=request.provider,
             mode=request.mode,
             status="PLANNED",
-            request_json=json.dumps(request.model_dump(mode="json"), ensure_ascii=False),
+            request_json=json.dumps(request.model_dump(mode="json", exclude_none=True), ensure_ascii=False),
             created_at=now,
             updated_at=now,
         )
@@ -274,8 +359,22 @@ def execute_generation_segment_v1(
             row.updated_at = utcnow()
             session.commit()
 
-        interval = max(0.2, float(poll_interval_seconds if poll_interval_seconds is not None else os.getenv("AI_DRAMA_H3_POLL_INTERVAL", "3")))
-        timeout = max(30.0, float(timeout_seconds if timeout_seconds is not None else os.getenv("AI_DRAMA_H3_GENERATION_TIMEOUT", "3600")))
+        interval = max(
+            0.2,
+            float(
+                poll_interval_seconds
+                if poll_interval_seconds is not None
+                else os.getenv("AI_DRAMA_H3_POLL_INTERVAL", "3")
+            ),
+        )
+        timeout = max(
+            30.0,
+            float(
+                timeout_seconds
+                if timeout_seconds is not None
+                else os.getenv("AI_DRAMA_H3_GENERATION_TIMEOUT", "3600")
+            ),
+        )
         deadline = time.monotonic() + timeout
         final_provider_status: str | None = submission.provider_status
         while True:
@@ -296,20 +395,30 @@ def execute_generation_segment_v1(
                 raise GenerationAttemptError("H3 生成任务等待超时")
             time.sleep(interval)
 
-        output = (
+        attempt_dir = (
             project_dir(project_id)
             / "target" / "h3" / "outputs"
             / str(segment["episode_id"])
             / segment_id
-            / f"attempt-{attempt_number:03d}.mp4"
         )
+        raw_output = attempt_dir / f"attempt-{attempt_number:03d}.h3.mp4"
+        output = attempt_dir / f"attempt-{attempt_number:03d}.mp4"
         generation_provider.download(
             mode=request.mode,
             external_job_id=submission.external_job_id,
-            destination=output,
+            destination=raw_output,
+        )
+        _finalize_downloaded_output(
+            raw_output,
+            output,
+            post_trim_duration_us=(
+                int(segment["post_trim_duration_us"])
+                if segment.get("post_trim_duration_us") is not None
+                else None
+            ),
         )
         if not output.is_file() or output.stat().st_size <= 0:
-            raise GenerationAttemptError("H3 输出文件为空")
+            raise GenerationAttemptError("H3 最终输出文件为空")
 
         # Never publish an output as current success after authoritative upstream data changed
         # while the local H3 job was running.
@@ -329,7 +438,8 @@ def execute_generation_segment_v1(
             row.error_message = None if still_current else "上游事实在 H3 生成期间发生变化，输出保留但不再作为当前结果"
             row.completed_at = completed
             row.updated_at = completed
-            session.commit(); session.refresh(row)
+            session.commit()
+            session.refresh(row)
             return _serialize(row)
     except Exception as exc:
         completed = utcnow()
@@ -340,10 +450,7 @@ def execute_generation_segment_v1(
                 row.error_message = str(exc)[:4000]
                 row.completed_at = completed
                 row.updated_at = completed
-                session.commit(); session.refresh(row)
-                result = _serialize(row)
-            else:
-                result = None
+                session.commit()
         if isinstance(exc, GenerationAttemptError):
             raise
         raise GenerationAttemptError(str(exc)) from exc
@@ -357,8 +464,8 @@ def run_ready_generation_segments_v1(
     *,
     progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
-    # References are themselves automatic H3 work. Failure does not create a fake human content
-    # issue; affected contexts remain WAITING_REFERENCE and can resume when runtime/resources work.
+    # References are automatic H3 work. Failure does not create a fake human content issue;
+    # affected contexts remain WAITING_REFERENCE and can resume when runtime/resources work.
     character_refs = ensure_target_character_references_v1(project_id)
     scene_refs = ensure_target_scene_references_v1(project_id)
     plan = compile_generation_segments_v1(project_id)
@@ -377,7 +484,11 @@ def run_ready_generation_segments_v1(
     for index, segment in enumerate(ready, start=1):
         segment_id = str(segment["id"])
         if progress:
-            progress(index, total, f"正在生成 {index}/{total} · Shot {segment.get('shot_ordinal')} · Segment {segment.get('shot_segment_index')}")
+            progress(
+                index,
+                total,
+                f"正在生成 {index}/{total} · Shot {segment.get('shot_ordinal')} · Segment {segment.get('shot_segment_index')}",
+            )
         before = latest_successful_generation_output_v1(project_id, segment_id)
         if before is not None:
             reused += 1
@@ -418,5 +529,6 @@ __all__ = [
     "get_generation_attempt_v1",
     "latest_successful_generation_output_v1",
     "list_generation_attempts_v1",
+    "recover_interrupted_generation_attempts_v1",
     "run_ready_generation_segments_v1",
 ]
