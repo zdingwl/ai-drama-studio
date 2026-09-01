@@ -15,6 +15,7 @@ from engine.app.breakdown_read_model_v1 import (  # noqa: E402
     BreakdownReadModelError,
     load_episode_breakdown_read_model_v1,
 )
+from engine.app.breakdown_scene_timeline_assembler_v1 import SceneTimelineAssemblyError  # noqa: E402
 from engine.app.breakdown_scene_timeline_contract_v1 import SceneTimelinePayloadV1  # noqa: E402
 from engine.app.breakdown_scene_timeline_result_v1 import (  # noqa: E402
     SceneTimelineResultError,
@@ -32,7 +33,13 @@ def main() -> int:
 
     try:
         payload_raw = load_episode_breakdown_read_model_v1(args.episode_id)
-    except (LookupError, BreakdownReadModelError, SceneTimelineResultError, ValueError) as exc:
+    except (
+        LookupError,
+        BreakdownReadModelError,
+        SceneTimelineAssemblyError,
+        SceneTimelineResultError,
+        ValueError,
+    ) as exc:
         print(json.dumps({
             "status": "ERROR",
             "episode_id": args.episode_id,
@@ -62,7 +69,7 @@ def main() -> int:
         frozen_timeline = SceneTimelinePayloadV1.model_validate(
             build_scene_timeline_result_v1(draft)
         ).model_dump(mode="json")
-    except (LookupError, SceneTimelineResultError, ValueError) as exc:
+    except (LookupError, SceneTimelineAssemblyError, SceneTimelineResultError, ValueError) as exc:
         print(json.dumps({
             "status": "SOURCE_READ_ERROR",
             "episode_id": args.episode_id,
