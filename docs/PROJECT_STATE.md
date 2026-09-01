@@ -325,6 +325,7 @@ Dedicated isolated jobs:
 r7-generation-segments
 r8-h3-generation
 r9-h3-qc
+frontend-v2
 ```
 
 R9 acceptance covers:
@@ -340,9 +341,18 @@ FastAPI R9 route registration
 R8/R7 regression checks
 ```
 
-On 2026-09-01 the isolated R7, R8 and R9 jobs passed.
+On 2026-09-01:
 
-Frontend dependency drift was also corrected by aligning `frontend/package.json` with the existing lockfile TypeScript version and raising `.node-version` to the lockfile's Babel engine minimum. Frontend build acceptance must still be read from the latest CI run; do not infer it from code review alone.
+```text
+r7-generation-segments = PASS
+r8-h3-generation       = PASS
+r9-h3-qc                = PASS
+frontend-v2             = PASS (npm ci + vue-tsc + vite build)
+```
+
+Frontend toolchain was stabilized by regenerating `package-lock.json` with TypeScript 6.0.3 compatibility for `vue-tsc` and keeping `.node-version` at 22.18.0 for the current Babel/Vite engine requirements.
+
+Historical full-suite backend/older Breakdown debt remains separate from the R7/R8/R9 isolated acceptance boundary.
 
 ## 12. Local acceptance still required
 
@@ -361,7 +371,8 @@ Real end-to-end H3/R9 acceptance requires the user's actual machine:
 Current factual state:
 
 ```text
-R7/R8/R9 CODE + ISOLATED REPOSITORY ACCEPTANCE = PASS
+R7/R8/R9 CODE + REPOSITORY ACCEPTANCE = PASS
+FRONTEND BUILD ACCEPTANCE = PASS
 LOCAL H3 GPU / QWEN QC / REAL PROJECT ACCEPTANCE = PENDING
 ```
 
