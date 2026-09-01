@@ -22,12 +22,9 @@ export interface StageStatusContext {
   analysis: StageAnalysisLike | null
 }
 
-const BREAKDOWN_TASK_TYPES = new Set([
-  'EPISODE_SHOTS',
-  'BATCH_SHOTS',
-  'EPISODE_BREAKDOWN_P2',
-  'BATCH_BREAKDOWN_P2',
-])
+const SHOT_TASK_TYPES = new Set(['EPISODE_SHOTS', 'BATCH_SHOTS'])
+const BREAKDOWN_TASK_TYPES = new Set(['EPISODE_BREAKDOWN_P2', 'BATCH_BREAKDOWN_P2'])
+const STAGE_TWO_TASK_TYPES = new Set([...SHOT_TASK_TYPES, ...BREAKDOWN_TASK_TYPES])
 const ASSET_TASK_TYPES = new Set(['ASSET_EXTRACTION_V3'])
 const ACTIVE_STATUSES = new Set(['QUEUED', 'PROCESSING'])
 
@@ -57,13 +54,21 @@ function sourceStageState(episodes: StageEpisodeLike[]): StudioStageState {
 }
 
 function breakdownStageState(episodes: StageEpisodeLike[], tasks: StageTaskLike[]): StudioStageState {
-  const task = latestTask(tasks, BREAKDOWN_TASK_TYPES)
+  const latestStageTask = latestTask(tasks, STAGE_TWO_TASK_TYPES)
+  const latestBreakdownTask = latestTask(tasks, BREAKDOWN_TASK_TYPES)
   const hasShots = episodes.some((episode) => episode.shot_count > 0)
 
-  if (task && ACTIVE_STATUSES.has(task.status)) return 'processing'
-  if (task?.status === 'FAILED') return 'blocked'
-  if (task?.status === 'READY_WITH_WARNINGS') return 'review'
-  if (task?.status === 'READY' && hasShots) return 'completed'
+  if (latestStageTask && ACTIVE_STATUSES.has(latestStageTask.status)) return 'processing'
+  if (latestStageTask?.status === 'FAILED') return 'blocked'
+  if (latestStageTask?.status === 'READY_WITH_WARNINGS') return 'review'
+
+  const breakdownIsLatest = Boolean(
+    latestBreakdownTask
+    && latestStageTask
+    && latestBreakdownTask.created_at === latestStageTask.created_at
+    && latestBreakdownTask.task_type === latestStageTask.task_type,
+  )
+  if (breakdownIsLatest && latestBreakdownTask?.status === 'READY' && hasShots) return 'completed'
   if (hasShots) return 'review'
   return 'not_started'
 }
