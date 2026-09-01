@@ -387,3 +387,147 @@ export interface GenerationQualitySummary {
   checks: GenerationQualityCheck[]
   selections: GenerationSelection[]
 }
+
+export type PostProductionStatus =
+  | 'READY'
+  | 'WAITING_SELECTION'
+  | 'WAITING_AUDIO'
+  | 'WAITING_MODEL'
+  | 'REVIEW'
+  | 'PROCESSING'
+  | 'SUCCEEDED'
+  | 'FAILED'
+  | 'STALE'
+
+export type LipSyncMode =
+  | 'SKIP_NO_VISIBLE_DIALOGUE'
+  | 'LATENTSYNC_FULL_SEGMENT'
+  | 'LATENTSYNC_TARGET_FACE_ROI'
+  | 'REVIEW_MULTI_FACE'
+
+export interface PostProductionDialogue {
+  target_dialogue_id: string
+  target_character_id: string | null
+  target_character_name: string | null
+  final_text: string | null
+  audio_path: string
+  audio_trim_start_us: number
+  start_offset_us: number
+  end_offset_us: number
+  speaker_visible: boolean
+}
+
+export interface PostProductionSegment {
+  id: string
+  project_id: string
+  episode_id: string
+  generation_segment_id: string
+  segment_input_fingerprint: string
+  selection_id: string | null
+  selected_attempt_id: string | null
+  postproduction_fingerprint: string
+  target_start_us: number
+  target_end_us: number
+  target_duration_us: number
+  status: PostProductionStatus
+  reason: string
+  lip_sync_mode: LipSyncMode
+  visible_character_count: number
+  visible_speaker_ids: string[]
+  locator_input_fingerprint: string | null
+  lip_sync_windows: Array<Record<string, unknown>>
+  dialogues: PostProductionDialogue[]
+  audio_path: string | null
+  output_path: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PostProductionEpisode {
+  episode_id: string
+  status: PostProductionStatus
+  segment_count: number
+  succeeded_count: number
+  review_count: number
+  waiting_count: number
+  segments: PostProductionSegment[]
+}
+
+export interface PostProductionPlan {
+  schema_version: 'postproduction-plan-v1'
+  project_id: string
+  status: PostProductionStatus
+  episode_count: number
+  segment_count: number
+  succeeded_count: number
+  review_count: number
+  waiting_count: number
+  episodes: PostProductionEpisode[]
+}
+
+export interface LipSyncRuntimeStatus {
+  runtime_profile: 'LATENTSYNC_LOCAL_V1_6'
+  ready: boolean
+  reachable: boolean
+  base_url: string
+  worker: Record<string, unknown>
+  error: string | null
+}
+
+export type EpisodeOutputStatus =
+  | 'READY'
+  | 'WAITING_POSTPRODUCTION'
+  | 'PROCESSING'
+  | 'SUCCEEDED'
+  | 'FAILED'
+  | 'STALE'
+
+export interface EpisodeSubtitleEvent {
+  target_dialogue_id: string
+  start_us: number
+  end_us: number
+  text: string
+  target_character_id: string | null
+  target_character_name: string | null
+}
+
+export interface EpisodeOutputSegment {
+  generation_segment_id: string
+  postproduction_status: string
+  postproduction_fingerprint: string
+  target_start_us: number
+  target_end_us: number
+  target_duration_us: number
+  output_path: string | null
+}
+
+export interface EpisodeOutput {
+  id: string
+  project_id: string
+  episode_id: string
+  episode_title: string
+  input_fingerprint: string
+  status: EpisodeOutputStatus
+  reason: string
+  segment_count: number
+  target_duration_us: number
+  segments: EpisodeOutputSegment[]
+  subtitles: EpisodeSubtitleEvent[]
+  subtitle_path: string | null
+  output_path: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface EpisodeOutputPlan {
+  schema_version: 'episode-output-plan-v1'
+  project_id: string
+  status: EpisodeOutputStatus
+  episode_count: number
+  ready_count: number
+  succeeded_count: number
+  waiting_count: number
+  episodes: EpisodeOutput[]
+}
