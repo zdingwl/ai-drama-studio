@@ -127,6 +127,12 @@ function onTaskFinished(event: Event): void {
   }
 }
 
+function onProjectTruthChanged(event: Event): void {
+  const detail = (event as CustomEvent<{ project_id?: string }>).detail
+  if (detail?.project_id && detail.project_id !== projectId.value) return
+  void refreshProject()
+}
+
 function stageQuery(stageId: number): Record<string, string | string[] | null | undefined> {
   const query = { ...route.query } as Record<string, string | string[] | null | undefined>
   query.stage = String(stageId)
@@ -185,6 +191,7 @@ watch(
 onMounted(() => {
   window.addEventListener('studio-task-created', onTaskCreated)
   window.addEventListener('studio-task-finished', onTaskFinished)
+  window.addEventListener('studio-project-truth-changed', onProjectTruthChanged)
   if (String(route.query.stage || '') !== String(activeStage.value)) {
     void router.replace({ query: { ...route.query, stage: String(activeStage.value) } })
   }
@@ -194,6 +201,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('studio-task-created', onTaskCreated)
   window.removeEventListener('studio-task-finished', onTaskFinished)
+  window.removeEventListener('studio-project-truth-changed', onProjectTruthChanged)
 })
 </script>
 
