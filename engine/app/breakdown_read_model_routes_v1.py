@@ -1,6 +1,7 @@
 """P6 ordinary-user final Breakdown read-model API.
 
-This route composes frozen G2 + frozen P5. It never starts inference and never writes business state.
+This route composes frozen G2 with independent Final Character / Scene / Prop display overlays.
+It never starts inference and never writes business state.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/api", tags=["breakdown-read-model"])
     response_model=BreakdownReadModelV1 | None,
 )
 def api_get_episode_breakdown_read_model(episode_id: str) -> dict[str, object] | None:
-    """Return current Scene Timeline plus fail-closed Final Character display overlay."""
+    """Return frozen Scene Timeline plus fail-closed Final Character/Scene/Prop display overlays."""
 
     try:
         return load_episode_breakdown_read_model_v1(episode_id)
