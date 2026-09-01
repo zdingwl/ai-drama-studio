@@ -125,6 +125,35 @@ function highConfidence(item: StageAssetEvidenceLike | null | undefined, thresho
   return Boolean(item && item.confidence !== null && item.confidence >= threshold)
 }
 
+function lowConfidenceNeedsReview(
+  evidence: StageShotAssetEvidenceLike,
+  binding: StageAssetBindingsLike,
+): boolean {
+  const characterNeedsReview = evidence.characters.some((item) => (
+    item.confidence !== null
+    && item.confidence < 0.75
+    && Boolean(item.final_asset_id)
+    && !binding.character_ids.includes(item.final_asset_id as string)
+  ))
+  if (characterNeedsReview) return true
+
+  const sceneNeedsReview = Boolean(
+    evidence.scene
+      && evidence.scene.confidence !== null
+      && evidence.scene.confidence < 0.75
+      && evidence.scene.final_asset_id
+      && evidence.scene.final_asset_id !== binding.scene_id,
+  )
+  if (sceneNeedsReview) return true
+
+  return evidence.props.some((item) => (
+    item.confidence !== null
+    && item.confidence < 0.75
+    && Boolean(item.final_asset_id)
+    && !binding.prop_ids.includes(item.final_asset_id as string)
+  ))
+}
+
 /**
  * Mirrors the ordinary-user asset review inbox rules.
  * Final Binding remains authority; Evidence only determines whether a human review is still needed.
@@ -155,13 +184,7 @@ function workspaceNeedsAssetReview(workspace: StageAssetWorkspaceLike | null): b
       || (binding.prop_ids.length > 0 && strongProps.some((item) => item.final_asset_id && !binding.prop_ids.includes(item.final_asset_id)))
     )
     if (conflict) return true
-
-    const confidenceValues = [
-      ...evidence.characters.map((item) => item.confidence),
-      evidence.scene?.confidence ?? null,
-      ...evidence.props.map((item) => item.confidence),
-    ].filter((value): value is number => value !== null)
-    if (confidenceValues.some((value) => value < 0.75)) return true
+    if (lowConfidenceNeedsReview(evidence, binding)) return true
   }
 
   return false
