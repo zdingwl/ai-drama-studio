@@ -32,10 +32,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 /**
- * 职责：创建后台任务后立即通知全局 Task Dock。
- * 输入：Task API URL；输出：BackgroundTask。
- * 为什么：无活动任务时 Task Dock 只做 10 秒低频轮询。如果 POST 成功后不主动通知，
- * 用户会看到按钮恢复正常却没有任何进度反馈，误以为“点击没反应”。
+ * 创建后台任务后立即通知全局任务中心，避免低频轮询造成“点击没反应”的错觉。
  */
 async function requestTask(url: string, options?: RequestInit): Promise<BackgroundTask> {
   const task = await request<BackgroundTask>(url, options)
@@ -43,6 +40,20 @@ async function requestTask(url: string, options?: RequestInit): Promise<Backgrou
     window.dispatchEvent(new CustomEvent('studio-task-created', { detail: task }))
   }
   return task
+}
+
+/**
+ * Final Asset / Binding 写入成功后，以后端返回的 AssetWorkspace 作为最新事实通知项目壳刷新。
+ * 这里只通知“事实已变化”，不在 API 层推断任何阶段状态。
+ */
+async function requestAssetWorkspaceWrite(url: string, options?: RequestInit): Promise<AssetWorkspace> {
+  const workspace = await request<AssetWorkspace>(url, options)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('studio-project-truth-changed', {
+      detail: { project_id: workspace.project_id },
+    }))
+  }
+  return workspace
 }
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
@@ -90,32 +101,32 @@ export const api = {
   getAssetSemanticModelStatus: () => request<AssetSemanticModelStatus>('/api/assets/models/status'),
   getCharacterGallery: (candidateId: string) => request<CharacterGalleryPayload>(`/api/content-analysis/characters/${candidateId}/gallery`),
   startFullAssetExtractionTask: (projectId: string) => requestTask(`/api/projects/${projectId}/assets/tasks/extract`, { method: 'POST' }),
-  applyLatestAssetAnalysis: (projectId: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/apply-analysis`, { method: 'POST' }),
-  setShotAssetBindings: (projectId: string, shotId: string, payload: ShotAssetBindings) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/shots/${shotId}/bindings`, {
+  applyLatestAssetAnalysis: (projectId: string) => requestAssetWorkspaceWrite(`/api/projects/${projectId}/assets/apply-analysis`, { method: 'POST' }),
+  setShotAssetBindings: (projectId: string, shotId: string, payload: ShotAssetBindings) => requestAssetWorkspaceWrite(`/api/projects/${projectId}/assets/shots/${shotId}/bindings`, {
     method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload),
   }),
-  batchSetShotAssetBindings: (projectId: string, payload: BatchShotAssetBindings) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/bindings/batch`, {
+  batchSetShotAssetBindings: (projectId: string, payload: BatchShotAssetBindings) => requestAssetWorkspaceWrite(`/api/projects/${projectId}/assets/bindings/batch`, {
     method: 'PUT', headers: jsonHeaders, body: JSON.stringify(payload),
   }),
-  createFinalAsset: (projectId: string, entityType: AssetEntityType, name: string, shotId?: string | null) => request<AssetWorkspace>(`/api/projects/${projectId}/assets`, {
+  createFinalAsset: (projectId: string, entityType: AssetEntityType, name: string, shotId?: string | null) => requestAssetWorkspaceWrite(`/api/projects/${projectId}/assets`, {
     method: 'POST', headers: jsonHeaders, body: JSON.stringify({ entity_type: entityType, name, shot_id: shotId || null }),
   }),
-  renameFinalAsset: (projectId: string, entityType: AssetEntityType, entityId: string, name: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/${entityType}/${entityId}`, {
+  renameFinalAsset: (projectId: string, entityType: AssetEntityType, entityId: string, name: string) => requestAssetWorkspaceWrite(`/api/projects/${projectId}/assets/${entityType}/${entityId}`, {
     method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ name }),
   }),
-  deleteFinalAsset: (projectId: string, entityType: AssetEntityType, entityId: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/${entityType}/${entityId}`, {
+  deleteFinalAsset: (projectId: string, entityType: AssetEntityType, entityId: string) => requestAssetWorkspaceWrite(`/api/projects/${projectId}/assets/${entityType}/${entityId}`, {
     method: 'DELETE',
   }),
-  mergeFinalAssets: (projectId: string, entityType: AssetEntityType, entityIds: string[], targetId?: string | null) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/merge`, {
+  mergeFinalAssets: (projectId: string, entityType: AssetEntityType, entityIds: string[], targetId?: string | null) => requestAssetWorkspaceWrite(`/api/projects/${projectId}/assets/merge`, {
     method: 'POST', headers: jsonHeaders, body: JSON.stringify({ entity_type: entityType, entity_ids: entityIds, target_id: targetId || null }),
   }),
-  splitFinalAsset: (projectId: string, entityType: AssetEntityType, entityId: string, shotIds: string[], newName?: string | null) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/${entityType}/${entityId}/split`, {
+  splitFinalAsset: (projectId: string, entityType: AssetEntityType, entityId: string, shotIds: string[], newName?: string | null) => requestAssetWorkspaceWrite(`/api/projects/${projectId}/assets/${entityType}/${entityId}/split`, {
     method: 'POST', headers: jsonHeaders, body: JSON.stringify({ entity_type: entityType, shot_ids: shotIds, new_name: newName || null }),
   }),
-  setFinalAssetCover: (projectId: string, entityType: AssetEntityType, entityId: string, coverUrl: string) => request<AssetWorkspace>(`/api/projects/${projectId}/assets/${entityType}/${entityId}/cover`, {
+  setFinalAssetCover: (projectId: string, entityType: AssetEntityType, entityId: string, coverUrl: string) => requestAssetWorkspaceWrite(`/api/projects/${projectId}/assets/${entityType}/${entityId}/cover`, {
     method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ cover_url: coverUrl }),
   }),
-  restoreAssetRevision: (revisionId: string) => request<AssetWorkspace>(`/api/asset-revisions/${revisionId}/restore`, { method: 'POST' }),
+  restoreAssetRevision: (revisionId: string) => requestAssetWorkspaceWrite(`/api/asset-revisions/${revisionId}/restore`, { method: 'POST' }),
 
   // 显式 Task API，给各工作区复用。所有创建动作都会触发 studio-task-created。
   startEpisodePreprocessTask: (episodeId: string) => requestTask(`/api/episodes/${episodeId}/tasks/preprocess`, { method: 'POST' }),
