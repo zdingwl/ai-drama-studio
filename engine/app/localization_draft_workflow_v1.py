@@ -11,7 +11,6 @@ from typing import Any, Iterable, Mapping
 from engine.app.localization_draft_contract_v1 import LocalizationDraftEditV1, LocalizationDraftStatus
 from engine.app.localization_draft_v1 import (
     LocalizationDraftConflictError,
-    LocalizationDraftError,
     create_localization_draft,
     edit_localization_draft,
     get_current_localization_draft,
@@ -55,6 +54,20 @@ def _assert_review_ready(view: Mapping[str, Any]) -> None:
         raise LocalizationDraftConflictError(f"仍有 {len(unfinished)} 条本土化内容缺少最终文案，不能送审/定稿")
 
 
+def _normalized_edits(entries: Iterable[Mapping[str, Any] | LocalizationDraftEditV1]) -> list[LocalizationDraftEditV1]:
+    result: list[LocalizationDraftEditV1] = []
+    for item in entries:
+        parsed = item if isinstance(item, LocalizationDraftEditV1) else LocalizationDraftEditV1.model_validate(item)
+        payload = parsed.model_dump(mode="python")
+        for field in ("translated_text", "localized_text", "final_text", "note"):
+            value = payload.get(field)
+            if isinstance(value, str):
+                normalized = value.strip()
+                payload[field] = normalized or None
+        result.append(LocalizationDraftEditV1.model_validate(payload))
+    return result
+
+
 def create_localization_draft_safe(episode_id: str, *, note: str | None = None) -> dict[str, Any]:
     return create_localization_draft(episode_id, note=note)
 
@@ -70,10 +83,11 @@ def edit_localization_draft_safe(
     _assert_base(current, base_revision_id)
     if current.get("status") != "DRAFT":
         raise LocalizationDraftConflictError("只有 DRAFT 状态可以编辑；待复核稿请先退回修改")
+    normalized = _normalized_edits(entries)
     return edit_localization_draft(
         episode_id,
         base_revision_id=base_revision_id,
-        entries=entries,
+        entries=normalized,
         note=note,
     )
 
