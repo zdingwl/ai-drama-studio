@@ -2,8 +2,8 @@
 
 Accepted internal modules remain hidden behind one task. A successful run composes the
 stable SourceDramaSnapshot, creates TargetCharacter / SceneLocalizationMapping, then
-localizes target dialogue and materializes target-character speech when local Qwen3-TTS
-is available. Only uncertain content is surfaced as ReviewIssue rows.
+localizes target dialogue and materializes every READY line when local Qwen3-TTS is
+available. Only uncertain content is surfaced as ReviewIssue rows.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from engine.app.review_issue_v1 import list_review_issues
 from engine.app.source_drama_review_issue_sync_v1 import sync_source_drama_speaker_issues
 from engine.app.source_drama_snapshot_v1 import load_project_source_drama_snapshot_v1
 from engine.app.studio_v2 import get_episode, list_episode_records
-from engine.app.target_dialogue_v1 import generate_target_dialogue_v1
+from engine.app.target_dialogue_pipeline_v1 import run_target_dialogue_pipeline_v1
 from engine.app.target_localization_v1 import generate_target_localization_v1
 from engine.app.task_progress_v2 import fail_task, finish_task, start_task, update_task
 
@@ -222,9 +222,9 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             progress_percent=99.0,
             stage_key="auto_target_dialogue",
             stage_label="自动生成目标对白与声音",
-            message="正在翻译/本土化对白；本地 Qwen3-TTS 可用时同时生成固定角色声音和真实语音时长",
+            message="正在翻译/本土化对白；READY 台词会尽量生成固定角色声音和真实语音时长",
         )
-        target_dialogue = generate_target_dialogue_v1(project_id, synthesize_audio=True)
+        target_dialogue = run_target_dialogue_pipeline_v1(project_id, synthesize_audio=True)
         dialogue_review_count = int(target_dialogue.get("review_count") or 0)
         open_issues = list_review_issues(project_id, status="OPEN")
         review_issue_count = len(open_issues)
@@ -243,8 +243,8 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             warnings.append(f"{target_review_count} 项目标人物/场景本土化需要人工确认")
         if dialogue_review_count:
             warnings.append(f"{dialogue_review_count} 条目标对白尚未形成安全可用文本")
-        if target_dialogue.get("status") == "TEXT_READY_AUDIO_PENDING":
-            warnings.append("目标对白文本已就绪，但部分/全部 TTS 音频尚未生成")
+        if target_dialogue.get("audio_ready_count", 0) < target_dialogue.get("dialogue_count", 0):
+            warnings.append("部分目标对白 TTS 音频尚未生成；不影响已完成文本继续保留")
 
         result = {
             "project_id": project_id,
