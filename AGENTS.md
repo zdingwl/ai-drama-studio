@@ -2,7 +2,7 @@
 
 Current product architecture: **Localized Remake V1 + local MiniMax H3 target runtime**.
 
-The pre-restructure repository state is frozen at:
+Rollback snapshot:
 
 ```text
 branch: backup/pre-h3-remake-restructure-2026-09-01
@@ -36,20 +36,20 @@ timeline -> may extend/trim/reflow for target speech duration
 video generation -> local MiniMax H3
 ```
 
-**Product rule:** if a result can be completed automatically with acceptable confidence, do not make it a separate user page. Only uncertain/conflicting/high-risk/repeatedly failed items enter the Review Center.
+**Product rule:** automatic work is background work, not a page. Only uncertain/conflicting/high-risk/repeatedly failed items enter Review Center.
 
 Detailed architecture: `docs/PRODUCT_REMAKE_ARCHITECTURE_V1.md`.
 
 ## 2. Current ordinary-user UI
 
-The formal main UI is V4:
+Formal UI:
 
 ```text
 ProjectListV4
 ProjectStudioV4
 ```
 
-Only three primary work areas:
+Primary work areas:
 
 ```text
 Project
@@ -57,9 +57,9 @@ Review Center
 Output
 ```
 
-Legacy Stage 01-06 / P/G UIs remain compatibility/advanced tools only. Do not treat them as the current product workflow.
+Legacy Stage 01-06 / P/G UIs are compatibility/advanced tools only.
 
-## 3. Current automatic workflow on main
+## 3. Current automatic workflow
 
 One-click task:
 
@@ -76,28 +76,55 @@ Project/Episodes
 → Breakdown ASR + OCR + Qwen3-VL + Fusion
 → Character V10.1 / Scene / Prop extraction
 → Final Asset application under existing safety rules
-→ ReviewIssue synchronization
+→ Shot / Character / Asset ReviewIssue sync
+→ project SourceDramaSnapshot
+→ Speaker ReviewIssue sync
 ```
 
-Current ReviewIssue producers include:
+Current ReviewIssue producers:
 
 ```text
 SHOT_BOUNDARY
 CHARACTER_IDENTITY
 ASSET_BINDING
+SPEAKER
 ```
 
-Future producers will include:
+Future producers:
 
 ```text
-SPEAKER
 LOCALIZATION
 DIALOGUE_TIMING
 H3_QC
 LIP_SYNC_QC
 ```
 
-## 4. Existing accepted internals remain usable
+## 4. SourceDramaSnapshot is now the downstream source boundary
+
+R2 is implemented on `main`.
+
+Future remake modules must consume:
+
+```text
+SourceDramaSnapshot
+```
+
+instead of directly depending on G2/P5/P6/P7 product naming.
+
+APIs:
+
+```text
+GET /api/episodes/{episode_id}/source-drama-snapshot
+GET /api/projects/{project_id}/source-drama-snapshot
+```
+
+The Snapshot is a deterministic current read facade, not a duplicate truth database. Downstream persisted models must anchor its `source_fingerprint`.
+
+It contains source-only facts. Target dialogue, TargetCharacter, target scene, TTS, target timing and H3 output are forbidden from this Contract.
+
+Read `docs/SOURCE_DRAMA_SNAPSHOT_V1.md` before changing downstream remake models.
+
+## 5. Existing accepted internals remain usable
 
 Do not delete or weaken accepted internals merely because their old names are no longer product concepts.
 
@@ -117,13 +144,14 @@ Scene Timeline structured facts
 Character V10.1 Person Evidence / tracking / ReID
 Final Character/Scene/Prop + Shot bindings
 AssetRevision
-Localization immutable-source / revision safety
+P5/P6 compatibility layers while SourceDramaSnapshot still consumes them
+Localization revision safety where legacy code still depends on it
 BackgroundTask / progress
 ```
 
-Previously accepted G1/G2/P5 behavior should stay fail-closed unless a concrete regression or the new remake contract requires a deliberate migration.
+Previously accepted G1/G2/P5 behavior stays fail-closed unless a concrete regression or deliberate migration requires change.
 
-## 5. Semantic safety rules that remain valid
+## 6. Semantic safety rules
 
 ```text
 LocalSubject != Character
@@ -134,13 +162,12 @@ raw Evidence != Final binding truth
 same-Shot person observations = hard cannot-link
 ASR source text = immutable source truth
 OCR source text = immutable source truth
+SourceDramaSnapshot target-side fields = forbidden
 ```
 
-Dynamic expression/emotion/action/pose/speaking/screen position/framing are not identity keys.
+Character V10.1 identity safety must not be relaxed to reduce ReviewIssues. Ambiguity belongs in Review Center.
 
-Character V10.1 identity safety must not be relaxed simply to reduce ReviewIssues. The product solution for uncertainty is **human confirmation in Review Center**, not unsafe auto-merging.
-
-## 6. New current product data foundations
+## 7. Current product data foundations
 
 ### ProjectRemakePolicy
 
@@ -152,19 +179,21 @@ generation_engine = MINIMAX_H3_LOCAL
 
 ### ReviewIssue
 
-Unified attention queue. It is not a second source of domain truth.
+Unified attention queue; not a second source of domain truth.
 
-Domain correction remains in Shot / Asset / Dialogue / Generation APIs; ReviewIssue records why attention is needed and whether it was resolved.
+### SourceDramaSnapshot
 
-## 7. Next development frontier
+Single downstream source-read boundary with stable source keys and `source_fingerprint`.
+
+## 8. Next development frontier
 
 Do **not** continue the old Stage 05 plan.
 
-Next order:
+Current order:
 
 ```text
-R2 SourceDramaSnapshot facade
-R4 TargetCharacter + SceneLocalizationMapping
+R2 SourceDramaSnapshot                  = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
+R4 TargetCharacter + SceneLocalizationMapping = NEXT
 R5 automatic target dialogue + TTS
 R6 Dialogue Timing Engine + RemakeTimeline
 R7 local MiniMax H3 RuntimeManager
@@ -174,27 +203,21 @@ R10 Lip Sync + audio/subtitle/episode assembly
 R11 legacy cleanup after dependencies are migrated
 ```
 
-`Shot != GenerationSegment` must be preserved: Shot is source directing/editing structure; GenerationSegment is the actual H3 execution unit.
+`Shot != GenerationSegment` must be preserved.
 
-## 8. Git workflow
+## 9. Git workflow
 
 ```text
-Documentation-only change:
-  -> edit main directly
-
-Code/behavior change:
-  -> edit main directly by default
-
-Only create/use another branch or PR when the user explicitly asks.
-
-All commits:
-  -> include [skip ci]
-  -> hosted GitHub Actions are not acceptance evidence
+Documentation-only change -> main directly
+Code/behavior change -> main directly by default
+Only create/use another branch or PR when the user explicitly asks
+All commits -> [skip ci]
+Hosted GitHub Actions -> not acceptance evidence
 ```
 
-Current requested backup branch must remain untouched unless the user explicitly asks to change it.
+The backup branch is rollback-only.
 
-## 9. Recovery order
+## 10. Recovery order
 
 Always read repository truth before old chat/history:
 
@@ -204,8 +227,7 @@ Always read repository truth before old chat/history:
 3. docs/PRODUCT_REMAKE_ARCHITECTURE_V1.md
 4. docs/PROJECT_STATE.md
 5. docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-6. relevant current code/tests
-7. old P/G docs only when maintaining those internals
+6. docs/SOURCE_DRAMA_SNAPSHOT_V1.md when working downstream
+7. relevant current code/tests
+8. old P/G docs only when maintaining those internals
 ```
-
-When old docs conflict with this file on **product workflow**, this file + `PRODUCT_REMAKE_ARCHITECTURE_V1.md` are authoritative.
