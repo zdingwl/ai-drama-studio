@@ -28,6 +28,7 @@ jobs:
             SQLAlchemy==2.0.50 \
             python-multipart==0.0.29 \
             httpx==0.28.1 \
+            numpy==2.1.3 \
             pytest==9.0.2
 
       - name: Compile R7 backend
