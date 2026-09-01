@@ -1,9 +1,10 @@
 """Automatic target reference assets for R8 H3 generation.
 
 TargetCharacter text design is not enough to keep cast identity stable when Ref2VA also sees
-source actors. This module uses the local H3 provider to generate one deterministic casting
-reference clip per current TargetCharacter and one empty environment reference per localized
-Scene, then extracts reusable still images. These are runtime assets, not new product pages.
+source actors. This module uses the local H3 FL2VA service in text-to-video mode to generate
+one deterministic casting reference clip per current TargetCharacter and one empty environment
+reference per localized Scene, then extracts reusable still images. These are runtime assets,
+not new product pages.
 """
 from __future__ import annotations
 
@@ -15,11 +16,9 @@ import subprocess
 import time
 from typing import Any, Mapping
 
-from sqlalchemy import select
-
 from engine.app.minimax_h3_provider_v1 import get_video_generation_provider_v1
 from engine.app.studio_v2 import get_session, project_dir, utcnow
-from engine.app.target_localization_v1 import SceneLocalizationMapping, TargetCharacter, get_target_localization_v1
+from engine.app.target_localization_v1 import TargetCharacter, get_target_localization_v1
 from engine.app.video_generation_provider_v1 import VideoGenerationRequestV1
 
 
@@ -37,7 +36,7 @@ def _digest(value: Any) -> str:
 
 
 def _full_character_mapping(character: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Normalize both full TargetCharacter rows and compact GenerationSegment character contexts."""
+    """Normalize both full TargetCharacter rows and compact GenerationSegment contexts."""
 
     target_id = str(character.get("id") or character.get("target_character_id") or "").strip()
     if not target_id:
@@ -93,13 +92,7 @@ def target_scene_reference_signature_v1(scene: Mapping[str, Any], *, target_regi
 
 def _ffmpeg(command: list[str], *, timeout_seconds: int = 900) -> None:
     try:
-        subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout_seconds)
     except FileNotFoundError as exc:
         raise H3ReferenceAssetError("找不到 ffmpeg，请先把 FFmpeg 加入 PATH") from exc
     except subprocess.TimeoutExpired as exc:
@@ -208,8 +201,8 @@ def _scene_prompt(scene: Mapping[str, Any], *, target_region: str) -> str:
 def _submit_reference_video(*, prompt: str, seed: int, destination: Path) -> Path:
     provider = get_video_generation_provider_v1("MINIMAX_H3_LOCAL")
     status = provider.status()
-    if not status.get("ready"):
-        raise H3ReferenceAssetError("本地 MiniMax H3 Runtime 尚未 READY")
+    if not bool((status.get("fl2va") or {}).get("ready")):
+        raise H3ReferenceAssetError("本地 MiniMax H3 FL2VA Runtime 尚未 READY")
     request = VideoGenerationRequestV1.model_validate({
         "provider": "MINIMAX_H3_LOCAL",
         "mode": "FL2VA",
