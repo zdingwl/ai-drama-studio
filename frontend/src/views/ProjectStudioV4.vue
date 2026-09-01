@@ -37,7 +37,8 @@ const activeTask = computed(() => tasks.value.find((task) => task.status === 'QU
 const autoTask = computed(() => tasks.value.find((task) => task.task_type === 'AUTO_REMAKE_PREP_V1') ?? null)
 const openIssueCount = computed(() => issues.value.length)
 const blockingCount = computed(() => issues.value.filter((item) => item.severity === 'BLOCKING').length)
-const genericIssues = computed(() => issues.value.filter((item) => !['TARGET_CHARACTER', 'SCENE_LOCALIZATION'].includes(item.issue_type)))
+const domainEditedIssueTypes = new Set(['TARGET_CHARACTER', 'SCENE_LOCALIZATION', 'LOCALIZATION'])
+const genericIssues = computed(() => issues.value.filter((item) => !domainEditedIssueTypes.has(item.issue_type)))
 const issueGroups = computed(() => {
   const result: Record<string, number> = {}
   for (const issue of issues.value) result[issue.issue_type] = (result[issue.issue_type] || 0) + 1
@@ -120,6 +121,7 @@ async function startAutoPrepare(): Promise<void> {
 }
 
 async function closeIssue(issue: ReviewIssue, status: 'RESOLVED' | 'IGNORED'): Promise<void> {
+  if (domainEditedIssueTypes.has(issue.issue_type)) return
   try {
     await remakeApi.setReviewIssueStatus(issue.id, status, { manual: true })
     await refresh()
@@ -200,12 +202,12 @@ onUnmounted(() => {
 
       <main v-if="activeView === 'project'" class="panel">
         <section class="hero">
-          <div><small>出海规则</small><h1>原短剧作为导演参考，重新拍成目标地区版本</h1><p>人物必须更换；场景按策略保留或本土化；对白进入下一步后自动翻译、TTS 和时长规划；最终由本地 MiniMax H3 重拍。</p></div>
+          <div><small>出海规则</small><h1>原短剧作为导演参考，重新拍成目标地区版本</h1><p>人物必须更换；场景按策略保留或本土化；对白自动翻译、本土化并尝试生成固定角色声音；真正的镜头时长调整由后续 Timing Engine 完成。</p></div>
           <div class="locale"><span>{{ project.target_language }}</span><strong>{{ project.target_region }}</strong></div>
         </section>
         <section class="rules">
           <article><small>人物</small><strong>必须替换</strong><span>原 Character → TargetCharacter，全剧一致</span></article>
-          <article><small>对白</small><strong>{{ project.target_language }}</strong><span>后续自动翻译 / TTS / Lip Sync</span></article>
+          <article><small>对白</small><strong>{{ project.target_language }}</strong><span>自动翻译 / Qwen3-TTS / 后续 Lip Sync</span></article>
           <article><small>生成</small><strong>H3 Local</strong><span>原 Shot 继续作为 Reference Video</span></article>
         </section>
         <section class="scene-policy">
@@ -215,7 +217,7 @@ onUnmounted(() => {
           </div>
         </section>
         <section class="auto-run">
-          <div><small>自动流程</small><strong>能自动完成的全部在后台完成</strong><p>素材 → 镜头 → ASR/OCR/VLM → 原人物/场景/道具 → SourceDramaSnapshot → 目标人物/场景方案。只有异常进入待确认。</p></div>
+          <div><small>自动流程</small><strong>能自动完成的全部在后台完成</strong><p>素材 → 镜头 → ASR/OCR/VLM → 原片资产 → SourceDramaSnapshot → 目标人物/场景 → 目标对白 → 可用时自动 Qwen3-TTS。只有异常进入待确认。</p></div>
           <button class="primary" :disabled="startingAuto || Boolean(activeTask) || !project.episodes.length" @click="startAutoPrepare">{{ startingAuto ? '正在启动…' : activeTask ? '处理中…' : project.episodes.length ? '开始自动处理' : '先导入原短剧' }}</button>
         </section>
         <EpisodeManagerV3 :project="project" @refresh="refresh" />
@@ -223,7 +225,7 @@ onUnmounted(() => {
 
       <main v-else-if="activeView === 'review'" class="panel">
         <section class="review-head">
-          <div><small>人工只处理异常</small><h1>{{ openIssueCount ? `需要确认 ${openIssueCount} 项` : '当前没有需要人工确认的问题' }}</h1><p>确认后结果直接写回真正业务数据，不在 ReviewIssue 里复制一份“真相”。</p></div>
+          <div><small>人工只处理异常</small><h1>{{ openIssueCount ? `需要确认 ${openIssueCount} 项` : '当前没有需要人工确认的问题' }}</h1><p>目标人物、目标场景和目标对白必须直接修改真实业务数据；不能只关闭提示来绕过问题。</p></div>
           <div class="chips"><span>阻塞 <b>{{ blockingCount }}</b></span><span v-for="(count, key) in issueGroups" :key="key">{{ issueTypeLabel(String(key)) }} <b>{{ count }}</b></span></div>
         </section>
 
@@ -246,8 +248,8 @@ onUnmounted(() => {
         <section class="hero"><div><small>生成交付</small><h1>本地 MiniMax H3 重拍整部短剧</h1><p>生成页只展示真正需要看的进度、失败片段、版本选择、整集预览和导出。</p></div></section>
         <section class="pipeline">
           <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>01</b><strong>原片理解</strong><span>SourceDramaSnapshot</span></article>
-          <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>02</b><strong>目标人物 / 场景</strong><span>TargetCharacter + Scene Mapping 已接入自动流程</span></article>
-          <article><b>03</b><strong>对白 / TTS / Timing</strong><span>下一阶段</span></article>
+          <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>02</b><strong>目标人物 / 场景</strong><span>TargetCharacter + Scene Mapping</span></article>
+          <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>03</b><strong>目标对白 / TTS</strong><span>TargetDialogue + Qwen3-TTS 已接入；下一步做 Timing</span></article>
           <article><b>04</b><strong>MiniMax H3</strong><span>Ref2VA 主重制 / FL2VA 补镜</span></article>
           <article><b>05</b><strong>Lip Sync / QC</strong><span>自动重试，异常再确认</span></article>
           <article><b>06</b><strong>整集导出</strong><span>字幕 / 混音 / 拼接</span></article>
