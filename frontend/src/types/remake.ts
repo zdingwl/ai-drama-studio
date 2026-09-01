@@ -310,3 +310,80 @@ export interface GenerationAttemptSummary {
   stale_count: number
   attempts: GenerationAttempt[]
 }
+
+export type GenerationQCStatus = 'PASS' | 'RETRY' | 'REVIEW' | 'WAITING_MODEL' | 'STALE'
+
+export interface GenerationStructuralQC {
+  expected_duration_us: number
+  actual_duration_us: number | null
+  duration_delta_us: number | null
+  duration_tolerance_us: number
+  duration_ok: boolean
+  decode_ok: boolean
+  has_video: boolean
+  width: number | null
+  height: number | null
+  fps: number | null
+  error_message: string | null
+}
+
+export interface GenerationSemanticQC {
+  visual_integrity: number | null
+  target_character_consistency: number | null
+  scene_consistency: number | null
+  action_camera_consistency: number | null
+  continuity_consistency: number | null
+  confidence: number | null
+  source_actor_leak: boolean
+  obvious_visual_artifact: boolean
+  reasons: string[]
+  retry_instruction: string | null
+  raw: Record<string, unknown>
+}
+
+export interface GenerationQualityCheck {
+  id: string
+  project_id: string
+  episode_id: string
+  generation_segment_id: string
+  generation_attempt_id: string
+  segment_input_fingerprint: string
+  profile_version: string
+  status: GenerationQCStatus
+  quality_score: number | null
+  structural: GenerationStructuralQC
+  semantic: GenerationSemanticQC | null
+  model_profile: string | null
+  reason: string
+  retry_instruction: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface GenerationSelection {
+  id: string
+  project_id: string
+  episode_id: string
+  generation_segment_id: string
+  segment_input_fingerprint: string
+  selected_attempt_id: string
+  quality_check_id: string | null
+  selection_source: 'AUTO' | 'MANUAL'
+  quality_score: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface GenerationQualitySummary {
+  schema_version: 'generation-quality-summary-v1'
+  project_id: string
+  check_count: number
+  pass_count: number
+  retry_count: number
+  review_count: number
+  waiting_model_count: number
+  stale_count: number
+  selected_count: number
+  checks: GenerationQualityCheck[]
+  selections: GenerationSelection[]
+}
