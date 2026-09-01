@@ -36,7 +36,7 @@ from engine.app.breakdown_read_model_contract_v1 import (
 from engine.app.breakdown_scene_timeline_contract_v1 import SceneTimelinePayloadV1
 from engine.app.breakdown_scene_timeline_result_v1 import build_scene_timeline_result_v1
 from engine.app.breakdown_serializer_v1 import get_current_breakdown
-from engine.app.studio_v2 import Character, get_session
+from engine.app.studio_v2 import Character, Episode, get_session
 
 
 IDENTITY_PENDING_WARNING = "人物资产尚未完成最终身份确认，当前继续使用匿名人物显示。"
@@ -99,6 +99,20 @@ def _anonymous_result(
         identity=_anonymous_identity(timeline, warning=warning),
         assets=asset_overlay,
     ).model_dump(mode="json")
+
+
+def _current_episode_asset_anchor(episode_id: str) -> tuple[str, str | None]:
+    """Return project + current AssetRevision without depending on P5 Character resolution."""
+
+    with get_session() as session:
+        episode = session.get(Episode, episode_id)
+        if episode is None:
+            raise LookupError("剧集不存在")
+        current_revision = session.scalar(select(AssetRevision).where(
+            AssetRevision.project_id == episode.project_id,
+            AssetRevision.is_current.is_(True),
+        ))
+        return episode.project_id, current_revision.id if current_revision is not None else None
 
 
 def _load_current_character_snapshots(
@@ -188,8 +202,6 @@ def compose_breakdown_read_model_v1(
     if not anchors_match:
         return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING, asset_overlay=assets)
 
-    # P5 contract is intentionally permissive about aggregate counters. P6 treats any mismatch as stale
-    # instead of letting malformed bridge data selectively resolve a person.
     bridge_people_count = sum(len(scene.people) for scene in resolution.scenes)
     bridge_resolved_count = sum(
         1
@@ -219,7 +231,6 @@ def compose_breakdown_read_model_v1(
     resolved_count = 0
     unresolved_count = 0
 
-    # First prove the whole Scene/P* numbering surface is identical before resolving a single person.
     for scene_ordinal, scene in timeline_scenes.items():
         bridge_scene = resolution_scenes[scene_ordinal]
         timeline_people = {person.ref: person for person in scene.people}
@@ -291,19 +302,25 @@ def compose_breakdown_read_model_v1(
         assets=assets,
     ).model_dump(mode="json")
 
-    # Explicit leak/mutation guard: P6 may never rewrite any frozen Timeline value.
     if result["timeline"] != normalized_timeline:
         raise BreakdownReadModelError("P6 不允许改写 Scene Timeline")
     return result
 
 
 def load_episode_breakdown_read_model_v1(episode_id: str) -> dict[str, Any] | None:
-    """Read current G2 result and safely add current Final Character/Scene/Prop display overlays."""
+    """Read current G2 result and independently add current Final Character/Scene/Prop overlays."""
 
     draft = get_current_breakdown(episode_id)
     if draft is None:
         return None
     timeline = SceneTimelinePayloadV1.model_validate(build_scene_timeline_result_v1(draft))
+
+    project_id, current_asset_revision_id = _current_episode_asset_anchor(episode_id)
+    assets = load_episode_final_asset_overlay_v1(
+        timeline,
+        project_id=project_id,
+        expected_asset_revision_id=current_asset_revision_id,
+    )
 
     try:
         resolution = load_episode_character_resolution_v1(episode_id)
@@ -311,11 +328,12 @@ def load_episode_breakdown_read_model_v1(episode_id: str) -> dict[str, Any] | No
         return compose_breakdown_read_model_v1(
             timeline,
             None,
+            asset_overlay=assets,
             unavailable_warning=IDENTITY_STALE_WARNING,
         )
 
     if resolution is None:
-        return compose_breakdown_read_model_v1(timeline, None)
+        return compose_breakdown_read_model_v1(timeline, None, asset_overlay=assets)
 
     resolved_character_ids = {
         str(person.character_id)
@@ -327,11 +345,6 @@ def load_episode_breakdown_read_model_v1(episode_id: str) -> dict[str, Any] | No
         project_id=resolution.project_id,
         expected_asset_revision_id=resolution.asset_revision_id,
         character_ids=resolved_character_ids,
-    )
-    assets = load_episode_final_asset_overlay_v1(
-        timeline,
-        project_id=resolution.project_id,
-        expected_asset_revision_id=resolution.asset_revision_id,
     )
     return compose_breakdown_read_model_v1(
         timeline,
