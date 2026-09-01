@@ -1,4 +1,6 @@
+import type { BreakdownReadModelPayload } from '../types/breakdown-read-model'
 import type { SceneTimelinePayload } from '../types/scene-timeline'
+import { projectBreakdownReadModelForOrdinaryUi } from '../utils/breakdownReadModelUi'
 import { sanitizeOrdinarySceneTimelinePayload } from '../utils/sceneTimelineUi'
 
 async function request<T>(url: string): Promise<T> {
@@ -21,8 +23,15 @@ async function requestOrdinaryTimeline(url: string): Promise<SceneTimelinePayloa
   return payload ? sanitizeOrdinarySceneTimelinePayload(payload) : null
 }
 
+async function requestOrdinaryReadModel(url: string): Promise<SceneTimelinePayload | null> {
+  const payload = await request<BreakdownReadModelPayload | null>(url)
+  return payload ? projectBreakdownReadModelForOrdinaryUi(payload) : null
+}
+
 export const sceneTimelineApi = {
-  getEpisode: (episodeId: string) => requestOrdinaryTimeline(`/api/episodes/${episodeId}/scene-timeline`),
+  // Ordinary episode reading goes through P6: frozen G2 Timeline + fail-closed Final Character overlay.
+  getEpisode: (episodeId: string) => requestOrdinaryReadModel(`/api/episodes/${episodeId}/breakdown-read-model`),
+  // Historical/debug run reading remains the frozen G2.5 endpoint and does not invent Final identity.
   getRun: async (runId: string) => {
     const payload = await request<SceneTimelinePayload>(`/api/breakdown-runs/${runId}/scene-timeline`)
     return sanitizeOrdinarySceneTimelinePayload(payload)
