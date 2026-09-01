@@ -14,6 +14,7 @@ from engine.app.asset_final_gate_v10 import apply_analysis_to_assets
 from engine.app.asset_semantics_p4_v1 import enrich_asset_run, semantic_model_status
 from engine.app.breakdown_p2_pipeline_v1 import run_episode_breakdown_p2
 from engine.app.breakdown_serializer_v1 import get_current_breakdown
+from engine.app.character_review_issue_sync_v1 import sync_character_review_issues
 from engine.app.media_v2 import detect_episode_shots, preprocess_episode
 from engine.app.review_issue_sync_v1 import sync_asset_review_issues, sync_shot_review_issues
 from engine.app.studio_v2 import get_episode, list_episode_records
@@ -184,14 +185,16 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             progress_percent=96.0,
             stage_key="auto_review_sync",
             stage_label="整理待确认问题",
-            message="高置信度结果自动通过，只把异常镜头和资产绑定推入待确认",
+            message="高置信度结果自动通过，只把异常镜头、人物身份和资产绑定推入待确认",
         )
         workspace = apply_analysis_to_assets(project_id, run_id)
         shot_issue_count = sync_shot_review_issues(project_id)
+        character_issue_count = sync_character_review_issues(project_id, run_id)
         asset_issue_count = sync_asset_review_issues(project_id, workspace)
+        review_issue_count = shot_issue_count + character_issue_count + asset_issue_count
 
         warnings = []
-        unresolved = int((analysis.get("counts") or {}).get("unresolved_character_candidates") or 0)
+        unresolved = int((analysis.get("counts") or {}).get("unresolved_character_candidates") or character_issue_count)
         if unresolved:
             warnings.append(f"{unresolved} 个人物 Evidence 尚未形成安全身份，需要在人物复核中处理")
         if semantic_result.get("status") in {"FAILED", "READY_WITH_WARNINGS", "NOT_CONFIGURED"}:
@@ -201,8 +204,9 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             "project_id": project_id,
             "episode_count": total,
             "asset_run_id": run_id,
-            "review_issue_count": shot_issue_count + asset_issue_count,
+            "review_issue_count": review_issue_count,
             "shot_review_issue_count": shot_issue_count,
+            "character_review_issue_count": character_issue_count,
             "asset_review_issue_count": asset_issue_count,
             "unresolved_character_evidence": unresolved,
             "semantic": semantic_result,
@@ -211,11 +215,11 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             task_id,
             result=result,
             message=(
-                f"自动理解完成：{shot_issue_count + asset_issue_count} 项需要人工确认"
-                if shot_issue_count + asset_issue_count
-                else "自动理解完成：当前没有镜头/资产问题需要人工确认"
+                f"自动理解完成：{review_issue_count} 项需要人工确认"
+                if review_issue_count
+                else "自动理解完成：当前没有镜头/人物/资产问题需要人工确认"
             ),
-            status="READY_WITH_WARNINGS" if warnings or shot_issue_count + asset_issue_count else "READY",
+            status="READY_WITH_WARNINGS" if warnings or review_issue_count else "READY",
         )
     except Exception as exc:
         fail_task(task_id, exc)
