@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
 import type { BackgroundTask, ContentAnalysisRun, Episode, F05ModelStatus } from '../types/studio'
+import AssetReviewInboxV1 from './AssetReviewInboxV1.vue'
 import AssetReviewMatrixV4 from './AssetReviewMatrixV4.vue'
 import CharacterPersonGalleryV10 from './CharacterPersonGalleryV10.vue'
 
@@ -22,13 +23,16 @@ type CharacterModelStatus = F05ModelStatus & {
   final_policy?: string
 }
 
-type AssetWorkspaceMode = 'review' | 'people'
+type AssetWorkspaceMode = 'inbox' | 'matrix' | 'people'
 
 const route = useRoute()
 const router = useRouter()
 
 function workspaceModeFromRoute(): AssetWorkspaceMode {
-  return String(route.query.asset_tab || '') === 'people' ? 'people' : 'review'
+  const requested = String(route.query.asset_tab || '')
+  if (requested === 'people') return 'people'
+  if (requested === 'matrix') return 'matrix'
+  return 'inbox'
 }
 
 const status = ref<CharacterModelStatus | null>(null)
@@ -173,9 +177,13 @@ onUnmounted(() => {
     <div v-if="error" class="character-v4-error">{{ error }}</div>
 
     <nav class="asset-workspace-tabs" aria-label="资产工作区">
-      <button :class="{ active: workspaceMode === 'review' }" type="button" @click="selectWorkspaceMode('review')">
-        <strong>待处理与绑定</strong>
-        <span>优先检查人物、场景、道具是否绑定正确</span>
+      <button :class="{ active: workspaceMode === 'inbox' }" type="button" @click="selectWorkspaceMode('inbox')">
+        <strong>待处理</strong>
+        <span>只看冲突、未绑定和低置信度镜头</span>
+      </button>
+      <button :class="{ active: workspaceMode === 'matrix' }" type="button" @click="selectWorkspaceMode('matrix')">
+        <strong>完整绑定</strong>
+        <span>查看并编辑全部人物、场景、道具 Binding</span>
       </button>
       <button :class="{ active: workspaceMode === 'people' }" type="button" @click="selectWorkspaceMode('people')">
         <strong>人物结果</strong>
@@ -183,7 +191,13 @@ onUnmounted(() => {
       </button>
     </nav>
 
-    <AssetReviewMatrixV4 v-if="workspaceMode === 'review'" :project-id="props.projectId" :episodes="props.episodes" />
+    <AssetReviewInboxV1
+      v-if="workspaceMode === 'inbox'"
+      :project-id="props.projectId"
+      :episodes="props.episodes"
+      @open-matrix="selectWorkspaceMode('matrix')"
+    />
+    <AssetReviewMatrixV4 v-else-if="workspaceMode === 'matrix'" :project-id="props.projectId" :episodes="props.episodes" />
     <CharacterPersonGalleryV10 v-else :project-id="props.projectId" />
 
     <details v-if="status" class="asset-runtime-details">
@@ -253,7 +267,7 @@ onUnmounted(() => {
 .asset-workspace-tabs {
   margin: 10px 22px 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 .asset-workspace-tabs button {
