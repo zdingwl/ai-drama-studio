@@ -1,9 +1,8 @@
-"""One-click automatic source understanding + target localization for remake.
+"""One-click automatic source understanding + localized remake preparation.
 
-Accepted internal modules remain hidden behind one task. A successful run composes the
-stable SourceDramaSnapshot, creates TargetCharacter / SceneLocalizationMapping, then
-localizes target dialogue and materializes every READY line when local Qwen3-TTS is
-available. Only uncertain content is surfaced as ReviewIssue rows.
+Accepted internal modules stay hidden behind one task. The task now runs through R6:
+source understanding -> target assets -> target dialogue/TTS -> target remake timeline.
+Only uncertain content becomes ReviewIssue; missing runtime audio remains WAITING_AUDIO.
 """
 from __future__ import annotations
 
@@ -16,6 +15,7 @@ from engine.app.breakdown_p2_pipeline_v1 import run_episode_breakdown_p2
 from engine.app.breakdown_serializer_v1 import get_current_breakdown
 from engine.app.character_review_issue_sync_v1 import sync_character_review_issues
 from engine.app.media_v2 import detect_episode_shots, preprocess_episode
+from engine.app.remake_timeline_v1 import generate_remake_timeline_v1
 from engine.app.review_issue_sync_v1 import sync_asset_review_issues, sync_shot_review_issues
 from engine.app.review_issue_v1 import list_review_issues
 from engine.app.source_drama_review_issue_sync_v1 import sync_source_drama_speaker_issues
@@ -44,8 +44,8 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
         start_task(
             task_id,
             stage_key="auto_prepare",
-            stage_label="自动理解并本土化原短剧",
-            message="将按剧集顺序自动完成素材、拉片、目标人物/场景、目标对白和可用的本地 TTS",
+            stage_label="自动理解并规划本土化短剧",
+            message="将自动完成素材、拉片、目标人物/场景、目标对白/TTS 和目标镜头时间轴",
         )
 
         # 0-72%: episode media + source understanding.
@@ -137,7 +137,7 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
                     message=f"{label} 当前拉片结果仍匹配 Current Shots，直接复用",
                 )
 
-        # 72-96%: project-level Character/Scene/Prop extraction.
+        # 72-96%: project-level Character / Scene / Prop extraction.
         def asset_progress(
             percent: float,
             stage_key: str,
@@ -199,7 +199,7 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
 
         update_task(
             task_id,
-            progress_percent=97.5,
+            progress_percent=97.0,
             stage_key="auto_source_snapshot",
             stage_label="形成统一原片快照",
             message="正在把 Scene / Shot / 人物 / 场景 / 道具 / 对白 / Reference Video 收敛为 SourceDramaSnapshot",
@@ -209,23 +209,36 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
 
         update_task(
             task_id,
-            progress_percent=98.3,
+            progress_percent=97.8,
             stage_key="auto_target_localization",
             stage_label="自动设计目标人物与场景",
-            message="正在按目标语言、目标地区和场景策略生成 TargetCharacter / SceneLocalizationMapping",
+            message="正在按目标语言、地区和场景策略生成 TargetCharacter / SceneLocalizationMapping",
         )
         target_localization = generate_target_localization_v1(project_id)
         target_review_count = int(target_localization.get("review_count") or 0)
 
         update_task(
             task_id,
-            progress_percent=99.0,
+            progress_percent=98.6,
             stage_key="auto_target_dialogue",
             stage_label="自动生成目标对白与声音",
             message="正在翻译/本土化对白；READY 台词会尽量生成固定角色声音和真实语音时长",
         )
         target_dialogue = run_target_dialogue_pipeline_v1(project_id, synthesize_audio=True)
         dialogue_review_count = int(target_dialogue.get("review_count") or 0)
+
+        update_task(
+            task_id,
+            progress_percent=99.4,
+            stage_key="auto_remake_timeline",
+            stage_label="自动规划目标镜头时间",
+            message="正在根据真实目标语音时长自动 KEEP / TRIM / 借反应镜 / EXTEND；极端时长才进入待确认",
+        )
+        remake_timeline = generate_remake_timeline_v1(project_id)
+        timing_review_count = int(remake_timeline.get("review_count") or 0)
+        timing_waiting_audio_count = int(remake_timeline.get("waiting_audio_count") or 0)
+
+        # Timing generation may add DIALOGUE_TIMING issues, so count the final open queue here.
         open_issues = list_review_issues(project_id, status="OPEN")
         review_issue_count = len(open_issues)
 
@@ -244,7 +257,11 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
         if dialogue_review_count:
             warnings.append(f"{dialogue_review_count} 条目标对白尚未形成安全可用文本")
         if target_dialogue.get("audio_ready_count", 0) < target_dialogue.get("dialogue_count", 0):
-            warnings.append("部分目标对白 TTS 音频尚未生成；不影响已完成文本继续保留")
+            warnings.append("部分目标对白 TTS 音频尚未生成；已完成文本继续保留")
+        if timing_waiting_audio_count:
+            warnings.append(f"{timing_waiting_audio_count} 个镜头等待真实 TTS 时长后再确定目标时长")
+        if timing_review_count:
+            warnings.append(f"{timing_review_count} 个镜头时长变化过大，需要人工确认")
 
         result = {
             "project_id": project_id,
@@ -257,6 +274,8 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             "speaker_review_issue_count": speaker_issue_count,
             "target_localization_review_item_count": target_review_count,
             "target_dialogue_review_item_count": dialogue_review_count,
+            "dialogue_timing_review_item_count": timing_review_count,
+            "dialogue_timing_waiting_audio_count": timing_waiting_audio_count,
             "unresolved_character_evidence": unresolved,
             "semantic": semantic_result,
             "source_snapshot": {
@@ -283,14 +302,22 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
                 "review_count": dialogue_review_count,
                 "audio_ready_count": target_dialogue["audio_ready_count"],
             },
+            "remake_timeline": {
+                "schema_version": remake_timeline["schema_version"],
+                "status": remake_timeline["status"],
+                "episode_count": remake_timeline["episode_count"],
+                "review_count": timing_review_count,
+                "waiting_audio_count": timing_waiting_audio_count,
+                "target_dialogue_fingerprint": remake_timeline["target_dialogue_fingerprint"],
+            },
         }
         finish_task(
             task_id,
             result=result,
             message=(
-                f"原片理解、目标人物/场景和目标对白已自动处理：{review_issue_count} 项需要人工确认"
+                f"自动处理已完成到目标镜头时间轴：{review_issue_count} 项需要人工确认"
                 if review_issue_count
-                else "原片理解、目标人物/场景和目标对白已自动处理：当前无需人工确认"
+                else "自动处理已完成到目标镜头时间轴：当前无需人工确认"
             ),
             status="READY_WITH_WARNINGS" if warnings or review_issue_count else "READY",
         )
