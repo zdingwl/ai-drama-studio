@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
-from threading import Lock
+from threading import RLock
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -33,7 +33,7 @@ CHECKPOINT_REL = os.getenv("AI_DRAMA_LATENTSYNC_CHECKPOINT", "checkpoints/latent
 USE_DEEPCACHE = os.getenv("AI_DRAMA_LATENTSYNC_DEEPCACHE", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 app = FastAPI(title="AI Drama Studio LatentSync Worker", version="1.0")
-_lock = Lock()
+_lock = RLock()
 _engine: Any = None
 
 
