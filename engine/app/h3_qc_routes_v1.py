@@ -28,7 +28,9 @@ from engine.app.task_progress_v2 import (
 )
 
 
-router = APIRouter(prefix="/api", tags=["h3-quality"])
+# Mounted by h3_generation_routes_v1 under its /api prefix so H3 generation/QC stays one
+# product API surface and all R9 ORM tables are imported before init_database().
+router = APIRouter(tags=["h3-quality"])
 H3_QC_RETRY_TASK_TYPE = "H3_QC_RETRY_V1"
 
 
@@ -80,7 +82,12 @@ def api_selected_generation_video(segment_id: str, project_id: str):
 
 def _run_manual_retry_task(task_id: str, project_id: str, segment_id: str) -> None:
     try:
-        start_task(task_id, stage_key="h3_qc_retry", stage_label="重新生成未通过镜头", message="正在根据上一版 QC 反馈重新生成并再次质检")
+        start_task(
+            task_id,
+            stage_key="h3_qc_retry",
+            stage_label="重新生成未通过镜头",
+            message="正在根据上一版 QC 反馈重新生成并再次质检",
+        )
         result = run_manual_qc_retry_v1(project_id, segment_id)
         qc = result.get("quality_check") or {}
         passed = qc.get("status") == "PASS"
@@ -103,7 +110,7 @@ def api_start_manual_qc_retry(project_id: str, segment_id: str, background: Back
         raise HTTPException(status_code=409, detail="本地 MiniMax H3 Runtime 尚未 READY")
     active = [task for task in list_project_tasks(project_id, limit=100) if task["status"] in ACTIVE_TASK_STATUSES]
     if active:
-        existing = next((task for task in active if task["task_type"] == H3_QC_RETRY_TASK_TYPE and task.get("episode_id") is None), None)
+        existing = next((task for task in active if task["task_type"] == H3_QC_RETRY_TASK_TYPE), None)
         if existing is not None:
             return existing
         raise HTTPException(status_code=409, detail="当前已有后台重任务正在执行")
