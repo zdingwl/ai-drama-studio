@@ -39,9 +39,9 @@ Executable CURRENT = `PROJECT_STATE + this manifest + current code/tests`.
 ## Repository workflow
 
 ```text
-Documentation-only synchronization -> direct main; no docs-only branch/PR.
-Code/behavior changes -> feature branch + Draft PR by default.
-Explicit user request for direct main/merge -> follow that explicit request.
+Documentation-only synchronization -> direct main; do not create a branch or PR.
+Code/behavior changes -> direct main by default; do not create a feature branch or PR by default.
+Only create/use a branch or PR when the user explicitly asks for one.
 Hosted GitHub Actions -> not acceptance evidence.
 All commits -> [skip ci].
 ```
