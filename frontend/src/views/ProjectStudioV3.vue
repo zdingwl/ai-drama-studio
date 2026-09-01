@@ -7,7 +7,7 @@ import BreakdownStageV1 from '../components/BreakdownStageV1.vue'
 import EpisodeManagerV3 from '../components/EpisodeManagerV3.vue'
 import { api } from '../api/client'
 import type { BreakdownRunSummary } from '../types/breakdown'
-import type { BackgroundTask, ContentAnalysisRun, Episode, Project } from '../types/studio'
+import type { AssetWorkspace, BackgroundTask, ContentAnalysisRun, Episode, Project } from '../types/studio'
 import { deriveStageStates, stageStateLabels } from '../utils/stageStatus'
 
 const route = useRoute()
@@ -17,6 +17,7 @@ const project = ref<Project | null>(null)
 const tasks = ref<BackgroundTask[]>([])
 const analysis = ref<ContentAnalysisRun | null>(null)
 const breakdownRuns = ref<BreakdownRunSummary[]>([])
+const assetWorkspace = ref<AssetWorkspace | null>(null)
 const loading = ref(true)
 const error = ref('')
 const shotRefreshToken = ref(0)
@@ -41,6 +42,7 @@ const stageStates = computed(() => deriveStageStates({
   tasks: tasks.value,
   analysis: analysis.value,
   breakdownRuns: breakdownRuns.value,
+  assetWorkspace: assetWorkspace.value,
 }))
 
 function stageState(stageId: number) {
@@ -57,14 +59,16 @@ async function refreshProject(): Promise<void> {
   try {
     const nextProject = await api.getProject(projectId.value)
     project.value = nextProject
-    const [taskResult, analysisResult, runsResult] = await Promise.allSettled([
+    const [taskResult, analysisResult, runsResult, workspaceResult] = await Promise.allSettled([
       api.listProjectTasks(projectId.value, 30),
       api.getCurrentContentAnalysis(projectId.value),
       readBreakdownRuns(nextProject.episodes),
+      api.getAssetWorkspace(projectId.value),
     ])
     if (taskResult.status === 'fulfilled') tasks.value = taskResult.value
     if (analysisResult.status === 'fulfilled') analysis.value = analysisResult.value
     if (runsResult.status === 'fulfilled') breakdownRuns.value = runsResult.value
+    if (workspaceResult.status === 'fulfilled') assetWorkspace.value = workspaceResult.value
     error.value = ''
   } catch (err) {
     error.value = err instanceof Error ? err.message : '项目读取失败'
