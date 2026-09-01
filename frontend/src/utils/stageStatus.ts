@@ -1,6 +1,7 @@
 export type StudioStageState = 'not_started' | 'processing' | 'review' | 'completed' | 'blocked' | 'planned'
 
 export interface StageEpisodeLike {
+  id?: string
   shot_count: number
   preprocess_status?: string | null
 }
@@ -16,10 +17,18 @@ export interface StageAnalysisLike {
   counts?: Record<string, number>
 }
 
+export interface StageBreakdownRunLike {
+  episode_id: string
+  status: string
+  is_current: boolean
+  source_shot_revision?: { is_current: boolean } | null
+}
+
 export interface StageStatusContext {
   episodes: StageEpisodeLike[]
   tasks: StageTaskLike[]
   analysis: StageAnalysisLike | null
+  breakdownRuns?: StageBreakdownRunLike[]
 }
 
 const SHOT_TASK_TYPES = new Set(['EPISODE_SHOTS', 'BATCH_SHOTS'])
@@ -53,23 +62,36 @@ function sourceStageState(episodes: StageEpisodeLike[]): StudioStageState {
   return 'completed'
 }
 
-function breakdownStageState(episodes: StageEpisodeLike[], tasks: StageTaskLike[]): StudioStageState {
+function breakdownStageState(
+  episodes: StageEpisodeLike[],
+  tasks: StageTaskLike[],
+  breakdownRuns: StageBreakdownRunLike[],
+): StudioStageState {
   const latestStageTask = latestTask(tasks, STAGE_TWO_TASK_TYPES)
-  const latestBreakdownTask = latestTask(tasks, BREAKDOWN_TASK_TYPES)
-  const hasShots = episodes.some((episode) => episode.shot_count > 0)
-
   if (latestStageTask && ACTIVE_STATUSES.has(latestStageTask.status)) return 'processing'
   if (latestStageTask?.status === 'FAILED') return 'blocked'
   if (latestStageTask?.status === 'READY_WITH_WARNINGS') return 'review'
 
-  const breakdownIsLatest = Boolean(
-    latestBreakdownTask
-    && latestStageTask
-    && latestBreakdownTask.created_at === latestStageTask.created_at
-    && latestBreakdownTask.task_type === latestStageTask.task_type,
-  )
-  if (breakdownIsLatest && latestBreakdownTask?.status === 'READY' && hasShots) return 'completed'
-  if (hasShots) return 'review'
+  if (!episodes.length) return 'not_started'
+  const hasAnyShots = episodes.some((episode) => episode.shot_count > 0)
+  const allEpisodesHaveShots = episodes.every((episode) => episode.shot_count > 0)
+  const currentRuns = breakdownRuns.filter((run) => run.is_current)
+
+  if (currentRuns.some((run) => ACTIVE_STATUSES.has(run.status.toUpperCase()))) return 'processing'
+  if (currentRuns.some((run) => run.status.toUpperCase() === 'FAILED')) return 'blocked'
+  if (currentRuns.some((run) => run.status.toUpperCase() === 'READY_WITH_WARNINGS')) return 'review'
+
+  const allEpisodesHaveCurrentReadyRun = allEpisodesHaveShots && episodes.every((episode) => {
+    if (!episode.id) return false
+    return currentRuns.some((run) => (
+      run.episode_id === episode.id
+      && run.status.toUpperCase() === 'READY'
+      && run.source_shot_revision?.is_current === true
+    ))
+  })
+
+  if (allEpisodesHaveCurrentReadyRun) return 'completed'
+  if (hasAnyShots || currentRuns.length) return 'review'
   return 'not_started'
 }
 
@@ -93,7 +115,7 @@ function assetStageState(analysis: StageAnalysisLike | null, tasks: StageTaskLik
 export function deriveStageStates(context: StageStatusContext): Record<number, StudioStageState> {
   return {
     1: sourceStageState(context.episodes),
-    2: breakdownStageState(context.episodes, context.tasks),
+    2: breakdownStageState(context.episodes, context.tasks, context.breakdownRuns ?? []),
     3: assetStageState(context.analysis, context.tasks),
     4: 'planned',
     5: 'planned',
