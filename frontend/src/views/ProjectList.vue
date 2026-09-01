@@ -54,7 +54,7 @@ onMounted(loadProjects)
         <h1>短剧本地化重制工作台</h1>
         <p>先把原片拆成可控制的镜头，再基于 Reference Video 替换人物、语言、声音、场景和关键道具。</p>
       </div>
-      <div class="hero-badge"><strong>13</strong><span>阶段生产链</span></div>
+      <div class="hero-badge"><strong>6</strong><span>阶段生产链</span></div>
     </section>
 
     <section class="home-grid">

@@ -1,4 +1,5 @@
 import type { SceneTimelinePayload } from '../types/scene-timeline'
+import { sanitizeOrdinarySceneTimelinePayload } from '../utils/sceneTimelineUi'
 
 async function request<T>(url: string): Promise<T> {
   const response = await fetch(url)
@@ -15,7 +16,15 @@ async function request<T>(url: string): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function requestOrdinaryTimeline(url: string): Promise<SceneTimelinePayload | null> {
+  const payload = await request<SceneTimelinePayload | null>(url)
+  return payload ? sanitizeOrdinarySceneTimelinePayload(payload) : null
+}
+
 export const sceneTimelineApi = {
-  getEpisode: (episodeId: string) => request<SceneTimelinePayload | null>(`/api/episodes/${episodeId}/scene-timeline`),
-  getRun: (runId: string) => request<SceneTimelinePayload>(`/api/breakdown-runs/${runId}/scene-timeline`),
+  getEpisode: (episodeId: string) => requestOrdinaryTimeline(`/api/episodes/${episodeId}/scene-timeline`),
+  getRun: async (runId: string) => {
+    const payload = await request<SceneTimelinePayload>(`/api/breakdown-runs/${runId}/scene-timeline`)
+    return sanitizeOrdinarySceneTimelinePayload(payload)
+  },
 }

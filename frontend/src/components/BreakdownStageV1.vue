@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import type { BreakdownRunSummary } from '../types/breakdown'
 import type { BackgroundTask, Episode } from '../types/studio'
 import BreakdownTaskBarV1 from './BreakdownTaskBarV1.vue'
@@ -17,23 +18,45 @@ const emit = defineEmits<{
   (event: 'refresh-project'): void
 }>()
 
+const route = useRoute()
+const router = useRouter()
 const mode = ref<'shots' | 'draft'>(props.episodes.some((episode) => episode.shot_count > 0) ? 'draft' : 'shots')
 const draftRefreshToken = ref(0)
 const selectedEpisodeId = ref('')
 const currentDraftRun = ref<BreakdownRunSummary | null>(null)
 
+function defaultEpisodeId(): string {
+  return props.episodes.find((item) => item.shot_count > 0)?.id ?? props.episodes[0]?.id ?? ''
+}
+
+function syncEpisodeFromRoute(): void {
+  const requested = String(route.query.episode || '')
+  const requestedExists = props.episodes.some((item) => item.id === requested)
+  const currentExists = props.episodes.some((item) => item.id === selectedEpisodeId.value)
+  const next = requestedExists ? requested : currentExists ? selectedEpisodeId.value : defaultEpisodeId()
+
+  if (selectedEpisodeId.value !== next) selectedEpisodeId.value = next
+  if (next && requested !== next) {
+    void router.replace({ query: { ...route.query, episode: next } })
+  }
+}
+
 watch(
   () => props.episodes.map((item) => `${item.id}:${item.shot_count}`).join('|'),
-  () => {
-    if (props.episodes.some((item) => item.id === selectedEpisodeId.value)) return
-    selectedEpisodeId.value = props.episodes.find((item) => item.shot_count > 0)?.id ?? props.episodes[0]?.id ?? ''
-    currentDraftRun.value = null
-  },
+  syncEpisodeFromRoute,
   { immediate: true },
 )
 
-watch(selectedEpisodeId, () => {
+watch(
+  () => route.query.episode,
+  syncEpisodeFromRoute,
+)
+
+watch(selectedEpisodeId, (episodeId) => {
   currentDraftRun.value = null
+  if (episodeId && String(route.query.episode || '') !== episodeId) {
+    void router.replace({ query: { ...route.query, episode: episodeId } })
+  }
 })
 
 function onTaskFinished(event: Event): void {

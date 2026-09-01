@@ -1,8 +1,11 @@
 import type {
   SceneTimelineCinematography,
+  SceneTimelinePayload,
   SceneTimelinePerson,
   SceneTimelineSceneInfo,
 } from '../types/scene-timeline'
+
+const SHOT_LOCAL_SUBJECT_TOKEN = /\bsubject_[a-z0-9]+\b/gi
 
 export function timelineTime(us: number | null | undefined): string {
   if (us === null || us === undefined || !Number.isFinite(us)) return '—'
@@ -33,4 +36,36 @@ export function cinematographyItems(value: SceneTimelineCinematography): string[
 
 export function personDisplayName(people: SceneTimelinePerson[], ref: string): string {
   return people.find((person) => person.ref === ref)?.display_name || '人物'
+}
+
+/**
+ * G2.6 ordinary-user boundary: Shot-local subject_A/B labels are model-local evidence,
+ * never identity authority. Remove only those tokens and keep the human-readable action.
+ */
+export function publicInteractionText(value: string | null | undefined): string {
+  if (!value) return ''
+  return value
+    .replace(SHOT_LOCAL_SUBJECT_TOKEN, '')
+    .replace(/^[\s:：,，;；\-—]+|[\s:：,，;；\-—]+$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+/**
+ * Return a display-only copy. Frozen G2.5 payload truth remains unchanged on the backend.
+ */
+export function sanitizeOrdinarySceneTimelinePayload(payload: SceneTimelinePayload): SceneTimelinePayload {
+  return {
+    ...payload,
+    scenes: payload.scenes.map((scene) => ({
+      ...scene,
+      shots: scene.shots.map((shot) => ({
+        ...shot,
+        props: shot.props.map((prop) => ({
+          ...prop,
+          interaction: publicInteractionText(prop.interaction) || null,
+        })),
+      })),
+    })),
+  }
 }
