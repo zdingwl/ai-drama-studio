@@ -1,0 +1,97 @@
+/*
+ * Ordinary-user readability floor.
+ * Keep this file last in main.ts so legacy workbench CSS cannot shrink primary UI text back to 9-10px.
+ * This layer changes presentation only; no workflow or evidence semantics live here.
+ */
+
+/* Project shell */
+.stage-copy small,
+.stage-copy em,
+.project-command-context small,
+.command-stat small,
+.next-action-button small,
+.sidebar-footer small {
+  font-size: 11px !important;
+}
+.stage-copy strong { font-size: 14px !important; }
+.command-stat strong,
+.next-action-button strong,
+.project-command-context span { font-size: 12px !important; }
+
+/* Home dashboard */
+.panel-subtitle,
+.project-locale,
+.project-dashboard-footer,
+.project-stage-chip > small,
+.project-overall-pill {
+  font-size: 11px !important;
+}
+.project-stage-chip > strong { font-size: 12px !important; }
+
+/* 01 Source / episode workflow */
+.source-stage-v1 small,
+.source-stage-v1 .source-episode-main span,
+.source-stage-v1 .source-state strong,
+.source-stage-v1 .source-delete {
+  font-size: 11px !important;
+}
+.source-stage-v1 .source-episode-main strong,
+.source-stage-v1 .source-next-step strong { font-size: 13px !important; }
+.source-stage-v1 .source-stage-header p { font-size: 14px !important; }
+
+/* 02 Breakdown navigation and task controls */
+.breakdown-stage-v1 .stage-switcher-title span,
+.breakdown-stage-v1 .breakdown-stage-tabs small,
+.breakdown-task-bar-v3 .episode-picker > span,
+.breakdown-task-bar-v3 .result-status strong,
+.breakdown-task-bar-v3 .rerun-confirmation p,
+.breakdown-task-bar-v3 .rerun-confirmation small,
+.breakdown-task-bar-v3 .task-notice {
+  font-size: 11px !important;
+}
+.breakdown-stage-v1 .breakdown-stage-tabs b,
+.breakdown-task-bar-v3 .episode-picker select,
+.breakdown-task-bar-v3 .task-actions button,
+.breakdown-task-bar-v3 .confirm-actions button {
+  font-size: 12px !important;
+}
+
+/* 03 Asset summary / inbox */
+.asset-stage-v4 .asset-user-summary-copy small,
+.asset-stage-v4 .asset-user-summary-copy span,
+.asset-stage-v4 .asset-user-stats small,
+.asset-stage-v4 .asset-workspace-tabs span,
+.asset-review-inbox-v1 small,
+.asset-review-inbox-v1 .inbox-binding-compare h4,
+.asset-review-inbox-v1 .inbox-binding-compare p span,
+.asset-review-inbox-v1 .inbox-binding-compare p strong,
+.asset-review-inbox-v1 .inbox-filters button,
+.asset-review-inbox-v1 .inbox-item-actions button {
+  font-size: 11px !important;
+}
+.asset-stage-v4 .asset-user-stats strong,
+.asset-stage-v4 .asset-workspace-tabs strong,
+.asset-review-inbox-v1 .inbox-item-main header strong {
+  font-size: 12px !important;
+}
+.asset-review-inbox-v1 .inbox-header strong { font-size: 15px !important; }
+
+/* Task center: primary information should remain readable even in the compact header slot. */
+.task-dock-copy strong { font-size: 12px !important; }
+.task-dock-copy small,
+.task-dock-percent,
+.task-dock-count,
+.task-item-head small,
+.task-panel-item > small,
+.task-panel-item p {
+  font-size: 11px !important;
+}
+
+/* Click/tap targets for ordinary navigation controls. */
+.breakdown-stage-tabs button,
+.asset-workspace-tabs button,
+.inbox-filters button,
+.source-delete,
+.next-action-button {
+  min-height: 38px;
+}
