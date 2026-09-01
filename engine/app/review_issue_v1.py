@@ -28,6 +28,7 @@ DOMAIN_EDITED_ISSUE_TYPES = {
     "LOCALIZATION",
     "DIALOGUE_TIMING",
     "H3_QC",
+    "LIP_SYNC_QC",
 }
 
 
