@@ -88,7 +88,12 @@ function personForRef(scene: SceneTimelineScene, ref: string): SceneTimelinePers
   }
 }
 
-function onPersonCoverError(event: Event): void {
+function assetAvatarText(name: string | null | undefined): string {
+  const compact = String(name || '').trim().replace(/\s+/g, '')
+  return compact ? Array.from(compact)[0] : '资'
+}
+
+function onAssetCoverError(event: Event): void {
   const image = event.currentTarget
   if (image instanceof HTMLImageElement) image.hidden = true
 }
@@ -299,6 +304,23 @@ watch(
             <span>{{ selectedScene.shots.length }} 个镜头 · {{ timelineDuration(selectedScene.duration_us) }}</span>
           </div>
 
+          <div v-if="selectedScene.final_scene" class="scene-final-asset">
+            <span class="scene-final-cover" aria-hidden="true">
+              <span>{{ assetAvatarText(selectedScene.final_scene.name) }}</span>
+              <img
+                v-if="selectedScene.final_scene.cover_url"
+                :src="selectedScene.final_scene.cover_url"
+                alt=""
+                loading="lazy"
+                @error="onAssetCoverError"
+              />
+            </span>
+            <span class="scene-final-copy">
+              <small>最终场景</small>
+              <strong>{{ selectedScene.final_scene.name }}</strong>
+            </span>
+          </div>
+
           <p v-if="selectedScene.story_summary" class="scene-story">{{ selectedScene.story_summary }}</p>
 
           <div v-if="sceneInfoTags(selectedScene.scene_info).length" class="scene-meta-row">
@@ -322,7 +344,7 @@ watch(
                     :src="person.final_character.cover_url"
                     alt=""
                     loading="lazy"
-                    @error="onPersonCoverError"
+                    @error="onAssetCoverError"
                   />
                 </span>
                 <strong>{{ person.display_name }}</strong>
@@ -426,10 +448,29 @@ watch(
                     :src="personForRef(selectedScene, ref).final_character?.cover_url || undefined"
                     alt=""
                     loading="lazy"
-                    @error="onPersonCoverError"
+                    @error="onAssetCoverError"
                   />
                 </span>
                 <strong>{{ personForRef(selectedScene, ref).display_name }}</strong>
+              </span>
+            </div>
+          </section>
+
+          <section v-if="selectedShot.final_props?.length" class="inspector-block inspector-final-assets">
+            <h4>最终道具</h4>
+            <div class="final-prop-list">
+              <span v-for="prop in selectedShot.final_props" :key="prop.id" class="final-prop-card">
+                <span class="final-prop-cover" aria-hidden="true">
+                  <span>{{ assetAvatarText(prop.name) }}</span>
+                  <img
+                    v-if="prop.cover_url"
+                    :src="prop.cover_url"
+                    alt=""
+                    loading="lazy"
+                    @error="onAssetCoverError"
+                  />
+                </span>
+                <strong>{{ prop.name }}</strong>
               </span>
             </div>
           </section>
@@ -457,7 +498,7 @@ watch(
           </section>
 
           <section v-if="selectedShot.props.length" class="inspector-block">
-            <h4>道具</h4>
+            <h4>道具观察</h4>
             <div class="inspector-prop-list">
               <article v-for="(prop, index) in selectedShot.props" :key="`${selectedShot.ordinal}-prop-${index}`">
                 <strong>{{ prop.label }}</strong>
@@ -586,6 +627,37 @@ watch(
 .scene-title-row > span { flex: none; color: #8a96a7; font-size: 9px; }
 .scene-eyebrow { color: #6782af; font-size: 9px; font-weight: 900; letter-spacing: .07em; }
 .scene-hero h2 { margin: 2px 0 0; color: #263c5d; font-size: 18px; line-height: 1.2; }
+.scene-final-asset {
+  width: fit-content;
+  max-width: 100%;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #d7e2f2;
+  border-radius: 10px;
+  padding: 5px 9px 5px 5px;
+  background: #fff;
+}
+.scene-final-cover,
+.final-prop-cover {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border: 1px solid #dce4ef;
+  background: #edf2f8;
+  color: #60728d;
+}
+.scene-final-cover { width: 46px; height: 34px; border-radius: 7px; }
+.final-prop-cover { width: 26px; height: 26px; border-radius: 7px; }
+.scene-final-cover > span,
+.final-prop-cover > span { font-size: 9px; font-weight: 900; }
+.scene-final-cover > img,
+.final-prop-cover > img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; }
+.scene-final-copy { min-width: 0; display: grid; gap: 1px; }
+.scene-final-copy small { color: #8190a4; font-size: 8px; font-weight: 800; }
+.scene-final-copy strong { overflow: hidden; max-width: 220px; color: #3e5678; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .scene-story { margin: 0; color: #455874; font-size: 11px; line-height: 1.65; }
 .scene-meta-row { display: flex; flex-wrap: wrap; gap: 5px; }
 .scene-meta-row span { border-radius: 999px; padding: 4px 7px; background: #edf3fb; color: #587099; font-size: 9px; font-weight: 750; }
@@ -692,8 +764,11 @@ watch(
 .inspector-block h4 { margin: 0; color: #586a84; font-size: 9px; font-weight: 900; }
 .inspector-block ul { display: grid; gap: 5px; margin: 0; padding-left: 17px; }
 .inspector-block li { color: #40516a; font-size: 10px; line-height: 1.55; }
-.inspector-person-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.inspector-person {
+.inspector-final-assets { border-color: #d8e3f2; background: #f8fbff; }
+.inspector-person-list,
+.final-prop-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.inspector-person,
+.final-prop-card {
   display: inline-flex;
   gap: 6px;
   align-items: center;
@@ -703,7 +778,9 @@ watch(
   padding: 3px 7px 3px 3px;
   background: #f8fafc;
 }
-.inspector-person > strong { max-width: 135px; overflow: hidden; color: #536984; font-size: 9px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.final-prop-card { background: #fff; }
+.inspector-person > strong,
+.final-prop-card > strong { max-width: 135px; overflow: hidden; color: #536984; font-size: 9px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .inspector-chips span { border-radius: 999px; padding: 3px 6px; background: #edf2f8; color: #536984; font-size: 9px; }
 .inspector-dialogue-list,
