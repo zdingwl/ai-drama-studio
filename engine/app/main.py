@@ -68,7 +68,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="AI Drama Studio", version="2.8.0", lifespan=lifespan)
+app = FastAPI(title="AI Drama Studio", version="2.7.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -116,7 +116,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "architecture": "localized-remake-h3-local-v1", "app_version": "2.8.0"}
+    return {"status": "ok", "architecture": "localized-remake-h3-local-v1", "app_version": "2.7.0"}
 
 
 @app.get("/api/projects")
