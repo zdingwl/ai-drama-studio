@@ -1,10 +1,8 @@
-"""One-click automatic source-drama analysis for the remake workflow.
+"""One-click automatic source understanding + target asset localization for remake.
 
-This intentionally reuses the already accepted internal modules instead of exposing them
-as separate product pages. The user starts one job; preprocessing, shot detection,
-Breakdown and asset extraction run sequentially. Only uncertain results are surfaced as
-ReviewIssue records. A successful run finishes by composing the stable SourceDramaSnapshot
-that all future remake modules consume.
+Accepted internal modules remain hidden behind one task.  A successful run composes the
+stable SourceDramaSnapshot, then automatically creates TargetCharacter and scene
+localization plans. Only uncertain results are surfaced as ReviewIssue rows.
 """
 from __future__ import annotations
 
@@ -21,6 +19,7 @@ from engine.app.review_issue_sync_v1 import sync_asset_review_issues, sync_shot_
 from engine.app.source_drama_review_issue_sync_v1 import sync_source_drama_speaker_issues
 from engine.app.source_drama_snapshot_v1 import load_project_source_drama_snapshot_v1
 from engine.app.studio_v2 import get_episode, list_episode_records
+from engine.app.target_localization_v1 import generate_target_localization_v1
 from engine.app.task_progress_v2 import fail_task, finish_task, start_task, update_task
 
 
@@ -42,8 +41,8 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
         start_task(
             task_id,
             stage_key="auto_prepare",
-            stage_label="自动理解原短剧",
-            message="将按剧集顺序自动完成素材准备、镜头检测、AI 拉片和资产识别",
+            stage_label="自动理解并本土化原短剧",
+            message="将按剧集顺序自动完成素材准备、镜头理解、资产识别和目标人物/场景规划",
         )
 
         # 0-72%: episodes. Each episode owns an equal slice and internally runs media + Breakdown.
@@ -187,7 +186,7 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             task_id,
             progress_percent=96.0,
             stage_key="auto_review_sync",
-            stage_label="整理待确认问题",
+            stage_label="整理源片待确认问题",
             message="高置信度结果自动通过，只把异常镜头、人物身份和资产绑定推入待确认",
         )
         workspace = apply_analysis_to_assets(project_id, run_id)
@@ -204,11 +203,22 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
         )
         source_snapshot = load_project_source_drama_snapshot_v1(project_id)
         speaker_issue_count = sync_source_drama_speaker_issues(project_id, source_snapshot)
+
+        update_task(
+            task_id,
+            progress_percent=99.0,
+            stage_key="auto_target_localization",
+            stage_label="自动设计目标人物与场景",
+            message="正在按目标语言、目标地区和场景策略生成 TargetCharacter / SceneLocalizationMapping",
+        )
+        target_localization = generate_target_localization_v1(project_id)
+        target_review_count = int(target_localization.get("review_count") or 0)
         review_issue_count = (
             shot_issue_count
             + character_issue_count
             + asset_issue_count
             + speaker_issue_count
+            + target_review_count
         )
 
         warnings = []
@@ -221,6 +231,8 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             warnings.append("SourceDramaSnapshot 已形成，但仍包含需要下游尊重的源片警告")
         if speaker_issue_count:
             warnings.append(f"{speaker_issue_count} 条对白需要确认说话人")
+        if target_review_count:
+            warnings.append(f"{target_review_count} 项目标人物/场景本土化需要人工确认")
 
         result = {
             "project_id": project_id,
@@ -231,6 +243,7 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             "character_review_issue_count": character_issue_count,
             "asset_review_issue_count": asset_issue_count,
             "speaker_review_issue_count": speaker_issue_count,
+            "target_localization_review_issue_count": target_review_count,
             "unresolved_character_evidence": unresolved,
             "semantic": semantic_result,
             "source_snapshot": {
@@ -242,14 +255,21 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
                 "resolved_character_count": source_snapshot["resolved_character_count"],
                 "source_dialogue_count": source_snapshot["source_dialogue_count"],
             },
+            "target_localization": {
+                "schema_version": target_localization["schema_version"],
+                "status": target_localization["status"],
+                "target_character_count": target_localization["target_character_count"],
+                "scene_mapping_count": target_localization["scene_mapping_count"],
+                "review_count": target_review_count,
+            },
         }
         finish_task(
             task_id,
             result=result,
             message=(
-                f"原短剧理解完成并形成 SourceDramaSnapshot：{review_issue_count} 项需要人工确认"
+                f"原短剧理解与目标人物/场景规划完成：{review_issue_count} 项需要人工确认"
                 if review_issue_count
-                else "原短剧理解完成并形成 SourceDramaSnapshot：当前没有镜头/人物/资产/说话人问题需要人工确认"
+                else "原短剧理解与目标人物/场景规划完成：当前无需人工确认"
             ),
             status="READY_WITH_WARNINGS" if warnings or review_issue_count else "READY",
         )
