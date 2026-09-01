@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import wave
 
 import pytest
@@ -196,6 +197,9 @@ def test_offscreen_dialogue_skips_lipsync_but_keeps_audio(tmp_path: Path, monkey
 
 
 def test_dialogue_materializer_applies_cross_segment_trim(tmp_path: Path) -> None:
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("FFmpeg is not installed in this lightweight test environment")
+
     source = tmp_path / "source.wav"
     output = tmp_path / "trimmed.wav"
     _write_wav(source)
@@ -229,6 +233,7 @@ def test_r10_routes_are_registered() -> None:
     assert "/api/lip-sync/runtime" in paths
     assert "/api/projects/{project_id}/postproduction" in paths
     assert "/api/projects/{project_id}/tasks/postproduction" in paths
+    assert "/api/projects/{project_id}/postproduction-segments/{segment_id}/retry-lip-sync" in paths
     assert "/api/postproduction-segments/{segment_id}/video" in paths
 
 
