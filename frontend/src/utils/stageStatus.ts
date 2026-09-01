@@ -83,17 +83,17 @@ function breakdownStageState(
   const hasAnyShots = episodes.some((episode) => episode.shot_count > 0)
   const allEpisodesHaveShots = episodes.every((episode) => episode.shot_count > 0)
   const currentRuns = breakdownRuns.filter((run) => run.is_current)
+  const currentRevisionRuns = currentRuns.filter((run) => run.source_shot_revision?.is_current === true)
 
-  if (currentRuns.some((run) => ACTIVE_STATUSES.has(run.status.toUpperCase()))) return 'processing'
-  if (currentRuns.some((run) => run.status.toUpperCase() === 'FAILED')) return 'blocked'
-  if (currentRuns.some((run) => run.status.toUpperCase() === 'READY_WITH_WARNINGS')) return 'review'
+  if (currentRevisionRuns.some((run) => ACTIVE_STATUSES.has(run.status.toUpperCase()))) return 'processing'
+  if (currentRevisionRuns.some((run) => run.status.toUpperCase() === 'FAILED')) return 'blocked'
+  if (currentRevisionRuns.some((run) => run.status.toUpperCase() === 'READY_WITH_WARNINGS')) return 'review'
 
   const allEpisodesHaveCurrentReadyRun = allEpisodesHaveShots && episodes.every((episode) => {
     if (!episode.id) return false
-    return currentRuns.some((run) => (
+    return currentRevisionRuns.some((run) => (
       run.episode_id === episode.id
       && run.status.toUpperCase() === 'READY'
-      && run.source_shot_revision?.is_current === true
     ))
   })
 
