@@ -84,6 +84,10 @@ jobs:
           python -m pip install fastapi==0.128.2 pydantic==2.13.4 SQLAlchemy==2.0.50 python-multipart==0.0.29 httpx==0.28.1 numpy==2.1.3 pytest==9.0.2
       - name: Ensure FFmpeg
         run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
           ffmpeg -version
           ffprobe -version
       - name: Compile R10 backend and worker
