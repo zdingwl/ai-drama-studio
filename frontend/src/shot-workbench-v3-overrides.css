@@ -1,8 +1,8 @@
 .studio-main.shot-stage-main {
   height: 100vh;
-  padding: 20px 22px 108px;
-  scroll-padding-bottom: 108px;
-  /* Keep the fixed Task Dock from covering the final Shot content until P1 moves tasks into the header center. */
+  padding: 20px 22px 28px;
+  scroll-padding-bottom: 28px;
+  /* Task center now lives in the project header, so the old fixed-dock clearance is no longer needed. */
 }
 
 .studio-main.shot-stage-main .shot-v3 {
@@ -13,7 +13,7 @@
 @media (max-height: 900px) {
   .studio-main.shot-stage-main {
     padding-top: 14px;
-    padding-bottom: 108px;
+    padding-bottom: 24px;
   }
 
   .shot-v3 {
