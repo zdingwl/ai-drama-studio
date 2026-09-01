@@ -5,42 +5,43 @@
 
 .scene-timeline-results-v1 .scene-navigator > header strong { font-size: 13px !important; }
 .scene-timeline-results-v1 .scene-navigator > header span { font-size: 11px !important; }
-.scene-timeline-results-v1 .scene-nav-item > span { font-size: 11px !important; }
-.scene-timeline-results-v1 .scene-nav-item > strong { font-size: 14px !important; }
+.scene-timeline-results-v1 .scene-nav-item > span { font-size: 10px !important; }
+.scene-timeline-results-v1 .scene-nav-item > strong { font-size: 13px !important; }
 .scene-timeline-results-v1 .scene-nav-item > small { font-size: 11px !important; }
 
+.scene-timeline-results-v1 .scene-title-row > span,
 .scene-timeline-results-v1 .scene-eyebrow { font-size: 11px !important; }
 .scene-timeline-results-v1 .scene-story { font-size: 14px !important; }
-.scene-timeline-results-v1 .scene-meta-row span { font-size: 11px !important; }
-.scene-timeline-results-v1 .scene-environment { font-size: 12px !important; }
-
-.scene-timeline-results-v1 .scene-people-card > header strong { font-size: 13px !important; }
-.scene-timeline-results-v1 .scene-people-card > header span { font-size: 11px !important; }
-.scene-timeline-results-v1 .person-avatar { font-size: 11px !important; }
-.scene-timeline-results-v1 .scene-people-list strong { font-size: 13px !important; }
-.scene-timeline-results-v1 .scene-people-list p { font-size: 12px !important; }
+.scene-timeline-results-v1 .scene-meta-row span,
+.scene-timeline-results-v1 .scene-environment,
+.scene-timeline-results-v1 .scene-person-label,
+.scene-timeline-results-v1 .scene-person-strip > div > span { font-size: 11px !important; }
 
 .scene-timeline-results-v1 .shots-section-head strong { font-size: 14px !important; }
-.scene-timeline-results-v1 .shots-section-head span { font-size: 12px !important; }
-.scene-timeline-results-v1 .shot-card-head span { font-size: 12px !important; }
-.scene-timeline-results-v1 .shot-card-head strong { font-size: 11px !important; }
-.scene-timeline-results-v1 .shot-card-head small { font-size: 10px !important; }
-.scene-timeline-results-v1 .shot-preview-button i,
-.scene-timeline-results-v1 .shot-preview-placeholder,
-.scene-timeline-results-v1 .close-video-button { font-size: 11px !important; }
+.scene-timeline-results-v1 .shots-section-head span { font-size: 11px !important; }
+.scene-timeline-results-v1 .compact-shot-title strong { font-size: 12px !important; }
+.scene-timeline-results-v1 .compact-shot-title small { font-size: 10px !important; }
+.scene-timeline-results-v1 .compact-shot-main > b { font-size: 13px !important; }
+.scene-timeline-results-v1 .compact-shot-people { font-size: 11px !important; }
+.scene-timeline-results-v1 .compact-shot-meta i,
+.scene-timeline-results-v1 .compact-shot-thumb i { font-size: 10px !important; }
 
-.scene-timeline-results-v1 .shot-primary-description > span,
-.scene-timeline-results-v1 .shot-person-row > span { font-size: 12px !important; }
-.scene-timeline-results-v1 .shot-primary-description p { font-size: 14px !important; }
-.scene-timeline-results-v1 .shot-person-row b { font-size: 11px !important; }
-.scene-timeline-results-v1 .shot-detail-block h4 { font-size: 12px !important; }
-.scene-timeline-results-v1 .shot-detail-block ul { font-size: 12px !important; }
-
-.scene-timeline-results-v1 .dialogue-list strong { font-size: 11px !important; }
-.scene-timeline-results-v1 .dialogue-list span { font-size: 10px !important; }
-.scene-timeline-results-v1 .dialogue-list p { font-size: 13px !important; }
-.scene-timeline-results-v1 .prop-list strong { font-size: 11px !important; }
-.scene-timeline-results-v1 .prop-list span { font-size: 10px !important; }
-.scene-timeline-results-v1 .cinematography-list span { font-size: 11px !important; }
-.scene-timeline-results-v1 .screen-text-list span { font-size: 10px !important; }
-.scene-timeline-results-v1 .screen-text-list p { font-size: 11px !important; }
+.scene-timeline-results-v1 .inspector-head span,
+.scene-timeline-results-v1 .inspector-head small { font-size: 10px !important; }
+.scene-timeline-results-v1 .inspector-head strong { font-size: 14px !important; }
+.scene-timeline-results-v1 .inspector-preview-button span,
+.scene-timeline-results-v1 .inspector-preview-static span,
+.scene-timeline-results-v1 .inspector-preview-button i { font-size: 11px !important; }
+.scene-timeline-results-v1 .inspector-primary-block > span { font-size: 11px !important; }
+.scene-timeline-results-v1 .inspector-primary-block p { font-size: 14px !important; }
+.scene-timeline-results-v1 .inspector-block h4,
+.scene-timeline-results-v1 .inspector-advanced > summary { font-size: 12px !important; }
+.scene-timeline-results-v1 .inspector-block li,
+.scene-timeline-results-v1 .inspector-dialogue-list p,
+.scene-timeline-results-v1 .inspector-screen-text-list p { font-size: 12px !important; }
+.scene-timeline-results-v1 .inspector-chips span,
+.scene-timeline-results-v1 .inspector-dialogue-list strong,
+.scene-timeline-results-v1 .inspector-prop-list strong,
+.scene-timeline-results-v1 .inspector-prop-list span { font-size: 11px !important; }
+.scene-timeline-results-v1 .inspector-dialogue-list span,
+.scene-timeline-results-v1 .inspector-screen-text-list span { font-size: 10px !important; }
