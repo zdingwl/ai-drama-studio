@@ -1,14 +1,24 @@
-import type { BreakdownReadModelPayload, BreakdownReadSceneIdentity } from '../types/breakdown-read-model'
-import type { SceneTimelinePayload, SceneTimelineScene } from '../types/scene-timeline'
+import type {
+  BreakdownReadAssetOverlay,
+  BreakdownReadModelPayload,
+  BreakdownReadSceneIdentity,
+} from '../types/breakdown-read-model'
+import type {
+  FinalPropDisplay,
+  FinalSceneDisplay,
+  SceneTimelinePayload,
+  SceneTimelineScene,
+} from '../types/scene-timeline'
 import { sanitizeOrdinarySceneTimelinePayload } from './sceneTimelineUi'
 
 export const IDENTITY_UI_STALE_WARNING = '人物身份信息暂不可用，当前继续使用匿名人物显示。'
+export const FINAL_ASSET_UI_STALE_WARNING = '场景/道具最终资产暂不可用，当前保留拉片原结果。'
 
 function mergeWarnings(...groups: string[][]): string[] {
   return Array.from(new Set(groups.flat().map((item) => item.trim()).filter(Boolean)))
 }
 
-function anonymousTimeline(timeline: SceneTimelinePayload): SceneTimelinePayload {
+function anonymousIdentityTimeline(timeline: SceneTimelinePayload): SceneTimelinePayload {
   return {
     ...timeline,
     warnings: mergeWarnings(timeline.warnings, [IDENTITY_UI_STALE_WARNING]),
@@ -19,6 +29,21 @@ function anonymousTimeline(timeline: SceneTimelinePayload): SceneTimelinePayload
         display_name: person.display_name,
         appearance: person.appearance,
         final_character: null,
+      })),
+    })),
+  }
+}
+
+function clearFinalAssets(timeline: SceneTimelinePayload, warning: string): SceneTimelinePayload {
+  return {
+    ...timeline,
+    warnings: mergeWarnings(timeline.warnings, [warning]),
+    scenes: timeline.scenes.map((scene) => ({
+      ...scene,
+      final_scene: null,
+      shots: scene.shots.map((shot) => ({
+        ...shot,
+        final_props: [],
       })),
     })),
   }
@@ -50,17 +75,10 @@ function sceneIdentityIsSafe(scene: SceneTimelineScene, identity: BreakdownReadS
   return true
 }
 
-/**
- * P6 ordinary-user projection.
- *
- * The backend read-model keeps frozen G2 under `timeline` and Final Character under a separate
- * identity overlay. This function makes a display-only copy for the existing renderer. It never
- * changes Shot facts, dialogue, OCR, props, timings, P* membership, or backend business state.
- */
-export function projectBreakdownReadModelForOrdinaryUi(
+function projectIdentity(
+  timeline: SceneTimelinePayload,
   payload: BreakdownReadModelPayload,
 ): SceneTimelinePayload {
-  const timeline = sanitizeOrdinarySceneTimelinePayload(payload.timeline)
   const identity = payload.identity
   const identityScenes = new Map(identity.scenes.map((scene) => [scene.scene_ordinal, scene]))
   const peopleCount = identity.scenes.reduce((sum, scene) => sum + scene.people.length, 0)
@@ -76,13 +94,13 @@ export function projectBreakdownReadModelForOrdinaryUi(
     || identity.unresolved_count !== peopleCount - resolvedCount
     || (resolvedCount > 0 && !identity.asset_revision_id)
   ) {
-    return anonymousTimeline(timeline)
+    return anonymousIdentityTimeline(timeline)
   }
 
   for (const scene of timeline.scenes) {
     const sceneIdentity = identityScenes.get(scene.ordinal)
     if (!sceneIdentity || !sceneIdentityIsSafe(scene, sceneIdentity)) {
-      return anonymousTimeline(timeline)
+      return anonymousIdentityTimeline(timeline)
     }
   }
 
@@ -105,4 +123,87 @@ export function projectBreakdownReadModelForOrdinaryUi(
       }
     }),
   }
+}
+
+function finalSceneIsSafe(value: FinalSceneDisplay | null): boolean {
+  return value === null || Boolean(value.id.trim() && value.name.trim())
+}
+
+function finalPropsAreSafe(values: FinalPropDisplay[]): boolean {
+  const ids = new Set<string>()
+  for (const item of values) {
+    if (!item.id.trim() || !item.name.trim() || ids.has(item.id)) return false
+    ids.add(item.id)
+  }
+  return true
+}
+
+function assetOverlayIsSafe(timeline: SceneTimelinePayload, assets: BreakdownReadAssetOverlay): boolean {
+  const sceneMap = new Map(assets.scenes.map((item) => [item.scene_ordinal, item]))
+  const shotMap = new Map(assets.shots.map((item) => [`${item.scene_ordinal}:${item.shot_ordinal}`, item]))
+  const expectedSceneOrdinals = new Set(timeline.scenes.map((scene) => scene.ordinal))
+  const expectedShotKeys = new Set(
+    timeline.scenes.flatMap((scene) => scene.shots.map((shot) => `${scene.ordinal}:${shot.ordinal}`)),
+  )
+
+  if (
+    sceneMap.size !== assets.scenes.length
+    || shotMap.size !== assets.shots.length
+    || sceneMap.size !== expectedSceneOrdinals.size
+    || shotMap.size !== expectedShotKeys.size
+  ) return false
+
+  for (const ordinal of expectedSceneOrdinals) {
+    const item = sceneMap.get(ordinal)
+    if (!item || !finalSceneIsSafe(item.scene)) return false
+  }
+  for (const key of expectedShotKeys) {
+    const item = shotMap.get(key)
+    if (!item || !finalPropsAreSafe(item.props)) return false
+  }
+
+  const hasFinalAssets = assets.scenes.some((item) => item.scene !== null)
+    || assets.shots.some((item) => item.props.length > 0)
+  if (hasFinalAssets && !assets.asset_revision_id) return false
+  return true
+}
+
+function projectFinalAssets(
+  timeline: SceneTimelinePayload,
+  assets: BreakdownReadAssetOverlay | null | undefined,
+): SceneTimelinePayload {
+  if (!assets) return timeline
+  if (!assetOverlayIsSafe(timeline, assets)) {
+    return clearFinalAssets(timeline, FINAL_ASSET_UI_STALE_WARNING)
+  }
+
+  const sceneMap = new Map(assets.scenes.map((item) => [item.scene_ordinal, item.scene]))
+  const shotMap = new Map(assets.shots.map((item) => [`${item.scene_ordinal}:${item.shot_ordinal}`, item.props]))
+  return {
+    ...timeline,
+    warnings: mergeWarnings(timeline.warnings, assets.warnings),
+    scenes: timeline.scenes.map((scene) => ({
+      ...scene,
+      final_scene: sceneMap.get(scene.ordinal) ? { ...sceneMap.get(scene.ordinal)! } : null,
+      shots: scene.shots.map((shot) => ({
+        ...shot,
+        final_props: (shotMap.get(`${scene.ordinal}:${shot.ordinal}`) ?? []).map((item) => ({ ...item })),
+      })),
+    })),
+  }
+}
+
+/**
+ * P6 ordinary-user projection.
+ *
+ * Frozen G2 stays under `timeline`. Character identity and Final Scene/Prop bindings are projected
+ * only into display-only fields after independent fail-closed validation. Shot facts, dialogue,
+ * OCR, G2 props, timings, P* membership and backend business state are never rewritten.
+ */
+export function projectBreakdownReadModelForOrdinaryUi(
+  payload: BreakdownReadModelPayload,
+): SceneTimelinePayload {
+  const timeline = sanitizeOrdinarySceneTimelinePayload(payload.timeline)
+  const withIdentity = projectIdentity(timeline, payload)
+  return projectFinalAssets(withIdentity, payload.assets)
 }
