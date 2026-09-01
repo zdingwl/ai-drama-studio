@@ -10,6 +10,12 @@ V10.1 separates three decisions:
 The adapter therefore prefers explicit Shot assignments for RESOLVED Characters, while
 keeping UNRESOLVED Track evidence in a separate diagnostics lane.  Historical Runs that
 predate explicit assignment continue to use Track-derived presence as a fallback.
+
+Final Asset / Shot Binding consistency is also repaired here before the payload reaches
+the frontend.  The database `ShotCharacterBinding` rows are the canonical Final truth;
+`characters[].shot_ids` and `bindings_by_shot[*].character_ids` must always be two views
+of those same rows.  This prevents the Asset Library from saying a Character is bound to
+a Shot while the Shot matrix renders the Character column as empty.
 """
 from __future__ import annotations
 
@@ -18,6 +24,7 @@ from typing import Any
 
 from sqlalchemy import select
 
+from engine.app.asset_workspace_v3 import ShotCharacterBinding
 from engine.app.content_analysis_v2 import CharacterCandidate, CharacterTrack, ContentAnalysisRun
 from engine.app.studio_v2 import get_session
 
@@ -110,6 +117,56 @@ def _empty_bucket(*, scene: Any = None, props: list[Any] | None = None) -> dict[
     }
 
 
+def _sync_final_character_bindings(
+    workspace: dict[str, Any],
+    bindings: list[ShotCharacterBinding],
+) -> dict[str, Any]:
+    """Make every Final Character Shot view follow current DB bindings exactly.
+
+    `asset_workspace_v3` normally serializes both views from the same snapshot, but the
+    UI must never be allowed to render contradictory Final truth even if a stale payload
+    or a later adapter leaves them out of sync.  Scene/Prop binding fields are preserved;
+    only Character Final bindings are rebuilt from the canonical DB table.
+    """
+
+    result = dict(workspace)
+    by_shot: dict[str, dict[str, Any]] = {}
+    for shot_id, raw in (workspace.get("bindings_by_shot") or {}).items():
+        bucket = dict(raw or {})
+        by_shot[str(shot_id)] = {
+            "character_ids": [],
+            "scene_id": bucket.get("scene_id"),
+            "prop_ids": list(bucket.get("prop_ids") or []),
+        }
+
+    shots_by_character: dict[str, set[str]] = {}
+    for binding in bindings:
+        shot_id = str(binding.shot_id)
+        character_id = str(binding.character_id)
+        if not shot_id or not character_id:
+            continue
+        bucket = by_shot.setdefault(shot_id, {"character_ids": [], "scene_id": None, "prop_ids": []})
+        if character_id not in bucket["character_ids"]:
+            bucket["character_ids"].append(character_id)
+        shots_by_character.setdefault(character_id, set()).add(shot_id)
+
+    characters: list[dict[str, Any]] = []
+    for raw in workspace.get("characters") or []:
+        item = dict(raw or {})
+        character_id = str(item.get("id") or "")
+        shot_ids = sorted(shots_by_character.get(character_id, set()))
+        item["shot_ids"] = shot_ids
+        item["shot_count"] = len(shot_ids)
+        characters.append(item)
+
+    for bucket in by_shot.values():
+        bucket["character_ids"] = sorted(set(str(value) for value in bucket["character_ids"] if value))
+
+    result["characters"] = characters
+    result["bindings_by_shot"] = by_shot
+    return result
+
+
 def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> dict[str, Any]:
     """Return workspace payload with V10.1-correct Character presence per Shot."""
 
@@ -129,15 +186,18 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
             .order_by(CharacterCandidate.ordinal)
         ).all())
         tracks = list(session.scalars(select(CharacterTrack).where(CharacterTrack.run_id == run_id)).all())
+        final_bindings = list(session.scalars(
+            select(ShotCharacterBinding).where(ShotCharacterBinding.project_id == project_id)
+        ).all())
 
-    candidate_to_asset = _candidate_to_asset(workspace)
+    result = _sync_final_character_bindings(workspace, final_bindings)
+    candidate_to_asset = _candidate_to_asset(result)
     tracks_by_candidate_shot: dict[tuple[str, str], list[CharacterTrack]] = {}
     for track in tracks:
         tracks_by_candidate_shot.setdefault((track.candidate_id, track.shot_id), []).append(track)
 
-    result = dict(workspace)
     evidence_by_shot: dict[str, dict[str, Any]] = {}
-    for shot_id, raw_bucket in (workspace.get("evidence_by_shot") or {}).items():
+    for shot_id, raw_bucket in (result.get("evidence_by_shot") or {}).items():
         bucket = dict(raw_bucket or {})
         evidence_by_shot[str(shot_id)] = _empty_bucket(
             scene=bucket.get("scene"),
@@ -201,4 +261,7 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
     return result
 
 
-__all__ = ["decorate_asset_workspace_character_evidence"]
+__all__ = [
+    "decorate_asset_workspace_character_evidence",
+    "_sync_final_character_bindings",
+]
