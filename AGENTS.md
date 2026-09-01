@@ -23,6 +23,9 @@ G2.5 Windows/CUDA local acceptance    = PASS
 G2.6 ordinary-user result UI          = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character                  = v1 / FINAL PASS / FROZEN
+P6 Final Breakdown read model         = v1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+P6 Final Character renderer           = IMPLEMENTED / VISUAL ACCEPTANCE PENDING
+P6 Final Scene/Prop fill-back         = IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
 ```
 
 Truth priority:
@@ -193,23 +196,38 @@ LLM MUST NOT own or rewrite:
 
 G2.6 is present on `main` and consumes frozen G2.5, but remains user-local acceptance pending.
 
-## 8. Current implementation frontier
+## 8. P6 composition boundary
+
+P6 is implemented on `main`; it is **not** an identification/re-recognition layer.
+
+```text
+Character:
+  P5 RESOLVED + exact current anchors -> existing Final Character name/cover
+  P5 UNRESOLVED -> remain anonymous 人物N
+
+Scene:
+  every Shot in one G2 Scene must have Final ShotSceneBinding
+  all bindings must point to the same existing Final Scene
+  only then -> display-only final_scene
+
+Prop:
+  current Final ShotPropBinding -> display-only final_props per Shot
+  never use Draft/G2 text similarity as Final Prop authority
+  frozen G2 props remain separate observation truth
+```
+
+Character and Scene/Prop overlays fail closed independently. P6 must never mutate G2/P5/Final bindings or ASR/OCR truth.
+
+## 9. Current implementation frontier
 
 ```text
 1. keep G1 + G2.1-G2.5 + P5 frozen
-2. finish G2.6 UI acceptance when needed
-3. P4 Draft-guided Scene/Prop local acceptance is still pending
-4. next code frontier = P6 Final identity/asset fill-back + final Breakdown read model/renderers
+2. user-local accept P6 end-to-end: backend tests + real runner + frontend Vitest/typecheck/build + visual review
+3. close G2.6 visual acceptance together with the P6 result-page review
+4. P4 Draft-guided Scene/Prop local acceptance remains separately pending
+5. after P6 acceptance, continue the next product workflow stage without reopening frozen recognition layers
 ```
 
-P6 rules:
-
-```text
-RESOLVED P5 person -> may render existing Final Character name/assets
-UNRESOLVED P5 person -> remain anonymous 人物N
-P6 must compose, not mutate, frozen G2/P5
-ASR/OCR/frozen Shot facts remain unchanged
-no prose/speaker/name fallback for identity
-```
+P6 acceptance details live in `docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md`.
 
 Hosted GitHub Actions must not be used; commits use `[skip ci]`.
