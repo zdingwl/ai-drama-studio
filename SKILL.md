@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-localized-remake-v1
-version: 4.0.0
-description: Localized short-drama remake workflow; automatic source understanding + unified Review Center + local MiniMax H3 target generation.
+version: 4.1.0
+description: Localized short-drama remake workflow; automatic source understanding + SourceDramaSnapshot + unified Review Center + local MiniMax H3 target generation.
 ---
 
 # AI Drama Studio — Localized Remake V1
@@ -16,12 +16,13 @@ AGENTS.md
 → docs/PRODUCT_REMAKE_ARCHITECTURE_V1.md
 → docs/PROJECT_STATE.md
 → docs/CURRENT_IMPLEMENTATION_MANIFEST.md
+→ docs/SOURCE_DRAMA_SNAPSHOT_V1.md when working downstream
 → relevant current code/tests
 ```
 
-Old P/G/Stage docs remain implementation history. They are not the current product workflow when they conflict with the Localized Remake V1 product definition.
+Old P/G/Stage docs are implementation history, not the current product workflow when they conflict with Localized Remake V1.
 
-Backup of the repository before this restructuring:
+Rollback snapshot:
 
 ```text
 backup/pre-h3-remake-restructure-2026-09-01
@@ -32,14 +33,12 @@ backup/pre-h3-remake-restructure-2026-09-01
 
 Input: an existing short drama.
 
-Output: a new localized drama for the Project target language/region, using the original drama as directing/reference material.
-
-Required behavior:
+Output: a new localized drama for the Project target language/region, using the source drama as directing/reference material.
 
 ```text
 story/directing/actions/camera may follow source
 characters must be replaced/localized
-scene may KEEP or LOCALIZE according to project policy
+scene may KEEP or LOCALIZE according to Project policy
 dialogue must become target language
 voice must belong to target character
 lip movement must follow final target audio
@@ -47,13 +46,13 @@ timeline may change for target-language speech duration
 final generation engine = local MiniMax H3
 ```
 
-Do not force target speech into the original duration by unnatural speech acceleration or global slow-motion.
+Do not force target speech into source duration by unnatural speech acceleration or global slow-motion.
 
 ## 2. Product UX rule
 
 > Automatic work is background work, not a page.
 
-The user-facing workflow is:
+User-facing workflow:
 
 ```text
 Project
@@ -65,26 +64,22 @@ Only errors/uncertainty/conflicts/high-risk decisions require user attention.
 
 ## 3. Current V4 UI
 
-Formal entry components:
+Formal entries:
 
 ```text
 frontend/src/views/ProjectListV4.vue
 frontend/src/views/ProjectStudioV4.vue
 ```
 
-Main areas:
-
 ```text
-Project      = locale/policy + episodes + one-click auto processing
-Review       = only uncertain items + correction tools
-Output       = H3 generation/QC/export surface
+Project = locale/policy + Episodes + one-click auto processing
+Review  = only uncertain items + correction tools
+Output  = H3 generation/QC/export surface
 ```
 
 Legacy Stage 01-06 components are compatibility/advanced tools. Do not add new top-level stages.
 
-## 4. Current automatic source-analysis task
-
-Endpoint/task:
+## 4. Current automatic source-understanding task
 
 ```text
 POST /api/projects/{project_id}/tasks/auto-remake-prepare
@@ -99,7 +94,9 @@ preprocess when needed
 → Breakdown ASR/OCR/Qwen3-VL/Fusion when needed
 → Character V10.1 + Scene/Prop extraction
 → Final Asset application under existing safety gates
-→ ReviewIssue sync
+→ Shot / Character / Asset ReviewIssue sync
+→ SourceDramaSnapshot
+→ Speaker ReviewIssue sync
 ```
 
 Current ReviewIssue types:
@@ -108,11 +105,43 @@ Current ReviewIssue types:
 SHOT_BOUNDARY
 CHARACTER_IDENTITY
 ASSET_BINDING
+SPEAKER
 ```
 
-## 5. Project remake policy
+## 5. SourceDramaSnapshot V1
 
-Stored separately from legacy Project schema to avoid ALTER TABLE migration risk:
+R2 is implemented on `main`.
+
+Future remake modules consume SourceDramaSnapshot instead of directly consuming legacy P/G product layers.
+
+```text
+GET /api/episodes/{episode_id}/source-drama-snapshot
+GET /api/projects/{project_id}/source-drama-snapshot
+```
+
+The Snapshot contains source-only:
+
+```text
+Episode / Scene / Shot
+source timing
+ShotRevision anchors
+Reference Video
+source people + safe Final Character
+Final Scene / Prop overlays where supported
+action / performance
+source dialogue + speaker keys
+OCR
+cinematography
+source_fingerprint
+```
+
+It is a deterministic current read facade, not a duplicate source database.
+
+Downstream persisted models must store `source_fingerprint` and become stale when the current fingerprint changes.
+
+Target-side fields are forbidden.
+
+## 6. Project remake policy
 
 ```text
 ProjectRemakePolicy
@@ -121,7 +150,7 @@ character_policy = LOCALIZE
 generation_engine = MINIMAX_H3_LOCAL
 ```
 
-## 6. Review Center contract
+## 7. Review Center contract
 
 `ReviewIssue` is the single attention queue, not domain truth.
 
@@ -139,19 +168,9 @@ editable_payload
 resolution
 ```
 
-Corrections still write to authoritative domain models:
+Corrections write to authoritative domain models, not ReviewIssue.
 
-```text
-ShotRevision / Shot
-Final Character/Scene/Prop + Shot bindings
-future TargetDialogue
-future RemakeTimeline
-future GenerationSegment
-```
-
-## 7. Existing internal capabilities to preserve
-
-Keep using accepted internals unless deliberately migrated:
+## 8. Existing internal capabilities to preserve
 
 ```text
 Source PTS
@@ -165,17 +184,17 @@ Window Context / Exact Shot
 Scene Timeline
 Character V10.1
 AssetRevision + Final bindings
-Localization source/revision safety
+P5/P6 compatibility while SourceDramaSnapshot still uses them
 BackgroundTask
 ```
 
-Do not weaken Character identity gates just to eliminate unresolved items. Uncertainty is handled by Review Center.
+Do not weaken Character identity gates to eliminate unresolved items.
 
-## 8. Next implementation order
+## 9. Next implementation order
 
 ```text
-R2 SourceDramaSnapshot
-R4 TargetCharacter + SceneLocalizationMapping
+R2 SourceDramaSnapshot                  = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
+R4 TargetCharacter + SceneLocalizationMapping = NEXT
 R5 automatic localization + TTS
 R6 Dialogue Timing Engine + RemakeTimeline
 R7 H3RuntimeManager (local MiniMax H3)
@@ -191,18 +210,16 @@ Key rule:
 Shot != GenerationSegment
 ```
 
-## 9. Future H3 input contract
-
-The target compiler should produce H3-ready conditions from:
+## 10. Future H3 input contract
 
 ```text
 source Reference Video
-Target Character references
-Target Scene references if localized
-Target Dialogue audio
-action/performance facts
-camera/composition constraints
-target duration
++ Target Character references
++ Target Scene references if localized
++ Target Dialogue audio
++ action/performance facts
++ camera/composition constraints
++ target duration
 ```
 
 Preferred generation use:
@@ -212,9 +229,7 @@ Ref2VA = main remake
 FL2VA  = extension / bridge / repair
 ```
 
-## 10. Dialogue timing contract
-
-Required flow:
+## 11. Dialogue timing contract
 
 ```text
 source dialogue
@@ -225,7 +240,7 @@ source dialogue
 → RemakeTimeline
 ```
 
-Preferred automatic strategies:
+Strategies:
 
 ```text
 KEEP
@@ -237,10 +252,10 @@ REGENERATE_EXTENSION
 HUMAN_REVIEW
 ```
 
-## 11. Git discipline
+## 12. Git discipline
 
 ```text
-main is the active development branch
+main is active development
 backup/pre-h3-remake-restructure-2026-09-01 is rollback-only
 all commits include [skip ci]
 hosted GitHub Actions are not acceptance evidence
