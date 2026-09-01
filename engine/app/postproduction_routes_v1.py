@@ -16,6 +16,7 @@ from engine.app.episode_output_v1 import (
 )
 from engine.app.latentsync_provider_v1 import get_lip_sync_provider_v1
 from engine.app.postproduction_contract_v1 import LipSyncRuntimeStatusV1, PostProductionPlanV1
+from engine.app.postproduction_review_v1 import retry_lip_sync_review_v1
 from engine.app.postproduction_v1 import (
     compile_postproduction_plan_v1,
     get_postproduction_segment_v1,
@@ -152,6 +153,14 @@ def api_get_postproduction(project_id: str):
 def api_get_episode_outputs(project_id: str):
     try:
         return compile_episode_outputs_v1(project_id)
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/projects/{project_id}/postproduction-segments/{segment_id}/retry-lip-sync")
+def api_retry_lip_sync(project_id: str, segment_id: str):
+    try:
+        return retry_lip_sync_review_v1(project_id, segment_id)
     except Exception as exc:
         raise _error(exc) from exc
 
