@@ -74,9 +74,36 @@ function highConfidence(item: AssetEvidenceItem | null | undefined, threshold = 
   return Boolean(item && item.confidence !== null && item.confidence >= threshold)
 }
 
+function lowConfidenceNeedsReview(evidence: ShotAssetEvidence, binding: ShotAssetBindings): boolean {
+  const characterNeedsReview = evidence.characters.some((item) => (
+    item.confidence !== null
+    && item.confidence < 0.75
+    && Boolean(item.final_asset_id)
+    && !binding.character_ids.includes(item.final_asset_id as string)
+  ))
+  if (characterNeedsReview) return true
+
+  const sceneNeedsReview = Boolean(
+    evidence.scene
+      && evidence.scene.confidence !== null
+      && evidence.scene.confidence < 0.75
+      && evidence.scene.final_asset_id
+      && evidence.scene.final_asset_id !== binding.scene_id,
+  )
+  if (sceneNeedsReview) return true
+
+  return evidence.props.some((item) => (
+    item.confidence !== null
+    && item.confidence < 0.75
+    && Boolean(item.final_asset_id)
+    && !binding.prop_ids.includes(item.final_asset_id as string)
+  ))
+}
+
 /**
- * Display-only review state. Thresholds intentionally mirror AssetReviewMatrixV4.
- * Final Binding remains authority; AI Evidence never writes truth by itself.
+ * Display-only review state. Final Binding remains authority; AI Evidence only decides
+ * whether human attention is still needed. A low-confidence suggestion clears once the
+ * human has explicitly confirmed that same Final Asset in the binding.
  */
 function reviewState(shot: Shot): ReviewState {
   const binding = bindingsFor(shot.id)
@@ -97,18 +124,12 @@ function reviewState(shot: Shot): ReviewState {
   )
   const propConflict = binding.prop_ids.length > 0 && strongProps.some((item) => item.final_asset_id && !binding.prop_ids.includes(item.final_asset_id))
   const conflict = characterConflict || sceneConflict || propConflict
+  const low = lowConfidenceNeedsReview(evidence, binding)
 
-  const confidenceValues = [
-    ...evidence.characters.map((item) => item.confidence),
-    evidence.scene?.confidence ?? null,
-    ...evidence.props.map((item) => item.confidence),
-  ].filter((value): value is number => value !== null)
-  const low = confidenceValues.some((value) => value < 0.75)
-
-  if (conflict) return { key: 'conflict', label: 'AI 与当前绑定冲突', conflict, unbound, low }
+  if (conflict) return { key: 'conflict', label: '识别结果与当前绑定冲突', conflict, unbound, low }
   if (unbound) return { key: 'unbound', label: '存在高置信度内容未绑定', conflict, unbound, low }
-  if (low) return { key: 'low', label: '有低置信度内容建议检查', conflict, unbound, low }
-  return { key: 'ok', label: '自动一致', conflict, unbound, low }
+  if (low) return { key: 'low', label: '有不确定内容需要确认', conflict, unbound, low }
+  return { key: 'ok', label: '已确认', conflict, unbound, low }
 }
 
 const counts = computed(() => {
