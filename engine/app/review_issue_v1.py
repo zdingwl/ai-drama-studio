@@ -20,6 +20,15 @@ OPEN_STATUSES = {"OPEN"}
 FINAL_STATUSES = {"RESOLVED", "IGNORED"}
 ALL_STATUSES = OPEN_STATUSES | FINAL_STATUSES
 SEVERITIES = {"REVIEW", "BLOCKING"}
+# These issues represent authoritative domain facts. They may only close as a side effect
+# of writing the real domain row (TargetCharacter/Scene/Dialogue/RemakeTimeline), never by
+# a generic UI acknowledgement.
+DOMAIN_EDITED_ISSUE_TYPES = {
+    "TARGET_CHARACTER",
+    "SCENE_LOCALIZATION",
+    "LOCALIZATION",
+    "DIALOGUE_TIMING",
+}
 
 
 class ReviewIssue(Base):
@@ -169,6 +178,10 @@ def set_review_issue_status(issue_id: str, *, status: str, resolution: Any = Non
         row = session.get(ReviewIssue, issue_id)
         if row is None:
             raise LookupError("待确认问题不存在")
+        if normalized in FINAL_STATUSES and row.issue_type in DOMAIN_EDITED_ISSUE_TYPES:
+            raise ValueError(
+                f"{row.issue_type} 必须通过对应编辑器修改真实业务数据，不能直接忽略或标记已处理"
+            )
         now = utcnow()
         row.status = normalized
         row.updated_at = now
@@ -180,6 +193,7 @@ def set_review_issue_status(issue_id: str, *, status: str, resolution: Any = Non
 
 
 __all__ = [
+    "DOMAIN_EDITED_ISSUE_TYPES",
     "ReviewIssue",
     "list_review_issues",
     "serialize_review_issue",
