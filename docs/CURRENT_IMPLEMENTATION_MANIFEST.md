@@ -33,6 +33,7 @@ P3 current 02 拉片 Shot-card UI: IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop: IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character: V1 / FINAL PASS / FROZEN
 P6 Final Breakdown read model: V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+P6 Character cover renderer: IMPLEMENTED ON MAIN / USER-LOCAL VISUAL ACCEPTANCE PENDING
 ```
 
 Executable CURRENT = `PROJECT_STATE + this manifest + current code/tests`.
@@ -215,7 +216,10 @@ frontend/src/types/breakdown-read-model.ts
 frontend/src/types/scene-timeline.ts
 frontend/src/utils/breakdownReadModelUi.ts
 frontend/src/utils/breakdownReadModelUi.test.ts
+frontend/src/utils/sceneTimelineUi.ts
+frontend/src/utils/sceneTimelineUi.test.ts
 frontend/src/api/scene-timeline.ts
+frontend/src/components/SceneTimelineResultsV1.vue
 docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md
 ```
 
@@ -255,13 +259,24 @@ Any mismatch keeps the whole Episode identity display anonymous. `UNRESOLVED` P5
 
 Backend response preserves the entire frozen G2 payload under `timeline`; identity is a separate overlay. The frontend ordinary Episode reader consumes P6 and changes display-only person names/assets after a second validation gate. Historical Run reading continues to use frozen G2.5 without current Character projection.
 
+The ordinary-user renderer now consumes the display-only `final_character.cover_url` in two direct result surfaces:
+
+```text
+Scene hero -> 本场人物
+Shot inspector -> 人物
+```
+
+Resolved people with a usable cover show the Final Character cover + name. Anonymous people, Final Characters without a cover, and failed image loads use a text-avatar fallback. No P* ref, Character ID, resolution basis or technical identity status is shown to ordinary users.
+
 Acceptance evidence currently available:
 
 ```text
 P6 backend deterministic tests = added / NOT USER-LOCAL RUN YET
 P6 route tests = added / NOT USER-LOCAL RUN YET
 P6 frontend Vitest = added / NOT USER-LOCAL RUN YET
-isolated new frontend P6 core `tsc --strict` = PASS in assistant execution environment
+isolated new frontend P6 projection core `tsc --strict` = PASS in assistant execution environment
+isolated person avatar helper `tsc --strict` = PASS in assistant execution environment
+full Vue component typecheck/build = NOT USER-LOCAL RUN YET
 full repository clone/test = unavailable in assistant environment (github.com DNS resolution failed)
 ```
 
@@ -275,7 +290,8 @@ Do not mark P6 FINAL PASS before Python tests, frontend Vitest/typecheck/build, 
 1. keep G1 + G2.1-G2.5 + P5 frozen
 2. finish G2.6 local UI acceptance when needed
 3. P4 Scene/Prop local acceptance remains pending
-4. finish P6 user-local acceptance and final visual asset rendering polish
+4. finish P6 user-local tests/build + real Episode runner + ordinary-user visual review
+5. after P6 acceptance, continue final Scene/Prop asset fill-back while preserving Draft != Final Asset boundaries
 ```
 
 P6 must remain a separate composition layer. It may render Final Character names/assets only for P5 `RESOLVED` people; `UNRESOLVED` people remain `人物N`. It must not mutate frozen G2, P5, ASR/OCR truth, or Final Character bindings.
