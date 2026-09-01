@@ -5,10 +5,18 @@ export interface SceneTimelineSceneInfo {
   environment: string | null
 }
 
+export interface FinalCharacterDisplay {
+  id: string
+  name: string
+  cover_url: string | null
+}
+
 export interface SceneTimelinePerson {
   ref: string
   display_name: string
   appearance: string | null
+  /** P6 ordinary-user projection only. Frozen G2 payload never owns this field. */
+  final_character?: FinalCharacterDisplay | null
 }
 
 export interface SceneTimelinePerformance {
