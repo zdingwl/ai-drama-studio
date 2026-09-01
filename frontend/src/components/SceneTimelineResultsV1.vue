@@ -8,12 +8,15 @@ import type {
   SceneTimelineDialogue,
   SceneTimelinePayload,
   SceneTimelinePerformance,
+  SceneTimelinePerson,
   SceneTimelineScene,
   SceneTimelineShot,
 } from '../types/scene-timeline'
 import type { Episode } from '../types/studio'
 import {
   cinematographyItems,
+  personAvatarText,
+  personByRef,
   personDisplayName,
   sceneInfoTags,
   timelineDuration,
@@ -74,6 +77,20 @@ function episodeLabel(): string {
 
 function peopleNames(scene: SceneTimelineScene, refs: string[]): string {
   return Array.from(new Set(refs.map((ref) => personDisplayName(scene.people, ref)))).join('、')
+}
+
+function personForRef(scene: SceneTimelineScene, ref: string): SceneTimelinePerson {
+  return personByRef(scene.people, ref) ?? {
+    ref,
+    display_name: '人物',
+    appearance: null,
+    final_character: null,
+  }
+}
+
+function onPersonCoverError(event: Event): void {
+  const image = event.currentTarget
+  if (image instanceof HTMLImageElement) image.hidden = true
 }
 
 function performanceLabel(scene: SceneTimelineScene, item: SceneTimelinePerformance): string {
@@ -291,9 +308,24 @@ watch(
 
           <div v-if="selectedScene.people.length" class="scene-person-strip">
             <span class="scene-person-label">本场人物</span>
-            <div>
-              <span v-for="person in selectedScene.people" :key="person.ref" :title="person.appearance || undefined">
-                {{ person.display_name }}
+            <div class="scene-person-list">
+              <span
+                v-for="person in selectedScene.people"
+                :key="person.ref"
+                class="scene-person-card"
+                :title="person.appearance || person.display_name"
+              >
+                <span class="person-avatar" aria-hidden="true">
+                  <span>{{ personAvatarText(person) }}</span>
+                  <img
+                    v-if="person.final_character?.cover_url"
+                    :src="person.final_character.cover_url"
+                    alt=""
+                    loading="lazy"
+                    @error="onPersonCoverError"
+                  />
+                </span>
+                <strong>{{ person.display_name }}</strong>
               </span>
             </div>
           </div>
@@ -385,8 +417,20 @@ watch(
 
           <section v-if="selectedShot.people.length" class="inspector-block">
             <h4>人物</h4>
-            <div class="inspector-chips">
-              <span v-for="ref in selectedShot.people" :key="ref">{{ personDisplayName(selectedScene.people, ref) }}</span>
+            <div class="inspector-person-list">
+              <span v-for="ref in selectedShot.people" :key="ref" class="inspector-person">
+                <span class="person-avatar person-avatar-small" aria-hidden="true">
+                  <span>{{ personAvatarText(personForRef(selectedScene, ref)) }}</span>
+                  <img
+                    v-if="personForRef(selectedScene, ref).final_character?.cover_url"
+                    :src="personForRef(selectedScene, ref).final_character?.cover_url || undefined"
+                    alt=""
+                    loading="lazy"
+                    @error="onPersonCoverError"
+                  />
+                </span>
+                <strong>{{ personForRef(selectedScene, ref).display_name }}</strong>
+              </span>
             </div>
           </section>
 
@@ -548,8 +592,35 @@ watch(
 .scene-environment { margin: 0; border-left: 3px solid #cfdaea; padding-left: 8px; color: #78869a; font-size: 10px; line-height: 1.55; }
 .scene-person-strip { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 7px; align-items: center; padding-top: 2px; }
 .scene-person-label { color: #8a96a7; font-size: 9px; font-weight: 800; }
-.scene-person-strip > div { display: flex; flex-wrap: wrap; gap: 5px; }
-.scene-person-strip > div > span { border: 1px solid #e1e7f0; border-radius: 999px; padding: 3px 7px; background: #fff; color: #4d617f; font-size: 9px; font-weight: 750; }
+.scene-person-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.scene-person-card {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid #e1e7f0;
+  border-radius: 9px;
+  padding: 4px 8px 4px 4px;
+  background: #fff;
+}
+.scene-person-card > strong { max-width: 128px; overflow: hidden; color: #4d617f; font-size: 9px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.person-avatar {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border: 1px solid #dce4ef;
+  border-radius: 50%;
+  background: #edf2f8;
+  color: #60728d;
+}
+.person-avatar > span { font-size: 9px; font-weight: 900; }
+.person-avatar > img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; }
+.person-avatar-small { width: 24px; height: 24px; }
+.person-avatar-small > span { font-size: 8px; }
 
 .scene-shots-section { display: grid; gap: 7px; }
 .shots-section-head { display: flex; justify-content: space-between; align-items: end; padding: 0 2px; }
@@ -621,6 +692,18 @@ watch(
 .inspector-block h4 { margin: 0; color: #586a84; font-size: 9px; font-weight: 900; }
 .inspector-block ul { display: grid; gap: 5px; margin: 0; padding-left: 17px; }
 .inspector-block li { color: #40516a; font-size: 10px; line-height: 1.55; }
+.inspector-person-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.inspector-person {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid #e1e7f0;
+  border-radius: 9px;
+  padding: 3px 7px 3px 3px;
+  background: #f8fafc;
+}
+.inspector-person > strong { max-width: 135px; overflow: hidden; color: #536984; font-size: 9px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .inspector-chips span { border-radius: 999px; padding: 3px 6px; background: #edf2f8; color: #536984; font-size: 9px; }
 .inspector-dialogue-list,
