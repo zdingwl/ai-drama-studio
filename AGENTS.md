@@ -12,20 +12,17 @@ Window Context                        = Segment-index v4 / accepted / frozen
 Exact-Shot                            = Compact-reconstruction v3 / accepted / frozen
 P2-E6 anonymous continuity Fusion     = E6-v2 / real production accepted / frozen
 P2.6 Windows / real-model acceptance  = PASS
-G2 Scene Timeline Contract            = v1 / FINAL PASS / FROZEN FOUNDATION
-G2 Deterministic Assembler            = v1 / FINAL PASS / FROZEN FOUNDATION
-G2 Scene Narrative Core               = v1.5 / FINAL PASS / FROZEN
-G2 Local Qwen text runtime            = REAL ACCEPTED / FROZEN BASELINE
-G2 Source / Support Validator         = v1.5 / FINAL PASS / FROZEN
-G2.3/G2.4 real-model acceptance       = PASS
-G2.5 Scene Timeline API               = v1 / FINAL PASS / FROZEN
-G2.5 Windows/CUDA local acceptance    = PASS
+G2.1-G2.5                             = FINAL PASS / FROZEN
 G2.6 ordinary-user result UI          = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character                  = v1 / FINAL PASS / FROZEN
 P6 Final Breakdown read model         = v1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 P6 Final Character renderer           = IMPLEMENTED / VISUAL ACCEPTANCE PENDING
 P6 Final Scene/Prop fill-back         = IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
+P7.1 Localization Source Package      = v1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+Stage 04 本土化剧本                  = LOCKED / REVISIONED DRAFT NOT IMPLEMENTED
+Stage 05 镜头重制方案                = LOCKED / PLANNED
+Stage 06 生成·质检·交付             = LOCKED / PLANNED
 ```
 
 Truth priority:
@@ -62,10 +59,17 @@ Always read repository truth before old chat/history:
 2. SKILL.md
 3. docs/PROJECT_STATE.md
 4. docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-5. relevant Breakdown plans/contracts
+5. relevant current phase docs/contracts
 6. Character docs when relevant
 7. current code/tests
 8. latest docs/sessions/*.md handoff
+```
+
+For downstream work also read:
+
+```text
+docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md
+docs/P7_LOCALIZATION_SOURCE_V1.md
 ```
 
 ## 3. Frozen production Breakdown chain
@@ -82,15 +86,6 @@ Episode Current ShotRevision
 → P2-E6-v2 Episode-context Fusion
 → P1 validator
 → READY / READY_WITH_WARNINGS
-```
-
-Production profiles:
-
-```text
-Window = breakdown-p2-vlm-window-context-segment-index-zh-v4
-Exact-Shot = breakdown-p2-vlm-exact-shot-compact-reconstruction-zh-v3
-Fusion = breakdown-p2-fusion-episode-context-e6-v2
-Pipeline = breakdown-p2-full-v1
 ```
 
 Accepted production reference:
@@ -127,6 +122,8 @@ G2 Scene-local P1/P2 refs != Character identity
 G2 Scene Timeline != Final Character / Final Scene / Final Prop truth
 ASR-origin DIALOGUE text = verbatim source truth
 OCR-origin text = verbatim source truth
+P7 source_dialogue/source_on_screen_text = immutable downstream source truth
+translated/localized/final copy != source truth
 ```
 
 Dynamic expression/emotion/action/pose/speaking/screen position/framing are not identity keys.
@@ -143,11 +140,9 @@ YOLOX Person Detection
 → Final Character Gate
 ```
 
-Never relax same-sample cannot-link, face conflict, >=3 independent evidence/images, ambiguity rules, explicit Shot assignment or Final Gate because of Breakdown hints.
+Never relax same-sample cannot-link, face conflict, >=3 independent evidence/images, ambiguity rules, explicit Shot assignment or Final Gate because of Breakdown/localization hints.
 
 ## 6. P5 frozen identity bridge
-
-Frozen direction only:
 
 ```text
 Final ShotCharacterBinding
@@ -155,7 +150,7 @@ Final ShotCharacterBinding
 → resolve Breakdown anonymous display when uniquely safe
 ```
 
-P5 never uses Breakdown prose, ASR names/speaker labels, relationship terms, role hints, appearance summaries or P1/P2 labels as identity authority.
+P5 never uses prose, ASR names/speaker labels, relationships, appearance summaries or P1/P2 labels as identity authority.
 
 Accepted user-local evidence:
 
@@ -165,69 +160,65 @@ real runner = READY
 people = 4
 resolved = 1
 unresolved = 3
-warnings = []
 Scene1 P2 -> 人物 001 / FINAL_SHOT_BINDING_SIGNATURE_V1
 ```
 
-The other three anonymous people correctly remain unresolved. **P5 = FINAL PASS / FROZEN.**
+**P5 = FINAL PASS / FROZEN.**
 
-## 7. G2 frozen foundation
+## 7. P6 composition boundary
 
-G2.1 through G2.5 are frozen. G2.3 LLM authority remains deliberately narrow:
-
-```text
-LLM MAY write:
-  readable_title
-  story_summary
-
-LLM MUST NOT own or rewrite:
-  Scene/Shot timestamps or boundaries
-  people count or identity
-  Shot visual facts
-  performance/action facts
-  ASR dialogue
-  OCR text
-  prop existence
-  shot type
-  composition
-  camera motion
-  Final Character/Scene/Prop
-```
-
-G2.6 is present on `main` and consumes frozen G2.5, but remains user-local acceptance pending.
-
-## 8. P6 composition boundary
-
-P6 is implemented on `main`; it is **not** an identification/re-recognition layer.
+P6 is composition only:
 
 ```text
-Character:
-  P5 RESOLVED + exact current anchors -> existing Final Character name/cover
-  P5 UNRESOLVED -> remain anonymous 人物N
-
-Scene:
-  every Shot in one G2 Scene must have Final ShotSceneBinding
-  all bindings must point to the same existing Final Scene
-  only then -> display-only final_scene
-
-Prop:
-  current Final ShotPropBinding -> display-only final_props per Shot
-  never use Draft/G2 text similarity as Final Prop authority
-  frozen G2 props remain separate observation truth
+P5 RESOLVED -> safe Final Character display
+P5 UNRESOLVED -> anonymous 人物N
+all exact Shots in a G2 Scene agree on one Final Scene -> final_scene
+ShotPropBinding -> final_props
+G2 props remain separate observation truth
 ```
 
 Character and Scene/Prop overlays fail closed independently. P6 must never mutate G2/P5/Final bindings or ASR/OCR truth.
+
+## 8. P7.1 localization source boundary
+
+P7.1 is now implemented as a read-only current-source package:
+
+```text
+current P6 read model
++ Project source_language / target_language / target_region
+→ localization-source-v1
+```
+
+It may carry safe Final Character/Scene/Prop display data but may not infer or rewrite them. Scene-local P* is internal join state only and is not downstream business identity.
+
+Immutable P7 source fields include:
+
+```text
+source_dialogue[].source_text
+source_on_screen_text[].source_text
+visual_description
+performance
+observed_props
+cinematography
+```
+
+Do not put `translated_text`, `localized_text` or `final_text` inside the P7.1 source package. Those belong to the next revisioned Localization Draft layer.
+
+Old/future-facing `Dialogue / Asset / Voice / Generation` tables in `studio_v2.py` are not current P7 source authority and must not be silently adopted without version-safe migration/design.
 
 ## 9. Current implementation frontier
 
 ```text
 1. keep G1 + G2.1-G2.5 + P5 frozen
-2. user-local accept P6 end-to-end: backend tests + real runner + frontend Vitest/typecheck/build + visual review
-3. close G2.6 visual acceptance together with the P6 result-page review
-4. P4 Draft-guided Scene/Prop local acceptance remains separately pending
-5. after P6 acceptance, continue the next product workflow stage without reopening frozen recognition layers
+2. user-local accept P6 when available
+3. user-local accept P7.1 source package on a real Episode
+4. P4 local acceptance remains separately pending
+5. next code frontier = P7.2 revisioned Localization Draft persistence + edit/review contract
+6. unlock Stage 04 only after real editable/revisioned localization behavior exists
+7. keep Stage 05/06 locked until their own executable workflows exist
 ```
 
-P6 acceptance details live in `docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md`.
+P6 acceptance: `docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md`.  
+P7.1 boundary/acceptance: `docs/P7_LOCALIZATION_SOURCE_V1.md`.
 
 Hosted GitHub Actions must not be used; commits use `[skip ci]`.
