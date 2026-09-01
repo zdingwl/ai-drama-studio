@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { breakdownApi } from '../api/breakdown'
 import AssetStageV4 from '../components/AssetStageV4.vue'
 import BreakdownStageV1 from '../components/BreakdownStageV1.vue'
 import EpisodeManagerV3 from '../components/EpisodeManagerV3.vue'
 import { api } from '../api/client'
-import type { BackgroundTask, ContentAnalysisRun, Project } from '../types/studio'
+import type { BreakdownRunSummary } from '../types/breakdown'
+import type { BackgroundTask, ContentAnalysisRun, Episode, Project } from '../types/studio'
 import { deriveStageStates, stageStateLabels } from '../utils/stageStatus'
 
 const route = useRoute()
@@ -14,6 +16,7 @@ const projectId = computed(() => String(route.params.projectId || ''))
 const project = ref<Project | null>(null)
 const tasks = ref<BackgroundTask[]>([])
 const analysis = ref<ContentAnalysisRun | null>(null)
+const breakdownRuns = ref<BreakdownRunSummary[]>([])
 const loading = ref(true)
 const error = ref('')
 const shotRefreshToken = ref(0)
@@ -37,22 +40,31 @@ const stageStates = computed(() => deriveStageStates({
   episodes: project.value?.episodes ?? [],
   tasks: tasks.value,
   analysis: analysis.value,
+  breakdownRuns: breakdownRuns.value,
 }))
 
 function stageState(stageId: number) {
   return stageStates.value[stageId] || 'not_started'
 }
 
+async function readBreakdownRuns(episodes: Episode[]): Promise<BreakdownRunSummary[]> {
+  const results = await Promise.allSettled(episodes.map((episode) => breakdownApi.listRuns(episode.id)))
+  return results.flatMap((result) => result.status === 'fulfilled' ? result.value : [])
+}
+
 async function refreshProject(): Promise<void> {
   if (!projectId.value) return
   try {
-    project.value = await api.getProject(projectId.value)
-    const [taskResult, analysisResult] = await Promise.allSettled([
+    const nextProject = await api.getProject(projectId.value)
+    project.value = nextProject
+    const [taskResult, analysisResult, runsResult] = await Promise.allSettled([
       api.listProjectTasks(projectId.value, 30),
       api.getCurrentContentAnalysis(projectId.value),
+      readBreakdownRuns(nextProject.episodes),
     ])
     if (taskResult.status === 'fulfilled') tasks.value = taskResult.value
     if (analysisResult.status === 'fulfilled') analysis.value = analysisResult.value
+    if (runsResult.status === 'fulfilled') breakdownRuns.value = runsResult.value
     error.value = ''
   } catch (err) {
     error.value = err instanceof Error ? err.message : '项目读取失败'
