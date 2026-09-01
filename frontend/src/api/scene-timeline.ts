@@ -29,9 +29,9 @@ async function requestOrdinaryReadModel(url: string): Promise<SceneTimelinePaylo
 }
 
 export const sceneTimelineApi = {
-  // Ordinary episode reading goes through P6: frozen G2 Timeline + fail-closed Final Character overlay.
+  // Ordinary episode reading goes through P6: frozen G2 Timeline + independent Final Character/Scene/Prop overlays.
   getEpisode: (episodeId: string) => requestOrdinaryReadModel(`/api/episodes/${episodeId}/breakdown-read-model`),
-  // Historical/debug run reading remains the frozen G2.5 endpoint and does not invent Final identity.
+  // Historical/debug run reading remains frozen G2.5 and never projects current Final assets onto history.
   getRun: async (runId: string) => {
     const payload = await request<SceneTimelinePayload>(`/api/breakdown-runs/${runId}/scene-timeline`)
     return sanitizeOrdinarySceneTimelinePayload(payload)
