@@ -1,8 +1,9 @@
 """R8 H3 Context Compiler.
 
-GenerationSegment contains product facts and internal Studio URLs.  This compiler resolves
-those facts into concrete local files plus the official H3 prompt structure.  It never
-passes an internal `/api/...` URL blindly to SGLang.
+GenerationSegment contains product facts and internal Studio URLs. This compiler resolves
+those facts into concrete local files plus the official H3 prompt structure. It never
+passes an internal `/api/...` URL blindly to SGLang and never lets source-language audio
+leak through the source directing/reference video.
 """
 from __future__ import annotations
 
@@ -71,6 +72,7 @@ def _resolve_local_path(project_id: str, value: str) -> Path | None:
         return get_shot_path(match.group(1), "reference")
     if clean.startswith("file://"):
         from urllib.parse import unquote, urlparse
+
         parsed = urlparse(clean)
         path = Path(unquote(parsed.path))
         if parsed.netloc and not path.drive:
@@ -82,7 +84,16 @@ def _resolve_local_path(project_id: str, value: str) -> Path | None:
     return path
 
 
-def _materialized_condition(*, path: Path, condition_type: str, role: str, label: str, source: str) -> dict[str, Any]:
+def _materialized_condition(
+    *,
+    path: Path,
+    condition_type: str,
+    role: str,
+    label: str,
+    source: str,
+    frame_index: int | None = None,
+    start_time_seconds: float | None = None,
+) -> dict[str, Any]:
     resolved = path.expanduser().resolve()
     if not resolved.is_file() or resolved.stat().st_size <= 0:
         raise H3ContextCompilerError(f"H3 条件文件不存在：{resolved}")
@@ -94,10 +105,19 @@ def _materialized_condition(*, path: Path, condition_type: str, role: str, label
         "local_path": str(resolved),
         "sha256": _file_sha256(resolved),
         "source": source,
+        "frame_index": frame_index,
+        "start_time_seconds": start_time_seconds,
     }).model_dump(mode="json")
 
 
 def _materialize_reference_video(segment: Mapping[str, Any], workspace: Path) -> Path:
+    """Create a silent 24fps visual-only Ref2VA clip.
+
+    Existing Shot Reference Clips intentionally retain source audio for source analysis and
+    review. H3 must not receive that source-language soundtrack because Ref2VA can treat an
+    embedded soundtrack as reference audio. Therefore R8 makes an explicit `-an` derivative.
+    """
+
     raw = str(segment.get("reference_url") or "")
     source = _resolve_local_path(str(segment.get("project_id") or ""), raw)
     if source is None or not source.is_file():
@@ -113,7 +133,7 @@ def _materialize_reference_video(segment: Mapping[str, Any], workspace: Path) ->
         "-ss", f"{start_us / 1_000_000:.6f}",
         "-i", str(source),
         "-map", "0:v:0", "-an",
-        "-vf", "fps=24,tpad=stop_mode=clone:stop_duration=15",
+        "-vf", "fps=24",
         "-t", f"{duration_us / 1_000_000:.6f}",
         "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
         "-movflags", "+faststart", str(output),
@@ -135,6 +155,8 @@ def _extract_last_frame(video: Path, output: Path) -> Path:
 
 
 def _materialize_target_audio(segment: Mapping[str, Any], workspace: Path) -> Path | None:
+    """Mix target TTS slices onto one exact segment-local stereo timeline."""
+
     dialogues = [item for item in segment.get("dialogues") or [] if isinstance(item, Mapping)]
     if not dialogues:
         return None
@@ -163,9 +185,15 @@ def _materialize_target_audio(segment: Mapping[str, Any], workspace: Path) -> Pa
     for index, (dialogue, _path) in enumerate(zip(dialogues, source_paths), start=1):
         global_start = int(dialogue.get("global_start_us") or 0)
         global_end = int(dialogue.get("global_end_us") or global_start)
+        if global_end <= global_start:
+            raise H3ContextCompilerError("目标对白全局时长非法")
         overlap_start = max(segment_start_us, global_start)
         audio_trim_start = max(0, overlap_start - global_start) / 1_000_000
-        slice_duration = max(1, int(dialogue.get("segment_end_offset_us") or 0) - int(dialogue.get("segment_start_offset_us") or 0)) / 1_000_000
+        slice_duration = max(
+            1,
+            int(dialogue.get("segment_end_offset_us") or 0)
+            - int(dialogue.get("segment_start_offset_us") or 0),
+        ) / 1_000_000
         delay_ms = max(0, round(int(dialogue.get("segment_start_offset_us") or 0) / 1000))
         filters.append(
             f"[{index}:a]atrim=start={audio_trim_start:.6f}:duration={slice_duration:.6f},"
@@ -173,8 +201,6 @@ def _materialize_target_audio(segment: Mapping[str, Any], workspace: Path) -> Pa
             f"adelay={delay_ms}|{delay_ms}[d{index}]"
         )
         mix_inputs.append(f"[d{index}]")
-        if global_end <= global_start:
-            raise H3ContextCompilerError("目标对白全局时长非法")
     filters.append(
         "".join(mix_inputs)
         + f"amix=inputs={len(mix_inputs)}:duration=first:dropout_transition=0,"
@@ -233,10 +259,13 @@ def _target_character_text(character: Mapping[str, Any]) -> str:
     ).strip()
 
 
-def _dialogue_body(segment: Mapping[str, Any], subject_labels: Mapping[str, str]) -> str:
-    language = _language_name(
-        next((item.get("target_language") for item in segment.get("target_characters") or [] if isinstance(item, Mapping)), None)
-    )
+def _dialogue_body(
+    segment: Mapping[str, Any],
+    subject_labels: Mapping[str, str],
+    *,
+    target_language: str,
+) -> str:
+    language = _language_name(target_language)
     speaker_ids: dict[str, str] = {}
     lines: list[str] = []
     for item in segment.get("dialogues") or []:
@@ -259,7 +288,14 @@ def _dialogue_body(segment: Mapping[str, Any], subject_labels: Mapping[str, str]
     return " ".join(lines)
 
 
-def _build_ref_prompt(segment: Mapping[str, Any], *, image_subjects: list[tuple[Mapping[str, Any], str]], scene_picture: str | None, has_audio: bool) -> str:
+def _build_ref_prompt(
+    segment: Mapping[str, Any],
+    *,
+    image_subjects: list[tuple[Mapping[str, Any], str]],
+    scene_picture: str | None,
+    has_audio: bool,
+    target_language: str,
+) -> str:
     definitions: list[str] = []
     retention: list[str] = []
     subject_labels: dict[str, str] = {}
@@ -311,7 +347,7 @@ def _build_ref_prompt(segment: Mapping[str, Any], *, image_subjects: list[tuple[
         f"{subject_labels.get(str(item.get('target_character_id') or ''), str(item.get('target_name') or 'Target character'))}: {_target_character_text(item)}."
         for item in segment.get("target_characters") or [] if isinstance(item, Mapping)
     )
-    dialogue = _dialogue_body(segment, subject_labels)
+    dialogue = _dialogue_body(segment, subject_labels, target_language=target_language)
     detailed = (
         "Live-action localized short-drama remake. [Shot 1] "
         f"{characters} Environment: {_scene_description(segment)}. "
@@ -336,7 +372,12 @@ def _build_ref_prompt(segment: Mapping[str, Any], *, image_subjects: list[tuple[
     )
 
 
-def _build_fl_prompt(segment: Mapping[str, Any], *, keyframe_count: int) -> str:
+def _build_fl_prompt(
+    segment: Mapping[str, Any],
+    *,
+    keyframe_count: int,
+    target_language: str,
+) -> str:
     duration = int(segment.get("h3_duration_us") or 0) / 1_000_000
     instruction = ""
     if keyframe_count == 1:
@@ -350,7 +391,7 @@ def _build_fl_prompt(segment: Mapping[str, Any], *, keyframe_count: int) -> str:
         f"{_target_character_text(item)}."
         for item in segment.get("target_characters") or [] if isinstance(item, Mapping)
     )
-    dialogue = _dialogue_body(segment, {})
+    dialogue = _dialogue_body(segment, {}, target_language=target_language)
     integrated = (
         "[Shot 1] Live-action localized short-drama remake. "
         + ("Begin exactly from <Picture 1> and preserve its already-localized character identity, clothing, scene state and composition. " if keyframe_count else "")
@@ -396,10 +437,27 @@ def _current_segment(project_id: str, segment_id: str) -> dict[str, Any]:
     raise LookupError("GenerationSegment 不存在或已经失效")
 
 
+def _request_condition(item: Mapping[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "type": item["type"],
+        "uri": item["uri"],
+        "role": item["role"],
+    }
+    if item.get("frame_index") is not None:
+        payload["frame_index"] = int(item["frame_index"])
+    if item.get("start_time_seconds") is not None:
+        payload["start_time_seconds"] = float(item["start_time_seconds"])
+    return payload
+
+
 def compile_h3_context_v1(project_id: str, segment_id: str) -> dict[str, Any]:
     segment = _current_segment(project_id, segment_id)
     if segment.get("status") != "READY":
         raise GenerationSegmentError(f"GenerationSegment 尚不可提交 H3：{segment.get('reason')}")
+
+    localization = get_target_localization_v1(project_id)
+    target_language = str(localization.get("target_language") or "")
+    target_region = str(localization.get("target_region") or "")
     workspace = project_dir(project_id) / "target" / "h3" / "contexts" / segment_id / str(segment["input_fingerprint"])[:16]
     workspace.mkdir(parents=True, exist_ok=True)
     conditions: list[dict[str, Any]] = []
@@ -424,40 +482,55 @@ def compile_h3_context_v1(project_id: str, segment_id: str) -> dict[str, Any]:
                 image_number += 1
                 label = f"<Picture {image_number}>"
                 conditions.append(_materialized_condition(
-                    path=refs[0], condition_type="image", role=f"target_character:{character.get('target_character_id')}",
-                    label=label, source="target-character-reference",
+                    path=refs[0],
+                    condition_type="image",
+                    role=f"target_character:{character.get('target_character_id')}",
+                    label=label,
+                    source="target-character-reference",
                 ))
                 picture_subjects.append((character, label))
 
         scene = segment.get("target_scene") if isinstance(segment.get("target_scene"), Mapping) else None
         if status == "READY" and scene and scene.get("decision") == "LOCALIZE" and image_number < 9:
-            localization = get_target_localization_v1(project_id)
             full_scene = next(
-                (item for item in localization.get("scene_mappings") or [] if isinstance(item, Mapping) and item.get("id") == scene.get("mapping_id")),
+                (
+                    item
+                    for item in localization.get("scene_mappings") or []
+                    if isinstance(item, Mapping) and item.get("id") == scene.get("mapping_id")
+                ),
                 None,
             )
             if full_scene is not None:
-                scene_ref = current_target_scene_reference_asset_v1(full_scene, target_region=str(localization.get("target_region") or ""))
+                scene_ref = current_target_scene_reference_asset_v1(full_scene, target_region=target_region)
                 if scene_ref is None:
                     status, reason = "WAITING_REFERENCE", "目标本土化场景尚未生成当前版本参考资产"
                 else:
                     image_number += 1
                     scene_picture_label = f"<Picture {image_number}>"
                     conditions.append(_materialized_condition(
-                        path=scene_ref, condition_type="image", role="target_scene", label=scene_picture_label,
+                        path=scene_ref,
+                        condition_type="image",
+                        role="target_scene",
+                        label=scene_picture_label,
                         source="target-scene-reference",
                     ))
 
         if status == "READY":
             ref = _materialize_reference_video(segment, workspace)
             conditions.append(_materialized_condition(
-                path=ref, condition_type="video", role="source_directing_reference", label="<Video 1>",
+                path=ref,
+                condition_type="video",
+                role="source_directing_reference",
+                label="<Video 1>",
                 source="source-reference-video",
             ))
             audio = _materialize_target_audio(segment, workspace)
             if audio is not None:
                 conditions.append(_materialized_condition(
-                    path=audio, condition_type="audio", role="target_dialogue_timeline", label="<Audio 1>",
+                    path=audio,
+                    condition_type="audio",
+                    role="target_dialogue_timeline",
+                    label="<Audio 1>",
                     source="target-dialogue-audio",
                 ))
         prompt = _build_ref_prompt(
@@ -465,6 +538,7 @@ def compile_h3_context_v1(project_id: str, segment_id: str) -> dict[str, Any]:
             image_subjects=picture_subjects,
             scene_picture=scene_picture_label,
             has_audio=any(item["type"] == "audio" for item in conditions),
+            target_language=target_language,
         )
     elif mode == "FL2VA":
         keyframe_count = 0
@@ -472,6 +546,7 @@ def compile_h3_context_v1(project_id: str, segment_id: str) -> dict[str, Any]:
         if previous_segment_id:
             try:
                 from engine.app.generation_attempt_v1 import latest_successful_generation_output_v1
+
                 previous_output = latest_successful_generation_output_v1(project_id, previous_segment_id)
             except ImportError:
                 previous_output = None
@@ -480,11 +555,19 @@ def compile_h3_context_v1(project_id: str, segment_id: str) -> dict[str, Any]:
             else:
                 first_frame = _extract_last_frame(previous_output, workspace / "continuity-first-frame.jpg")
                 conditions.append(_materialized_condition(
-                    path=first_frame, condition_type="image", role="first_frame", label="<Picture 1>",
+                    path=first_frame,
+                    condition_type="image",
+                    role="first_frame",
+                    label="<Picture 1>",
                     source="previous-generation-output",
+                    frame_index=0,
                 ))
                 keyframe_count = 1
-        prompt = _build_fl_prompt(segment, keyframe_count=keyframe_count)
+        prompt = _build_fl_prompt(
+            segment,
+            keyframe_count=keyframe_count,
+            target_language=target_language,
+        )
     else:
         raise H3ContextCompilerError(f"未知 GenerationSegment mode：{mode}")
 
@@ -493,10 +576,7 @@ def compile_h3_context_v1(project_id: str, segment_id: str) -> dict[str, Any]:
         "provider": "MINIMAX_H3_LOCAL",
         "mode": mode,
         "prompt": prompt,
-        "conditions": [
-            {"type": item["type"], "uri": item["uri"], "role": item["role"]}
-            for item in conditions
-        ],
+        "conditions": [_request_condition(item) for item in conditions],
         "duration_seconds": int(segment["h3_duration_us"]) // 1_000_000,
         "short_edge": 768,
         "aspect_ratio": _nearest_aspect_ratio(str(segment["episode_id"])),
@@ -506,12 +586,20 @@ def compile_h3_context_v1(project_id: str, segment_id: str) -> dict[str, Any]:
     context_fingerprint = _digest({
         "segment_input_fingerprint": segment["input_fingerprint"],
         "mode": mode,
+        "target_language": target_language,
+        "target_region": target_region,
         "prompt": prompt,
         "conditions": [
-            {"type": item["type"], "role": item["role"], "sha256": item["sha256"]}
+            {
+                "type": item["type"],
+                "role": item["role"],
+                "sha256": item["sha256"],
+                "frame_index": item.get("frame_index"),
+                "start_time_seconds": item.get("start_time_seconds"),
+            }
             for item in conditions
         ],
-        "request": request.model_dump(mode="json") if request else None,
+        "request": request.model_dump(mode="json", exclude_none=True) if request else None,
         "status": status,
     })
     return H3CompiledContextV1.model_validate({
@@ -527,7 +615,7 @@ def compile_h3_context_v1(project_id: str, segment_id: str) -> dict[str, Any]:
         "mode": mode,
         "prompt": prompt,
         "conditions": conditions,
-        "request": request.model_dump(mode="json") if request else None,
+        "request": request.model_dump(mode="json", exclude_none=True) if request else None,
         "workspace_dir": str(workspace),
         "created_at": utcnow().isoformat(),
     }).model_dump(mode="json")
