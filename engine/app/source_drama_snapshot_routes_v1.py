@@ -31,11 +31,14 @@ def _unavailable(exc: Exception) -> HTTPException:
 
 @router.get(
     "/episodes/{episode_id}/source-drama-snapshot",
-    response_model=SourceDramaEpisodeSnapshotV1 | None,
+    response_model=SourceDramaEpisodeSnapshotV1,
 )
 def api_get_episode_source_drama_snapshot(episode_id: str):
     try:
-        return load_episode_source_drama_snapshot_v1(episode_id)
+        snapshot = load_episode_source_drama_snapshot_v1(episode_id)
+        if snapshot is None:
+            raise SourceDramaSnapshotError("当前 Episode 尚未形成可消费的 SourceDramaSnapshot")
+        return snapshot
     except (
         LookupError,
         SourceDramaSnapshotError,
