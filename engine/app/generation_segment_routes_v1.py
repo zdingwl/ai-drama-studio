@@ -16,7 +16,7 @@ from engine.app.target_dialogue_v1 import TargetDialogueError
 from engine.app.target_localization_v1 import TargetLocalizationError
 
 
-router = APIRouter(tags=["generation-segments"])
+router = APIRouter(prefix="/api", tags=["generation-segments"])
 
 
 def _error(exc: Exception) -> HTTPException:
