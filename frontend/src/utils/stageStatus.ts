@@ -1,4 +1,4 @@
-export type StudioStageState = 'not_started' | 'processing' | 'review' | 'completed' | 'blocked' | 'planned'
+export type StudioStageState = 'not_started' | 'processing' | 'editing' | 'review' | 'completed' | 'blocked' | 'planned'
 
 export interface StageEpisodeLike {
   id?: string
@@ -49,12 +49,23 @@ export interface StageAssetWorkspaceLike {
   evidence_by_shot?: Record<string, StageShotAssetEvidenceLike>
 }
 
+export interface StageLocalizationDraftLike {
+  episode_id: string
+  status: string
+  stale: boolean
+  progress?: {
+    total: number
+    pending: number
+  }
+}
+
 export interface StageStatusContext {
   episodes: StageEpisodeLike[]
   tasks: StageTaskLike[]
   analysis: StageAnalysisLike | null
   breakdownRuns?: StageBreakdownRunLike[]
   assetWorkspace?: StageAssetWorkspaceLike | null
+  localizationDrafts?: StageLocalizationDraftLike[]
 }
 
 const SHOT_TASK_TYPES = new Set(['EPISODE_SHOTS', 'BATCH_SHOTS'])
@@ -66,6 +77,7 @@ const ACTIVE_STATUSES = new Set(['QUEUED', 'PROCESSING'])
 export const stageStateLabels: Record<StudioStageState, string> = {
   not_started: '未开始',
   processing: '处理中',
+  editing: '编辑中',
   review: '待复核',
   completed: '已完成',
   blocked: '阻塞',
@@ -154,10 +166,6 @@ function lowConfidenceNeedsReview(
   ))
 }
 
-/**
- * Mirrors the ordinary-user asset review inbox rules.
- * Final Binding remains authority; Evidence only determines whether a human review is still needed.
- */
 function workspaceNeedsAssetReview(workspace: StageAssetWorkspaceLike | null): boolean {
   if (!workspace?.evidence_by_shot) return false
   const bindingsByShot = workspace.bindings_by_shot ?? {}
@@ -219,12 +227,36 @@ function assetStageState(
   return 'completed'
 }
 
+function localizationStageState(
+  episodes: StageEpisodeLike[],
+  drafts: StageLocalizationDraftLike[],
+): StudioStageState {
+  if (!episodes.length) return 'not_started'
+  if (!drafts.length) return 'not_started'
+  if (drafts.some((draft) => draft.stale)) return 'blocked'
+
+  const byEpisode = new Map(drafts.map((draft) => [draft.episode_id, draft]))
+  const knownDrafts = episodes.flatMap((episode) => episode.id && byEpisode.has(episode.id) ? [byEpisode.get(episode.id)!] : [])
+  if (!knownDrafts.length) return 'not_started'
+  if (knownDrafts.some((draft) => draft.status.toUpperCase() === 'IN_REVIEW')) return 'review'
+
+  const allEpisodesFinal = episodes.every((episode) => (
+    Boolean(episode.id)
+    && byEpisode.get(episode.id as string)?.status.toUpperCase() === 'FINAL'
+  ))
+  if (allEpisodesFinal) return 'completed'
+
+  const knownStatuses = new Set(knownDrafts.map((draft) => draft.status.toUpperCase()))
+  if ([...knownStatuses].some((status) => !['DRAFT', 'FINAL'].includes(status))) return 'review'
+  return 'editing'
+}
+
 export function deriveStageStates(context: StageStatusContext): Record<number, StudioStageState> {
   return {
     1: sourceStageState(context.episodes),
     2: breakdownStageState(context.episodes, context.tasks, context.breakdownRuns ?? []),
     3: assetStageState(context.analysis, context.tasks, context.assetWorkspace ?? null),
-    4: 'planned',
+    4: localizationStageState(context.episodes, context.localizationDrafts ?? []),
     5: 'planned',
     6: 'planned',
   }
