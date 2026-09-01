@@ -38,11 +38,12 @@ Do not reopen any frozen layer without a concrete regression.
 ```text
 Documentation-only synchronization/update:
   -> edit main directly
-  -> do not create a branch or PR only for docs
+  -> do not create a branch or PR
 
 Code/behavior changes:
-  -> use a feature branch + Draft PR by default
-  -> if the user explicitly asks to change/merge directly on main, follow that instruction
+  -> edit main directly by default
+  -> do not create a feature branch or PR by default
+  -> only create/use a branch or PR when the user explicitly asks for one
 
 All commits:
   -> include [skip ci]
