@@ -26,7 +26,8 @@ P6 Final Breakdown read model: V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE 
 P6 Final Character renderer: IMPLEMENTED / VISUAL ACCEPTANCE PENDING
 P6 Final Scene/Prop fill-back: IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
 P7.1 Localization Source Package: V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
-Stage 04 本土化剧本: LOCKED / REVISIONED DRAFT NOT IMPLEMENTED
+P7.2 Localization Draft: V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+Stage 04 本土化剧本: IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 Stage 05 镜头重制方案: LOCKED / PLANNED
 Stage 06 生成·质检·交付: LOCKED / PLANNED
 ```
@@ -112,32 +113,11 @@ Status: **P5 V1 / FINAL PASS / FROZEN**.
 
 ## P6 Final Breakdown read model
 
-Backend:
-
 ```text
-engine/app/breakdown_read_model_contract_v1.py
-engine/app/breakdown_read_model_v1.py
-engine/app/breakdown_read_model_routes_v1.py
-engine/app/breakdown_final_asset_overlay_v1.py
-engine/tests/v2/test_breakdown_read_model_v1.py
-engine/tests/v2/test_breakdown_read_model_routes_v1.py
-engine/tests/v2/test_breakdown_final_asset_overlay_v1.py
-engine/tests/v2/test_breakdown_read_model_asset_independence_v1.py
-scripts/run_breakdown_p6_read_model_acceptance_v1.py
-```
-
-Frontend:
-
-```text
-frontend/src/types/breakdown-read-model.ts
-frontend/src/types/scene-timeline.ts
-frontend/src/utils/breakdownReadModelUi.ts
-frontend/src/utils/breakdownReadModelUi.test.ts
-frontend/src/utils/breakdownReadModelAssetsUi.test.ts
-frontend/src/utils/sceneTimelineUi.ts
-frontend/src/utils/sceneTimelineUi.test.ts
-frontend/src/api/scene-timeline.ts
-frontend/src/components/SceneTimelineResultsV1.vue
+frozen G2 Scene Timeline
++ frozen P5 Character resolution
++ current exact Final Scene / Prop bindings
+→ ordinary-user P6 read model
 ```
 
 Rules:
@@ -145,11 +125,17 @@ Rules:
 ```text
 P5 RESOLVED -> safe Final Character display
 P5 UNRESOLVED -> anonymous 人物N
-one G2 Scene -> Final Scene only when all its exact current Shots bind one same Final Scene
+one G2 Scene -> Final Scene only when all exact current Shots bind one same Final Scene
 Final Prop -> only exact ShotPropBinding
 G2 prop observations remain separate
 Character and Scene/Prop fail-closed domains are independent
 frozen G2 timeline is never rewritten
+```
+
+Endpoint:
+
+```text
+GET /api/episodes/{episode_id}/breakdown-read-model
 ```
 
 Status: **P6 V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING**.
@@ -179,53 +165,144 @@ Authority direction:
 ```text
 current P6 read model
 + Project source_language / target_language / target_region
-→ localization-source-v1
+→ immutable localization-source-v1
 ```
 
-The package carries:
-
-```text
-BreakdownRun / ShotRevision / AssetRevision anchors
-Scene/Shot timing + reference URLs
-visual description + performance
-verbatim source dialogue
-verbatim OCR source text
-safe person display / optional Final Character
-Final Scene
-G2 observed props separate from Final Props
-cinematography
-```
-
-Scene-local P* refs are internal join keys only and are not exported as downstream person identity objects.
-
-Old/future-facing `Dialogue / Asset / Voice / Generation` tables in `studio_v2.py` are not current P7 authority. P7.1 performs no translation, creates no localization revision and writes no business state.
-
-Tests explicitly cover verbatim ASR/OCR preservation, safe identity projection, G2 observed Prop vs Final Prop separation, version mismatch rejection, non-current source rejection and strict rejection of downstream `localized_text` inside the source contract.
-
-Real runner:
-
-```text
-python scripts/run_localization_source_acceptance_v1.py <EPISODE_ID>
-```
-
-Required signal:
-
-```text
-source_truth_preserved = true
-```
+The package carries version anchors, Scene/Shot context, reference URLs, verbatim ASR/OCR source text, safe person display, Final Scene/Props and cinematography. It performs no translation and writes no business state.
 
 Status: **P7.1 V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING**.
+
+## P7.2 Localization Draft / Stage 04
+
+### Backend
+
+```text
+engine/app/localization_draft_contract_v1.py
+engine/app/localization_draft_v1.py
+engine/app/localization_draft_workflow_v1.py
+engine/app/breakdown_read_model_routes_v1.py
+```
+
+Persistence:
+
+```text
+v2_localization_revisions
+```
+
+Every write creates a new immutable Episode-level Revision with:
+
+```text
+source BreakdownRun / ShotRevision / AssetRevision anchors
+source fingerprint
+immutable P7.1 source snapshot
+separate target-side edits snapshot
+status / kind / note / revision number
+```
+
+Supported decisions:
+
+```text
+PENDING
+LOCALIZE
+KEEP_SOURCE
+OMIT
+```
+
+`LOCALIZE` target layers:
+
+```text
+translated_text
+localized_text
+final_text
+```
+
+Write boundary rules:
+
+```text
+source_text is never accepted from edit requests
+base_revision_id prevents lost updates
+DRAFT may save partial target copy
+IN_REVIEW / FINAL require zero PENDING rows
+IN_REVIEW / FINAL require final_text for every LOCALIZE row
+IN_REVIEW cannot be PATCH-ed until explicitly returned to DRAFT
+FINAL is immutable
+stale source blocks write/review/finalize until explicit rebase
+```
+
+Rebase only carries an old edit when `source_key + kind + Scene/Shot + timing + source_text` all match exactly.
+
+API:
+
+```text
+GET   /api/episodes/{episode_id}/localization-draft
+POST  /api/episodes/{episode_id}/localization-draft
+PATCH /api/episodes/{episode_id}/localization-draft
+POST  /api/episodes/{episode_id}/localization-draft/status
+POST  /api/episodes/{episode_id}/localization-draft/rebase
+GET   /api/episodes/{episode_id}/localization-revisions
+GET   /api/localization-revisions/{revision_id}
+```
+
+### Frontend
+
+```text
+frontend/src/types/localization.ts
+frontend/src/api/localization.ts
+frontend/src/components/LocalizationStageV1.vue
+frontend/src/utils/stageStatus.ts
+frontend/src/views/ProjectStudioV3.vue
+frontend/src/views/ProjectList.vue
+```
+
+Stage 04 ordinary-user workflow:
+
+```text
+select Episode
+→ create draft from current P7.1 source
+→ read source text beside Shot context
+→ choose processing decision
+→ edit translation / localized rewrite / final copy
+→ save new Revision
+→ send to review
+→ return to edit OR finalize
+```
+
+Truthful Stage 04 state:
+
+```text
+no draft          -> not_started / 未开始
+DRAFT             -> editing / 编辑中
+IN_REVIEW         -> review / 待复核
+stale source      -> blocked / 阻塞
+all Episodes FINAL-> completed / 已完成
+```
+
+Stage 04 is now enabled in the project shell and project dashboard. Stage 05/06 remain disabled.
+
+### Tests / audit
+
+```text
+engine/tests/v2/test_localization_draft_v1.py
+engine/tests/v2/test_localization_draft_workflow_v1.py
+engine/tests/v2/test_localization_draft_routes_v1.py
+frontend/src/utils/stageStatus.test.ts
+scripts/run_localization_draft_acceptance_v1.py
+```
+
+The real P7.2 runner is read-only. It never creates or modifies the current production draft.
+
+Status: **P7.2 V1 / Stage 04 IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING**.
 
 ## Current frontier
 
 ```text
 1. keep G1 + G2.1-G2.5 + P5 frozen
 2. user-local accept P6 when available
-3. user-local accept P7.1 source package
+3. user-local accept P7.1/P7.2 backend + real read-only audit + Stage 04 frontend/visual flow
 4. P4 local acceptance remains separately pending
-5. next code frontier = P7.2 revisioned Localization Draft persistence + edit/review contract
-6. unlock Stage 04 only after a real editable/revisioned localization workflow exists
-7. keep Stage 05/06 locked until their own executable workflows exist
+5. next code frontier = Stage 05 versioned Shot Remake Plan / generation-input contract
+6. Stage 05 must consume FINAL P7.2 + version-safe P6/P7 source anchors, not mutable UI state
+7. Stage 06 remains locked until its generation/QC/delivery workflow exists
 ```
 
-No assistant-local full pytest/CUDA PASS is claimed. Hosted GitHub Actions remain intentionally unused.
+No assistant-local full pytest/Vitest/vue-tsc/Vite/CUDA PASS is claimed. Hosted GitHub Actions remain intentionally unused.
