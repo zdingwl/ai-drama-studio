@@ -4,6 +4,12 @@ import { useRoute } from 'vue-router'
 import { api } from '../api/client'
 import type { BackgroundTask } from '../types/studio'
 
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+}>(), {
+  embedded: false,
+})
+
 const route = useRoute()
 const tasks = ref<BackgroundTask[]>([])
 const expanded = ref(false)
@@ -242,16 +248,17 @@ onUnmounted(() => {
 
 <template>
   <div
-    v-if="projectId && displayTask"
+    v-if="projectId && (displayTask || props.embedded)"
     class="task-dock"
     :class="{
+      embedded: props.embedded,
       expanded,
-      stalled: isStalled(displayTask),
-      failed: displayTask.status === 'FAILED',
-      warning: displayTask.status === 'READY_WITH_WARNINGS',
+      stalled: displayTask ? isStalled(displayTask) : false,
+      failed: displayTask?.status === 'FAILED',
+      warning: displayTask?.status === 'READY_WITH_WARNINGS',
     }"
   >
-    <div class="task-dock-summary-row">
+    <div v-if="displayTask" class="task-dock-summary-row">
       <button class="task-dock-summary" @click="expanded = !expanded">
         <span :class="['task-state-dot', displayTask.status.toLowerCase()]" />
         <span class="task-dock-copy">
@@ -278,8 +285,20 @@ onUnmounted(() => {
       >×</button>
     </div>
 
+    <div v-else class="task-dock-summary-row">
+      <button class="task-dock-summary" @click="expanded = !expanded">
+        <span class="task-state-dot idle" />
+        <span class="task-dock-copy">
+          <strong>后台任务</strong>
+          <small>{{ recentTasks.length ? '当前无运行任务 · 可查看最近任务' : '当前空闲' }}</small>
+        </span>
+        <span class="task-dock-percent">—</span>
+        <span class="task-dock-count">{{ recentTasks.length ? `最近 ${recentTasks.length}` : '空闲' }}</span>
+      </button>
+    </div>
+
     <div
-      v-if="displayTask.status === 'PROCESSING' || displayTask.status === 'QUEUED'"
+      v-if="displayTask && (displayTask.status === 'PROCESSING' || displayTask.status === 'QUEUED')"
       class="task-progress-track"
       :class="{ indeterminate: displayTask.progress_mode === 'indeterminate' || displayTask.progress_percent === null }"
     >
@@ -290,7 +309,7 @@ onUnmounted(() => {
     <div v-if="expanded" class="task-dock-panel">
       <div class="task-panel-head"><strong>后台任务</strong><span>页面切换或刷新不会丢失</span></div>
       <p v-if="error" class="task-panel-error">{{ error }}</p>
-      <div class="task-panel-list">
+      <div v-if="recentTasks.length" class="task-panel-list">
         <article
           v-for="task in recentTasks"
           :key="task.id"
@@ -310,10 +329,11 @@ onUnmounted(() => {
           <pre v-if="task.error_message" class="task-error-detail task-error-pre">{{ task.error_message }}</pre>
         </article>
       </div>
+      <div v-else class="task-panel-empty">还没有后台任务记录。</div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.task-dock-summary-row{display:flex;align-items:stretch}.task-dock-summary-row>.task-dock-summary{flex:1;min-width:0}.task-dock-dismiss{width:38px;border:0;border-left:1px solid #ead0d0;background:#fff6f6;color:#a33b3b;font-size:20px;cursor:pointer}.task-dock.failed{border-color:#e4aaaa}.task-dock.failed .task-dock-summary-row{background:#fff7f7}.task-dock.warning .task-dock-summary-row{background:#fffaf0}.task-dock.stalled .task-progress-track,.task-item-stalled .task-mini-track{opacity:.65}.task-stall-copy{color:#a35c00!important;font-weight:700}.task-failed-copy{display:block;max-width:900px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#b33b3b!important;font-weight:700}.task-stall-detail{display:block;margin-top:5px;color:#9a6400;line-height:1.45}.task-item-stalled{background:#fffaf0}.task-item-failed{background:#fff8f8}.task-error-pre{display:block;margin:7px 0 0;padding:8px 10px;max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #efcaca;border-radius:7px;background:#fff;color:#a92828;font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+.task-dock-summary-row{display:flex;align-items:stretch}.task-dock-summary-row>.task-dock-summary{flex:1;min-width:0}.task-dock-dismiss{width:38px;border:0;border-left:1px solid #ead0d0;background:#fff6f6;color:#a33b3b;font-size:20px;cursor:pointer}.task-dock.failed{border-color:#e4aaaa}.task-dock.failed .task-dock-summary-row{background:#fff7f7}.task-dock.warning .task-dock-summary-row{background:#fffaf0}.task-dock.stalled .task-progress-track,.task-item-stalled .task-mini-track{opacity:.65}.task-stall-copy{color:#a35c00!important;font-weight:700}.task-failed-copy{display:block;max-width:900px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#b33b3b!important;font-weight:700}.task-stall-detail{display:block;margin-top:5px;color:#9a6400;line-height:1.45}.task-item-stalled{background:#fffaf0}.task-item-failed{background:#fff8f8}.task-state-dot.idle{background:#7fb493;box-shadow:0 0 0 3px #edf7f1}.task-panel-empty{padding:18px 8px;color:#8490a2;text-align:center;font-size:11px}.task-error-pre{display:block;margin:7px 0 0;padding:8px 10px;max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #efcaca;border-radius:7px;background:#fff;color:#a92828;font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
 </style>
