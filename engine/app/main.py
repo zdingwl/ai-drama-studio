@@ -1,7 +1,8 @@
 """AI Drama Studio V2 FastAPI 入口。
 
 当前可用范围：
-多剧集管理、自动初始化 + 拉片、Shot 人工修正、Final Asset / Shot Binding，以及统一后台 Task / Progress API。
+多剧集管理、自动初始化 + 拉片、Shot 人工修正、Final Asset / Shot Binding、
+项目重制策略、统一人工复核队列，以及统一后台 Task / Progress API。
 """
 from __future__ import annotations
 
@@ -29,6 +30,8 @@ from engine.app.content_analysis_v2 import (
 )
 from engine.app.content_models_v2 import ContentModelError, prepare_models
 from engine.app.media_v2 import MediaPipelineError, detect_episode_shots, preprocess_episode
+from engine.app.remake_routes_v1 import router as remake_router
+from engine.app.review_issue_routes_v1 import router as review_issue_router
 from engine.app.shot_cache_routes_v51 import router as shot_cache_router
 from engine.app.shot_edit_routes_v2 import router as shot_edit_router
 from engine.app.studio_v2 import (
@@ -50,14 +53,14 @@ from engine.app.task_routes_v2 import router as task_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # asset_routes_v3 / asset_batch_routes_v4 / content_analysis_v2 / task_progress_v2 已在本模块 import，
-    # Final Asset / Binding / Revision 表会进入同一个 Base metadata。
+    # 所有当前业务模型在 init_database() 前完成 import；新表通过 create_all 安全补齐，
+    # 不改写已有本地数据库表结构。
     init_database()
     recover_interrupted_tasks()
     yield
 
 
-app = FastAPI(title="AI Drama Studio", version="2.4.1", lifespan=lifespan)
+app = FastAPI(title="AI Drama Studio", version="2.5.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -74,6 +77,8 @@ app.include_router(breakdown_read_model_router)
 app.include_router(asset_router)
 app.include_router(asset_batch_router)
 app.include_router(character_gallery_router)
+app.include_router(remake_router)
+app.include_router(review_issue_router)
 
 
 class ProjectCreate(BaseModel):
@@ -97,7 +102,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "architecture": "reference-video-v2", "app_version": "2.4.1"}
+    return {"status": "ok", "architecture": "localized-remake-h3-local-v1", "app_version": "2.5.0"}
 
 
 @app.get("/api/projects")
