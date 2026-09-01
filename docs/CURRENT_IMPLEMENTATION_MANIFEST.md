@@ -344,12 +344,14 @@ Review Center exposes H3-specific actions only:
 
 No separate H3/QC top-level page was added.
 
-Repository dependency consistency fix made while validating R9 frontend:
+Frontend toolchain compatibility was stabilized during R9 acceptance:
 
 ```text
-frontend/package.json TypeScript -> matches package-lock.json (7.0.2)
-frontend/.node-version -> 22.18.0 to satisfy locked Babel engine minimum
+frontend/package.json / package-lock.json -> TypeScript 6.0.3 line for vue-tsc compatibility
+frontend/.node-version -> 22.18.0 for current Babel/Vite engine requirements
 ```
+
+Formal `frontend-v2` CI now passes `npm ci` followed by `vue-tsc --noEmit && vite build`.
 
 ## Main application wiring
 
@@ -363,7 +365,7 @@ h3_generation_router
 
 Therefore all R8/R9 tables participate in safe `Base.metadata.create_all()` without a schema rewrite.
 
-## Isolated acceptance
+## Repository acceptance
 
 Tests:
 
@@ -379,6 +381,7 @@ Jobs:
 r7-generation-segments
 r8-h3-generation
 r9-h3-qc
+frontend-v2
 ```
 
 R9 acceptance covers:
@@ -394,16 +397,24 @@ FastAPI R9 routes
 R8/R7 regression
 ```
 
-On 2026-09-01 R7/R8/R9 isolated backend jobs passed.
+On 2026-09-01:
+
+```text
+r7-generation-segments = PASS
+r8-h3-generation       = PASS
+r9-h3-qc                = PASS
+frontend-v2             = PASS
+```
 
 ## Acceptance boundary
 
 ```text
-R7/R8/R9 CODE / ISOLATED REPOSITORY ACCEPTANCE = PASS
+R7/R8/R9 CODE / REPOSITORY ACCEPTANCE = PASS
+FRONTEND BUILD ACCEPTANCE = PASS
 LOCAL H3 GPU / QWEN QC / REAL PROJECT ACCEPTANCE = PENDING
 ```
 
-Frontend build result must be taken from the latest workflow after the dependency consistency fix; do not infer it.
+Historical full-suite backend/older Breakdown failures are separate legacy/dependency debt and do not redefine the isolated R7/R8/R9 acceptance result.
 
 ## Current frontier
 
