@@ -28,6 +28,7 @@ G2.6 ordinary-user result UI          = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTA
 P3 current 02 拉片 Shot-card UI       = IMPLEMENTED / NOT FINAL ACCEPTED
 P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character                  = V1 / FINAL PASS / FROZEN
+P6 Final Breakdown read model         = V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 same-Shot hard safety                 = PASS / conflicts=0
 ```
 
@@ -189,22 +190,60 @@ Therefore:
 P5 = FINAL PASS / FROZEN
 ```
 
-## 6. Current implementation frontier
+## 6. P6 Final Breakdown read model
+
+P6 is implemented as a separate read-only composition layer:
+
+```text
+Frozen G2 Scene Timeline
++
+Frozen P5 Scene-local Character resolution
++
+Current AssetRevision / existing Final Character display data
+→ P6 ordinary-user read model
+```
+
+Current implementation:
+
+```text
+engine/app/breakdown_read_model_contract_v1.py
+engine/app/breakdown_read_model_v1.py
+engine/app/breakdown_read_model_routes_v1.py
+GET /api/episodes/{episode_id}/breakdown-read-model
+frontend/src/utils/breakdownReadModelUi.ts
+frontend ordinary episode reading -> P6 endpoint
+```
+
+Identity safety:
+
+```text
+RESOLVED P5 person + exact current anchors -> may display existing Final Character name/cover metadata
+UNRESOLVED P5 person -> remain anonymous 人物N
+run/revision/Scene/P*/asset/Character mismatch -> all identity display falls back to anonymous
+Breakdown prose/ASR/OCR -> never becomes identity authority
+G2 Timeline object -> never mutated by backend P6
+```
+
+Tests have been added for backend composition/route and frontend projection, but they are not yet user-local accepted. An isolated `tsc --strict` compile of the new frontend P6 type/projection core passed in the assistant execution environment; full repository clone/test was not possible there because `github.com` DNS was unavailable.
+
+Detailed boundary and acceptance commands: `docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md`.
+
+Status:
+
+```text
+P6 = V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+```
+
+Do not mark P6 FINAL PASS until Python tests, frontend Vitest/typecheck/build, lockfile synchronization, and ordinary-user visual review are supplied.
+
+## 7. Current implementation frontier
 
 ```text
 1. keep G1 + G2.1-G2.5 + P5 frozen
 2. finish G2.6 ordinary-user UI local acceptance when needed
 3. P4 Draft-guided Scene/Prop still needs local acceptance
-4. next code frontier = P6 Final identity/asset fill-back + final Breakdown renderer/read model
-5. P6 must compose frozen G2 + frozen P5 without mutating either
+4. finish P6 user-local acceptance and final visual asset rendering polish
+5. P6 must continue to compose frozen G2 + frozen P5 without mutating either
 ```
 
-P6 identity rule:
-
-```text
-RESOLVED P5 person -> may render existing Final Character name/assets
-UNRESOLVED P5 person -> remain anonymous 人物N
-Breakdown prose/ASR/OCR -> never becomes identity authority
-```
-
-No assistant-local pytest/CUDA PASS is claimed. Hosted GitHub Actions remain intentionally unused.
+No assistant-local full pytest/CUDA PASS is claimed. Hosted GitHub Actions remain intentionally unused.
