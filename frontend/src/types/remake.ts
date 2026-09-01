@@ -161,3 +161,152 @@ export interface TtsRuntimeStatus {
   worker?: Record<string, unknown>
   error?: string
 }
+
+export type TimingStrategy = 'KEEP' | 'TRIM' | 'CARRY_OVER_REACTION' | 'EXTEND' | 'REWRITE_SHORTER' | 'HUMAN_REVIEW'
+
+export interface RemakeDialoguePlan {
+  target_dialogue_id: string
+  source_dialogue_key: string
+  source_character_id: string | null
+  target_character_id: string | null
+  source_start_us: number
+  source_end_us: number
+  source_window_us: number
+  speech_duration_us: number | null
+  planned_start_offset_us: number
+  planned_end_offset_us: number
+  planned_start_us: number
+  planned_end_us: number
+  strategy: TimingStrategy
+  carry_over_shot_key: string | null
+  overrun_us: number
+  reason: string
+}
+
+export interface RemakeShotPlan {
+  shot_plan_id: string
+  scene_key: string
+  shot_key: string
+  source_shot_id: string | null
+  ordinal: number
+  reference_url: string | null
+  source_start_us: number
+  source_end_us: number
+  source_duration_us: number
+  planned_start_us: number
+  planned_end_us: number
+  planned_duration_us: number
+  duration_delta_us: number
+  strategy: TimingStrategy
+  status: 'READY' | 'REVIEW' | 'WAITING_AUDIO'
+  decision_source: 'AUTO' | 'MANUAL'
+  reason: string
+  dialogue_plans: RemakeDialoguePlan[]
+}
+
+export interface RemakeEpisodeTimeline {
+  schema_version: 'remake-timeline-v1'
+  id: string
+  project_id: string
+  episode_id: string
+  source_fingerprint: string
+  target_dialogue_fingerprint: string
+  status: 'READY' | 'REVIEW' | 'WAITING_AUDIO'
+  source_duration_us: number
+  planned_duration_us: number
+  duration_delta_us: number
+  shot_count: number
+  review_count: number
+  waiting_audio_count: number
+  shot_plans: RemakeShotPlan[]
+  created_at: string
+  updated_at: string
+}
+
+export interface RemakeProjectTimeline {
+  schema_version: 'remake-project-timeline-v1'
+  project_id: string
+  source_fingerprint: string
+  target_dialogue_fingerprint: string
+  status: 'READY' | 'REVIEW' | 'WAITING_AUDIO'
+  episode_count: number
+  review_count: number
+  waiting_audio_count: number
+  episodes: RemakeEpisodeTimeline[]
+}
+
+export interface GenerationSegmentSummary {
+  id: string
+  episode_id: string
+  shot_ordinal: number
+  shot_segment_index: number
+  shot_segment_count: number
+  status: 'READY' | 'REVIEW' | 'WAITING_AUDIO'
+  reason: string
+  generation_mode: 'REF2VA' | 'FL2VA'
+  target_duration_us: number
+  h3_duration_us: number
+  post_trim_duration_us: number | null
+}
+
+export interface GenerationSegmentEpisode {
+  episode_id: string
+  status: 'READY' | 'REVIEW' | 'WAITING_AUDIO'
+  segment_count: number
+  review_count: number
+  waiting_audio_count: number
+  segments: GenerationSegmentSummary[]
+}
+
+export interface GenerationSegmentPlan {
+  schema_version: 'generation-segment-plan-v1'
+  project_id: string
+  status: 'READY' | 'REVIEW' | 'WAITING_AUDIO'
+  episode_count: number
+  segment_count: number
+  review_count: number
+  waiting_audio_count: number
+  episodes: GenerationSegmentEpisode[]
+}
+
+export interface H3RuntimeStatus {
+  runtime_profile: string
+  ready: boolean
+  fl2va: Record<string, unknown>
+  ref2va: Record<string, unknown>
+}
+
+export type GenerationAttemptStatus = 'PLANNED' | 'SUBMITTED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'STALE'
+
+export interface GenerationAttempt {
+  id: string
+  project_id: string
+  episode_id: string
+  generation_segment_id: string
+  attempt_number: number
+  segment_input_fingerprint: string
+  context_fingerprint: string
+  provider: 'MINIMAX_H3_LOCAL'
+  mode: 'FL2VA' | 'REF2VA'
+  status: GenerationAttemptStatus
+  external_job_id: string | null
+  provider_status: string | null
+  request: Record<string, unknown>
+  output_path: string | null
+  error_message: string | null
+  created_at: string
+  submitted_at: string | null
+  completed_at: string | null
+  updated_at: string
+}
+
+export interface GenerationAttemptSummary {
+  schema_version: 'generation-attempt-summary-v1'
+  project_id: string
+  attempt_count: number
+  succeeded_count: number
+  running_count: number
+  failed_count: number
+  stale_count: number
+  attempts: GenerationAttempt[]
+}
