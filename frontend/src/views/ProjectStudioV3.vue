@@ -5,6 +5,7 @@ import { breakdownApi } from '../api/breakdown'
 import AssetStageV4 from '../components/AssetStageV4.vue'
 import BreakdownStageV1 from '../components/BreakdownStageV1.vue'
 import EpisodeManagerV3 from '../components/EpisodeManagerV3.vue'
+import TaskProgressDock from '../components/TaskProgressDock.vue'
 import { api } from '../api/client'
 import type { BreakdownRunSummary } from '../types/breakdown'
 import type { AssetWorkspace, BackgroundTask, ContentAnalysisRun, Episode, Project } from '../types/studio'
@@ -48,6 +49,42 @@ const stageStates = computed(() => deriveStageStates({
 function stageState(stageId: number) {
   return stageStates.value[stageId] || 'not_started'
 }
+
+const activeStageMeta = computed(() => stages.find((stage) => stage.id === activeStage.value) ?? stages[0])
+const currentEpisode = computed(() => {
+  const episodes = project.value?.episodes ?? []
+  const requestedId = String(route.query.episode || '')
+  return episodes.find((episode) => episode.id === requestedId) ?? episodes[0] ?? null
+})
+const reviewStageIds = computed(() => [1, 2, 3].filter((stageId) => {
+  const state = stageState(stageId)
+  return state === 'review' || state === 'blocked'
+}))
+const activeTaskCount = computed(() => tasks.value.filter((task) => task.status === 'QUEUED' || task.status === 'PROCESSING').length)
+const taskDockVisible = computed(() => tasks.value.some((task) => ['QUEUED', 'PROCESSING', 'FAILED', 'READY_WITH_WARNINGS'].includes(task.status)))
+
+const overallStatus = computed(() => {
+  const states = [1, 2, 3].map((stageId) => stageState(stageId))
+  if (states.includes('blocked')) return { label: '存在阻塞', tone: 'blocked' }
+  if (states.includes('processing')) return { label: '处理中', tone: 'processing' }
+  if (states.includes('review')) return { label: '待复核', tone: 'review' }
+  if (states.every((state) => state === 'completed')) return { label: '当前流程完成', tone: 'completed' }
+  if ((project.value?.episodes.length ?? 0) === 0) return { label: '未开始', tone: 'idle' }
+  return { label: '进行中', tone: 'active' }
+})
+
+const nextStep = computed(() => {
+  if ((project.value?.episodes.length ?? 0) === 0) return { stageId: 1, label: '先导入源片' }
+  for (const stageId of [1, 2, 3]) {
+    const state = stageState(stageId)
+    const stage = stages.find((item) => item.id === stageId)!
+    if (state === 'blocked') return { stageId, label: `处理「${stage.title}」阻塞` }
+    if (state === 'processing') return { stageId, label: `查看「${stage.title}」进度` }
+    if (state === 'review') return { stageId, label: `复核「${stage.title}」` }
+    if (state === 'not_started') return { stageId, label: `开始「${stage.title}」` }
+  }
+  return { stageId: 3, label: '当前可用流程已完成' }
+})
 
 async function readBreakdownRuns(episodes: Episode[]): Promise<BreakdownRunSummary[]> {
   const results = await Promise.allSettled(episodes.map((episode) => breakdownApi.listRuns(episode.id)))
@@ -150,17 +187,54 @@ onUnmounted(() => {
       </div>
     </aside>
 
-    <main :class="['studio-main', { 'shot-stage-main': activeStage === 2, 'asset-stage-main': activeStage === 3 }]">
-      <EpisodeManagerV3 v-if="activeStage === 1" :project="project" @refresh="refreshProject" />
-      <BreakdownStageV1
-        v-else-if="activeStage === 2"
-        :project-id="project.id"
-        :episodes="project.episodes"
-        :refresh-token="shotRefreshToken"
-        @refresh-project="refreshProject"
-      />
-      <AssetStageV4 v-else-if="activeStage === 3" :project-id="project.id" :episodes="project.episodes" />
-    </main>
+    <section class="studio-workspace-shell">
+      <header class="project-command-bar">
+        <div class="project-command-context">
+          <small>当前项目</small>
+          <strong>{{ project.name }}</strong>
+          <span>{{ currentEpisode ? currentEpisode.title : '尚未导入剧集' }}</span>
+        </div>
+
+        <div class="project-command-status">
+          <div class="command-stat">
+            <small>当前阶段</small>
+            <strong>{{ String(activeStageMeta.id).padStart(2, '0') }} · {{ activeStageMeta.title }}</strong>
+          </div>
+          <div :class="['command-stat', `tone-${overallStatus.tone}`]">
+            <small>项目状态</small>
+            <strong>{{ overallStatus.label }}</strong>
+          </div>
+          <div class="command-stat">
+            <small>待处理</small>
+            <strong>{{ reviewStageIds.length }} 个阶段</strong>
+          </div>
+          <button class="next-action-button" @click="selectStage(nextStep.stageId)">
+            <small>下一步</small>
+            <strong>{{ nextStep.label }}</strong>
+          </button>
+        </div>
+
+        <div class="project-task-center">
+          <TaskProgressDock v-if="taskDockVisible" />
+          <div v-else class="project-task-idle">
+            <span class="task-idle-dot"></span>
+            <div><strong>后台任务</strong><small>{{ activeTaskCount ? `${activeTaskCount} 个进行中` : '当前空闲' }}</small></div>
+          </div>
+        </div>
+      </header>
+
+      <main :class="['studio-main', { 'shot-stage-main': activeStage === 2, 'asset-stage-main': activeStage === 3 }]">
+        <EpisodeManagerV3 v-if="activeStage === 1" :project="project" @refresh="refreshProject" />
+        <BreakdownStageV1
+          v-else-if="activeStage === 2"
+          :project-id="project.id"
+          :episodes="project.episodes"
+          :refresh-token="shotRefreshToken"
+          @refresh-project="refreshProject"
+        />
+        <AssetStageV4 v-else-if="activeStage === 3" :project-id="project.id" :episodes="project.episodes" />
+      </main>
+    </section>
   </div>
 
   <div v-else-if="loading" class="screen-loading">正在读取项目…</div>
@@ -184,4 +258,152 @@ onUnmounted(() => {
 .stage-item.planned { opacity: .58; cursor: not-allowed; }
 .stage-item.planned:hover { background: transparent; }
 .stage-item.planned .stage-copy em { color: #9aa4b2; }
+
+.studio-workspace-shell {
+  min-width: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: #f5f7fb;
+}
+.studio-workspace-shell > .studio-main {
+  min-height: 0;
+  overflow: auto;
+}
+.studio-workspace-shell > .studio-main.shot-stage-main,
+.studio-workspace-shell > .studio-main.asset-stage-main {
+  height: 100%;
+}
+.project-command-bar {
+  position: relative;
+  z-index: 130;
+  min-height: 74px;
+  display: grid;
+  grid-template-columns: minmax(190px, .85fr) minmax(520px, 1.7fr) minmax(300px, 1fr);
+  gap: 18px;
+  align-items: center;
+  padding: 10px 18px;
+  border-bottom: 1px solid #dde3eb;
+  background: rgba(255, 255, 255, .97);
+  box-shadow: 0 3px 14px rgba(33, 48, 76, .04);
+  backdrop-filter: blur(10px);
+}
+.project-command-context {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.project-command-context small,
+.command-stat small,
+.next-action-button small,
+.project-task-idle small {
+  color: #8994a4;
+  font-size: 10px;
+  font-weight: 750;
+}
+.project-command-context strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #1e2938;
+  font-size: 14px;
+}
+.project-command-context span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #697586;
+  font-size: 11px;
+}
+.project-command-status {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(96px, 1fr)) minmax(170px, 1.35fr);
+  gap: 7px;
+}
+.command-stat,
+.next-action-button {
+  min-width: 0;
+  min-height: 48px;
+  display: grid;
+  align-content: center;
+  gap: 1px;
+  padding: 6px 9px;
+  border: 1px solid #e3e8ef;
+  border-radius: 9px;
+  background: #fafbfc;
+}
+.command-stat strong,
+.next-action-button strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #334155;
+  font-size: 11px;
+}
+.command-stat.tone-processing strong { color: #315ec4; }
+.command-stat.tone-review strong { color: #9a6400; }
+.command-stat.tone-blocked strong { color: #b33b3b; }
+.command-stat.tone-completed strong { color: #16835b; }
+.next-action-button {
+  border-color: #cbd8ff;
+  background: #f1f5ff;
+  text-align: left;
+  cursor: pointer;
+}
+.next-action-button:hover { border-color: #9db5f5; background: #eaf0ff; }
+.next-action-button strong { color: #2549aa; }
+.project-task-center {
+  min-width: 0;
+  position: relative;
+}
+.project-task-center :deep(.task-dock) {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  z-index: 145;
+  width: 100%;
+  border-radius: 9px;
+  box-shadow: none;
+  overflow: visible;
+}
+.project-task-center :deep(.task-dock-summary) {
+  min-height: 48px;
+}
+.project-task-center :deep(.task-dock-panel) {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(620px, 64vw);
+  max-height: 430px;
+  border: 1px solid #dce3ed;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 16px 40px rgba(29, 43, 67, .16);
+}
+.project-task-idle {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 1px solid #e3e8ef;
+  border-radius: 9px;
+  background: #fafbfc;
+}
+.project-task-idle > div { min-width: 0; display: grid; }
+.project-task-idle strong { color: #465160; font-size: 11px; }
+.task-idle-dot { width: 8px; height: 8px; border-radius: 50%; background: #7fb493; box-shadow: 0 0 0 3px #edf7f1; }
+
+@media (max-width: 1400px) {
+  .project-command-bar {
+    grid-template-columns: minmax(160px, .7fr) minmax(480px, 1.8fr) minmax(250px, .9fr);
+    gap: 10px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .project-command-status { grid-template-columns: repeat(3, minmax(88px, 1fr)) minmax(150px, 1.25fr); }
+}
 </style>
