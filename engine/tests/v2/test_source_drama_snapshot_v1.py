@@ -10,6 +10,7 @@ from engine.app.source_drama_snapshot_contract_v1 import SourceDramaEpisodeSnaps
 from engine.app.source_drama_snapshot_v1 import (
     compose_episode_source_drama_snapshot_v1,
     compose_project_source_drama_snapshot_v1,
+    source_drama_episode_fingerprint,
 )
 
 
@@ -231,13 +232,10 @@ def test_project_snapshot_deduplicates_resolved_character_catalog() -> None:
     assert project["source_fingerprint"]
 
 
-def test_fingerprint_ignores_only_operational_warning_text() -> None:
+def test_fingerprint_ignores_operational_status_and_warning_text() -> None:
     first = _episode_snapshot()
     changed = deepcopy(first)
     changed["warnings"] = ["另一条仅用于展示的运行提示"]
     changed["status"] = "READY_WITH_WARNINGS"
 
-    # Recompose from source model rather than mutating the fingerprint: the fingerprint helper
-    # intentionally excludes operational status/warnings, while source facts remain identical.
-    parsed = SourceDramaEpisodeSnapshotV1.model_validate(changed)
-    assert parsed.source_fingerprint == first["source_fingerprint"]
+    assert source_drama_episode_fingerprint(changed) == first["source_fingerprint"]
