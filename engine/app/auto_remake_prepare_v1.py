@@ -1,0 +1,224 @@
+"""One-click automatic source-drama analysis for the remake workflow.
+
+This intentionally reuses the already accepted internal modules instead of exposing them
+as separate product pages. The user starts one job; preprocessing, shot detection,
+Breakdown and asset extraction run sequentially. Only uncertain results are surfaced as
+ReviewIssue records.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from engine.app.asset_analysis_progress_v4 import run_content_analysis_with_progress
+from engine.app.asset_final_gate_v10 import apply_analysis_to_assets
+from engine.app.asset_semantics_p4_v1 import enrich_asset_run, semantic_model_status
+from engine.app.breakdown_p2_pipeline_v1 import run_episode_breakdown_p2
+from engine.app.breakdown_serializer_v1 import get_current_breakdown
+from engine.app.media_v2 import detect_episode_shots, preprocess_episode
+from engine.app.review_issue_sync_v1 import sync_asset_review_issues, sync_shot_review_issues
+from engine.app.studio_v2 import get_episode, list_episode_records
+from engine.app.task_progress_v2 import fail_task, finish_task, start_task, update_task
+
+
+def _has_current_breakdown(episode_id: str) -> bool:
+    current = get_current_breakdown(episode_id)
+    if not current:
+        return False
+    revision = current.get("source_shot_revision") or {}
+    return bool(current.get("is_current")) and revision.get("is_current") is True
+
+
+def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
+    try:
+        episodes = list_episode_records(project_id)
+        if not episodes:
+            raise ValueError("项目还没有剧集")
+
+        total = len(episodes)
+        start_task(
+            task_id,
+            stage_key="auto_prepare",
+            stage_label="自动理解原短剧",
+            message="将按剧集顺序自动完成素材准备、镜头检测、AI 拉片和资产识别",
+        )
+
+        # 0-72%: episodes. Each episode owns an equal slice and internally runs media + Breakdown.
+        for index, episode_record in enumerate(episodes, start=1):
+            episode = get_episode(episode_record.id)
+            if episode is None:
+                raise LookupError(f"剧集不存在：{episode_record.id}")
+            base = (index - 1) / total * 72.0
+            span = 72.0 / total
+            label = f"第{int(episode['sort_order']):02d}集 · {episode['title']}"
+
+            if episode.get("preprocess_status") != "READY":
+                def media_progress(
+                    percent: float,
+                    stage_key: str,
+                    message: str,
+                    current: int | None,
+                    inner_total: int | None,
+                ) -> None:
+                    update_task(
+                        task_id,
+                        progress_percent=base + span * 0.18 * (percent / 100.0),
+                        stage_key=f"auto_{stage_key}",
+                        stage_label="自动准备素材",
+                        current_item=label,
+                        current_index=index,
+                        total_items=total,
+                        message=message,
+                    )
+
+                preprocess_episode(episode["id"], progress=media_progress)
+
+            episode = get_episode(episode_record.id) or episode
+            if int(episode.get("shot_count") or 0) <= 0:
+                def shot_progress(
+                    percent: float,
+                    stage_key: str,
+                    message: str,
+                    current: int | None,
+                    inner_total: int | None,
+                ) -> None:
+                    update_task(
+                        task_id,
+                        progress_percent=base + span * (0.18 + 0.32 * (percent / 100.0)),
+                        stage_key=f"auto_{stage_key}",
+                        stage_label="自动识别镜头",
+                        current_item=label,
+                        current_index=index,
+                        total_items=total,
+                        message=message,
+                    )
+
+                detect_episode_shots(episode["id"], progress=shot_progress)
+            else:
+                update_task(
+                    task_id,
+                    progress_percent=base + span * 0.50,
+                    stage_key="auto_reuse_shots",
+                    stage_label="复用已确认镜头",
+                    current_item=label,
+                    current_index=index,
+                    total_items=total,
+                    message=f"{label} 已有 Current Shots，不重复切镜",
+                )
+
+            if not _has_current_breakdown(episode["id"]):
+                def breakdown_progress(percent: float, stage: str, message: str) -> None:
+                    update_task(
+                        task_id,
+                        progress_percent=base + span * (0.50 + 0.50 * (percent / 100.0)),
+                        stage_key=f"auto_{stage}",
+                        stage_label="自动理解剧情与镜头",
+                        current_item=label,
+                        current_index=index,
+                        total_items=total,
+                        message=message,
+                    )
+
+                run_episode_breakdown_p2(episode["id"], progress=breakdown_progress)
+            else:
+                update_task(
+                    task_id,
+                    progress_percent=base + span,
+                    stage_key="auto_reuse_breakdown",
+                    stage_label="复用当前拉片结果",
+                    current_item=label,
+                    current_index=index,
+                    total_items=total,
+                    message=f"{label} 当前拉片结果仍匹配 Current Shots，直接复用",
+                )
+
+        # 72-96%: project-level Character/Scene/Prop extraction.
+        def asset_progress(
+            percent: float,
+            stage_key: str,
+            stage_label: str,
+            current_item: str | None,
+            current_index: int | None,
+            total_items: int | None,
+            message: str,
+        ) -> None:
+            update_task(
+                task_id,
+                progress_percent=72.0 + percent * 0.18,
+                stage_key=f"auto_{stage_key}",
+                stage_label=stage_label,
+                current_item=current_item,
+                current_index=current_index,
+                total_items=total_items,
+                message=message,
+            )
+
+        analysis = run_content_analysis_with_progress(project_id, progress=asset_progress)
+        run_id = str(analysis["id"])
+        semantic = semantic_model_status()
+        semantic_result: dict[str, Any] = {"status": "NOT_CONFIGURED"}
+        if semantic.get("ready"):
+            update_task(
+                task_id,
+                progress_percent=90.0,
+                stage_key="auto_asset_semantics",
+                stage_label="自动验证场景与道具",
+                message="正在结合拉片上下文验证场景 / 道具",
+            )
+
+            def semantic_progress(current: int, semantic_total: int, message: str) -> None:
+                update_task(
+                    task_id,
+                    progress_percent=90.0 + current / max(1, semantic_total) * 5.0,
+                    stage_key="auto_asset_semantics",
+                    stage_label="自动验证场景与道具",
+                    current_item=f"Shot {current} / {semantic_total}",
+                    current_index=current,
+                    total_items=semantic_total,
+                    message=message,
+                )
+
+            semantic_result = enrich_asset_run(run_id, project_id, progress=semantic_progress)
+
+        update_task(
+            task_id,
+            progress_percent=96.0,
+            stage_key="auto_review_sync",
+            stage_label="整理待确认问题",
+            message="高置信度结果自动通过，只把异常镜头和资产绑定推入待确认",
+        )
+        workspace = apply_analysis_to_assets(project_id, run_id)
+        shot_issue_count = sync_shot_review_issues(project_id)
+        asset_issue_count = sync_asset_review_issues(project_id, workspace)
+
+        warnings = []
+        unresolved = int((analysis.get("counts") or {}).get("unresolved_character_candidates") or 0)
+        if unresolved:
+            warnings.append(f"{unresolved} 个人物 Evidence 尚未形成安全身份，需要在人物复核中处理")
+        if semantic_result.get("status") in {"FAILED", "READY_WITH_WARNINGS", "NOT_CONFIGURED"}:
+            warnings.append("场景 / 道具语义验证存在降级")
+
+        result = {
+            "project_id": project_id,
+            "episode_count": total,
+            "asset_run_id": run_id,
+            "review_issue_count": shot_issue_count + asset_issue_count,
+            "shot_review_issue_count": shot_issue_count,
+            "asset_review_issue_count": asset_issue_count,
+            "unresolved_character_evidence": unresolved,
+            "semantic": semantic_result,
+        }
+        finish_task(
+            task_id,
+            result=result,
+            message=(
+                f"自动理解完成：{shot_issue_count + asset_issue_count} 项需要人工确认"
+                if shot_issue_count + asset_issue_count
+                else "自动理解完成：当前没有镜头/资产问题需要人工确认"
+            ),
+            status="READY_WITH_WARNINGS" if warnings or shot_issue_count + asset_issue_count else "READY",
+        )
+    except Exception as exc:
+        fail_task(task_id, exc)
+
+
+__all__ = ["run_auto_remake_prepare_task"]
