@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
 import type { BackgroundTask, ContentAnalysisRun, Episode, F05ModelStatus } from '../types/studio'
 import AssetReviewMatrixV4 from './AssetReviewMatrixV4.vue'
@@ -23,6 +24,13 @@ type CharacterModelStatus = F05ModelStatus & {
 
 type AssetWorkspaceMode = 'review' | 'people'
 
+const route = useRoute()
+const router = useRouter()
+
+function workspaceModeFromRoute(): AssetWorkspaceMode {
+  return String(route.query.asset_tab || '') === 'people' ? 'people' : 'review'
+}
+
 const status = ref<CharacterModelStatus | null>(null)
 const loading = ref(true)
 const preparing = ref(false)
@@ -30,7 +38,7 @@ const error = ref('')
 const resolvedCount = ref(0)
 const unresolvedEvidenceCount = ref(0)
 const analysisProfile = ref('')
-const workspaceMode = ref<AssetWorkspaceMode>('review')
+const workspaceMode = ref<AssetWorkspaceMode>(workspaceModeFromRoute())
 
 const missingModels = computed(() => (status.value?.models ?? []).filter((item) => !item.ready))
 const runtimeLabel = computed(() => {
@@ -53,6 +61,21 @@ const userStatus = computed(() => {
   if (resolvedCount.value > 0) return { title: '资产结果可继续使用', detail: `当前已有 ${resolvedCount.value} 个最终人物，继续检查场景、道具和镜头绑定。`, tone: 'ready' }
   return { title: '等待资产提取结果', detail: '完成资产提取后，这里会汇总人物、场景和道具的确认状态。', tone: 'neutral' }
 })
+
+function selectWorkspaceMode(next: AssetWorkspaceMode): void {
+  workspaceMode.value = next
+  if (String(route.query.asset_tab || '') !== next) {
+    void router.replace({ query: { ...route.query, asset_tab: next } })
+  }
+}
+
+function syncWorkspaceModeFromRoute(): void {
+  const next = workspaceModeFromRoute()
+  if (workspaceMode.value !== next) workspaceMode.value = next
+  if (String(route.query.asset_tab || '') !== next) {
+    void router.replace({ query: { ...route.query, asset_tab: next } })
+  }
+}
 
 async function refreshModelStatus(): Promise<void> {
   try {
@@ -102,8 +125,14 @@ function onTaskFinished(event: Event): void {
   void refreshPersonCompleteness()
 }
 
+watch(
+  () => route.query.asset_tab,
+  syncWorkspaceModeFromRoute,
+)
+
 onMounted(async () => {
   window.addEventListener('studio-task-finished', onTaskFinished)
+  syncWorkspaceModeFromRoute()
   await Promise.all([refreshModelStatus(), refreshPersonCompleteness()])
 })
 
@@ -144,11 +173,11 @@ onUnmounted(() => {
     <div v-if="error" class="character-v4-error">{{ error }}</div>
 
     <nav class="asset-workspace-tabs" aria-label="资产工作区">
-      <button :class="{ active: workspaceMode === 'review' }" type="button" @click="workspaceMode = 'review'">
+      <button :class="{ active: workspaceMode === 'review' }" type="button" @click="selectWorkspaceMode('review')">
         <strong>待处理与绑定</strong>
         <span>优先检查人物、场景、道具是否绑定正确</span>
       </button>
-      <button :class="{ active: workspaceMode === 'people' }" type="button" @click="workspaceMode = 'people'">
+      <button :class="{ active: workspaceMode === 'people' }" type="button" @click="selectWorkspaceMode('people')">
         <strong>人物结果</strong>
         <span>{{ resolvedCount }} 个最终人物<template v-if="unresolvedEvidenceCount"> · {{ unresolvedEvidenceCount }} 条待归属证据</template></span>
       </button>
