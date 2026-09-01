@@ -1,9 +1,9 @@
 """Automatic target reference assets for R8 H3 generation.
 
 TargetCharacter text design is not enough to keep cast identity stable when Ref2VA also sees
-source actors.  This module uses the local H3 provider to generate one deterministic casting
+source actors. This module uses the local H3 provider to generate one deterministic casting
 reference clip per current TargetCharacter and one empty environment reference per localized
-Scene, then extracts reusable still images.  These are runtime assets, not new product pages.
+Scene, then extracts reusable still images. These are runtime assets, not new product pages.
 """
 from __future__ import annotations
 
@@ -36,15 +36,47 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _full_character_mapping(character: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Normalize both full TargetCharacter rows and compact GenerationSegment character contexts."""
+
+    target_id = str(character.get("id") or character.get("target_character_id") or "").strip()
+    if not target_id:
+        return None
+    required = {
+        "project_id",
+        "target_language",
+        "target_region",
+        "target_name",
+        "appearance_profile",
+        "generation_prompt",
+    }
+    if all(character.get(key) for key in required):
+        return {**dict(character), "id": target_id}
+    with get_session() as session:
+        row = session.get(TargetCharacter, target_id)
+        if row is None:
+            return None
+        return {
+            "id": row.id,
+            "project_id": row.project_id,
+            "target_language": row.target_language,
+            "target_region": row.target_region,
+            "target_name": row.target_name,
+            "appearance_profile": row.appearance_profile,
+            "generation_prompt": row.generation_prompt,
+        }
+
+
 def target_character_reference_signature_v1(character: Mapping[str, Any]) -> str:
+    normalized = _full_character_mapping(character) or dict(character)
     return _digest({
         "profile": CHARACTER_REFERENCE_PROFILE,
-        "id": character.get("id"),
-        "target_language": character.get("target_language"),
-        "target_region": character.get("target_region"),
-        "target_name": character.get("target_name"),
-        "appearance_profile": character.get("appearance_profile"),
-        "generation_prompt": character.get("generation_prompt"),
+        "id": normalized.get("id") or normalized.get("target_character_id"),
+        "target_language": normalized.get("target_language"),
+        "target_region": normalized.get("target_region"),
+        "target_name": normalized.get("target_name"),
+        "appearance_profile": normalized.get("appearance_profile"),
+        "generation_prompt": normalized.get("generation_prompt"),
     })
 
 
@@ -81,7 +113,7 @@ def _extract_frame(video: Path, seconds: float, output: Path) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
     _ffmpeg([
         "ffmpeg", "-y", "-ss", f"{max(0.0, seconds):.3f}", "-i", str(video),
-        "-frames:v", "1", "-vf", "scale='min(1280,iw)':-2", "-q:v", "2", str(output),
+        "-frames:v", "1", "-vf", "scale=min(1280\\,iw):-2", "-q:v", "2", str(output),
     ])
     if not output.is_file() or output.stat().st_size <= 0:
         raise H3ReferenceAssetError("H3 参考视频未能抽出有效参考帧")
@@ -114,11 +146,12 @@ def _read_meta(path: Path) -> dict[str, Any] | None:
 
 
 def current_target_character_reference_assets_v1(character: Mapping[str, Any]) -> list[Path]:
-    project_id = str(character.get("project_id") or "")
-    target_id = str(character.get("id") or "")
-    if not project_id or not target_id:
+    normalized = _full_character_mapping(character)
+    if normalized is None:
         return []
-    signature = target_character_reference_signature_v1(character)
+    project_id = str(normalized["project_id"])
+    target_id = str(normalized["id"])
+    signature = target_character_reference_signature_v1(normalized)
     root = project_dir(project_id) / "target" / "h3" / "reference-characters" / target_id / signature[:16]
     meta = _read_meta(root / "metadata.json")
     if not meta or meta.get("signature") != signature:
