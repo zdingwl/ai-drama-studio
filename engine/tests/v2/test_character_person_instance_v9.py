@@ -88,6 +88,20 @@ def test_partial_and_face_fallback_can_never_seed_gallery() -> None:
     assert fallback.gallery_eligible is False
 
 
+def test_almost_full_width_bottom_truncated_person_is_partial() -> None:
+    safety = classify_person_instance(
+        person_bbox=(1, 543, 1055, 1353),
+        other_person_boxes=[],
+        frame_width=1080,
+        frame_height=1920,
+        proposal_source="v6.3-yolox",
+    )
+
+    assert safety.touches_frame_edges == 2
+    assert safety.instance_class == "PARTIAL"
+    assert safety.gallery_eligible is False
+
+
 def test_same_sample_multiple_people_get_separate_ids_and_cannot_links() -> None:
     left = obs(bbox=(40, 100, 180, 700))
     middle = obs(bbox=(400, 100, 180, 700))

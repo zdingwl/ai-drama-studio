@@ -40,6 +40,16 @@ PARTIAL_EDGE_MARGIN_RATIO = 0.035
 EDGE_RETRY_WIDTH_RATIO = 0.68
 EDGE_RETRY_DEDUP_IOU = 0.55
 
+# YOLOX can emit a high-confidence substantial Person box together with several
+# very-low-confidence edge/body-part boxes for the same seated or close-up person.
+# IoU alone does not remove those fragments because a narrow sleeve/head strip can be
+# mostly covered by the substantial box while contributing little to the union area.
+# Suppress only weak partial proposals that are mostly covered by an already-selected
+# strong proposal. Two strong people and weak proposals with genuinely distinct
+# visible area remain separate.
+PARTIAL_FRAGMENT_MAX_SCORE = 0.20
+PARTIAL_FRAGMENT_STRONG_COVERAGE = 0.65
+
 
 def sample_times_us(duration_us: int) -> tuple[int, ...]:
     duration = max(1, int(duration_us))
@@ -155,11 +165,39 @@ def _offset_box(
 def _dedupe_person_proposals(
     values: list[tuple[tuple[int, int, int, int], float, str]],
 ) -> list[tuple[tuple[int, int, int, int], float, str]]:
-    """全帧与 edge retry 可能重复命中同一人；保留高分框，避免一人同帧变两个 Observation。"""
+    """Remove duplicate full-frame/edge/body-fragment proposals conservatively.
+
+    Standard IoU handles two similarly-sized proposals. A second containment check
+    handles the SHOT 0029 failure shape: one substantial strong Person proposal plus
+    narrow, weak partial proposals covering only a sleeve/head edge of that same
+    person. Coverage is measured against the weak proposal, not the union, so a thin
+    contained fragment can be recognized without weakening normal multi-person NMS.
+    """
+
+    def covered_by(
+        fragment: tuple[int, int, int, int],
+        dominant: tuple[int, int, int, int],
+    ) -> float:
+        fx, fy, fw, fh = fragment
+        dx, dy, dw, dh = dominant
+        left, top = max(fx, dx), max(fy, dy)
+        right, bottom = min(fx + fw, dx + dw), min(fy + fh, dy + dh)
+        intersection = max(0, right - left) * max(0, bottom - top)
+        return intersection / float(max(1, fw * fh))
 
     selected: list[tuple[tuple[int, int, int, int], float, str]] = []
     for item in sorted(values, key=lambda value: value[1], reverse=True):
         if any(v5.bbox_iou(item[0], existing[0]) >= EDGE_RETRY_DEDUP_IOU for existing in selected):
+            continue
+        item_is_weak_partial = bool(
+            float(item[1]) < PARTIAL_FRAGMENT_MAX_SCORE
+            and "partial" in str(item[2] or "").lower()
+        )
+        if item_is_weak_partial and any(
+            float(existing[1]) >= STRONG_PERSON_SCORE
+            and covered_by(item[0], existing[0]) >= PARTIAL_FRAGMENT_STRONG_COVERAGE
+            for existing in selected
+        ):
             continue
         selected.append(item)
     return selected

@@ -83,6 +83,35 @@ def test_edge_retry_duplicate_does_not_create_second_person_observation() -> Non
     assert deduped[0][2] == "v6.2-yolox-edge-partial"
 
 
+def test_dedupe_suppresses_weak_partial_fragments_mostly_covered_by_strong_person() -> None:
+    values = [
+        ((1, 543, 1055, 1353), 0.87, "v6.2-yolox"),
+        ((0, 0, 207, 1714), 0.16, "v6.2-yolox-partial"),
+        ((829, 1440, 251, 478), 0.19, "v6.2-yolox-partial"),
+        ((10, 22, 566, 1893), 0.19, "v6.2-yolox-partial"),
+    ]
+
+    result = observation_v61._dedupe_person_proposals(values)
+
+    assert result == [((1, 543, 1055, 1353), 0.87, "v6.2-yolox")]
+
+
+def test_dedupe_preserves_strong_overlapping_people_and_distinct_partial() -> None:
+    strong_left = ((40, 100, 420, 800), 0.91, "v6.2-yolox")
+    strong_right = ((330, 110, 430, 790), 0.88, "v6.2-yolox")
+    distinct_partial = ((810, 120, 170, 760), 0.17, "v6.2-yolox-partial")
+
+    result = observation_v61._dedupe_person_proposals([
+        strong_left,
+        strong_right,
+        distinct_partial,
+    ])
+
+    assert strong_left in result
+    assert strong_right in result
+    assert distinct_partial in result
+
+
 def test_face_does_not_erase_partial_provenance() -> None:
     assert observation_v61._source_with_face("v6.2-yolox-partial") == "v6.2-yolox-partial+face"
     assert observation_v61._source_with_face("v6.2-yolox-edge-partial") == "v6.2-yolox-edge-partial+face"

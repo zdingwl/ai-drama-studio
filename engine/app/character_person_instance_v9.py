@@ -23,7 +23,10 @@ OCCLUDED_OVERLAP_RATIO = 0.025
 CONTAMINATED_OVERLAP_RATIO = 0.15
 CLEAN_MARGIN_RATIO = 0.04
 CLEAN_EXPANDED_CONTAMINATION_MAX = 0.015
-PARTIAL_EDGE_MARGIN_RATIO = 0.012
+# A 1.2% edge band left SHOT 0029's almost-full-width, bottom-truncated seated-person
+# box one pixel outside the PARTIAL classification. A 1.5% tolerance absorbs normal
+# detector jitter while still requiring contact with at least two frame edges.
+PARTIAL_EDGE_MARGIN_RATIO = 0.015
 PARTIAL_MAX_FRAME_COVERAGE_WITH_EDGE_TRUNCATION = 0.88
 
 
