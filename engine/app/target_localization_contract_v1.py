@@ -1,7 +1,8 @@
 """Target-side character/scene localization contract for the remake pipeline.
 
 This layer is downstream of SourceDramaSnapshot. It never rewrites source Character,
-Scene, Shot, ASR or OCR truth. Every row stays anchored to the current source fingerprint.
+Scene, Shot, ASR or OCR truth. Every row stays anchored to the current source fingerprint
+and current project scene policy.
 """
 from __future__ import annotations
 
@@ -102,6 +103,10 @@ class TargetLocalizationBundleV1(_StrictTargetModel):
             raise ValueError("TargetCharacter source fingerprint is stale")
         if any(item.source_fingerprint != self.source_fingerprint for item in self.scene_mappings):
             raise ValueError("SceneLocalizationMapping source fingerprint is stale")
+        if any(item.project_policy != self.scene_policy for item in self.scene_mappings):
+            raise ValueError("SceneLocalizationMapping project policy is stale")
+        if any(item.target_language != self.target_language or item.target_region != self.target_region for item in self.target_characters):
+            raise ValueError("TargetCharacter locale is stale")
         return self
 
 
