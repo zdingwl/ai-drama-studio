@@ -1,4 +1,4 @@
-"""R8 H3 Context / GenerationAttempt / background generation APIs."""
+"""R8/R9 H3 generation APIs with automatic QC and selected-output gating."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,15 +6,11 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 
-from engine.app.generation_attempt_v1 import (
-    GenerationAttemptError,
-    get_generation_attempt_v1,
-    list_generation_attempts_v1,
-    run_ready_generation_segments_v1,
-)
+from engine.app.generation_attempt_v1 import GenerationAttemptError, get_generation_attempt_v1, list_generation_attempts_v1
 from engine.app.generation_segment_v1 import GenerationSegmentError, get_generation_segments_v1
 from engine.app.h3_context_compiler_v1 import H3ContextCompilerError, compile_h3_context_v1
 from engine.app.h3_context_contract_v1 import GenerationAttemptProjectSummaryV1, H3CompiledContextV1
+from engine.app.h3_qc_v1 import H3QualityError, run_generation_with_qc_v1
 from engine.app.minimax_h3_provider_v1 import get_video_generation_provider_v1
 from engine.app.studio_v2 import get_project
 from engine.app.task_progress_v2 import (
@@ -32,6 +28,7 @@ router = APIRouter(prefix="/api", tags=["h3-generation"])
 H3_BATCH_TASK_TYPE = "H3_GENERATE_READY_V1"
 _HEAVY_TASK_TYPES = {
     H3_BATCH_TASK_TYPE,
+    "H3_QC_RETRY_V1",
     "AUTO_REMAKE_PREP_V1",
     "EPISODE_SHOTS",
     "BATCH_SHOTS",
@@ -47,14 +44,14 @@ def _http_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, ValueError):
         return HTTPException(status_code=400, detail=str(exc))
-    if isinstance(exc, (GenerationAttemptError, GenerationSegmentError, H3ContextCompilerError)):
+    if isinstance(exc, (GenerationAttemptError, GenerationSegmentError, H3ContextCompilerError, H3QualityError)):
         return HTTPException(status_code=409, detail=str(exc))
     return HTTPException(status_code=409, detail=f"H3 生成当前不可用：{exc}")
 
 
 def _required_runtime_modes(plan: dict) -> set[str]:
-    # FL2VA is always required in R8 because target-character / localized-scene reference
-    # assets are automatically created through text-to-video on the FL2VA endpoint.
+    # FL2VA is always required because target-character / localized-scene references are
+    # generated through text-to-video on the FL2VA service before Ref2VA can use them.
     modes = {"FL2VA"}
     for episode in plan.get("episodes") or []:
         for segment in episode.get("segments") or []:
@@ -72,10 +69,7 @@ def _assert_runtime_ready(plan: dict) -> None:
     if "REF2VA" in required and not bool((runtime.get("ref2va") or {}).get("ready")):
         missing.append("Ref2VA(30011)")
     if missing:
-        raise HTTPException(
-            status_code=409,
-            detail="本地 MiniMax H3 Runtime 尚未 READY：" + "、".join(missing),
-        )
+        raise HTTPException(status_code=409, detail="本地 MiniMax H3 Runtime 尚未 READY：" + "、".join(missing))
 
 
 def _run_h3_batch_task(task_id: str, project_id: str) -> None:
@@ -84,7 +78,7 @@ def _run_h3_batch_task(task_id: str, project_id: str) -> None:
             task_id,
             stage_key="h3_references",
             stage_label="准备 H3 目标参考",
-            message="正在自动补齐目标人物 / 本土化场景参考资产",
+            message="正在自动补齐目标人物 / 本土化场景参考资产，随后逐段生成并质检",
         )
 
         def progress(current: int, total: int, message: str) -> None:
@@ -93,30 +87,31 @@ def _run_h3_batch_task(task_id: str, project_id: str) -> None:
                 task_id,
                 progress_mode="determinate",
                 progress_percent=percent,
-                stage_key="h3_generation",
-                stage_label="本地 MiniMax H3 生成",
+                stage_key="h3_generation_qc",
+                stage_label="MiniMax H3 生成 + QC",
                 current_item=message,
                 current_index=current,
                 total_items=total,
                 message=message,
             )
 
-        result = run_ready_generation_segments_v1(project_id, progress=progress)
-        failed = list(result.get("failed") or [])
+        result = run_generation_with_qc_v1(project_id, progress=progress)
+        failures = list(result.get("generation_failures") or [])
         waiting = list(result.get("waiting") or [])
+        review = list(result.get("review") or [])
         reference_failures = list((result.get("character_references") or {}).get("failed") or []) + list(
             (result.get("scene_references") or {}).get("failed") or []
         )
-        warning_count = len(failed) + len(waiting) + len(reference_failures)
+        warning_count = len(failures) + len(waiting) + len(review) + len(reference_failures)
         finish_task(
             task_id,
             result=result,
             status="READY_WITH_WARNINGS" if warning_count else "READY",
             message=(
-                f"H3 本地生成完成：{result.get('succeeded_now', 0)} 段新生成，"
-                f"{result.get('reused_success', 0)} 段复用，{warning_count} 项尚待自动重试/处理"
+                f"H3 生成/QC 完成：{result.get('selected_now', 0)} 段新通过，"
+                f"{result.get('reused_selected', 0)} 段复用 Selected Output，{warning_count} 项尚待运行恢复或人工确认"
                 if warning_count
-                else f"H3 本地生成完成：{result.get('succeeded_now', 0)} 段新生成，{result.get('reused_success', 0)} 段复用"
+                else f"H3 生成/QC 完成：{result.get('selected_now', 0)} 段新通过，{result.get('reused_selected', 0)} 段复用"
             ),
         )
     except Exception as exc:
@@ -173,7 +168,7 @@ def api_start_h3_generate_ready(project_id: str, background: BackgroundTasks):
     task = create_task(
         project_id=project_id,
         task_type=H3_BATCH_TASK_TYPE,
-        title="MiniMax H3 生成可用镜头",
+        title="MiniMax H3 生成并质检可用镜头",
         progress_mode="indeterminate",
         total_items=ready_count,
         deduplicate_active=False,
