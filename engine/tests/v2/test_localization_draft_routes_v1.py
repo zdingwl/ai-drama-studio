@@ -36,7 +36,7 @@ def _view() -> dict[str, object]:
 
 def test_create_route_forwards_only_target_side_request(monkeypatch) -> None:
     expected = _view()
-    monkeypatch.setattr(routes, "create_localization_draft", lambda episode_id, note=None: expected)
+    monkeypatch.setattr(routes, "create_localization_draft_safe", lambda episode_id, note=None: expected)
 
     result = routes.api_create_localization_draft(
         "EPISODE_1",
@@ -49,7 +49,7 @@ def test_edit_route_maps_revision_conflict_to_409(monkeypatch) -> None:
     def conflict(*args, **kwargs):
         raise LocalizationDraftConflictError("稿件已被更新，请刷新后再编辑")
 
-    monkeypatch.setattr(routes, "edit_localization_draft", conflict)
+    monkeypatch.setattr(routes, "edit_localization_draft_safe", conflict)
     payload = routes.LocalizationDraftEditRequest(
         base_revision_id="LOCALREV_OLD",
         entries=[{"source_key": "S1:H1:D1", "decision": "KEEP_SOURCE"}],
@@ -66,7 +66,7 @@ def test_rebase_route_maps_stale_business_error_without_internal_details(monkeyp
     def stale(*args, **kwargs):
         raise LocalizationDraftStaleError("本土化源版本已经变化，请先重建草稿")
 
-    monkeypatch.setattr(routes, "rebase_localization_draft", stale)
+    monkeypatch.setattr(routes, "rebase_localization_draft_safe", stale)
     with pytest.raises(HTTPException) as exc_info:
         routes.api_rebase_localization_draft("EPISODE_1", routes.LocalizationDraftRebaseRequest())
 
