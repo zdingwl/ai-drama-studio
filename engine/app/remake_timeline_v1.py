@@ -15,15 +15,12 @@ from typing import Any, Mapping
 from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, mapped_column
 
-from engine.app.remake_timeline_contract_v1 import (
-    RemakeEpisodeTimelineV1,
-    RemakeProjectTimelineV1,
-)
+from engine.app.remake_timeline_contract_v1 import RemakeEpisodeTimelineV1, RemakeProjectTimelineV1
 from engine.app.review_issue_v1 import ReviewIssue, upsert_review_issue
 from engine.app.source_drama_snapshot_v1 import load_project_source_drama_snapshot_v1
 from engine.app.studio_v2 import Base, Episode, Project, get_session, new_id, utcnow
 from engine.app.target_dialogue_pipeline_v1 import validate_target_dialogue_dependencies_v1
-from engine.app.target_dialogue_v1 import TargetDialogue, get_target_dialogue_v1
+from engine.app.target_dialogue_v1 import get_target_dialogue_v1
 
 
 TIMING_REVIEW_PREFIX = "auto:dialogue-timing:"
@@ -43,9 +40,7 @@ class RemakeTimelineError(RuntimeError):
 
 class RemakeTimeline(Base):
     __tablename__ = "v2_remake_timelines"
-    __table_args__ = (
-        UniqueConstraint("project_id", "episode_id", name="uq_v2_remake_timeline_episode"),
-    )
+    __table_args__ = (UniqueConstraint("project_id", "episode_id", name="uq_v2_remake_timeline_episode"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("v2_projects.id", ondelete="CASCADE"), index=True)
@@ -169,7 +164,7 @@ def _reaction_carry_candidate(
     index: int,
     *,
     source_character_id: str | None,
-    overrun_us: int,
+    speech_overrun_us: int,
     target_dialogues_by_shot: Mapping[str, list[Mapping[str, Any]]],
 ) -> dict[str, Any] | None:
     if source_character_id is None or index + 1 >= len(shots):
@@ -182,8 +177,10 @@ def _reaction_carry_candidate(
         return None
     if source_character_id in set(next_shot.get("source_character_ids") or []):
         return None
-    available = int(next_shot.get("duration_us") or 0) - TRAILING_HOLD_US
-    if available < overrun_us:
+    # Reserve the tail hold inside the reaction shot. Only real speech overrun is measured;
+    # lack of optional tail padding alone never causes a carry/extend decision.
+    available_speech = int(next_shot.get("duration_us") or 0) - TRAILING_HOLD_US
+    if available_speech < speech_overrun_us:
         return None
     return next_shot
 
@@ -203,13 +200,14 @@ def _dialogue_plans_for_shot(
     for row in target_rows:
         source_line_start = int(row.get("source_start_us") or source_start)
         source_line_end = int(row.get("source_end_us") or source_line_start)
+        source_window = max(1, source_line_end - source_line_start)
         start_offset = max(0, source_line_start - source_start, cursor)
-        duration = int(row.get("speech_duration_us") or 0)
-        audio_ready = row.get("status") == "READY" and row.get("audio_status") == "READY" and duration > 0
+        actual_duration = int(row.get("speech_duration_us") or 0)
+        audio_ready = row.get("status") == "READY" and row.get("audio_status") == "READY" and actual_duration > 0
         if not audio_ready:
             waiting_audio = True
-            duration = max(1, source_line_end - source_line_start)
-        end_offset = start_offset + duration
+        planning_duration = actual_duration if audio_ready else source_window
+        end_offset = start_offset + planning_duration
         cursor = end_offset + INTER_DIALOGUE_GAP_US
         max_end_offset = max(max_end_offset, end_offset)
         source_character_id = str(row.get("source_character_id") or "") or None
@@ -222,8 +220,8 @@ def _dialogue_plans_for_shot(
             "target_character_id": str(row.get("target_character_id") or "") or None,
             "source_start_us": source_line_start,
             "source_end_us": source_line_end,
-            "source_window_us": max(0, source_line_end - source_line_start),
-            "speech_duration_us": duration,
+            "source_window_us": source_window,
+            "speech_duration_us": actual_duration if audio_ready else None,
             "planned_start_offset_us": start_offset,
             "planned_end_offset_us": end_offset,
             "planned_start_us": 0,
@@ -231,7 +229,7 @@ def _dialogue_plans_for_shot(
             "strategy": "KEEP",
             "carry_over_shot_key": None,
             "overrun_us": 0,
-            "reason": "目标对白按源对白相对起点进入新时间轴",
+            "reason": "目标对白按源对白相对起点进入新时间轴" if audio_ready else "等待真实目标语音，当前仅保留源对白位置作为占位",
         })
     if len(source_characters) == 1:
         sole_source_character_id = next(iter(source_characters))
@@ -255,51 +253,53 @@ def _auto_shot_plan(
         reason = "无目标对白，保持原镜头时长"
     elif waiting_audio:
         strategy, status, planned_duration = "KEEP", "WAITING_AUDIO", source_duration
-        reason = "目标对白尚缺可用真实音频，暂时保持原时长等待 TTS"
+        reason = "目标对白尚缺真实 TTS 时长，保持原时长等待音频；不使用估算时长替代事实"
     else:
-        required_duration = max(source_duration, max_dialogue_end + TRAILING_HOLD_US)
-        overrun = max(0, required_duration - source_duration)
-        if overrun > 0:
+        speech_overrun = max(0, max_dialogue_end - source_duration)
+        if speech_overrun > 0:
+            planned_extension_duration = max_dialogue_end + TRAILING_HOLD_US
+            extension_delta = planned_extension_duration - source_duration
             carry = _reaction_carry_candidate(
                 shots,
                 index,
                 source_character_id=source_character_id,
-                overrun_us=overrun,
+                speech_overrun_us=speech_overrun,
                 target_dialogues_by_shot=target_dialogues_by_shot,
             )
             if carry is not None:
                 strategy, status, planned_duration = "CARRY_OVER_REACTION", "READY", source_duration
-                reason = "目标对白略长，自动延续到下一无对白反应镜，当前镜头不做慢放"
+                reason = "目标对白越过当前切点，自动延续到下一无对白反应镜；当前镜头不做慢放"
                 carry_key = str(carry.get("shot_key") or "")
                 for plan in dialogue_plans:
-                    if plan["planned_end_offset_us"] > source_duration:
+                    if int(plan["planned_end_offset_us"]) > source_duration:
                         plan["strategy"] = "CARRY_OVER_REACTION"
                         plan["carry_over_shot_key"] = carry_key
-                        plan["overrun_us"] = plan["planned_end_offset_us"] - source_duration
-                        plan["reason"] = "对白尾部跨到下一反应镜继续播放"
-            elif required_duration / source_duration > EXTREME_DURATION_RATIO and overrun > EXTREME_OVERRUN_US:
-                strategy, status, planned_duration = "HUMAN_REVIEW", "REVIEW", required_duration
-                reason = "目标对白比原镜头显著更长，直接延长可能破坏动作/节奏，需要确认是否接受延长或改写对白"
+                        plan["overrun_us"] = int(plan["planned_end_offset_us"]) - source_duration
+                        plan["reason"] = "目标语音尾部跨到下一反应镜继续播放"
+            elif planned_extension_duration / source_duration > EXTREME_DURATION_RATIO and extension_delta > EXTREME_OVERRUN_US:
+                strategy, status, planned_duration = "HUMAN_REVIEW", "REVIEW", planned_extension_duration
+                reason = "目标对白比原镜头显著更长，直接延长可能破坏动作/节奏，需要确认延长方案或回到目标对白改写"
                 for plan in dialogue_plans:
-                    if plan["planned_end_offset_us"] > source_duration:
+                    if int(plan["planned_end_offset_us"]) > source_duration:
                         plan["strategy"] = "HUMAN_REVIEW"
-                        plan["overrun_us"] = plan["planned_end_offset_us"] - source_duration
+                        plan["overrun_us"] = int(plan["planned_end_offset_us"]) - source_duration
                         plan["reason"] = reason
             else:
-                strategy, status, planned_duration = "EXTEND", "READY", required_duration
-                reason = "目标对白长于原镜头，延长镜头到真实语音结束并保留尾部停顿"
+                strategy, status, planned_duration = "EXTEND", "READY", planned_extension_duration
+                reason = "真实目标语音越过原切点，延长镜头到语音结束并保留自然尾部停顿"
                 for plan in dialogue_plans:
-                    if plan["planned_end_offset_us"] > source_duration:
+                    if int(plan["planned_end_offset_us"]) > source_duration:
                         plan["strategy"] = "EXTEND"
-                        plan["overrun_us"] = plan["planned_end_offset_us"] - source_duration
+                        plan["overrun_us"] = int(plan["planned_end_offset_us"]) - source_duration
                         plan["reason"] = "目标语音超出原镜头，随镜头一起延长"
         else:
-            # Conservative trim: only one line, source dialogue originally ended near Shot tail,
-            # and the target speech creates a meaningful but not destructive shortening.
+            # Conservative trim: only one line, source dialogue originally ended near the Shot
+            # tail, and target speech creates a meaningful shortening without cutting most action.
             candidate_duration = max_dialogue_end + TRAILING_HOLD_US
             source_line_tail = source_duration
             if len(target_rows) == 1:
-                source_line_tail = max(0, source_duration - max(0, int(target_rows[0].get("source_end_us") or 0) - int(shot.get("start_us") or 0)))
+                source_line_end_offset = max(0, int(target_rows[0].get("source_end_us") or 0) - int(shot.get("start_us") or 0))
+                source_line_tail = max(0, source_duration - source_line_end_offset)
             saving = source_duration - candidate_duration
             min_allowed = max(TRIM_MIN_DURATION_US, int(round(source_duration * TRIM_MIN_SOURCE_RATIO)))
             if (
@@ -309,13 +309,13 @@ def _auto_shot_plan(
                 and candidate_duration >= min_allowed
             ):
                 strategy, status, planned_duration = "TRIM", "READY", candidate_duration
-                reason = "目标对白明显更短且原对白接近镜头尾部，安全裁短镜头尾部空白"
+                reason = "目标对白明显更短且原对白接近镜头尾部，安全裁掉镜头尾部多余空白"
                 for plan in dialogue_plans:
                     plan["strategy"] = "TRIM"
                     plan["reason"] = reason
             else:
                 strategy, status, planned_duration = "KEEP", "READY", source_duration
-                reason = "目标对白可在原镜头内自然完成，保持原镜头节奏"
+                reason = "真实目标语音可在原镜头内完成，保持原镜头节奏"
 
     return {
         "shot_plan_id": f"SHOTPLAN_{hashlib.sha1(shot_key.encode('utf-8')).hexdigest()[:24]}",
@@ -364,10 +364,7 @@ def _episode_payload(
 ) -> dict[str, Any]:
     shots = _source_shot_rows(episode)
     by_shot = _target_dialogues_by_shot(dialogue_rows)
-    shot_plans = [
-        _auto_shot_plan(shots, index, target_dialogues_by_shot=by_shot)
-        for index in range(len(shots))
-    ]
+    shot_plans = [_auto_shot_plan(shots, index, target_dialogues_by_shot=by_shot) for index in range(len(shots))]
     _reflow_shot_plans(shot_plans)
     source_duration = sum(int(item["source_duration_us"]) for item in shot_plans)
     planned_duration = sum(int(item["planned_duration_us"]) for item in shot_plans)
@@ -439,7 +436,8 @@ def generate_remake_timeline_v1(project_id: str) -> dict[str, Any]:
                     updated_at=now,
                 )
                 session.add(row)
-                session.commit(); session.refresh(row)
+                session.commit()
+                session.refresh(row)
             row_id, created_at = row.id, row.created_at
 
         payload = _episode_payload(
@@ -521,10 +519,7 @@ def get_remake_timeline_v1(project_id: str) -> dict[str, Any]:
     with get_session() as session:
         if session.get(Project, project_id) is None:
             raise LookupError("项目不存在")
-        episode_order = {
-            item.id: item.sort_order
-            for item in session.scalars(select(Episode).where(Episode.project_id == project_id)).all()
-        }
+        episode_order = {item.id: item.sort_order for item in session.scalars(select(Episode).where(Episode.project_id == project_id)).all()}
         rows = list(session.scalars(select(RemakeTimeline).where(RemakeTimeline.project_id == project_id)).all())
     if len(rows) != len(source.get("episodes") or []):
         raise RemakeTimelineError("当前 SourceDramaSnapshot 尚未生成完整 RemakeTimeline")
@@ -592,13 +587,15 @@ def update_remake_shot_timing_v1(
     if index < 0:
         raise LookupError("镜头时间计划不存在")
     shot = shot_plans[index]
+    if any(item.get("speech_duration_us") is None for item in shot.get("dialogue_plans") or []):
+        raise ValueError("当前镜头仍缺真实目标语音时长，不能人工定稿时间轴")
     required_end_offset = max((int(item["planned_end_offset_us"]) for item in shot.get("dialogue_plans") or []), default=0)
     if strategy == "CARRY_OVER_REACTION":
         if not carry_over_shot_key:
             raise ValueError("CARRY_OVER_REACTION 必须指定下一反应镜")
         _validate_manual_carry(shot_plans, index, carry_over_shot_key, required_end_offset)
     elif planned_duration_us < required_end_offset + TRAILING_HOLD_US:
-        raise ValueError("目标镜头时长不足以容纳当前真实目标语音")
+        raise ValueError("目标镜头时长不足以容纳当前真实目标语音和自然尾部停顿")
 
     shot["strategy"] = strategy
     shot["status"] = "READY"
