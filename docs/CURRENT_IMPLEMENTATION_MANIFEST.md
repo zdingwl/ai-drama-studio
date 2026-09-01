@@ -14,11 +14,11 @@ Character runtime: V10.1
 Formal UI: ProjectListV4 + ProjectStudioV4
 ```
 
-Rollback:
+R7 rollback:
 
 ```text
-backup/pre-h3-remake-restructure-2026-09-01
-37944c693a08c6ff292b08e1f73b1249812cabae
+backup/pre-r7-20260901
+8abf420262255f464cb08a0aa783a36dd1c13d66
 ```
 
 ## User surface
@@ -29,7 +29,7 @@ Review Center
 Output
 ```
 
-No new top-level page for automatic work.
+No new top-level page is created for automatic work.
 
 ## Automatic pipeline currently implemented
 
@@ -48,6 +48,8 @@ Preprocess
 → Target ReviewIssues
 → TargetDialogue translation/localization
 → READY-line local Qwen3-TTS when worker is available
+→ Dialogue Timing / RemakeTimeline
+→ GenerationSegment compile
 ```
 
 ## Persistent remake tables
@@ -59,16 +61,13 @@ v2_target_characters
 v2_scene_localization_mappings
 v2_target_voice_profiles
 v2_target_dialogues
+v2_remake_timelines
+v2_generation_segments
 ```
 
-## R2 SourceDramaSnapshot V1
+## Implemented authority layers
 
-```text
-IMPLEMENTED ON MAIN
-LOCAL ACCEPTANCE PENDING
-```
-
-Implementation:
+### R2 SourceDramaSnapshot V1
 
 ```text
 engine/app/source_drama_snapshot_contract_v1.py
@@ -77,214 +76,219 @@ engine/app/source_drama_snapshot_routes_v1.py
 engine/app/source_drama_review_issue_sync_v1.py
 ```
 
-APIs:
+Source-only current read truth. Source fingerprint changes invalidate downstream target facts.
 
-```text
-GET /api/episodes/{episode_id}/source-drama-snapshot
-GET /api/projects/{project_id}/source-drama-snapshot
-```
-
-Spec: `docs/SOURCE_DRAMA_SNAPSHOT_V1.md`.
-
-## R4 Target Localization V1
-
-```text
-IMPLEMENTED ON MAIN
-LOCAL ACCEPTANCE PENDING
-```
-
-Implementation:
+### R4 Target Localization V1
 
 ```text
 engine/app/target_localization_contract_v1.py
 engine/app/target_localization_v1.py
 engine/app/target_localization_routes_v1.py
 frontend/src/components/TargetLocalizationReviewV1.vue
-frontend/src/api/remake.ts
-frontend/src/types/remake.ts
 ```
 
-Test:
-
-```text
-engine/tests/v2/test_target_localization_v1.py
-```
-
-Core rules:
+Core invariants:
 
 ```text
 Source Character != TargetCharacter
-same Final Scene across episodes -> one canonical target scene mapping
-KEEP -> automatic KEEP
-LOCALIZE -> target description required
-AUTO -> Qwen decision, low confidence -> REVIEW
+same Final Scene across episodes -> one canonical target mapping
+KEEP -> KEEP
+LOCALIZE -> localized target description
+AUTO -> automatic decision, uncertain result -> REVIEW
 ```
 
-Spec: `docs/TARGET_LOCALIZATION_V1.md`.
-
-## R5 TargetDialogue + Local Qwen3-TTS V1
+### R5 TargetDialogue + Qwen3-TTS V1
 
 ```text
-IMPLEMENTED ON MAIN
-LOCAL ACCEPTANCE PENDING
-```
-
-Implementation:
-
-```text
-engine/app/local_qwen_text_v1.py
 engine/app/target_dialogue_contract_v1.py
 engine/app/target_dialogue_v1.py
 engine/app/target_dialogue_pipeline_v1.py
 engine/app/target_dialogue_routes_v1.py
 engine/app/qwen3_tts_runtime_v1.py
 scripts/qwen3_tts_worker_v1.py
-frontend/src/components/TargetLocalizationReviewV1.vue
-frontend/src/api/remake.ts
-frontend/src/types/remake.ts
-frontend/src/views/ProjectStudioV4.vue
 ```
 
-Tests:
+READY audio persists real `speech_duration_us`. Source ASR/OCR is immutable.
+
+### R6 Dialogue Timing / RemakeTimeline V1
 
 ```text
-engine/tests/v2/test_target_dialogue_v1.py
-engine/tests/v2/test_target_dialogue_routes_v1.py
-engine/tests/v2/test_qwen3_tts_runtime_v1.py
+engine/app/remake_timeline_contract_v1.py
+engine/app/remake_timeline_v1.py
+engine/app/remake_timeline_routes_v1.py
 ```
 
-### TargetDialogue authority
+Persistent table:
 
 ```text
-SourceDramaSnapshot.source dialogue
-→ target-only translated_text
-→ localized_text
-→ final_text
+v2_remake_timelines
 ```
 
-Source ASR/OCR is never overwritten.
+Consumes current source + target dialogue truth and plans the target timeline from real speech duration.
 
-Automatic localization uses the existing local Qwen OpenAI-compatible service.
-
-Confidence threshold V1:
+Strategies include:
 
 ```text
-0.74
+KEEP
+TRIM
+CARRY_OVER_REACTION
+EXTEND
+HUMAN_REVIEW
+WAITING_AUDIO
 ```
 
-Known speaker + unsafe target text produces:
+Source Shot boundaries and source ASR are never rewritten.
+
+## R7 GenerationSegment + local H3 runtime
 
 ```text
-LOCALIZATION ReviewIssue
+IMPLEMENTED ON MAIN
+LOCAL H3/GPU ACCEPTANCE PENDING
 ```
 
-Speaker/TargetCharacter ambiguity is not duplicated as LOCALIZATION.
-
-### Review Center behavior
-
-These issue types require authoritative domain edits and are excluded from generic “mark resolved” actions:
+### GenerationSegment compiler
 
 ```text
-TARGET_CHARACTER
-SCENE_LOCALIZATION
-LOCALIZATION
+engine/app/generation_segment_contract_v1.py
+engine/app/generation_segment_v1.py
+engine/app/generation_segment_routes_v1.py
 ```
 
-Target dialogue edit:
+Persistent table:
 
 ```text
-writes TargetDialogue
-sets MANUAL + READY
-invalidates old TTS audio
-resolves LOCALIZATION issue
+v2_generation_segments
 ```
 
-### Target voice runtime
-
-Runtime profile:
+Compile boundary:
 
 ```text
-QWEN3_TTS_VOICE_DESIGN_CLONE_V1
+SourceDramaSnapshot
++ TargetLocalization
++ TargetDialogue
++ RemakeTimeline
+        ↓
+GenerationSegment
 ```
 
-Workflow:
+Important runtime sizing rules:
 
 ```text
-TargetCharacter
-→ VoiceDesign reference WAV
-→ Qwen3-TTS Base voice-clone prompt
-→ reuse same target-character voice across lines
+H3 render duration: 4..15 seconds
+Target shot >15 seconds: split to balanced GenerationSegments
+Target segment <4 seconds: render >=4 seconds, keep post-trim target
+Ref2VA reference duration: 2..15 seconds
+Reference too short / extension beyond source action: FL2VA path
 ```
 
-Worker is isolated from the main Studio Python environment.
+GenerationSegment stores source direction context, target scene/characters, target dialogue slices, timing strategy, H3 mode and stable freshness fingerprints.
+
+Freshness:
 
 ```text
-scripts/qwen3_tts_worker_v1.py
-http://127.0.0.1:7861 by default
+source_fingerprint
++ target_dialogue_fingerprint
++ target_localization_fingerprint
++ remake_timeline_fingerprint
+        ↓
+upstream_fingerprint
+        ↓
+input_fingerprint
 ```
 
-Main client:
+A stale segment fails closed and must be recompiled.
+
+APIs:
 
 ```text
-engine/app/qwen3_tts_runtime_v1.py
-AI_DRAMA_TTS_BASE_URL
+POST /api/projects/{project_id}/generation-segments/compile
+GET  /api/projects/{project_id}/generation-segments
 ```
 
-Worker absence or unsupported speech language is runtime capability state; it does not create content ReviewIssues.
-
-### Real speech duration
-
-READY audio records:
+### H3 RuntimeManager
 
 ```text
-audio_path
-speech_duration_us
-tts_runtime_profile
-audio_input_signature
+engine/app/h3_runtime_v1.py
 ```
 
-WAV duration is read from actual frame count/sample rate.
-
-### Item-local continuation
-
-`target_dialogue_pipeline_v1` materializes every READY line even if other lines are still REVIEW.
-
-### Freshness
+Default local endpoints:
 
 ```text
-SourceDramaSnapshot fingerprint / source dialogue anchors
-TargetCharacter current definition
-TargetVoiceProfile target_character_signature
-voice_fingerprint
-audio_input_signature
+FL2VA  http://127.0.0.1:30010
+Ref2VA http://127.0.0.1:30011
 ```
 
-TargetCharacter change:
+Runtime responsibilities:
 
 ```text
-AI dialogue -> regenerate
-manual dialogue -> reopen review
-voice reference -> regenerate
-old dialogue WAV -> invalidate
+health check
+request validation
+POST /v1/videos
+GET /v1/videos/{id}
+GET /v1/videos/{id}/content
+atomic local download
 ```
 
-GET/audio APIs fail closed on stale target-character dependencies.
+The main FastAPI process does not load H3 weights.
 
-### R5 APIs
+Diagnostic API:
 
 ```text
-GET  /api/tts/runtime-status
-POST /api/projects/{project_id}/target-dialogue/generate
-POST /api/projects/{project_id}/target-dialogue/generate-text
-POST /api/projects/{project_id}/target-dialogue/materialize-audio
-GET  /api/projects/{project_id}/target-dialogue
-PATCH /api/target-dialogues/{id}
-GET   /api/target-dialogues/{id}/audio
+GET /api/h3/runtime
 ```
 
-Spec: `docs/TARGET_DIALOGUE_TTS_V1.md`.
+### VideoGenerationProvider boundary
 
-## ReviewIssue types currently emitted
+```text
+engine/app/video_generation_provider_v1.py
+engine/app/minimax_h3_provider_v1.py
+```
+
+Dependency direction:
+
+```text
+business code
+→ VideoGenerationProvider
+→ MiniMaxH3Provider
+→ H3RuntimeManager
+→ local SGLang H3
+```
+
+Business code must not call provider-specific HTTP/runtime APIs directly.
+
+## R7 tests / CI
+
+Test:
+
+```text
+engine/tests/v2/test_generation_segment_v1.py
+```
+
+Coverage includes:
+
+```text
+4-15 second H3 duration quantization
+>15 second segment splitting
+FL2VA / Ref2VA condition validation
+MiniMaxH3Provider delegation
+provider terminal status mapping
+```
+
+Dedicated GitHub Actions job:
+
+```text
+r7-generation-segments
+```
+
+Command:
+
+```text
+python -m pytest -q engine/tests/v2/test_generation_segment_v1.py
+```
+
+This isolated job exists because the repository's full historical suite currently contains unrelated stale expectations and missing heavy CI runtime dependencies.
+
+## ReviewIssue types currently relevant
 
 ```text
 SHOT_BOUNDARY
@@ -294,28 +298,10 @@ SPEAKER
 TARGET_CHARACTER
 SCENE_LOCALIZATION
 LOCALIZATION
+DIALOGUE_TIMING
 ```
 
-## Source internals retained
-
-```text
-FFmpeg / FFprobe
-Source PTS
-ShotRevision
-TransVLM runtime/cache
-Reference Clips
-Faster-Whisper
-RapidOCR
-Qwen3-VL Breakdown
-Window / Exact Shot
-P2-E6 Fusion
-G2 Scene Timeline
-Character V10.1
-Final Asset + Shot bindings
-AssetRevision
-P5/P6 compatibility while required
-BackgroundTask
-```
+ReviewIssue is attention state, never the authoritative business row.
 
 ## Semantic invariants
 
@@ -329,41 +315,34 @@ TargetDialogue != source Dialogue
 ReviewIssue != domain truth
 same-Shot people cannot be merged by downstream hints
 SourceDramaSnapshot contains no target truth
+Shot != GenerationSegment
 ```
 
 ## Current missing frontier
 
+R7 foundation is implemented. Next:
+
 ```text
-R6 Dialogue Timing Engine + RemakeTimeline
-R7 MiniMax H3 RuntimeManager
-R8 H3 ContextCompiler + GenerationSegment
-R9 H3 QC / retry
+R8 H3 Context Compiler
+→ GenerationAttempt / output persistence
+→ materialize Ref2VA video/image/audio conditions
+→ materialize FL2VA start/end/continuation keyframes
+→ real H3 submit / status poll / output download
+R9 H3 QC / automatic retry / selected output
 R10 Lip Sync + subtitle/audio/assembly/export
 R11 legacy cleanup
 ```
 
-Mandatory rule:
+`GenerationSegment.reference_url` is an internal Studio reference and must be resolved to a real local H3 condition by R8; it must not be forwarded blindly to SGLang.
+
+## Acceptance boundary
+
+Repository implementation is not local H3 acceptance.
+
+R7 repository acceptance:
 
 ```text
-Shot != GenerationSegment
+python -m pytest -q engine/tests/v2/test_generation_segment_v1.py
 ```
 
-## Local acceptance
-
-No repository edit is FINAL PASS by itself.
-
-R5 commands:
-
-```text
-python -m pytest engine/tests/v2/test_target_dialogue_v1.py -q
-python -m pytest engine/tests/v2/test_target_dialogue_routes_v1.py -q
-python -m pytest engine/tests/v2/test_qwen3_tts_runtime_v1.py -q
-
-cd frontend
-npm run typecheck
-npm run build
-```
-
-Then run a real project with local Qwen/Qwen3-TTS and inspect actual WAVs / `speech_duration_us`.
-
-Hosted GitHub Actions are not acceptance evidence.
+Local model acceptance requires the user's actual H3 environment and will begin only when R8 implements real submission/persistence.
