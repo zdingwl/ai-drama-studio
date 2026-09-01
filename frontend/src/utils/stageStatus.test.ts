@@ -13,7 +13,7 @@ describe('deriveStageStates', () => {
     expect(states[1]).toBe('completed')
     expect(states[2]).toBe('not_started')
     expect(states[3]).toBe('not_started')
-    expect(states[4]).toBe('planned')
+    expect(states[4]).toBe('not_started')
   })
 
   it('marks stage two complete only when every episode has a current READY run on the current ShotRevision', () => {
@@ -262,5 +262,64 @@ describe('deriveStageStates', () => {
     })
 
     expect(states[3]).toBe('processing')
+  })
+
+  it('marks Stage 04 editing when at least one current draft is in progress', () => {
+    const states = deriveStageStates({
+      episodes: [
+        { id: 'E1', shot_count: 10, preprocess_status: 'READY' },
+        { id: 'E2', shot_count: 10, preprocess_status: 'READY' },
+      ],
+      tasks: [],
+      analysis: null,
+      localizationDrafts: [
+        { episode_id: 'E1', status: 'DRAFT', stale: false, progress: { total: 8, pending: 3 } },
+      ],
+    })
+
+    expect(states[4]).toBe('editing')
+  })
+
+  it('marks Stage 04 review when a draft is in review', () => {
+    const states = deriveStageStates({
+      episodes: [{ id: 'E1', shot_count: 10, preprocess_status: 'READY' }],
+      tasks: [],
+      analysis: null,
+      localizationDrafts: [
+        { episode_id: 'E1', status: 'IN_REVIEW', stale: false, progress: { total: 8, pending: 0 } },
+      ],
+    })
+
+    expect(states[4]).toBe('review')
+  })
+
+  it('blocks Stage 04 when its immutable source anchor is stale', () => {
+    const states = deriveStageStates({
+      episodes: [{ id: 'E1', shot_count: 10, preprocess_status: 'READY' }],
+      tasks: [],
+      analysis: null,
+      localizationDrafts: [
+        { episode_id: 'E1', status: 'DRAFT', stale: true, progress: { total: 8, pending: 0 } },
+      ],
+    })
+
+    expect(states[4]).toBe('blocked')
+  })
+
+  it('marks Stage 04 complete only when every episode is FINAL', () => {
+    const states = deriveStageStates({
+      episodes: [
+        { id: 'E1', shot_count: 10, preprocess_status: 'READY' },
+        { id: 'E2', shot_count: 9, preprocess_status: 'READY' },
+      ],
+      tasks: [],
+      analysis: null,
+      localizationDrafts: [
+        { episode_id: 'E1', status: 'FINAL', stale: false, progress: { total: 8, pending: 0 } },
+        { episode_id: 'E2', status: 'FINAL', stale: false, progress: { total: 6, pending: 0 } },
+      ],
+    })
+
+    expect(states[4]).toBe('completed')
   })
 })
