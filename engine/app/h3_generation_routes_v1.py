@@ -10,6 +10,7 @@ from engine.app.generation_attempt_v1 import GenerationAttemptError, get_generat
 from engine.app.generation_segment_v1 import GenerationSegmentError, get_generation_segments_v1
 from engine.app.h3_context_compiler_v1 import H3ContextCompilerError, compile_h3_context_v1
 from engine.app.h3_context_contract_v1 import GenerationAttemptProjectSummaryV1, H3CompiledContextV1
+from engine.app.h3_qc_routes_v1 import router as h3_qc_router
 from engine.app.h3_qc_v1 import H3QualityError, run_generation_with_qc_v1
 from engine.app.minimax_h3_provider_v1 import get_video_generation_provider_v1
 from engine.app.studio_v2 import get_project
@@ -25,6 +26,7 @@ from engine.app.task_progress_v2 import (
 
 
 router = APIRouter(prefix="/api", tags=["h3-generation"])
+router.include_router(h3_qc_router)
 H3_BATCH_TASK_TYPE = "H3_GENERATE_READY_V1"
 _HEAVY_TASK_TYPES = {
     H3_BATCH_TASK_TYPE,
@@ -50,8 +52,6 @@ def _http_error(exc: Exception) -> HTTPException:
 
 
 def _required_runtime_modes(plan: dict) -> set[str]:
-    # FL2VA is always required because target-character / localized-scene references are
-    # generated through text-to-video on the FL2VA service before Ref2VA can use them.
     modes = {"FL2VA"}
     for episode in plan.get("episodes") or []:
         for segment in episode.get("segments") or []:
