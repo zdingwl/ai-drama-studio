@@ -88,7 +88,16 @@ async function removeEpisode(episode: Episode): Promise<void> {
 }
 
 function goToBreakdown(): void {
-  void router.replace({ query: { ...route.query, stage: '2' } })
+  const firstReadyEpisode = props.project.episodes.find((episode) => episode.shot_count > 0) ?? props.project.episodes[0] ?? null
+  const query = { ...route.query } as Record<string, string | string[] | null | undefined>
+  query.stage = '2'
+  query.breakdown_view = totalShots.value > 0 ? 'result' : 'shots'
+  if (firstReadyEpisode) query.episode = firstReadyEpisode.id
+  delete query.asset_tab
+  delete query.asset_episode
+  delete query.asset_filter
+  delete query.asset_shot
+  void router.replace({ query })
 }
 </script>
 
@@ -152,7 +161,7 @@ function goToBreakdown(): void {
       <footer class="source-next-step">
         <div>
           <small>下一步</small>
-          <strong>进入「02 剧情与镜头」检查切点并查看拉片结果</strong>
+          <strong>{{ totalShots > 0 ? '直接进入「02 剧情与镜头」查看拉片结果' : '进入「02 剧情与镜头」开始镜头切分与拉片' }}</strong>
         </div>
         <button class="primary-button" @click="goToBreakdown">进入剧情与镜头 →</button>
       </footer>
