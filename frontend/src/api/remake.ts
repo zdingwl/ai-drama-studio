@@ -1,5 +1,10 @@
 import type {
+  GenerationAttemptSummary,
+  GenerationSegmentPlan,
+  H3RuntimeStatus,
   ProjectRemakePolicy,
+  RemakeEpisodeTimeline,
+  RemakeProjectTimeline,
   ReviewIssue,
   ReviewIssueStatus,
   SceneLocalizationMapping,
@@ -8,6 +13,7 @@ import type {
   TargetDialogue,
   TargetDialogueBundle,
   TargetLocalizationBundle,
+  TimingStrategy,
   TtsRuntimeStatus,
 } from '../types/remake'
 import type { BackgroundTask } from '../types/studio'
@@ -83,4 +89,21 @@ export const remakeApi = {
   }),
   targetDialogueAudioUrl: (id: string) => `/api/target-dialogues/${id}/audio`,
   getTtsRuntimeStatus: () => request<TtsRuntimeStatus>('/api/tts/runtime-status'),
+  getRemakeTimeline: (projectId: string) => request<RemakeProjectTimeline>(`/api/projects/${projectId}/remake-timeline`),
+  generateRemakeTimeline: (projectId: string) => request<RemakeProjectTimeline>(`/api/projects/${projectId}/remake-timeline/generate`, { method: 'POST' }),
+  updateRemakeShotTiming: (
+    timelineId: string,
+    shotPlanId: string,
+    payload: { strategy: TimingStrategy; planned_duration_us: number; carry_over_shot_key?: string | null; reason?: string | null },
+  ) => request<RemakeEpisodeTimeline>(`/api/remake-timelines/${timelineId}/shots/${shotPlanId}`, {
+    method: 'PATCH',
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  }),
+  getGenerationSegments: (projectId: string) => request<GenerationSegmentPlan>(`/api/projects/${projectId}/generation-segments`),
+  compileGenerationSegments: (projectId: string) => request<GenerationSegmentPlan>(`/api/projects/${projectId}/generation-segments/compile`, { method: 'POST' }),
+  getH3RuntimeStatus: () => request<H3RuntimeStatus>('/api/h3/runtime'),
+  listGenerationAttempts: (projectId: string) => request<GenerationAttemptSummary>(`/api/projects/${projectId}/generation-attempts`),
+  startH3Generation: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/h3-generate-ready`),
+  generationAttemptVideoUrl: (attemptId: string) => `/api/generation-attempts/${attemptId}/video`,
 }
