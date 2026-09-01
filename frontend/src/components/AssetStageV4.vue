@@ -21,6 +21,8 @@ type CharacterModelStatus = F05ModelStatus & {
   final_policy?: string
 }
 
+type AssetWorkspaceMode = 'review' | 'people'
+
 const status = ref<CharacterModelStatus | null>(null)
 const loading = ref(true)
 const preparing = ref(false)
@@ -28,6 +30,7 @@ const error = ref('')
 const resolvedCount = ref(0)
 const unresolvedEvidenceCount = ref(0)
 const analysisProfile = ref('')
+const workspaceMode = ref<AssetWorkspaceMode>('review')
 
 const missingModels = computed(() => (status.value?.models ?? []).filter((item) => !item.ready))
 const runtimeLabel = computed(() => {
@@ -140,6 +143,20 @@ onUnmounted(() => {
 
     <div v-if="error" class="character-v4-error">{{ error }}</div>
 
+    <nav class="asset-workspace-tabs" aria-label="资产工作区">
+      <button :class="{ active: workspaceMode === 'review' }" type="button" @click="workspaceMode = 'review'">
+        <strong>待处理与绑定</strong>
+        <span>优先检查人物、场景、道具是否绑定正确</span>
+      </button>
+      <button :class="{ active: workspaceMode === 'people' }" type="button" @click="workspaceMode = 'people'">
+        <strong>人物结果</strong>
+        <span>{{ resolvedCount }} 个最终人物<template v-if="unresolvedEvidenceCount"> · {{ unresolvedEvidenceCount }} 条待归属证据</template></span>
+      </button>
+    </nav>
+
+    <AssetReviewMatrixV4 v-if="workspaceMode === 'review'" :project-id="props.projectId" :episodes="props.episodes" />
+    <CharacterPersonGalleryV10 v-else :project-id="props.projectId" />
+
     <details v-if="status" class="asset-runtime-details">
       <summary>识别技术信息</summary>
       <div class="asset-runtime-grid">
@@ -153,9 +170,6 @@ onUnmounted(() => {
       <p v-if="status.runtime?.fallback">当前正在使用 CPU fallback；结果逻辑不变，但处理速度会更慢。</p>
       <p>人物身份仍遵守 Final Character Gate：动态表情、动作、姿态、说话状态和画面位置不能作为身份主键。</p>
     </details>
-
-    <CharacterPersonGalleryV10 :project-id="props.projectId" />
-    <AssetReviewMatrixV4 :project-id="props.projectId" :episodes="props.episodes" />
   </div>
 </template>
 
@@ -207,8 +221,32 @@ onUnmounted(() => {
 }
 .asset-prepare-button:disabled { opacity: .6; cursor: wait; }
 .character-v4-error { margin: 8px 22px 0; padding: 8px 11px; border-radius: 8px; background: #fff0f0; color: #b53a3a; font-size: 12px; }
+.asset-workspace-tabs {
+  margin: 10px 22px 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.asset-workspace-tabs button {
+  min-width: 0;
+  min-height: 52px;
+  display: grid;
+  gap: 2px;
+  align-content: center;
+  border: 1px solid #dde3eb;
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: #fff;
+  color: #536176;
+  text-align: left;
+  cursor: pointer;
+}
+.asset-workspace-tabs button:hover { border-color: #bfcce0; background: #fafcff; }
+.asset-workspace-tabs button.active { border-color: #8fa9df; background: #eef4ff; box-shadow: inset 3px 0 0 #5d82d6; }
+.asset-workspace-tabs strong { color: #354965; font-size: 13px; }
+.asset-workspace-tabs span { overflow: hidden; color: #8490a2; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .asset-runtime-details {
-  margin: 8px 22px 0;
+  margin: 10px 22px 18px;
   border: 1px solid #e1e6ed;
   border-radius: 10px;
   background: #fff;
