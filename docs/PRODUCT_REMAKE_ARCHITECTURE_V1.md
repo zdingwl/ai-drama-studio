@@ -1,13 +1,13 @@
 # AI Drama Studio — Localized Remake Architecture V1
 
-Status: CURRENT PRODUCT DIRECTION  
+Status: **CURRENT PRODUCT DIRECTION**  
 Date: 2026-09-01
 
 ## 1. Product definition
 
-AI Drama Studio is not a generic video-analysis platform and not a simple dubbing tool.
+AI Drama Studio is a localized short-drama remake system, not a generic video-analysis platform and not a simple dubbing tool.
 
-The product receives an existing short drama, understands its story and directing structure, then remakes a new localized drama for the Project target language and target region.
+The product receives an existing short drama, understands its story/directing structure, then remakes a new localized drama for the Project target language and target region.
 
 The source drama is used as:
 
@@ -24,7 +24,7 @@ The target drama changes:
 - dialogue language: always target language;
 - voice: target character voice;
 - lip movement: synced to final target audio;
-- scene: KEEP / LOCALIZE / AUTO according to project policy;
+- scene: KEEP / LOCALIZE / AUTO according to Project policy;
 - timeline: may change because target-language speech duration differs from source speech.
 
 Final video generation engine: **local MiniMax H3**.
@@ -35,40 +35,44 @@ Final video generation engine: **local MiniMax H3**.
 
 > Only uncertain, conflicting, high-risk, or repeatedly failed results enter the human Review Center.
 
-Internal implementation layers may remain complex, but the ordinary user flow must stay simple.
+Internal implementation layers may stay complex, but the ordinary-user flow must stay simple.
 
 ## 3. User-facing workflow
 
 The main UI has only three primary work areas:
 
-1. **Project**
-   - project name;
-   - source language;
-   - target language;
-   - target region;
-   - scene localization policy;
-   - episode import / reorder / delete;
-   - one-click automatic processing.
+### Project
 
-2. **Review Center**
-   - only issues that need human judgement;
-   - shot boundary correction;
-   - character identity merge/split/confirmation;
-   - Shot Character/Scene/Prop binding correction;
-   - speaker correction;
-   - localization ambiguity;
-   - dialogue timing conflict;
-   - H3 QC failures;
-   - lip-sync QC failures.
+- project name;
+- source language;
+- target language;
+- target region;
+- scene localization policy;
+- Episode import / reorder / delete;
+- one-click automatic processing.
 
-3. **Output**
-   - generation progress;
-   - failed/retried segments;
-   - selected generations;
-   - episode preview;
-   - export.
+### Review Center
 
-Legacy Stage 01-06 components remain temporarily available as advanced/compatibility tools but no longer define product architecture.
+Only issues needing human judgement:
+
+- shot boundary correction;
+- character identity merge/split/confirmation;
+- Shot Character/Scene/Prop binding correction;
+- speaker correction;
+- localization ambiguity;
+- dialogue timing conflict;
+- H3 QC failures;
+- lip-sync QC failures.
+
+### Output
+
+- generation progress;
+- failed/retried segments;
+- selected generations;
+- Episode preview;
+- export.
+
+Legacy Stage 01-06 components remain compatibility/advanced tools while migration is incomplete.
 
 ## 4. Automatic pipeline
 
@@ -83,9 +87,9 @@ Shot QC
         ↓
 ASR + OCR + Qwen3-VL
         ↓
-Source Drama Snapshot
+Character / Scene / Prop extraction and safe binding
         ↓
-Character / Scene / Prop extraction and binding
+SourceDramaSnapshot
         ↓
 Target Character / Target Scene localization
         ↓
@@ -114,13 +118,13 @@ Any stage that cannot decide safely creates a `ReviewIssue` instead of a new pro
 
 ## 5. Existing code that remains authoritative internally
 
-The following existing capabilities remain valuable and should not be removed merely because their old Stage/P/G names are no longer product concepts:
+Keep the accepted capabilities that already work:
 
 - FFmpeg / FFprobe media handling;
 - Source PTS time authority;
 - ShotRevision and manual Shot edits;
 - current TransVLM/shot detection runtime and cache;
-- Reference Clip renderer;
+- frame-exact Reference Clip renderer;
 - Faster-Whisper ASR;
 - RapidOCR;
 - Qwen3-VL Breakdown;
@@ -129,56 +133,107 @@ The following existing capabilities remain valuable and should not be removed me
 - Character V10.1 Person Evidence / tracking / ReID;
 - Final Character/Scene/Prop and Shot bindings;
 - AssetRevision history;
-- Localization source immutability and revision safety;
+- existing P5/P6 safety/read layers while the migration facade still consumes them;
 - persistent BackgroundTask / progress infrastructure.
 
-These are implementation modules, not user workflow stages.
+These are implementation modules, not product workflow stages.
 
-## 6. Current new V1 foundation on main
+## 6. Current implemented remake foundation
 
-Added on 2026-09-01:
+### ProjectRemakePolicy
 
-- `ProjectRemakePolicy`
-  - `scene_policy = AUTO | KEEP | LOCALIZE`
-  - `character_policy = LOCALIZE`
-  - `generation_engine = MINIMAX_H3_LOCAL`
-- unified `ReviewIssue` queue;
-- automatic Shot/Asset/Character issue synchronization;
-- one-click `AUTO_REMAKE_PREP_V1` source-analysis task;
-- V4 project list and studio shell;
-- main UI reduced to Project / Review / Output.
+```text
+scene_policy = AUTO | KEEP | LOCALIZE
+character_policy = LOCALIZE
+generation_engine = MINIMAX_H3_LOCAL
+```
 
-The current one-click task covers:
+### Unified ReviewIssue
+
+Current automatic source-side issue types:
+
+```text
+SHOT_BOUNDARY
+CHARACTER_IDENTITY
+ASSET_BINDING
+SPEAKER
+```
+
+### One-click source understanding
+
+```text
+AUTO_REMAKE_PREP_V1
+```
+
+Current chain:
 
 ```text
 Preprocess
 → Shot Detection
-→ Breakdown (ASR/OCR/Qwen3-VL/Fusion)
+→ Breakdown ASR/OCR/Qwen3-VL/Fusion
 → Character/Scene/Prop extraction
-→ ReviewIssue synchronization
+→ Final Asset application
+→ source-side ReviewIssue sync
+→ SourceDramaSnapshot
 ```
 
-It does **not yet** mean the full remake pipeline is complete.
+### Formal V4 UI
 
-## 7. Next backend data model
+```text
+Project
+Review Center
+Output
+```
 
-### 7.1 SourceDramaSnapshot
+## 7. SourceDramaSnapshot V1 — IMPLEMENTED
 
-Create one stable downstream read model that hides P5/P6/P7 naming and exposes only information needed to remake the drama:
+R2 is implemented on `main`; local/real-material acceptance is still pending.
 
-- episode / scene / shot;
+The Snapshot is the single product-facing source read model:
+
+```text
+G2 / P5 / P6 / Final Asset internals
+                ↓
+      SourceDramaSnapshot V1
+                ↓
+all future remake models
+```
+
+It is a deterministic current read facade, **not** another duplicate business-truth database.
+
+Episode endpoint:
+
+```text
+GET /api/episodes/{episode_id}/source-drama-snapshot
+```
+
+Project endpoint:
+
+```text
+GET /api/projects/{project_id}/source-drama-snapshot
+```
+
+It exposes:
+
+- Episode / Scene / Shot hierarchy;
 - source timing;
-- Reference Video;
-- source characters;
-- final source Character/Scene/Prop binding where known;
+- ShotRevision and Reference Video anchors;
+- source people and safely resolved Final Character identity;
+- Final Scene/Prop overlays when current bindings support them;
 - action/performance;
-- source dialogue and speaker;
+- verbatim source dialogue;
+- speaker person keys;
 - OCR;
-- cinematography.
+- cinematography;
+- deterministic `source_fingerprint`.
 
-P5/P6/P7 may continue implementing this internally until migration is complete.
+Target-side fields are forbidden from the Contract.
 
-### 7.2 TargetCharacter
+Downstream persisted models must store the source fingerprint and become stale when the current source fingerprint changes.
+
+Detailed contract: `docs/SOURCE_DRAMA_SNAPSHOT_V1.md`.
+
+## 8. Next model: TargetCharacter
 
 Source Character and localized Target Character must be separate entities.
 
@@ -188,97 +243,150 @@ Source Character
 Target Character
 ```
 
-TargetCharacter owns:
+TargetCharacter should own:
 
-- localized name/identity;
+- `source_character_id`;
+- source snapshot fingerprint anchor;
+- localized character name/identity;
 - target-region appearance design;
-- reference images/video;
-- target voice;
-- stable generation identity.
+- stable reference images/video;
+- target voice identity;
+- generation identity/status.
 
-### 7.3 SceneLocalizationMapping
+Source Character rows must never be renamed/repainted into target characters.
+
+High-confidence automatic design can proceed without a page. Main cast identity/design ambiguity creates ReviewIssue.
+
+## 9. SceneLocalizationMapping
+
+Scene policy is Project-level:
 
 ```text
-source_scene_id
-policy = KEEP | LOCALIZE
-target_scene_id / target scene references
+AUTO
+KEEP
+LOCALIZE
 ```
 
-AUTO policy resolves to KEEP or LOCALIZE and creates ReviewIssue only when ambiguous/high-risk.
+Per source Scene the system resolves:
 
-### 7.4 TargetDialogue
+```text
+source_scene_key
+source_final_scene_id when available
+requested_policy
+resolved_policy = KEEP | LOCALIZE
+source_fingerprint
+localized scene design/references when needed
+```
 
-Target dialogue must not be treated as a text-only translation field.
+`AUTO` should normally resolve automatically from visible regional/cultural evidence. Only ambiguous/high-risk decisions enter Review Center.
+
+## 10. TargetDialogue
+
+Target dialogue is not just a translation string.
 
 It needs:
 
-- source dialogue anchor;
+- source `dialogue_key`;
+- source fingerprint;
 - translated text;
 - localized/final text;
-- character/speaker;
-- voice;
+- target Character / Voice;
 - generated audio path;
-- speech duration;
-- timing quality status.
+- real speech duration;
+- timing quality/status.
 
-### 7.5 RemakeTimeline
+The source text in SourceDramaSnapshot is immutable.
+
+## 11. Dialogue timing is first-class
+
+Do not force target speech into source duration.
+
+```text
+source dialogue
+→ translation/localization
+→ TTS
+→ real target speech duration
+→ compare with Shot/reaction time
+→ choose timing strategy
+```
+
+Timing strategies:
+
+```text
+KEEP
+REWRITE_SHORTER
+TRIM
+EXTEND
+CARRY_OVER_REACTION
+REGENERATE_EXTENSION
+HUMAN_REVIEW
+```
+
+Preferred order:
+
+1. wording optimization without semantic loss;
+2. use existing pauses/available time;
+3. carry audio across reaction shots when editorially valid;
+4. naturally extend/regenerate the visual;
+5. ReviewIssue when no safe automatic strategy exists.
+
+Never solve this by globally slowing video or unnaturally accelerating speech.
+
+## 12. RemakeTimeline
 
 Source timeline is not final timeline.
 
-Each shot/segment needs:
+Each planned Shot needs:
 
-- `source_duration_us`;
-- `target_speech_duration_us`;
-- `planned_duration_us`;
-- `timing_strategy`.
+```text
+source_shot_key
+source_duration_us
+target_speech_duration_us
+planned_duration_us
+timing_strategy
+```
 
-Timing strategies include:
+The complete target Episode duration may differ from the source Episode duration.
 
-- KEEP;
-- REWRITE_SHORTER;
-- TRIM;
-- EXTEND;
-- CARRY_OVER_REACTION;
-- REGENERATE_EXTENSION;
-- HUMAN_REVIEW.
+## 13. GenerationSegment
 
-### 7.6 GenerationSegment
+Critical rule:
 
-`Shot != GenerationSegment`.
+```text
+Shot != GenerationSegment
+```
 
-Shot is the source directing/editing unit. GenerationSegment is the actual H3 generation unit and may contain one or more short Shots or a generated extension around a Shot.
+Shot is the source directing/editing unit. GenerationSegment is the actual H3 generation unit and may cover one Shot, multiple short Shots, or an extension/repair around a Shot.
 
 GenerationSegment needs:
 
 - source Shot references;
 - Reference Video(s);
-- target character references;
-- target scene references;
+- Target Character references;
+- Target Scene references when localized;
 - target audio;
 - target duration;
 - H3 mode;
-- prompt/context package;
+- compiled generation context;
 - generation versions;
 - QC state;
 - selected output.
 
-## 8. MiniMax H3 integration target
-
-Create internal modules rather than product pages:
+## 14. MiniMax H3 integration target
 
 ### H3RuntimeManager
 
-- local model status;
-- model paths;
+- local model paths/status;
 - GPU/runtime capability;
-- start/stop/load state;
+- load/start/stop state;
+- local task queue;
 - Ref2VA execution;
 - FL2VA execution;
-- local queue and failure handling.
+- failure handling.
 
 ### H3ContextCompiler
 
-Compile AI Drama Studio structured remake data into H3 inputs:
+Compile structured remake data into:
 
 ```text
 Reference Video
@@ -296,36 +404,11 @@ Reference Video
 - retry policy;
 - QC;
 - selected output;
-- later high-resolution regeneration path when available.
+- future high-resolution regeneration path.
 
-## 9. Dialogue timing is a first-class subsystem
+## 15. ReviewIssue contract
 
-Do not force target dialogue into the original duration.
-
-Required flow:
-
-```text
-source dialogue
-→ translation/localization
-→ TTS
-→ real target speech duration
-→ compare with available shot/reaction time
-→ automatically choose timing strategy
-```
-
-Do not solve long dialogue by globally slowing video or unnaturally accelerating speech.
-
-Preferred strategy order:
-
-1. wording optimization without semantic loss;
-2. use existing pauses/available shot time;
-3. carry audio across reaction shots when editorially valid;
-4. extend/regenerate shot naturally;
-5. human ReviewIssue when no safe automatic strategy exists.
-
-## 10. ReviewIssue contract
-
-All future uncertain stages publish to one queue.
+ReviewIssue is an attention queue, not a second truth database.
 
 Core fields:
 
@@ -343,35 +426,55 @@ editable_payload
 resolution
 ```
 
-Issue types will grow to include:
+Current and planned types:
 
-- SHOT_BOUNDARY;
-- CHARACTER_IDENTITY;
-- ASSET_BINDING;
-- SPEAKER;
-- LOCALIZATION;
-- DIALOGUE_TIMING;
-- H3_QC;
-- LIP_SYNC_QC.
+```text
+SHOT_BOUNDARY
+CHARACTER_IDENTITY
+ASSET_BINDING
+SPEAKER
+LOCALIZATION
+DIALOGUE_TIMING
+H3_QC
+LIP_SYNC_QC
+```
 
-Domain-specific correction APIs remain authoritative. ReviewIssue records attention and resolution state; it must not become a second copy of Character/Shot/Dialogue truth.
+Domain correction APIs remain authoritative.
 
-## 11. Removal policy
+## 16. Removal policy
 
 Do not mass-delete legacy code yet.
 
-Safe cleanup order:
+Safe order:
 
-1. new V4 user workflow becomes stable;
-2. new downstream models stop depending on legacy user-facing Stage contracts;
-3. global import/API/test search confirms a legacy component is no longer required;
+1. V4 workflow stays stable;
+2. downstream remake models depend on SourceDramaSnapshot instead of legacy user-facing Stage contracts;
+3. global import/API/test search confirms a legacy layer is no longer required;
 4. remove legacy UI;
-5. then remove compatibility backend layers only after dependencies are migrated.
+5. remove compatibility backend layers only after dependencies are migrated.
 
-The backup branch created before this restructuring is:
+Backup branch:
 
-`backup/pre-h3-remake-restructure-2026-09-01`
+```text
+backup/pre-h3-remake-restructure-2026-09-01
+```
 
-It points to pre-restructure main commit:
+Pre-restructure commit:
 
-`37944c693a08c6ff292b08e1f73b1249812cabae`
+```text
+37944c693a08c6ff292b08e1f73b1249812cabae
+```
+
+## 17. Current development order
+
+```text
+R2 SourceDramaSnapshot                  = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
+R4 TargetCharacter + SceneMapping       = NEXT
+R5 target dialogue + TTS                = NOT STARTED
+R6 Dialogue Timing + RemakeTimeline     = NOT STARTED
+R7 local MiniMax H3 RuntimeManager      = NOT STARTED
+R8 H3 ContextCompiler + Generation      = NOT STARTED
+R9 automatic QC / retry                 = NOT STARTED
+R10 Lip Sync + assembly / export        = NOT STARTED
+R11 legacy cleanup                      = LATER
+```
