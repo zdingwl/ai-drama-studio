@@ -84,7 +84,7 @@ def _run_task(task_id: str, project_id: str) -> None:
             status="READY_WITH_WARNINGS" if warning_count else "READY",
             message=(
                 f"R10 后期完成：{result.get('succeeded_now', 0)} 段新完成，"
-                f"{review_count} 段需确认，{waiting_count} 段等待上游"
+                f"{review_count} 段需确认，{waiting_count} 段等待上游/本地模型"
                 if warning_count
                 else f"R10 后期完成：{result.get('succeeded_now', 0)} 段新完成"
             ),
@@ -131,7 +131,10 @@ def api_start_postproduction(project_id: str, background: BackgroundTasks):
     ]
     if not ready:
         raise HTTPException(status_code=409, detail="当前没有可执行的 R10 PostProductionSegment")
-    needs_lip_sync = any(segment.get("lip_sync_mode") == "LATENTSYNC_FULL_SEGMENT" for segment in ready)
+    needs_lip_sync = any(
+        segment.get("lip_sync_mode") in {"LATENTSYNC_FULL_SEGMENT", "LATENTSYNC_TARGET_FACE_ROI"}
+        for segment in ready
+    )
     if needs_lip_sync:
         runtime = get_lip_sync_provider_v1().status()
         if not runtime.get("ready"):
