@@ -1,248 +1,211 @@
 # AI Drama Studio — Agent Entry Rules
 
-Current architecture: **Reference Video V2 + Breakdown Fast Grounded V2**.  
-Formal Character baseline: **Character V10.1 + explicit Shot Character Assignment**.
+Current product architecture: **Localized Remake V1 + local MiniMax H3 target runtime**.
 
-## 1. Executable CURRENT
-
-```text
-P1/P2 implementation acceptance       = CONDITIONAL PASS
-Fast Grounded G1                      = REAL ACCEPTED / PRODUCTION / FROZEN
-Window Context                        = Segment-index v4 / accepted / frozen
-Exact-Shot                            = Compact-reconstruction v3 / accepted / frozen
-P2-E6 anonymous continuity Fusion     = E6-v2 / real production accepted / frozen
-P2.6 Windows / real-model acceptance  = PASS
-G2.1-G2.5                             = FINAL PASS / FROZEN
-G2.6 ordinary-user result UI          = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
-P4 Draft-guided Scene/Prop            = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-P5 Draft ↔ Character                  = v1 / FINAL PASS / FROZEN
-P6 Final Breakdown read model         = v1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
-P6 Final Character renderer           = IMPLEMENTED / VISUAL ACCEPTANCE PENDING
-P6 Final Scene/Prop fill-back         = IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
-P7.1 Localization Source Package      = v1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
-P7.2 Localization Draft               = v1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
-Stage 04 本土化剧本                  = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
-Stage 05 镜头重制方案                = LOCKED / PLANNED
-Stage 06 生成·质检·交付             = LOCKED / PLANNED
-```
-
-Truth priority:
+The pre-restructure repository state is frozen at:
 
 ```text
-PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests = executable CURRENT
+branch: backup/pre-h3-remake-restructure-2026-09-01
+commit: 37944c693a08c6ff292b08e1f73b1249812cabae
 ```
 
-Do not reopen any frozen layer without a concrete regression.
+## 1. Highest product definition
 
-### Repository workflow
+AI Drama Studio receives an existing short drama, understands its content/directing structure, and remakes a localized short drama for the Project target language and target region.
+
+Source drama provides:
 
 ```text
-Documentation-only synchronization/update:
-  -> edit main directly
-  -> do not create a branch or PR
-
-Code/behavior changes:
-  -> edit main directly by default
-  -> do not create a feature branch or PR by default
-  -> only create/use a branch or PR when the user explicitly asks for one
-
-All commits:
-  -> include [skip ci]
-  -> do not use hosted GitHub Actions as acceptance evidence
+story
+shot/edit structure
+actions/performance
+blocking/composition/camera
+Reference Video
+dialogue relationships
 ```
 
-## 2. Recovery order
-
-Always read repository truth before old chat/history:
+Target drama changes:
 
 ```text
-1. AGENTS.md
-2. SKILL.md
-3. docs/PROJECT_STATE.md
-4. docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-5. relevant current phase docs/contracts
-6. Character docs when relevant
-7. current code/tests
-8. latest docs/sessions/*.md handoff
+characters -> localized Target Characters (required)
+scene -> KEEP / LOCALIZE / AUTO
+language -> target language
+voice -> Target Character voice
+lip movement -> final target audio
+timeline -> may extend/trim/reflow for target speech duration
+video generation -> local MiniMax H3
 ```
 
-For current downstream work also read:
+**Product rule:** if a result can be completed automatically with acceptable confidence, do not make it a separate user page. Only uncertain/conflicting/high-risk/repeatedly failed items enter the Review Center.
+
+Detailed architecture: `docs/PRODUCT_REMAKE_ARCHITECTURE_V1.md`.
+
+## 2. Current ordinary-user UI
+
+The formal main UI is V4:
 
 ```text
-docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md
-docs/P7_LOCALIZATION_SOURCE_V1.md
-docs/P7_LOCALIZATION_DRAFT_V1.md
+ProjectListV4
+ProjectStudioV4
 ```
 
-## 3. Frozen production Breakdown chain
+Only three primary work areas:
 
 ```text
-Episode Current ShotRevision
-→ frozen PROCESSING BreakdownRun
-→ Episode ASR
-→ OCR
-→ one-load Qwen3-VL Fast Grounded
-   ├─ Window Context v4
-   └─ Exact-Shot compact v3
-→ immutable exact-Shot VLM_OUTPUT sidecar
-→ P2-E6-v2 Episode-context Fusion
-→ P1 validator
-→ READY / READY_WITH_WARNINGS
+Project
+Review Center
+Output
 ```
 
-Accepted production reference:
+Legacy Stage 01-06 / P/G UIs remain compatibility/advanced tools only. Do not treat them as the current product workflow.
+
+## 3. Current automatic workflow on main
+
+One-click task:
 
 ```text
-Run = BREAKDOWNRUN_6953039fc8a940b6b239f6475cd537e4
-Episode = EPISODE_0ed6aaca0da4471db0364bd29c3d6a61
-ShotRevision = SHOTREV_1462ac6d9f3948b994fc9bc575fee3a0
-Shots = 30
-Scenes = 2
-LocalSubjects = 4
-same-Shot conflicts = 0
+AUTO_REMAKE_PREP_V1
 ```
 
-## 4. Core semantic rules
+Current executable scope:
 
-> **先看懂，再识别，再回填。**
+```text
+Project/Episodes
+→ automatic preprocess when needed
+→ Current Shot detection / Reference Clips when needed
+→ Breakdown ASR + OCR + Qwen3-VL + Fusion
+→ Character V10.1 / Scene / Prop extraction
+→ Final Asset application under existing safety rules
+→ ReviewIssue synchronization
+```
 
-> **Shot 是最小视觉证据与定位单位，不是连续理解的上下文上限。**
+Current ReviewIssue producers include:
 
-> **Exact-Shot visible fact > Window Context.**
+```text
+SHOT_BOUNDARY
+CHARACTER_IDENTITY
+ASSET_BINDING
+```
 
-> **Scene Timeline 是最终用户阅读拉片结果的主要单位。**
+Future producers will include:
+
+```text
+SPEAKER
+LOCALIZATION
+DIALOGUE_TIMING
+H3_QC
+LIP_SYNC_QC
+```
+
+## 4. Existing accepted internals remain usable
+
+Do not delete or weaken accepted internals merely because their old names are no longer product concepts.
+
+Still valuable:
+
+```text
+FFmpeg / FFprobe
+Source PTS authority
+ShotRevision + manual Shot edits
+TransVLM/current shot runtime + cache
+frame-exact Reference Clip rendering
+Faster-Whisper ASR
+RapidOCR
+Qwen3-VL Breakdown
+Window Context / Exact Shot
+Scene Timeline structured facts
+Character V10.1 Person Evidence / tracking / ReID
+Final Character/Scene/Prop + Shot bindings
+AssetRevision
+Localization immutable-source / revision safety
+BackgroundTask / progress
+```
+
+Previously accepted G1/G2/P5 behavior should stay fail-closed unless a concrete regression or the new remake contract requires a deliberate migration.
+
+## 5. Semantic safety rules that remain valid
 
 ```text
 LocalSubject != Character
 SceneSegmentDraft != Final Scene
 DraftPropHint != Final Prop
 ASR speaker != Character
-raw Evidence / Draft != Final binding truth
-subject_A/B = Shot-local labels only
+raw Evidence != Final binding truth
 same-Shot person observations = hard cannot-link
-G2 Scene-local P1/P2 refs != Character identity
-G2 Scene Timeline != Final Character / Final Scene / Final Prop truth
-ASR-origin DIALOGUE text = verbatim source truth
-OCR-origin text = verbatim source truth
-P7 source_dialogue/source_on_screen_text = immutable downstream source truth
-translated/localized/final copy != source truth
+ASR source text = immutable source truth
+OCR source text = immutable source truth
 ```
 
 Dynamic expression/emotion/action/pose/speaking/screen position/framing are not identity keys.
 
-## 5. Character V10.1 / P5 protection
+Character V10.1 identity safety must not be relaxed simply to reduce ReviewIssues. The product solution for uncertainty is **human confirmation in Review Center**, not unsafe auto-merging.
+
+## 6. New current product data foundations
+
+### ProjectRemakePolicy
 
 ```text
-YOLOX Person Detection
-→ capture-first Person Evidence
-→ mature MOT
-→ YoutuReID project identity
-→ RESOLVED / UNRESOLVED
-→ explicit Shot × known-Character Assignment
-→ Final Character Gate
+scene_policy = AUTO | KEEP | LOCALIZE
+character_policy = LOCALIZE
+generation_engine = MINIMAX_H3_LOCAL
 ```
 
-Never relax same-sample cannot-link, face conflict, >=3 independent evidence/images, ambiguity rules, explicit Shot assignment or Final Gate because of Breakdown/localization hints.
+### ReviewIssue
 
-P5 authority remains one-way:
+Unified attention queue. It is not a second source of domain truth.
+
+Domain correction remains in Shot / Asset / Dialogue / Generation APIs; ReviewIssue records why attention is needed and whether it was resolved.
+
+## 7. Next development frontier
+
+Do **not** continue the old Stage 05 plan.
+
+Next order:
 
 ```text
-Final ShotCharacterBinding
-→ deterministic Scene-local exact presence reconciliation
-→ resolve Breakdown anonymous display when uniquely safe
+R2 SourceDramaSnapshot facade
+R4 TargetCharacter + SceneLocalizationMapping
+R5 automatic target dialogue + TTS
+R6 Dialogue Timing Engine + RemakeTimeline
+R7 local MiniMax H3 RuntimeManager
+R8 H3 ContextCompiler + GenerationSegment
+R9 automatic generation QC / retry
+R10 Lip Sync + audio/subtitle/episode assembly
+R11 legacy cleanup after dependencies are migrated
 ```
 
-P5 never uses prose, ASR names/speaker labels, relationships, appearance summaries or P1/P2 labels as identity authority. **P5 = FINAL PASS / FROZEN.**
+`Shot != GenerationSegment` must be preserved: Shot is source directing/editing structure; GenerationSegment is the actual H3 execution unit.
 
-## 6. P6 boundary
-
-P6 is composition only:
+## 8. Git workflow
 
 ```text
-P5 RESOLVED -> safe Final Character display
-P5 UNRESOLVED -> anonymous 人物N
-all exact Shots in a G2 Scene agree on one Final Scene -> final_scene
-ShotPropBinding -> final_props
-G2 props remain separate observation truth
+Documentation-only change:
+  -> edit main directly
+
+Code/behavior change:
+  -> edit main directly by default
+
+Only create/use another branch or PR when the user explicitly asks.
+
+All commits:
+  -> include [skip ci]
+  -> hosted GitHub Actions are not acceptance evidence
 ```
 
-P6 must never mutate G2/P5/Final bindings or ASR/OCR truth.
+Current requested backup branch must remain untouched unless the user explicitly asks to change it.
 
-## 7. P7 localization boundary
+## 9. Recovery order
 
-### P7.1 immutable source
+Always read repository truth before old chat/history:
 
 ```text
-current P6 read model
-+ Project source_language / target_language / target_region
-→ localization-source-v1
+1. AGENTS.md
+2. SKILL.md
+3. docs/PRODUCT_REMAKE_ARCHITECTURE_V1.md
+4. docs/PROJECT_STATE.md
+5. docs/CURRENT_IMPLEMENTATION_MANIFEST.md
+6. relevant current code/tests
+7. old P/G docs only when maintaining those internals
 ```
 
-P7.1 may carry safe Final Character/Scene/Prop display data but does not infer or rewrite them. Scene-local P* remains internal join state only.
-
-Do not put target copy inside P7.1 source truth.
-
-### P7.2 revisioned target copy
-
-Stage 04 is now executable through append-only Episode Localization Revisions.
-
-Supported state:
-
-```text
-DRAFT -> IN_REVIEW
-IN_REVIEW -> DRAFT or FINAL
-FINAL -> immutable
-```
-
-Supported decisions:
-
-```text
-PENDING
-LOCALIZE
-KEEP_SOURCE
-OMIT
-```
-
-Hard P7.2 rules:
-
-```text
-write request never accepts source_text
-all writes create a new Revision
-base_revision_id prevents lost updates
-DRAFT may save partial translated/localized copy
-IN_REVIEW / FINAL require no PENDING entries
-IN_REVIEW / FINAL require final_text for every LOCALIZE entry
-IN_REVIEW must explicitly return to DRAFT before editing
-source fingerprint mismatch -> stale/read-only -> explicit rebase
-rebase carries edits only across exact source-key/kind/Scene/Shot/time/source-text equality
-```
-
-Stage 04 states:
-
-```text
-no draft -> 未开始
-DRAFT -> 编辑中
-IN_REVIEW -> 待复核
-stale -> 阻塞
-all Episodes FINAL -> 已完成
-```
-
-Stage 05/06 remain locked.
-
-## 8. Current implementation frontier
-
-```text
-1. keep G1 + G2.1-G2.5 + P5 frozen
-2. user-local accept P6 when available
-3. user-local accept P7.1/P7.2 backend + real read-only runners + Stage 04 visual flow
-4. P4 local acceptance remains separately pending
-5. next code frontier = Stage 05 versioned Shot Remake Plan / generation-input contract
-6. Stage 05 must consume FINAL P7.2 copy plus version-safe P6/P7 anchors
-7. keep Stage 06 locked until its own generation/QC/delivery workflow exists
-```
-
-P6 acceptance: `docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md`.  
-P7.1 source: `docs/P7_LOCALIZATION_SOURCE_V1.md`.  
-P7.2 revision workflow: `docs/P7_LOCALIZATION_DRAFT_V1.md`.
-
-Hosted GitHub Actions must not be used; commits use `[skip ci]`.
+When old docs conflict with this file on **product workflow**, this file + `PRODUCT_REMAKE_ARCHITECTURE_V1.md` are authoritative.
