@@ -22,7 +22,8 @@ from engine.app.target_dialogue_v1 import (
 )
 
 
-router = APIRouter(prefix="/api", tags=["target-dialogue"])
+# Mounted by target_localization_routes_v1, whose parent already owns the /api prefix.
+router = APIRouter(tags=["target-dialogue"])
 
 
 class TargetDialogueGenerateRequest(BaseModel):
