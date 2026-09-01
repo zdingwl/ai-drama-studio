@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from engine.app.generation_segment_routes_v1 import router as generation_segment_router
 from engine.app.remake_timeline_routes_v1 import router as remake_timeline_router
 from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError
 from engine.app.target_dialogue_routes_v1 import router as target_dialogue_router
@@ -25,6 +26,7 @@ from engine.app.target_localization_v1 import (
 router = APIRouter(prefix="/api", tags=["target-localization"])
 router.include_router(target_dialogue_router)
 router.include_router(remake_timeline_router)
+router.include_router(generation_segment_router)
 
 
 class TargetCharacterEditRequest(BaseModel):
