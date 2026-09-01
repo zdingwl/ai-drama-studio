@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError
+from engine.app.target_dialogue_routes_v1 import router as target_dialogue_router
 from engine.app.target_localization_contract_v1 import (
     SceneLocalizationMappingV1,
     TargetCharacterV1,
@@ -21,6 +22,7 @@ from engine.app.target_localization_v1 import (
 
 
 router = APIRouter(prefix="/api", tags=["target-localization"])
+router.include_router(target_dialogue_router)
 
 
 class TargetCharacterEditRequest(BaseModel):
