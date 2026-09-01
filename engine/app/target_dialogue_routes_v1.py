@@ -11,7 +11,10 @@ from engine.app.qwen3_tts_runtime_v1 import runtime_status
 from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError
 from engine.app.studio_v2 import get_session
 from engine.app.target_dialogue_contract_v1 import TargetDialogueBundleV1, TargetDialogueV1
-from engine.app.target_dialogue_pipeline_v1 import run_target_dialogue_pipeline_v1
+from engine.app.target_dialogue_pipeline_v1 import (
+    run_target_dialogue_pipeline_v1,
+    validate_target_dialogue_dependencies_v1,
+)
 from engine.app.target_dialogue_v1 import (
     TargetDialogue,
     TargetDialogueError,
@@ -73,6 +76,7 @@ def api_generate_target_dialogue_text(project_id: str):
 @router.post("/projects/{project_id}/target-dialogue/materialize-audio", response_model=TargetDialogueBundleV1)
 def api_materialize_target_dialogue_audio(project_id: str):
     try:
+        validate_target_dialogue_dependencies_v1(project_id)
         return materialize_target_dialogue_audio_v1(project_id)
     except Exception as exc:
         raise _error(exc) from exc
@@ -81,6 +85,7 @@ def api_materialize_target_dialogue_audio(project_id: str):
 @router.get("/projects/{project_id}/target-dialogue", response_model=TargetDialogueBundleV1)
 def api_get_target_dialogue(project_id: str):
     try:
+        validate_target_dialogue_dependencies_v1(project_id)
         return get_target_dialogue_v1(project_id)
     except Exception as exc:
         raise _error(exc) from exc
@@ -100,9 +105,14 @@ def api_target_dialogue_audio(target_dialogue_id: str):
         row = session.get(TargetDialogue, target_dialogue_id)
         if row is None:
             raise HTTPException(status_code=404, detail="目标对白不存在")
+        project_id = row.project_id
         if row.audio_status != "READY" or not row.audio_path:
             raise HTTPException(status_code=409, detail="目标对白音频尚未生成")
         path = Path(row.audio_path)
+    try:
+        validate_target_dialogue_dependencies_v1(project_id)
+    except Exception as exc:
+        raise _error(exc) from exc
     if not path.is_file():
         raise HTTPException(status_code=404, detail="目标对白音频文件不存在，请重新生成")
     return FileResponse(path, media_type="audio/wav", filename=path.name)
