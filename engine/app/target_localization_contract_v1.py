@@ -1,7 +1,7 @@
 """Target-side character/scene localization contract for the remake pipeline.
 
-This layer is downstream of SourceDramaSnapshot.  It never rewrites source Character,
-Scene, Shot, ASR or OCR truth.  It stores only localized remake decisions.
+This layer is downstream of SourceDramaSnapshot. It never rewrites source Character,
+Scene, Shot, ASR or OCR truth. Every row stays anchored to the current source fingerprint.
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ class SceneLocalizationMappingV1(_StrictTargetModel):
     updated_at: str
 
     @model_validator(mode="after")
-    def _localized_scene_has_target_description(self) -> "SceneLocalizationMappingV1":
+    def _valid_decision(self) -> "SceneLocalizationMappingV1":
         if self.decision == "LOCALIZE" and not self.target_description:
             raise ValueError("LOCALIZE scene must provide target_description")
         if self.status == "READY" and self.decision == "REVIEW":
@@ -83,7 +83,7 @@ class TargetLocalizationBundleV1(_StrictTargetModel):
     scene_mappings: list[SceneLocalizationMappingV1] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _counts_match(self) -> "TargetLocalizationBundleV1":
+    def _validate_bundle(self) -> "TargetLocalizationBundleV1":
         if self.target_character_count != len(self.target_characters):
             raise ValueError("target_character_count mismatch")
         if self.scene_mapping_count != len(self.scene_mappings):
@@ -94,6 +94,14 @@ class TargetLocalizationBundleV1(_StrictTargetModel):
             raise ValueError("review_count mismatch")
         if self.status == "READY" and reviews:
             raise ValueError("READY bundle cannot contain review items")
+        if any(item.project_id != self.project_id for item in self.target_characters):
+            raise ValueError("TargetCharacter belongs to another project")
+        if any(item.project_id != self.project_id for item in self.scene_mappings):
+            raise ValueError("SceneLocalizationMapping belongs to another project")
+        if any(item.source_fingerprint != self.source_fingerprint for item in self.target_characters):
+            raise ValueError("TargetCharacter source fingerprint is stale")
+        if any(item.source_fingerprint != self.source_fingerprint for item in self.scene_mappings):
+            raise ValueError("SceneLocalizationMapping source fingerprint is stale")
         return self
 
 
