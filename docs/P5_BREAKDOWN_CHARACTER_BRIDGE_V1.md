@@ -1,6 +1,6 @@
 # P5 Breakdown ↔ Character Safe Bridge V1
 
-Status: **IMPLEMENTED ON MAIN / UNIT CONTRACT PASS / REAL ACCEPTANCE BLOCKED BY MISSING FINAL CHARACTER SHOT BINDINGS**
+Status: **IMPLEMENTED ON MAIN / UNIT CONTRACT PASS / REAL ACCEPTANCE RERUN REQUIRED**
 
 Merged from PR #17. Merge commit: `ab4b11716f5c1c5ead7367119d1b2d787defe8f9`.
 
@@ -121,7 +121,7 @@ Real current Episode inspection:
 python scripts/run_breakdown_p5_character_bridge_acceptance_v1.py EPISODE_0ed6aaca0da4471db0364bd29c3d6a61
 ```
 
-Observed twice on the accepted Episode/Breakdown Run:
+An earlier P5 inspection returned:
 
 ```text
 status = READY
@@ -130,11 +130,30 @@ person_count = 4
 resolved_count = 0
 unresolved_count = 4
 warning = 当前剧集还没有 Final Character Shot 绑定，人物将保持未解析。
-all four people = UNRESOLVED / NO_MATCHING_FINAL_CHARACTER_SIGNATURE
 ```
 
-This is a correct fail-closed P5 result, not a P5 identity guess/regression. Real P5 acceptance is currently blocked upstream because the target Episode has zero usable Final `ShotCharacterBinding` rows. Character V10.1 Shot assignment / Final Gate materialization must be diagnosed and real-video accepted first.
+A later direct read of the same project database disproved the upstream-zero-binding diagnosis. Current observed truth is:
+
+```text
+Content Analysis Run = CONTENT_RUN_d6f66f45b758459cad69207a4eb81e60
+profile = f05-assets-v10.1-person-evidence-model-classification
+status = READY_WITH_WARNINGS
+resolved CharacterCandidates = 3
+current AssetRevision = ASSETREV_d387044c48824c2da67ba61e833dcc6f / revision 14 / AUTO
+Final Characters = 3
+Episode Final ShotCharacterBindings = 29
+
+人物 001 = Shots 3,4,5,6,9,10,11,22
+人物 002 = Shots 7,9,10,12,13,15,16,18,22,23,25,27,28
+人物 003 = Shots 14,17,19,21,24,27,28,30
+```
+
+Therefore Character V10.1 assignment and Final Gate materialization are present for this Episode. The earlier `bindings=0` P5 output is inconsistent with the current database and with the current `main` bridge query, which reads the same `ShotCharacterBinding` table by project + current Episode Shot IDs.
+
+Current acceptance action is to rerun P5 from an up-to-date `main` working tree and review the actual resolved mappings. Do not keep treating Final Binding materialization as the blocker unless a fresh rerun again proves it.
+
+Under the current exact-signature contract and the observed data, Scene 1 `P2` has the same subject-aware Shot signature as Final `人物 001` (`3,4,5,6,9,10,11`) and is expected to resolve. Scene 1 `P1` and both Scene 2 anonymous people do not exactly match a unique Final Character signature and are expected to remain unresolved. This expectation must still be confirmed by the real runner output before marking P5 FINAL PASS.
 
 Acceptance is not based on maximizing `resolved_count`. A correct real result may leave ambiguous people unresolved. Review instead that every `RESOLVED` mapping is visibly correct and that always-co-occurring/ambiguous people are not guessed.
 
-Do not mark P5 FINAL PASS until a real Final-Character-bound project result is reviewed. Do not start P6 while this upstream binding blocker remains.
+Do not mark P5 FINAL PASS until the fresh real Final-Character-bound runner result is reviewed.
