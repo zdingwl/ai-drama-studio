@@ -34,8 +34,18 @@ export function cinematographyItems(value: SceneTimelineCinematography): string[
     .filter(Boolean)
 }
 
+export function personByRef(people: SceneTimelinePerson[], ref: string): SceneTimelinePerson | null {
+  return people.find((person) => person.ref === ref) ?? null
+}
+
 export function personDisplayName(people: SceneTimelinePerson[], ref: string): string {
-  return people.find((person) => person.ref === ref)?.display_name || '人物'
+  return personByRef(people, ref)?.display_name || '人物'
+}
+
+/** Compact fallback used when Final Character has no usable cover image. */
+export function personAvatarText(person: SceneTimelinePerson | null | undefined): string {
+  const name = person?.display_name?.trim().replace(/\s+/g, '') ?? ''
+  return name ? Array.from(name)[0] : '人'
 }
 
 /**
