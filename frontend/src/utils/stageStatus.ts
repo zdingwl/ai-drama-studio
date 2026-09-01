@@ -24,11 +24,18 @@ export interface StageBreakdownRunLike {
   source_shot_revision?: { is_current: boolean } | null
 }
 
+export interface StageAssetWorkspaceLike {
+  status: string
+  stale: boolean
+  revision: unknown | null
+}
+
 export interface StageStatusContext {
   episodes: StageEpisodeLike[]
   tasks: StageTaskLike[]
   analysis: StageAnalysisLike | null
   breakdownRuns?: StageBreakdownRunLike[]
+  assetWorkspace?: StageAssetWorkspaceLike | null
 }
 
 const SHOT_TASK_TYPES = new Set(['EPISODE_SHOTS', 'BATCH_SHOTS'])
@@ -95,13 +102,22 @@ function breakdownStageState(
   return 'not_started'
 }
 
-function assetStageState(analysis: StageAnalysisLike | null, tasks: StageTaskLike[]): StudioStageState {
+function assetStageState(
+  analysis: StageAnalysisLike | null,
+  tasks: StageTaskLike[],
+  workspace: StageAssetWorkspaceLike | null,
+): StudioStageState {
   const task = latestTask(tasks, ASSET_TASK_TYPES)
   if (task && ACTIVE_STATUSES.has(task.status)) return 'processing'
   if (task?.status === 'FAILED') return 'blocked'
   if (task?.status === 'READY_WITH_WARNINGS') return 'review'
 
-  if (!analysis) return task?.status === 'READY' ? 'review' : 'not_started'
+  const workspaceStatus = workspace?.status.toUpperCase() || ''
+  if (ACTIVE_STATUSES.has(workspaceStatus)) return 'processing'
+  if (workspaceStatus === 'FAILED') return 'blocked'
+  if (workspaceStatus === 'READY_WITH_WARNINGS') return 'review'
+
+  if (!analysis) return workspace?.revision ? 'review' : 'not_started'
   const status = analysis.status.toUpperCase()
   if (ACTIVE_STATUSES.has(status)) return 'processing'
   if (status === 'FAILED') return 'blocked'
@@ -109,14 +125,16 @@ function assetStageState(analysis: StageAnalysisLike | null, tasks: StageTaskLik
   if (status !== 'READY') return 'review'
 
   const unresolved = Number(analysis.counts?.unresolved_character_candidates || 0)
-  return unresolved > 0 ? 'review' : 'completed'
+  if (unresolved > 0) return 'review'
+  if (!workspace?.revision || workspace.stale || workspaceStatus !== 'READY') return 'review'
+  return 'completed'
 }
 
 export function deriveStageStates(context: StageStatusContext): Record<number, StudioStageState> {
   return {
     1: sourceStageState(context.episodes),
     2: breakdownStageState(context.episodes, context.tasks, context.breakdownRuns ?? []),
-    3: assetStageState(context.analysis, context.tasks),
+    3: assetStageState(context.analysis, context.tasks, context.assetWorkspace ?? null),
     4: 'planned',
     5: 'planned',
     6: 'planned',
