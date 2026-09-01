@@ -56,7 +56,7 @@ def main() -> int:
 
     payload = BreakdownReadModelV1.model_validate(payload_raw)
 
-    # Rebuild the frozen G2 result independently and prove P6 did not rewrite it.
+    # Rebuild frozen G2 independently and prove P6 never rewrites Timeline truth.
     try:
         draft = get_current_breakdown(args.episode_id)
         if draft is None:
@@ -87,16 +87,29 @@ def main() -> int:
         }, ensure_ascii=False, indent=2))
         return 4
 
-    timeline_scenes = {scene.ordinal: scene for scene in payload.timeline.scenes}
+    identity_by_scene = {scene.scene_ordinal: scene for scene in payload.identity.scenes}
+    final_scene_by_ordinal = {
+        item.scene_ordinal: item.scene
+        for item in payload.assets.scenes
+    } if payload.assets is not None else {}
+    final_props_by_shot = {
+        (item.scene_ordinal, item.shot_ordinal): item.props
+        for item in payload.assets.shots
+    } if payload.assets is not None else {}
+
     scenes: list[dict[str, object]] = []
-    for scene_identity in payload.identity.scenes:
-        timeline_scene = timeline_scenes.get(scene_identity.scene_ordinal)
-        anonymous_by_ref = {
-            person.ref: person.display_name
-            for person in timeline_scene.people
-        } if timeline_scene is not None else {}
+    for timeline_scene in payload.timeline.scenes:
+        scene_identity = identity_by_scene.get(timeline_scene.ordinal)
+        anonymous_by_ref = {person.ref: person.display_name for person in timeline_scene.people}
+        final_scene = final_scene_by_ordinal.get(timeline_scene.ordinal)
         scenes.append({
-            "scene": scene_identity.scene_ordinal,
+            "scene": timeline_scene.ordinal,
+            "g2_title": timeline_scene.title,
+            "final_scene": {
+                "id": final_scene.id,
+                "name": final_scene.name,
+                "cover_url": final_scene.cover_url,
+            } if final_scene is not None else None,
             "people": [
                 {
                     "ref": person.ref,
@@ -108,6 +121,21 @@ def main() -> int:
                     "cover_url": person.character.cover_url if person.character is not None else None,
                 }
                 for person in scene_identity.people
+            ] if scene_identity is not None else [],
+            "shots": [
+                {
+                    "shot": shot.ordinal,
+                    "g2_props": [prop.label for prop in shot.props],
+                    "final_props": [
+                        {
+                            "id": prop.id,
+                            "name": prop.name,
+                            "cover_url": prop.cover_url,
+                        }
+                        for prop in final_props_by_shot.get((timeline_scene.ordinal, shot.ordinal), [])
+                    ],
+                }
+                for shot in timeline_scene.shots
             ],
         })
 
@@ -117,14 +145,22 @@ def main() -> int:
         "episode_id": payload.timeline.episode_id,
         "breakdown_run_id": payload.timeline.source_breakdown_run_id,
         "shot_revision_id": payload.timeline.source_shot_revision_id,
-        "asset_revision_id": payload.identity.asset_revision_id,
+        "identity_asset_revision_id": payload.identity.asset_revision_id,
+        "final_asset_revision_id": payload.assets.asset_revision_id if payload.assets is not None else None,
         "scene_count": payload.timeline.scene_count,
         "shot_count": payload.timeline.shot_count,
         "resolved_count": payload.identity.resolved_count,
         "unresolved_count": payload.identity.unresolved_count,
+        "final_scene_count": sum(
+            1 for item in (payload.assets.scenes if payload.assets is not None else []) if item.scene is not None
+        ),
+        "final_prop_binding_count": sum(
+            len(item.props) for item in (payload.assets.shots if payload.assets is not None else [])
+        ),
         "timeline_preserved": timeline_preserved,
         "timeline_warnings": payload.timeline.warnings,
         "identity_warnings": payload.identity.warnings,
+        "asset_warnings": payload.assets.warnings if payload.assets is not None else [],
         "scenes": scenes,
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
