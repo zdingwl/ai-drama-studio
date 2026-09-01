@@ -37,6 +37,7 @@ class PostProductionDialogueV1(_StrictModel):
     target_character_name: str | None = None
     final_text: str | None = None
     audio_path: str = Field(min_length=1)
+    audio_trim_start_us: int = Field(ge=0)
     start_offset_us: int = Field(ge=0)
     end_offset_us: int = Field(ge=1)
     speaker_visible: bool
