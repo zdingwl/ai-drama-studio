@@ -7,6 +7,7 @@ import AssetReviewInboxV1 from '../components/AssetReviewInboxV1.vue'
 import AssetStageV4 from '../components/AssetStageV4.vue'
 import EpisodeManagerV3 from '../components/EpisodeManagerV3.vue'
 import H3OutputV1 from '../components/H3OutputV1.vue'
+import H3QcReviewV1 from '../components/H3QcReviewV1.vue'
 import ShotWorkbenchV4 from '../components/ShotWorkbenchV4.vue'
 import TargetLocalizationReviewV1 from '../components/TargetLocalizationReviewV1.vue'
 import TaskProgressDock from '../components/TaskProgressDock.vue'
@@ -39,7 +40,7 @@ const activeTask = computed(() => tasks.value.find((task) => task.status === 'QU
 const autoTask = computed(() => tasks.value.find((task) => task.task_type === 'AUTO_REMAKE_PREP_V1') ?? null)
 const openIssueCount = computed(() => issues.value.length)
 const blockingCount = computed(() => issues.value.filter((item) => item.severity === 'BLOCKING').length)
-const domainEditedIssueTypes = new Set(['TARGET_CHARACTER', 'SCENE_LOCALIZATION', 'LOCALIZATION', 'DIALOGUE_TIMING'])
+const domainEditedIssueTypes = new Set(['TARGET_CHARACTER', 'SCENE_LOCALIZATION', 'LOCALIZATION', 'DIALOGUE_TIMING', 'H3_QC'])
 const genericIssues = computed(() => issues.value.filter((item) => !domainEditedIssueTypes.has(item.issue_type)))
 const issueGroups = computed(() => {
   const result: Record<string, number> = {}
@@ -227,12 +228,13 @@ onUnmounted(() => {
 
       <main v-else-if="activeView === 'review'" class="panel">
         <section class="review-head">
-          <div><small>人工只处理异常</small><h1>{{ openIssueCount ? `需要确认 ${openIssueCount} 项` : '当前没有需要人工确认的问题' }}</h1><p>目标人物、目标场景、目标对白和极端镜头时长必须直接修改真实业务数据；不能只关闭提示来绕过问题。</p></div>
+          <div><small>人工只处理异常</small><h1>{{ openIssueCount ? `需要确认 ${openIssueCount} 项` : '当前没有需要人工确认的问题' }}</h1><p>目标人物、目标场景、目标对白、极端镜头时长和自动重试仍失败的 H3 版本，必须修改或采用真实业务结果；不能只关闭提示来绕过问题。</p></div>
           <div class="chips"><span>阻塞 <b>{{ blockingCount }}</b></span><span v-for="(count, key) in issueGroups" :key="key">{{ issueTypeLabel(String(key)) }} <b>{{ count }}</b></span></div>
         </section>
 
         <TargetLocalizationReviewV1 :project-id="project.id" @changed="refresh" />
         <TimingReviewV1 :project-id="project.id" @changed="refresh" />
+        <H3QcReviewV1 :project-id="project.id" @changed="refresh" />
 
         <section v-if="genericIssues.length" class="issues">
           <article v-for="issue in genericIssues" :key="issue.id" :class="{ blocking: issue.severity === 'BLOCKING' }">
@@ -248,14 +250,14 @@ onUnmounted(() => {
       </main>
 
       <main v-else class="panel">
-        <section class="hero"><div><small>生成交付</small><h1>本地 MiniMax H3 重拍整部短剧</h1><p>这里只展示真正需要看的生成进度、失败片段和成功版本；Context、参考资产物化、任务轮询全部在后台自动完成。</p></div></section>
+        <section class="hero"><div><small>生成交付</small><h1>本地 MiniMax H3 重拍整部短剧</h1><p>这里只展示真正可进入后续成片的 Selected Output；Context、参考资产、H3 轮询、结构检查、Qwen3-VL 质检和自动重试都在后台完成。</p></div></section>
         <section class="pipeline">
           <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>01</b><strong>原片理解</strong><span>SourceDramaSnapshot</span></article>
           <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>02</b><strong>目标人物 / 场景</strong><span>TargetCharacter + Scene Mapping</span></article>
           <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>03</b><strong>对白 / TTS / Timing</strong><span>真实目标语音 → RemakeTimeline → GenerationSegment</span></article>
           <article><b>04</b><strong>MiniMax H3</strong><span>Context Compiler + Ref2VA / FL2VA + GenerationAttempt</span></article>
-          <article><b>05</b><strong>Lip Sync / QC</strong><span>下一阶段：自动质检、重试和最终口型</span></article>
-          <article><b>06</b><strong>整集导出</strong><span>字幕 / 混音 / 拼接</span></article>
+          <article><b>05</b><strong>H3 QC / Selected</strong><span>结构硬检 + Qwen3-VL + 自动重试 + 当前可用版本</span></article>
+          <article><b>06</b><strong>Lip Sync / 整集导出</strong><span>下一阶段：口型、字幕、混音、拼接</span></article>
         </section>
         <H3OutputV1 :project-id="project.id" :busy="Boolean(activeTask)" @changed="refresh" />
       </main>
