@@ -1,8 +1,9 @@
 """One-click automatic source understanding + localized remake preparation.
 
-Accepted internal modules stay hidden behind one task. The task now runs through R6:
-source understanding -> target assets -> target dialogue/TTS -> target remake timeline.
-Only uncertain content becomes ReviewIssue; missing runtime audio remains WAITING_AUDIO.
+Accepted internal modules stay hidden behind one task. The task now runs through R7.1:
+source understanding -> target assets -> target dialogue/TTS -> target remake timeline ->
+H3-sized GenerationSegments. Only uncertain content becomes ReviewIssue; missing runtime
+audio remains WAITING_AUDIO and blocks H3 submission without discarding prepared facts.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from engine.app.asset_semantics_p4_v1 import enrich_asset_run, semantic_model_st
 from engine.app.breakdown_p2_pipeline_v1 import run_episode_breakdown_p2
 from engine.app.breakdown_serializer_v1 import get_current_breakdown
 from engine.app.character_review_issue_sync_v1 import sync_character_review_issues
+from engine.app.generation_segment_v1 import compile_generation_segments_v1
 from engine.app.media_v2 import detect_episode_shots, preprocess_episode
 from engine.app.remake_timeline_v1 import generate_remake_timeline_v1
 from engine.app.review_issue_sync_v1 import sync_asset_review_issues, sync_shot_review_issues
@@ -45,7 +47,7 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             task_id,
             stage_key="auto_prepare",
             stage_label="自动理解并规划本土化短剧",
-            message="将自动完成素材、拉片、目标人物/场景、目标对白/TTS 和目标镜头时间轴",
+            message="将自动完成素材、拉片、目标人物/场景、目标对白/TTS、目标镜头时间轴和 H3 生成分段",
         )
 
         # 0-72%: episode media + source understanding.
@@ -229,7 +231,7 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
 
         update_task(
             task_id,
-            progress_percent=99.4,
+            progress_percent=99.2,
             stage_key="auto_remake_timeline",
             stage_label="自动规划目标镜头时间",
             message="正在根据真实目标语音时长自动 KEEP / TRIM / 借反应镜 / EXTEND；极端时长才进入待确认",
@@ -237,6 +239,17 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
         remake_timeline = generate_remake_timeline_v1(project_id)
         timing_review_count = int(remake_timeline.get("review_count") or 0)
         timing_waiting_audio_count = int(remake_timeline.get("waiting_audio_count") or 0)
+
+        update_task(
+            task_id,
+            progress_percent=99.7,
+            stage_key="auto_generation_segments",
+            stage_label="编译 H3 生成分段",
+            message="正在把目标时间轴编译为符合 H3 4-15 秒运行约束的 GenerationSegment；长镜头自动拆段，短镜头保留后裁剪计划",
+        )
+        generation_segments = compile_generation_segments_v1(project_id)
+        generation_segment_review_count = int(generation_segments.get("review_count") or 0)
+        generation_segment_waiting_audio_count = int(generation_segments.get("waiting_audio_count") or 0)
 
         # Timing generation may add DIALOGUE_TIMING issues, so count the final open queue here.
         open_issues = list_review_issues(project_id, status="OPEN")
@@ -262,6 +275,10 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             warnings.append(f"{timing_waiting_audio_count} 个镜头等待真实 TTS 时长后再确定目标时长")
         if timing_review_count:
             warnings.append(f"{timing_review_count} 个镜头时长变化过大，需要人工确认")
+        if generation_segment_waiting_audio_count:
+            warnings.append(f"{generation_segment_waiting_audio_count} 个 H3 生成分段等待目标语音 READY")
+        if generation_segment_review_count:
+            warnings.append(f"{generation_segment_review_count} 个 H3 生成分段仍有上游阻塞，不能提交生成")
 
         result = {
             "project_id": project_id,
@@ -276,6 +293,8 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             "target_dialogue_review_item_count": dialogue_review_count,
             "dialogue_timing_review_item_count": timing_review_count,
             "dialogue_timing_waiting_audio_count": timing_waiting_audio_count,
+            "generation_segment_review_item_count": generation_segment_review_count,
+            "generation_segment_waiting_audio_count": generation_segment_waiting_audio_count,
             "unresolved_character_evidence": unresolved,
             "semantic": semantic_result,
             "source_snapshot": {
@@ -310,14 +329,23 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
                 "waiting_audio_count": timing_waiting_audio_count,
                 "target_dialogue_fingerprint": remake_timeline["target_dialogue_fingerprint"],
             },
+            "generation_segments": {
+                "schema_version": generation_segments["schema_version"],
+                "status": generation_segments["status"],
+                "episode_count": generation_segments["episode_count"],
+                "segment_count": generation_segments["segment_count"],
+                "review_count": generation_segment_review_count,
+                "waiting_audio_count": generation_segment_waiting_audio_count,
+                "upstream_fingerprint": generation_segments["upstream_fingerprint"],
+            },
         }
         finish_task(
             task_id,
             result=result,
             message=(
-                f"自动处理已完成到目标镜头时间轴：{review_issue_count} 项需要人工确认"
+                f"自动处理已完成到 H3 生成分段：{review_issue_count} 项需要人工确认"
                 if review_issue_count
-                else "自动处理已完成到目标镜头时间轴：当前无需人工确认"
+                else "自动处理已完成到 H3 生成分段：当前无需人工确认"
             ),
             status="READY_WITH_WARNINGS" if warnings or review_issue_count else "READY",
         )
