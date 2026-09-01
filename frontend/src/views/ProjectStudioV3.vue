@@ -60,8 +60,6 @@ const reviewStageIds = computed(() => [1, 2, 3].filter((stageId) => {
   const state = stageState(stageId)
   return state === 'review' || state === 'blocked'
 }))
-const activeTaskCount = computed(() => tasks.value.filter((task) => task.status === 'QUEUED' || task.status === 'PROCESSING').length)
-const taskDockVisible = computed(() => tasks.value.some((task) => ['QUEUED', 'PROCESSING', 'FAILED', 'READY_WITH_WARNINGS'].includes(task.status)))
 
 const overallStatus = computed(() => {
   const states = [1, 2, 3].map((stageId) => stageState(stageId))
@@ -215,11 +213,7 @@ onUnmounted(() => {
         </div>
 
         <div class="project-task-center">
-          <TaskProgressDock v-if="taskDockVisible" />
-          <div v-else class="project-task-idle">
-            <span class="task-idle-dot"></span>
-            <div><strong>后台任务</strong><small>{{ activeTaskCount ? `${activeTaskCount} 个进行中` : '当前空闲' }}</small></div>
-          </div>
+          <TaskProgressDock embedded />
         </div>
       </header>
 
@@ -296,8 +290,7 @@ onUnmounted(() => {
 }
 .project-command-context small,
 .command-stat small,
-.next-action-button small,
-.project-task-idle small {
+.next-action-button small {
   color: #8994a4;
   font-size: 10px;
   font-weight: 750;
@@ -383,19 +376,6 @@ onUnmounted(() => {
   background: #fff;
   box-shadow: 0 16px 40px rgba(29, 43, 67, .16);
 }
-.project-task-idle {
-  min-height: 48px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 10px;
-  border: 1px solid #e3e8ef;
-  border-radius: 9px;
-  background: #fafbfc;
-}
-.project-task-idle > div { min-width: 0; display: grid; }
-.project-task-idle strong { color: #465160; font-size: 11px; }
-.task-idle-dot { width: 8px; height: 8px; border-radius: 50%; background: #7fb493; box-shadow: 0 0 0 3px #edf7f1; }
 
 @media (max-width: 1400px) {
   .project-command-bar {
