@@ -1,8 +1,8 @@
 """AI Drama Studio V2 FastAPI 入口。
 
 当前正式范围：多剧集管理、拉片/Reference Clip、SourceDramaSnapshot、目标人物/场景/
-对白本土化、真实 TTS Timing、GenerationSegment，以及本地 MiniMax H3 Context /
-GenerationAttempt 执行。自动工作继续隐藏在 Project / Review / Output 三个产品区域背后。
+对白本土化、真实 TTS Timing、GenerationSegment、本地 MiniMax H3 + R9 QC/Selected Output，
+以及 R10 口型/最终目标音轨 PostProduction。自动工作继续隐藏在 Project / Review / Output 三个产品区域背后。
 """
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ from engine.app.generation_attempt_v1 import recover_interrupted_generation_atte
 from engine.app.generation_segment_routes_v1 import router as generation_segment_router
 from engine.app.h3_generation_routes_v1 import router as h3_generation_router
 from engine.app.media_v2 import MediaPipelineError, detect_episode_shots, preprocess_episode
+from engine.app.postproduction_routes_v1 import router as postproduction_router
 from engine.app.remake_routes_v1 import router as remake_router
 from engine.app.review_issue_routes_v1 import router as review_issue_router
 from engine.app.shot_cache_routes_v51 import router as shot_cache_router
@@ -67,7 +68,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="AI Drama Studio", version="2.7.0", lifespan=lifespan)
+app = FastAPI(title="AI Drama Studio", version="2.8.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -91,6 +92,7 @@ app.include_router(auto_remake_router)
 app.include_router(target_localization_router)
 app.include_router(generation_segment_router)
 app.include_router(h3_generation_router)
+app.include_router(postproduction_router)
 
 
 class ProjectCreate(BaseModel):
@@ -114,7 +116,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "architecture": "localized-remake-h3-local-v1", "app_version": "2.7.0"}
+    return {"status": "ok", "architecture": "localized-remake-h3-local-v1", "app_version": "2.8.0"}
 
 
 @app.get("/api/projects")
