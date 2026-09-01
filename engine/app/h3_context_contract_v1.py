@@ -31,6 +31,17 @@ class H3MaterializedConditionV1(_StrictModel):
     local_path: str = Field(min_length=1, max_length=4096)
     sha256: str = Field(min_length=64, max_length=64)
     source: str = Field(min_length=1, max_length=120)
+    frame_index: int | None = Field(default=None, ge=-1)
+    start_time_seconds: float | None = Field(default=None, ge=0.0, le=86_400.0)
+
+    @model_validator(mode="after")
+    def _addressing_matches_type(self) -> "H3MaterializedConditionV1":
+        if self.frame_index is not None:
+            if self.type != "image" or self.frame_index not in {-1, 0}:
+                raise ValueError("H3 materialized frame_index only supports image 0/-1")
+        if self.start_time_seconds is not None and self.type not in {"video", "audio"}:
+            raise ValueError("H3 materialized start_time_seconds only supports video/audio")
+        return self
 
 
 class H3CompiledContextV1(_StrictModel):
@@ -59,11 +70,22 @@ class H3CompiledContextV1(_StrictModel):
         if self.request is not None:
             if self.request.mode != self.mode or self.request.provider != self.provider:
                 raise ValueError("H3 context request/provider mismatch")
-            request_conditions = [item.model_dump(mode="json") for item in self.request.conditions]
-            materialized = [
-                {"type": item.type, "uri": item.uri, "role": item.role}
-                for item in self.conditions
+            request_conditions = [
+                item.model_dump(mode="json", exclude_none=True)
+                for item in self.request.conditions
             ]
+            materialized = []
+            for item in self.conditions:
+                value: dict[str, Any] = {
+                    "type": item.type,
+                    "uri": item.uri,
+                    "role": item.role,
+                }
+                if item.frame_index is not None:
+                    value["frame_index"] = item.frame_index
+                if item.start_time_seconds is not None:
+                    value["start_time_seconds"] = item.start_time_seconds
+                materialized.append(value)
             if request_conditions != materialized:
                 raise ValueError("H3 context materialized conditions do not match request")
         return self
