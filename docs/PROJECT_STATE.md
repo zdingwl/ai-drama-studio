@@ -4,8 +4,8 @@
 > Repository: `zdingwl/ai-drama-studio`  
 > Branch: `main`  
 > Product architecture: **Localized Remake V1**  
-> Generation target: **local MiniMax H3**  
-> FastAPI app version: `2.7.0`  
+> Final video target: **local MiniMax H3**  
+> Target speech runtime V1: **local Qwen3-TTS**  
 > Formal Character runtime: Character V10.1
 
 ## 1. Product truth
@@ -15,7 +15,7 @@ source short drama
 → automatic source understanding
 → SourceDramaSnapshot
 → TargetCharacter + SceneLocalizationMapping
-→ target dialogue + TTS
+→ TargetDialogue + target-character voice + real TTS duration
 → Dialogue Timing / RemakeTimeline
 → local MiniMax H3
 → lip sync / QC / episode assembly
@@ -28,7 +28,7 @@ Rules:
 characters = always localized/replaced
 scene = AUTO | KEEP | LOCALIZE
 dialogue = target language
-voice = target character voice
+voice = new target-character voice
 lip = final target audio
 target timeline may differ from source timeline
 ```
@@ -70,7 +70,7 @@ Current chain:
 
 ```text
 Preprocess when needed
-→ Shot detection / Reference Clips when needed
+→ Shot detection / Reference Clips
 → Breakdown ASR + OCR + Qwen3-VL + Fusion
 → Character V10.1 / Scene / Prop
 → Final Asset application
@@ -78,12 +78,14 @@ Preprocess when needed
 → SourceDramaSnapshot
 → Speaker ReviewIssue sync
 → TargetCharacter + SceneLocalizationMapping
-→ target localization ReviewIssue sync
+→ target localization ReviewIssues
+→ TargetDialogue translation/localization
+→ READY-line Qwen3-TTS materialization when local worker is available
 ```
 
-## 5. R2 SourceDramaSnapshot
+A remaining review item does not block unrelated READY dialogue audio.
 
-Status:
+## 5. R2 SourceDramaSnapshot
 
 ```text
 IMPLEMENTED ON MAIN
@@ -97,88 +99,122 @@ GET /api/episodes/{episode_id}/source-drama-snapshot
 GET /api/projects/{project_id}/source-drama-snapshot
 ```
 
-It is a deterministic source-only read facade and carries `source_fingerprint`. It does not persist another copy of source truth and forbids target-side data.
+It is deterministic source-only current read truth with `source_fingerprint`.
 
-Detailed contract: `docs/SOURCE_DRAMA_SNAPSHOT_V1.md`.
+Spec: `docs/SOURCE_DRAMA_SNAPSHOT_V1.md`.
 
 ## 6. R4 Target localization
-
-Status:
 
 ```text
 IMPLEMENTED ON MAIN
 LOCAL TEST / REAL PROJECT ACCEPTANCE PENDING
 ```
 
-Persistent target-side data:
+Persistent data:
 
 ```text
 v2_target_characters
 v2_scene_localization_mappings
 ```
 
-Authority direction:
+Same Final Scene across episodes shares one canonical target mapping.
 
 ```text
-SourceDramaSnapshot + ProjectRemakePolicy
-→ target-localization-v1
+Final Scene SCENE_X
+→ ASSET:SCENE_X
+→ one KEEP / LOCALIZE plan
 ```
 
-### TargetCharacter
+TargetCharacter and source Character are separate truth domains.
 
-Exactly one target character per resolved source Character per Project.
+Spec: `docs/TARGET_LOCALIZATION_V1.md`.
 
-Stores stable target-region identity design:
+## 7. R5 TargetDialogue + TTS
 
 ```text
-target_name
-appearance_profile
-generation_prompt
-reference_assets
-confidence
-READY / REVIEW
-AI / MANUAL
+IMPLEMENTED ON MAIN
+LOCAL TEST / REAL PROJECT + LOCAL MODEL ACCEPTANCE PENDING
 ```
 
-Source and target Character are never the same row.
-
-### SceneLocalizationMapping
-
-Repeated occurrences of the same Final Scene use one canonical mapping:
+Persistent target-only data:
 
 ```text
-Final Scene id = SCENE_123
-→ canonical mapping key = ASSET:SCENE_123
+v2_target_voice_profiles
+v2_target_dialogues
 ```
 
-This keeps the same home/office/hospital visually consistent across episodes.
+Source ASR text is never overwritten.
 
-Anonymous scenes without a Final Scene remain occurrence-local.
-
-Project policy:
+### TargetDialogue
 
 ```text
-KEEP     -> automatic KEEP
-LOCALIZE -> requires a usable target scene description
-AUTO     -> generic spaces prefer KEEP; meaningful regional conflicts may LOCALIZE
+source dialogue
++ TargetCharacter
++ scene/Shot story context
++ target language / region
+        ↓
+translated_text
+localized_text
+final_text
 ```
 
-Local Qwen3-VL OpenAI-compatible service is reused for target-side planning; no second model server was added.
+Only unsafe target text produces `LOCALIZATION` ReviewIssue.
 
-APIs:
+User correction writes the real TargetDialogue row and invalidates old audio; `LOCALIZATION` cannot be closed from the generic ReviewIssue buttons.
+
+### TargetVoiceProfile
+
+Default V1 runtime:
 
 ```text
-POST   /api/projects/{project_id}/target-localization/generate
-GET    /api/projects/{project_id}/target-localization
-PATCH  /api/target-characters/{id}
-DELETE /api/target-characters/{id}
-PATCH  /api/scene-localization-mappings/{id}
-DELETE /api/scene-localization-mappings/{id}
+QWEN3_TTS_VOICE_DESIGN_CLONE_V1
 ```
 
-Detailed contract: `docs/TARGET_LOCALIZATION_V1.md`.
+Per TargetCharacter:
 
-## 7. Current ReviewIssue producers
+```text
+VoiceDesign
+→ stable reference WAV
+→ Base VoiceClone reusable prompt
+→ same target voice for every line
+```
+
+The source actor voice is not cloned as the default remake identity.
+
+### Real speech duration
+
+READY target WAV stores:
+
+```text
+audio_path
+speech_duration_us
+voice_fingerprint
+audio_input_signature
+```
+
+`R6` must use this real `speech_duration_us`, not an estimated character count.
+
+### Runtime isolation
+
+Worker:
+
+```text
+scripts/qwen3_tts_worker_v1.py
+```
+
+Main-process client:
+
+```text
+engine/app/qwen3_tts_runtime_v1.py
+```
+
+Qwen3-TTS runs in a separate local Python environment to avoid dependency conflicts with the main analysis/H3 stack.
+
+If the worker is not ready, target text remains saved and audio is marked `NOT_CONFIGURED`; this is infrastructure state, not a human content issue.
+
+Spec: `docs/TARGET_DIALOGUE_TTS_V1.md`.
+
+## 8. Current ReviewIssue producers
 
 ```text
 SHOT_BOUNDARY
@@ -187,23 +223,41 @@ ASSET_BINDING
 SPEAKER
 TARGET_CHARACTER
 SCENE_LOCALIZATION
+LOCALIZATION
 ```
 
-`TARGET_CHARACTER` and `SCENE_LOCALIZATION` are edited directly in Review Center. The old ordinary-user manual localization draft surface is no longer shown in ProjectStudioV4.
-
-## 8. Freshness rules
+Domain-edited issues:
 
 ```text
-source_fingerprint change -> target localization must be recomposed/revalidated
-local source-character signature change -> manual target character becomes REVIEW
-canonical source-scene signature change -> manual scene decision becomes REVIEW
-Project scene policy change -> old SceneLocalizationMapping is stale
-Project target locale mismatch -> old TargetCharacter bundle is stale
+TARGET_CHARACTER
+SCENE_LOCALIZATION
+LOCALIZATION
 ```
 
-No stale target plan may silently appear READY.
+These must be resolved by editing their authoritative domain rows in Review Center.
 
-## 9. Preserved source invariants
+## 9. Freshness rules
+
+```text
+SourceDramaSnapshot fingerprint change
+→ downstream target rows become stale
+
+source Character local signature change
+→ target character may require review
+
+source Scene canonical signature / Project scene policy change
+→ target scene mapping becomes stale
+
+TargetCharacter change
+→ AI TargetDialogue regenerates
+→ manual TargetDialogue reopens for review
+→ old target voice reference invalidates
+→ old dialogue WAV invalidates
+```
+
+GET/audio R5 APIs fail closed when target-character dependencies are stale.
+
+## 10. Preserved source invariants
 
 ```text
 LocalSubject != Character
@@ -211,16 +265,17 @@ SceneSegmentDraft != Final Scene
 DraftPropHint != Final Prop
 ASR speaker != Character
 same-Shot observations = hard cannot-link
-ASR source dialogue = immutable source truth
-OCR source text = immutable source truth
-SourceDramaSnapshot target-side data = forbidden
-TargetCharacter != Source Character
-Target scene decision never rewrites Source Scene
+ASR source dialogue = immutable
+OCR source text = immutable
+Source Character != TargetCharacter
+Source Scene != target Scene decision
+SourceDramaSnapshot contains no target truth
+ReviewIssue is attention state, not domain truth
 ```
 
-Character V10.1 remains fail-closed; ambiguity is handled in Review Center.
+Character V10.1 remains fail-closed.
 
-## 10. Existing source internals retained
+## 11. Existing source internals retained
 
 ```text
 FFmpeg / FFprobe
@@ -236,16 +291,17 @@ Scene Timeline
 Character V10.1
 Final Character/Scene/Prop + Shot bindings
 AssetRevision
-P5/P6 compatibility layers while required
+P5/P6 compatibility while required
 BackgroundTask / progress
 ```
 
-## 11. Next frontier
+## 12. Next frontier
 
-R2 and R4 are implemented. Next order:
+R2, R4 and R5 are implemented on `main`.
+
+Next order:
 
 ```text
-R5 automatic TargetDialogue + TTS/Voice contract/runtime
 R6 Dialogue Timing Engine + RemakeTimeline
 R7 local MiniMax H3 RuntimeManager
 R8 H3 ContextCompiler + GenerationSegment
@@ -260,20 +316,27 @@ Critical rule:
 Shot != GenerationSegment
 ```
 
-## 12. Acceptance boundary
+## 13. Acceptance boundary
 
-Repository implementation is not equivalent to local acceptance.
+Repository implementation is not local acceptance.
 
-The current environment could not clone GitHub from the container because external DNS was unavailable, so targeted pytest/npm execution has **not** been claimed.
-
-Minimum R2/R4 local checks are documented in:
+R5 minimum checks:
 
 ```text
-docs/SOURCE_DRAMA_SNAPSHOT_V1.md
-docs/TARGET_LOCALIZATION_V1.md
+python -m pytest engine/tests/v2/test_target_dialogue_v1.py -q
+python -m pytest engine/tests/v2/test_target_dialogue_routes_v1.py -q
+python -m pytest engine/tests/v2/test_qwen3_tts_runtime_v1.py -q
+
+cd frontend
+npm run typecheck
+npm run build
 ```
 
-## 13. Git workflow
+Then run a real Project with local Qwen + Qwen3-TTS worker and verify real target WAV duration.
+
+R2/R4/R5 remain **LOCAL ACCEPTANCE PENDING** until those checks are run in the user's Windows/CUDA/model environment.
+
+## 14. Git workflow
 
 ```text
 main = active development
