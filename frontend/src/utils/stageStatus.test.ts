@@ -57,6 +57,19 @@ describe('deriveStageStates', () => {
     expect(states[2]).toBe('review')
   })
 
+  it('does not treat a stale failed Breakdown Run as a current blocker', () => {
+    const states = deriveStageStates({
+      episodes: [{ id: 'E1', shot_count: 12, preprocess_status: 'READY' }],
+      tasks: [],
+      analysis: null,
+      breakdownRuns: [
+        { episode_id: 'E1', status: 'FAILED', is_current: true, source_shot_revision: { is_current: false } },
+      ],
+    })
+
+    expect(states[2]).toBe('review')
+  })
+
   it('does not call a multi-episode project complete when one episode has no current result', () => {
     const states = deriveStageStates({
       episodes: [
@@ -96,6 +109,30 @@ describe('deriveStageStates', () => {
     })
 
     expect(states[3]).toBe('review')
+  })
+
+  it('keeps assets in review until a final non-stale workspace revision exists', () => {
+    const states = deriveStageStates({
+      episodes: [{ id: 'E1', shot_count: 12, preprocess_status: 'READY' }],
+      tasks: [],
+      analysis: { status: 'READY', counts: { unresolved_character_candidates: 0 } },
+      breakdownRuns: [],
+      assetWorkspace: { status: 'READY', stale: false, revision: null },
+    })
+
+    expect(states[3]).toBe('review')
+  })
+
+  it('marks assets complete only with a READY non-stale final revision and no unresolved evidence', () => {
+    const states = deriveStageStates({
+      episodes: [{ id: 'E1', shot_count: 12, preprocess_status: 'READY' }],
+      tasks: [],
+      analysis: { status: 'READY', counts: { unresolved_character_candidates: 0 } },
+      breakdownRuns: [],
+      assetWorkspace: { status: 'READY', stale: false, revision: { id: 'REV1' } },
+    })
+
+    expect(states[3]).toBe('completed')
   })
 
   it('shows an active asset extraction task as processing', () => {
