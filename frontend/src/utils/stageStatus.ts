@@ -24,10 +24,29 @@ export interface StageBreakdownRunLike {
   source_shot_revision?: { is_current: boolean } | null
 }
 
+export interface StageAssetEvidenceLike {
+  confidence: number | null
+  final_asset_id: string | null
+}
+
+export interface StageAssetBindingsLike {
+  character_ids: string[]
+  scene_id: string | null
+  prop_ids: string[]
+}
+
+export interface StageShotAssetEvidenceLike {
+  characters: StageAssetEvidenceLike[]
+  scene: StageAssetEvidenceLike | null
+  props: StageAssetEvidenceLike[]
+}
+
 export interface StageAssetWorkspaceLike {
   status: string
   stale: boolean
   revision: unknown | null
+  bindings_by_shot?: Record<string, StageAssetBindingsLike>
+  evidence_by_shot?: Record<string, StageShotAssetEvidenceLike>
 }
 
 export interface StageStatusContext {
@@ -102,6 +121,52 @@ function breakdownStageState(
   return 'not_started'
 }
 
+function highConfidence(item: StageAssetEvidenceLike | null | undefined, threshold = 0.75): boolean {
+  return Boolean(item && item.confidence !== null && item.confidence >= threshold)
+}
+
+/**
+ * Mirrors the ordinary-user asset review inbox rules.
+ * Final Binding remains authority; Evidence only determines whether a human review is still needed.
+ */
+function workspaceNeedsAssetReview(workspace: StageAssetWorkspaceLike | null): boolean {
+  if (!workspace?.evidence_by_shot) return false
+  const bindingsByShot = workspace.bindings_by_shot ?? {}
+
+  for (const [shotId, evidence] of Object.entries(workspace.evidence_by_shot)) {
+    const binding = bindingsByShot[shotId] ?? { character_ids: [], scene_id: null, prop_ids: [] }
+    const strongCharacters = evidence.characters.filter((item) => highConfidence(item) && item.final_asset_id)
+    const strongProps = evidence.props.filter((item) => highConfidence(item, 0.8) && item.final_asset_id)
+
+    const unbound = (
+      (binding.character_ids.length === 0 && strongCharacters.length > 0)
+      || (!binding.scene_id && highConfidence(evidence.scene) && Boolean(evidence.scene?.final_asset_id))
+    )
+    if (unbound) return true
+
+    const conflict = (
+      (binding.character_ids.length > 0 && strongCharacters.some((item) => item.final_asset_id && !binding.character_ids.includes(item.final_asset_id)))
+      || Boolean(
+        binding.scene_id
+          && highConfidence(evidence.scene)
+          && evidence.scene?.final_asset_id
+          && evidence.scene.final_asset_id !== binding.scene_id,
+      )
+      || (binding.prop_ids.length > 0 && strongProps.some((item) => item.final_asset_id && !binding.prop_ids.includes(item.final_asset_id)))
+    )
+    if (conflict) return true
+
+    const confidenceValues = [
+      ...evidence.characters.map((item) => item.confidence),
+      evidence.scene?.confidence ?? null,
+      ...evidence.props.map((item) => item.confidence),
+    ].filter((value): value is number => value !== null)
+    if (confidenceValues.some((value) => value < 0.75)) return true
+  }
+
+  return false
+}
+
 function assetStageState(
   analysis: StageAnalysisLike | null,
   tasks: StageTaskLike[],
@@ -127,6 +192,7 @@ function assetStageState(
   const unresolved = Number(analysis.counts?.unresolved_character_candidates || 0)
   if (unresolved > 0) return 'review'
   if (!workspace?.revision || workspace.stale || workspaceStatus !== 'READY') return 'review'
+  if (workspaceNeedsAssetReview(workspace)) return 'review'
   return 'completed'
 }
 
