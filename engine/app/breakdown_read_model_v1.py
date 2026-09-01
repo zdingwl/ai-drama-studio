@@ -73,6 +73,17 @@ def _anonymous_identity(
     )
 
 
+def _anonymous_result(
+    timeline: SceneTimelinePayloadV1,
+    *,
+    warning: str,
+) -> dict[str, Any]:
+    return BreakdownReadModelV1(
+        timeline=timeline,
+        identity=_anonymous_identity(timeline, warning=warning),
+    ).model_dump(mode="json")
+
+
 def _load_current_character_snapshots(
     *,
     project_id: str,
@@ -98,7 +109,7 @@ def _load_current_character_snapshots(
         rows = list(session.scalars(select(Character).where(
             Character.project_id == project_id,
             Character.id.in_(tuple(sorted(character_ids))),
-        )).all())
+        ).all())
         snapshots: dict[str, dict[str, str | None]] = {}
         for character in rows:
             metadata = _metadata(character.metadata_json)
@@ -117,6 +128,7 @@ def compose_breakdown_read_model_v1(
     *,
     current_asset_revision_matches: bool = True,
     character_snapshots: Mapping[str, Mapping[str, str | None]] | None = None,
+    unavailable_warning: str = IDENTITY_PENDING_WARNING,
 ) -> dict[str, Any]:
     """Pure P6 composition gate used by API and deterministic tests.
 
@@ -132,7 +144,7 @@ def compose_breakdown_read_model_v1(
     normalized_timeline = timeline.model_dump(mode="json")
 
     if resolution_payload is None:
-        identity = _anonymous_identity(timeline, warning=IDENTITY_PENDING_WARNING)
+        identity = _anonymous_identity(timeline, warning=unavailable_warning)
         return BreakdownReadModelV1(
             schema_version=BREAKDOWN_READ_MODEL_SCHEMA_VERSION,
             timeline=timeline,
@@ -153,17 +165,33 @@ def compose_breakdown_read_model_v1(
         and resolution.asset_revision_id is not None
     )
     if not anchors_match:
-        identity = _anonymous_identity(timeline, warning=IDENTITY_STALE_WARNING)
-        return BreakdownReadModelV1(
-            timeline=timeline,
-            identity=identity,
-        ).model_dump(mode="json")
+        return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
+
+    # P5 contract is intentionally permissive about aggregate counters. P6 treats any mismatch as stale
+    # instead of letting malformed bridge data selectively resolve a person.
+    bridge_people_count = sum(len(scene.people) for scene in resolution.scenes)
+    bridge_resolved_count = sum(
+        1
+        for scene in resolution.scenes
+        for person in scene.people
+        if person.status == "RESOLVED"
+    )
+    if (
+        resolution.scene_count != len(resolution.scenes)
+        or resolution.person_count != bridge_people_count
+        or resolution.resolved_count != bridge_resolved_count
+        or resolution.unresolved_count != bridge_people_count - bridge_resolved_count
+    ):
+        return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
 
     timeline_scenes = {scene.ordinal: scene for scene in timeline.scenes}
     resolution_scenes = {scene.scene_ordinal: scene for scene in resolution.scenes}
-    if set(timeline_scenes) != set(resolution_scenes):
-        identity = _anonymous_identity(timeline, warning=IDENTITY_STALE_WARNING)
-        return BreakdownReadModelV1(timeline=timeline, identity=identity).model_dump(mode="json")
+    if (
+        len(timeline_scenes) != len(timeline.scenes)
+        or len(resolution_scenes) != len(resolution.scenes)
+        or set(timeline_scenes) != set(resolution_scenes)
+    ):
+        return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
 
     snapshots = character_snapshots or {}
     overlay_scenes: list[dict[str, object]] = []
@@ -175,14 +203,19 @@ def compose_breakdown_read_model_v1(
         bridge_scene = resolution_scenes[scene_ordinal]
         timeline_people = {person.ref: person for person in scene.people}
         bridge_people = {person.scene_person_ref: person for person in bridge_scene.people}
-        if set(timeline_people) != set(bridge_people):
-            identity = _anonymous_identity(timeline, warning=IDENTITY_STALE_WARNING)
-            return BreakdownReadModelV1(timeline=timeline, identity=identity).model_dump(mode="json")
+        bridge_scene_resolved = sum(person.status == "RESOLVED" for person in bridge_scene.people)
+        if (
+            len(timeline_people) != len(scene.people)
+            or len(bridge_people) != len(bridge_scene.people)
+            or bridge_scene.resolved_count != bridge_scene_resolved
+            or bridge_scene.unresolved_count != len(bridge_scene.people) - bridge_scene_resolved
+            or set(timeline_people) != set(bridge_people)
+        ):
+            return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
         for ref, person in timeline_people.items():
             bridge_person = bridge_people[ref]
             if bridge_person.local_display_name != person.display_name:
-                identity = _anonymous_identity(timeline, warning=IDENTITY_STALE_WARNING)
-                return BreakdownReadModelV1(timeline=timeline, identity=identity).model_dump(mode="json")
+                return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
             if bridge_person.status == "RESOLVED":
                 character_id = str(bridge_person.character_id or "")
                 snapshot = snapshots.get(character_id)
@@ -191,8 +224,7 @@ def compose_breakdown_read_model_v1(
                     or snapshot.get("id") != character_id
                     or snapshot.get("name") != bridge_person.character_name
                 ):
-                    identity = _anonymous_identity(timeline, warning=IDENTITY_STALE_WARNING)
-                    return BreakdownReadModelV1(timeline=timeline, identity=identity).model_dump(mode="json")
+                    return _anonymous_result(timeline, warning=IDENTITY_STALE_WARNING)
 
     for scene in timeline.scenes:
         bridge_people = {
@@ -254,6 +286,7 @@ def load_episode_breakdown_read_model_v1(episode_id: str) -> dict[str, Any] | No
         return compose_breakdown_read_model_v1(
             timeline,
             None,
+            unavailable_warning=IDENTITY_STALE_WARNING,
         )
 
     if resolution is None:
