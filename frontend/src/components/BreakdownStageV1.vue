@@ -20,10 +20,46 @@ const emit = defineEmits<{
 
 const route = useRoute()
 const router = useRouter()
-const mode = ref<'shots' | 'draft'>(props.episodes.some((episode) => episode.shot_count > 0) ? 'draft' : 'shots')
+
+type BreakdownWorkspaceMode = 'shots' | 'draft'
+
+function defaultMode(): BreakdownWorkspaceMode {
+  return props.episodes.some((episode) => episode.shot_count > 0) ? 'draft' : 'shots'
+}
+
+function modeFromRoute(): BreakdownWorkspaceMode {
+  const requested = String(route.query.breakdown_view || '')
+  if (requested === 'shots') return 'shots'
+  if (requested === 'result') return 'draft'
+  return defaultMode()
+}
+
+const mode = ref<BreakdownWorkspaceMode>(modeFromRoute())
 const draftRefreshToken = ref(0)
 const selectedEpisodeId = ref('')
 const currentDraftRun = ref<BreakdownRunSummary | null>(null)
+
+function modeQueryValue(value: BreakdownWorkspaceMode): 'shots' | 'result' {
+  return value === 'shots' ? 'shots' : 'result'
+}
+
+function selectMode(next: BreakdownWorkspaceMode): void {
+  mode.value = next
+  const queryValue = modeQueryValue(next)
+  if (String(route.query.breakdown_view || '') !== queryValue) {
+    void router.replace({ query: { ...route.query, breakdown_view: queryValue } })
+  }
+}
+
+function syncModeFromRoute(): void {
+  const next = modeFromRoute()
+  if (mode.value !== next) mode.value = next
+
+  const queryValue = modeQueryValue(next)
+  if (String(route.query.breakdown_view || '') !== queryValue) {
+    void router.replace({ query: { ...route.query, breakdown_view: queryValue } })
+  }
+}
 
 function defaultEpisodeId(): string {
   return props.episodes.find((item) => item.shot_count > 0)?.id ?? props.episodes[0]?.id ?? ''
@@ -43,13 +79,21 @@ function syncEpisodeFromRoute(): void {
 
 watch(
   () => props.episodes.map((item) => `${item.id}:${item.shot_count}`).join('|'),
-  syncEpisodeFromRoute,
+  () => {
+    syncEpisodeFromRoute()
+    if (!route.query.breakdown_view) syncModeFromRoute()
+  },
   { immediate: true },
 )
 
 watch(
   () => route.query.episode,
   syncEpisodeFromRoute,
+)
+
+watch(
+  () => route.query.breakdown_view,
+  syncModeFromRoute,
 )
 
 watch(selectedEpisodeId, (episodeId) => {
@@ -68,7 +112,10 @@ function onTaskFinished(event: Event): void {
   }
 }
 
-onMounted(() => window.addEventListener('studio-task-finished', onTaskFinished))
+onMounted(() => {
+  window.addEventListener('studio-task-finished', onTaskFinished)
+  syncModeFromRoute()
+})
 onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinished))
 </script>
 
@@ -80,11 +127,11 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
         <strong>{{ mode === 'shots' ? '镜头管理' : '拉片结果' }}</strong>
       </div>
       <div class="breakdown-stage-tabs" role="tablist" aria-label="拉片子工作区">
-        <button :class="{ active: mode === 'shots' }" type="button" @click="mode = 'shots'">
+        <button :class="{ active: mode === 'shots' }" type="button" @click="selectMode('shots')">
           <b>镜头管理</b>
           <small>检查与修正切点</small>
         </button>
-        <button :class="{ active: mode === 'draft' }" type="button" @click="mode = 'draft'">
+        <button :class="{ active: mode === 'draft' }" type="button" @click="selectMode('draft')">
           <b>拉片结果</b>
           <small>直接查看场景与镜头内容</small>
         </button>
