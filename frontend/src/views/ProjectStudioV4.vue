@@ -58,6 +58,7 @@ const scenePolicyOptions: Array<{ value: ScenePolicy; label: string; detail: str
 function issueTypeLabel(type: string): string {
   const labels: Record<string, string> = {
     SHOT_BOUNDARY: '镜头切点',
+    CHARACTER_IDENTITY: '人物身份',
     ASSET_BINDING: '人物 / 场景 / 道具',
     SPEAKER: '说话人',
     LOCALIZATION: '本土化对白',
@@ -134,6 +135,11 @@ function selectView(view: StudioView): void {
   delete query.breakdown_view
   delete query.asset_tab
   void router.replace({ query })
+}
+
+function onAdvancedAssetToggle(event: Event): void {
+  const target = event.currentTarget
+  advancedAssetOpen.value = target instanceof HTMLDetailsElement ? target.open : false
 }
 
 function onTaskCreated(event: Event): void {
@@ -272,7 +278,7 @@ onUnmounted(() => {
           <AssetReviewInboxV1 :project-id="project.id" :episodes="project.episodes" @open-matrix="advancedAssetOpen = true" />
         </section>
 
-        <details class="advanced-tool" :open="advancedAssetOpen" @toggle="advancedAssetOpen = ($event.target as HTMLDetailsElement).open">
+        <details class="advanced-tool" :open="advancedAssetOpen" @toggle="onAdvancedAssetToggle">
           <summary>高级：查看并修改全部人物 / 场景 / 道具绑定</summary>
           <AssetStageV4 :project-id="project.id" :episodes="project.episodes" />
         </details>
