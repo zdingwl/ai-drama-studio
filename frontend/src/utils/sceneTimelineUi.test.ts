@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   cinematographyItems,
+  personAvatarText,
+  personByRef,
   personDisplayName,
   publicInteractionText,
   sanitizeOrdinarySceneTimelinePayload,
@@ -35,10 +37,23 @@ describe('sceneTimelineUi', () => {
   it('maps Scene-local refs to ordinary display names without exposing refs', () => {
     const people = [
       { ref: 'P1', display_name: '人物1', appearance: '年轻女性' },
-      { ref: 'P2', display_name: '人物2', appearance: '老年女性' },
+      { ref: 'P2', display_name: '老年女性', appearance: '老年女性' },
     ]
-    expect(personDisplayName(people, 'P2')).toBe('人物2')
+    expect(personByRef(people, 'P2')).toEqual(people[1])
+    expect(personByRef(people, 'P9')).toBeNull()
+    expect(personDisplayName(people, 'P2')).toBe('老年女性')
     expect(personDisplayName(people, 'P9')).toBe('人物')
+  })
+
+  it('builds stable avatar fallback text for resolved and anonymous people', () => {
+    expect(personAvatarText({
+      ref: 'P1',
+      display_name: ' 人物 001 ',
+      appearance: null,
+      final_character: { id: 'C1', name: '人物 001', cover_url: '/cover.jpg' },
+    })).toBe('人')
+    expect(personAvatarText({ ref: 'P2', display_name: 'Alice', appearance: null })).toBe('A')
+    expect(personAvatarText(null)).toBe('人')
   })
 
   it('removes shot-local subject tokens without inventing identity', () => {
