@@ -31,7 +31,7 @@ const languageOptions = [
 const regionOptions = [
   ['US', '美国'], ['GB', '英国'], ['CA', '加拿大'], ['AU', '澳大利亚'], ['JP', '日本'], ['KR', '韩国'], ['SG', '新加坡'], ['BR', '巴西'],
 ]
-const stageNames: Record<number, string> = { 1: '源片', 2: '剧情与镜头', 3: '资产' }
+const stageNames: Record<number, string> = { 1: '源片', 2: '剧情与镜头', 3: '人物·场景·道具' }
 
 async function readBreakdownRuns(episodes: Episode[]): Promise<BreakdownRunSummary[]> {
   const results = await Promise.allSettled(episodes.map((episode) => breakdownApi.listRuns(episode.id)))
@@ -130,7 +130,17 @@ function episodeSummary(project: Project) {
 function openProject(project: Project): void {
   const overview = overviews[project.id]
   const stage = overview?.nextStage ?? 1
-  void router.push(`/projects/${project.id}?stage=${stage}`)
+  const query: Record<string, string> = { stage: String(stage) }
+
+  if (stage === 2) {
+    const episode = project.episodes.find((item) => item.shot_count > 0) ?? project.episodes[0]
+    query.breakdown_view = project.episodes.some((item) => item.shot_count > 0) ? 'result' : 'shots'
+    if (episode) query.episode = episode.id
+  } else if (stage === 3) {
+    query.asset_tab = 'inbox'
+  }
+
+  void router.push({ path: `/projects/${project.id}`, query })
 }
 
 function stateLabel(projectId: string, stageId: number): string {
