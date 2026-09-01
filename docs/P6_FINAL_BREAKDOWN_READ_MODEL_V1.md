@@ -161,7 +161,7 @@ P5 or AssetRevision no longer matches current G2/current assets
 → user-safe warning only
 ```
 
-## 7. Tests added
+## 7. Tests and real acceptance runner
 
 Backend deterministic coverage:
 
@@ -195,6 +195,14 @@ frontend/src/utils/breakdownReadModelUi.test.ts
 
 It covers safe name/asset projection, anonymous fallback, mismatch handling, input immutability, and preservation of dialogue/OCR/Shot facts while retaining the existing `subject_A/B` display sanitizer.
 
+Real Episode runner:
+
+```text
+scripts/run_breakdown_p6_read_model_acceptance_v1.py
+```
+
+The runner prints the real Episode/Run/ShotRevision/AssetRevision, resolved vs anonymous people, Final Character id/name/cover URL and warnings. It also independently rebuilds the frozen G2 Scene Timeline and requires exact equality with P6 `timeline`; otherwise it exits with `FAILED_TIMELINE_MUTATION_GUARD`.
+
 ## 8. Acceptance status
 
 Implemented code is on `main`.
@@ -210,11 +218,22 @@ python -m pytest \
   engine/tests/v2/test_breakdown_read_model_v1.py \
   engine/tests/v2/test_breakdown_read_model_routes_v1.py -q
 
+python scripts/run_breakdown_p6_read_model_acceptance_v1.py <EPISODE_ID>
+
 cd frontend
 npm install
 npm test -- src/utils/breakdownReadModelUi.test.ts src/utils/sceneTimelineUi.test.ts
 npm run typecheck
 npm run build
+```
+
+Expected real runner safety signal:
+
+```text
+status = READY
+timeline_preserved = true
+RESOLVED people may show existing Final Character name/assets
+all other people remain ANONYMOUS
 ```
 
 `npm install` is also expected to synchronize the existing TypeScript `6.0.3` `package.json` change into `package-lock.json`.
