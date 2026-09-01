@@ -16,12 +16,14 @@ source short drama
 → SourceDramaSnapshot
 → TargetCharacter + SceneLocalizationMapping
 → TargetDialogue + target-character voice + real TTS duration
-→ Dialogue Timing / RemakeTimeline
+→ RemakeTimeline
 → GenerationSegment
 → H3 Context Compiler
 → target reference assets
 → GenerationAttempt / local MiniMax H3
-→ H3 QC / retry
+→ structural + semantic H3 QC
+→ automatic retry
+→ GenerationSelection / Selected Output
 → lip sync / subtitles / audio / episode assembly
 → localized short drama
 ```
@@ -29,30 +31,29 @@ source short drama
 Hard rules:
 
 ```text
-characters = always localized/replaced
+characters = always replaced/localized
 scene = AUTO | KEEP | LOCALIZE
 dialogue = target language
 voice = target-character voice
-lip = final target audio
 target timeline may differ from source timeline
 Shot != GenerationSegment
+GenerationAttempt != selected usable output
 source ASR/OCR/Shot truth is immutable downstream
 ```
 
 ## 2. Rollback points
 
-R7/R8 work started after:
+R9 entry backup:
 
 ```text
-branch = backup/pre-r7-20260901
-commit = 8abf420262255f464cb08a0aa783a36dd1c13d66
+branch = backup/pre-r9-20260901
 ```
 
-Earlier restructure rollback remains:
+Earlier recovery points remain:
 
 ```text
-branch = backup/pre-h3-remake-restructure-2026-09-01
-commit = 37944c693a08c6ff292b08e1f73b1249812cabae
+backup/pre-r7-20260901
+backup/pre-h3-remake-restructure-2026-09-01
 ```
 
 Rollback branches are read-only recovery points. `main` is active development.
@@ -72,7 +73,7 @@ frontend/src/views/ProjectListV4.vue
 frontend/src/views/ProjectStudioV4.vue
 ```
 
-Automatic processing must stay in background tasks. Only uncertainty, conflict, high-risk edits or repeated generation failure belong in Review Center.
+Automatic work stays in background tasks. Only uncertainty/conflict/high-risk decisions/repeated generation failure belong in Review Center.
 
 ## 4. Automatic preparation chain
 
@@ -81,7 +82,7 @@ AUTO_REMAKE_PREP_V1
 POST /api/projects/{project_id}/tasks/auto-remake-prepare
 ```
 
-Current chain:
+Current preparation chain:
 
 ```text
 Preprocess
@@ -90,18 +91,22 @@ Preprocess
 → Character V10.1 + Scene + Prop
 → Final Asset / source ReviewIssues
 → SourceDramaSnapshot
-→ Speaker ReviewIssues
 → TargetCharacter + SceneLocalizationMapping
-→ target ReviewIssues
 → TargetDialogue localization
 → READY-line Qwen3-TTS
 → RemakeTimeline
 → GenerationSegment compile
 ```
 
-H3 generation is a separate heavy background task so source understanding/localization can finish even when H3 GPU runtime is offline.
+H3 is intentionally separate:
 
-## 5. Implemented stages
+```text
+POST /api/projects/{project_id}/tasks/h3-generate-ready
+```
+
+That task now performs generation **and R9 QC/automatic retry**, and only produces downstream-current output after `GenerationSelection` is written.
+
+## 5. Current stage table
 
 | Stage | State | Persistent authority |
 |---|---|---|
@@ -113,16 +118,15 @@ H3 generation is a separate heavy background task so source understanding/locali
 | R7 H3 Runtime/Provider | Implemented | isolated local SGLang adapter |
 | R8 H3 Context Compiler | Implemented | deterministic materialized context |
 | R8 GenerationAttempt | Implemented | `v2_generation_attempts` |
-| R9 H3 QC/retry/selection | Next | not yet authoritative |
-| R10 Lip sync/assembly/export | Not implemented | — |
+| R9 H3 QC | Implemented | `v2_generation_quality_checks` |
+| R9 Selected Output | Implemented | `v2_generation_selections` |
+| R10 Lip sync/assembly/export | Next | — |
 
-Repository implementation does **not** mean the user's local GPU/model environment has passed real-model acceptance.
+Repository implementation does **not** mean the user's local GPU/model environment has passed real-project acceptance.
 
-## 6. R6 Timing rules
+## 6. R6/R7 timing and segment rules
 
-`RemakeTimeline` consumes real TargetDialogue `speech_duration_us`. It never rewrites source Shot boundaries or source ASR.
-
-Current strategies include:
+`RemakeTimeline` consumes real TargetDialogue `speech_duration_us`; source Shot boundaries and source ASR are never rewritten.
 
 ```text
 KEEP
@@ -133,191 +137,171 @@ HUMAN_REVIEW
 WAITING_AUDIO
 ```
 
-Extreme timing ambiguity produces `DIALOGUE_TIMING` ReviewIssue.
-
-## 7. R7 GenerationSegment
-
-Compiler boundary:
+GenerationSegment boundary:
 
 ```text
 SourceDramaSnapshot
 + TargetLocalization
 + TargetDialogue
 + RemakeTimeline
-        ↓
-GenerationSegment
+→ GenerationSegment
 ```
 
-Important constraints:
+H3 constraints:
 
 ```text
-H3 render = 4..15 seconds
+render = 4..15 seconds
 >15-second target shot = balanced multi-segment split
-<4-second target segment = render >=4 seconds + exact post trim
+<4-second target = H3 render >=4 seconds + exact FFmpeg post-trim
 Ref2VA visual reference = 2..15 seconds
-source reference too short / extension outside source action = FL2VA
 ```
 
-Freshness:
+Any authoritative upstream fingerprint change makes old segment/attempt/QC/selection stale or invalid.
 
-```text
-source_fingerprint
-+ target_dialogue_fingerprint
-+ target_localization_fingerprint
-+ remake_timeline_fingerprint
-→ GenerationSegment input_fingerprint
-```
+## 7. R8 H3 execution
 
-Any authoritative upstream edit makes an old segment stale.
-
-APIs:
-
-```text
-POST /api/projects/{project_id}/generation-segments/compile
-GET  /api/projects/{project_id}/generation-segments
-GET  /api/h3/runtime
-```
-
-## 8. R8 H3 Context Compiler
-
-Implementation:
+Core implementation:
 
 ```text
 engine/app/h3_context_contract_v1.py
 engine/app/h3_context_compiler_v1.py
 engine/app/h3_reference_assets_v1.py
-```
-
-The compiler does not perform another story-understanding pass. It converts current product truth into executable H3 input.
-
-### Ref2VA context
-
-```text
-TargetCharacter current reference image(s)
-+ optional LOCALIZE Scene reference image
-+ silent source Reference Video
-+ aligned target TTS audio timeline when dialogue exists
-+ compact H3 Context-IR-style prompt
-```
-
-Critical safety/correctness rule:
-
-```text
-source Reference Clip may contain source audio for analysis/review
-↓
-R8 creates a new visual-only derivative with `-an`
-↓
-source-language soundtrack is never supplied to Ref2VA
-```
-
-Target TTS is mixed separately at exact segment offsets as 32 kHz stereo audio.
-
-### FL2VA context
-
-```text
-continuation segment
-→ previous current successful GenerationAttempt final frame
-→ frame_index = 0
-→ FL2VA continuation
-
-no keyframe
-→ FL2VA endpoint / t2va task
-```
-
-Target language is read from current target localization truth and used in H3 dialogue tags; it is not inferred from the compact character context.
-
-Internal Studio URLs such as `/api/shots/.../reference` are always resolved to real local files before SGLang submission.
-
-## 9. R8 target reference assets
-
-Text-only TargetCharacter definitions are automatically materialized into deterministic H3 casting references before Ref2VA generation:
-
-```text
-TargetCharacter
-→ FL2VA endpoint in text-to-video mode
-→ 4-second neutral casting clip
-→ reusable current reference stills
-```
-
-LOCALIZE scenes can similarly receive an empty target-region environment reference image.
-
-These are automatic runtime assets, not user-facing pages. Their signatures depend on current target truth, so target edits invalidate old references naturally.
-
-## 10. R8 GenerationAttempt
-
-Implementation:
-
-```text
 engine/app/generation_attempt_v1.py
 engine/app/h3_generation_routes_v1.py
 ```
 
-Persistent table:
+Ref2VA input:
 
 ```text
-v2_generation_attempts
+TargetCharacter reference image(s)
++ optional LOCALIZE Scene reference
++ visual-only source Reference Video (`-an`)
++ exact target-dialogue TTS audio condition when dialogue exists
++ compact deterministic prompt
 ```
 
-One row = one immutable execution attempt for one current GenerationSegment context.
+Source-language soundtrack is never passed into Ref2VA. Target TTS is mixed separately as aligned 32 kHz stereo audio.
 
-Lifecycle:
+GenerationAttempt lifecycle:
 
 ```text
-PLANNED
-→ SUBMITTED
-→ RUNNING
-→ SUCCEEDED | FAILED
-
-upstream changed during/after generation
-→ STALE
+PLANNED → SUBMITTED → RUNNING → SUCCEEDED | FAILED
+upstream changed → STALE
 ```
 
-Execution:
+For target segments shorter than H3's 4-second minimum, the raw H3 file is precisely trimmed to target duration before the Attempt output is published.
+
+## 8. R9 H3 QC / automatic retry / selection
+
+Implementation:
 
 ```text
-compile H3 context
-→ submit through VideoGenerationProvider
-→ poll local SGLang job
-→ download raw H3 output
-→ if H3 minimum render > target duration, exact FFmpeg post-trim
-→ persist current final output
+engine/app/h3_qc_contract_v1.py
+engine/app/h3_qc_core_v1.py
+engine/app/h3_qc_orchestrator_v1.py
+engine/app/h3_qc_v1.py
+engine/app/h3_retry_execution_v1.py
+engine/app/generation_selection_v1.py
+engine/app/h3_qc_routes_v1.py
+frontend/src/components/H3QcReviewV1.vue
+frontend/src/components/H3OutputV1.vue
 ```
 
-A Studio process restart marks local executor attempts left in `PLANNED/SUBMITTED/RUNNING` as failed instead of leaving a permanent false-running state.
-
-APIs:
+Persistent tables:
 
 ```text
-POST /api/projects/{project_id}/generation-segments/{segment_id}/h3-context/compile
+v2_generation_quality_checks
+v2_generation_selections
+```
+
+### Structural hard gate
+
+Each SUCCEEDED Attempt is checked with:
+
+```text
+ffprobe video stream / duration / dimensions / fps
++ full ffmpeg video decode
++ exact target-duration tolerance
+```
+
+A corrupt or wrong-duration output cannot become Selected Output, even by manual override.
+
+### Semantic QC
+
+The existing local Qwen3-VL service receives sampled frames from the generated video plus current comparison references:
+
+```text
+TargetCharacter references
+TargetScene reference/description
+source Reference Video samples for action/blocking/camera only
+previous Selected Output continuity frame when needed
+```
+
+It evaluates:
+
+```text
+visual integrity
+source actor leakage
+target character consistency
+scene consistency
+Ref2VA action/camera consistency
+FL2VA continuity consistency
+```
+
+Final lip sync is intentionally **not** scored here; it belongs to R10.
+
+### Retry policy
+
+```text
+QC PASS -> auto GenerationSelection
+QC RETRY -> different seed + concrete QC correction added to H3 prompt
+Qwen unavailable -> WAITING_MODEL, no human content ReviewIssue
+low-confidence/ambiguous semantic result -> H3_QC ReviewIssue
+repeated retry failure -> H3_QC ReviewIssue
+```
+
+Automatic attempt cap defaults to 3 and can be configured with:
+
+```text
+AI_DRAMA_H3_QC_MAX_ATTEMPTS
+```
+
+clamped to 1..5.
+
+FL2VA retry continuity uses the **previous Selected Output**, never merely the latest technically SUCCEEDED Attempt.
+
+### Human fallback
+
+`H3_QC` is a domain-edited ReviewIssue. Generic ignore/resolve is blocked.
+
+The Review Center allows only meaningful actions:
+
+```text
+采用这个版本 -> writes GenerationSelection
+再生成一次 -> background H3 retry + QC
+```
+
+Manual selection may override semantic uncertainty only when the output has passed structural hard checks.
+
+## 9. R9 APIs
+
+```text
+GET  /api/projects/{project_id}/h3-quality
+POST /api/generation-attempts/{attempt_id}/quality-check
+POST /api/generation-attempts/{attempt_id}/select
+GET  /api/generation-segments/{segment_id}/selected-video?project_id=...
+POST /api/projects/{project_id}/generation-segments/{segment_id}/tasks/h3-qc-retry
+```
+
+Existing H3 entry remains:
+
+```text
 POST /api/projects/{project_id}/tasks/h3-generate-ready
-GET  /api/projects/{project_id}/generation-attempts
-GET  /api/generation-attempts/{attempt_id}/video
 ```
 
-The batch task runs READY GenerationSegments sequentially and reuses a current successful output instead of regenerating it.
+but its product semantics are now **generate + QC + auto retry + select**, not raw generation only.
 
-## 11. H3 runtime boundary
-
-```text
-business code
-→ VideoGenerationProvider
-→ MiniMaxH3Provider
-→ H3RuntimeManager
-→ local SGLang H3
-```
-
-Default endpoints:
-
-```text
-FL2VA  http://127.0.0.1:30010
-Ref2VA http://127.0.0.1:30011
-```
-
-Current runtime request profile follows the SGLang async `/v1/videos` contract and supplies `model`, `seconds`, `task`, `conditions`, target resolution/aspect, inference settings and seed.
-
-The main Studio FastAPI process never loads the H3 weights.
-
-## 12. Current ReviewIssue families
+## 10. ReviewIssue families
 
 ```text
 SHOT_BOUNDARY
@@ -328,71 +312,66 @@ TARGET_CHARACTER
 SCENE_LOCALIZATION
 LOCALIZATION
 DIALOGUE_TIMING
+H3_QC
 ```
 
 `ReviewIssue` is attention state, not authoritative business truth.
 
-## 13. Repository acceptance
+## 11. Repository acceptance
 
 Dedicated isolated jobs:
 
 ```text
 r7-generation-segments
 r8-h3-generation
+r9-h3-qc
 ```
 
-Commands:
+R9 acceptance covers:
 
 ```text
-python -m pytest -q engine/tests/v2/test_generation_segment_v1.py
-python -m pytest -q engine/tests/v2/test_h3_r8_v1.py engine/tests/v2/test_generation_segment_v1.py
+QC pass thresholds
+source actor leakage -> RETRY
+low QC confidence -> REVIEW
+structural exact-duration + full-decode gate
+retry seed changes + QC correction prompt
+H3_QC domain-edit protection
+FastAPI R9 route registration
+R8/R7 regression checks
 ```
 
-On 2026-09-01 both isolated R7 and R8 jobs passed, including FastAPI R8 route import.
+On 2026-09-01 the isolated R7, R8 and R9 jobs passed.
 
-Known unrelated repository debt remains outside this acceptance boundary:
+Frontend dependency drift was also corrected by aligning `frontend/package.json` with the existing lockfile TypeScript version and raising `.node-version` to the lockfile's Babel engine minimum. Frontend build acceptance must still be read from the latest CI run; do not infer it from code review alone.
+
+## 12. Local acceptance still required
+
+Real end-to-end H3/R9 acceptance requires the user's actual machine:
 
 ```text
-frontend package.json/package-lock dependency drift -> npm ci failure
-historical Character/Breakdown tests with stale version expectations
-lightweight full-suite CI missing some heavy runtime dependencies
+1. start FL2VA and required Ref2VA runtime
+2. start local Qwen3-VL QC service
+3. run a real prepared Project
+4. generate target references and H3 attempts
+5. verify automatic QC/retries
+6. inspect Selected Output identity, scene, action/camera and duration
+7. force at least one bad/ambiguous case and verify H3_QC Review Center flow
 ```
 
-Do not claim those failures prove R7/R8 failed, and do not claim isolated repository PASS proves the local H3 model itself works.
-
-## 14. Local acceptance still required
-
-Real H3 acceptance must run on the user's actual GPU/model machine:
+Current factual state:
 
 ```text
-1. start FL2VA SGLang runtime
-2. start Ref2VA SGLang runtime when plan needs reference generation
-3. GET /api/h3/runtime
-4. run a prepared real Project through GenerationSegment
-5. POST /api/projects/{project_id}/tasks/h3-generate-ready
-6. inspect real target-character references and H3 outputs
-7. verify target identity, source action/camera transfer, target-language audio timing and exact final segment duration
+R7/R8/R9 CODE + ISOLATED REPOSITORY ACCEPTANCE = PASS
+LOCAL H3 GPU / QWEN QC / REAL PROJECT ACCEPTANCE = PENDING
 ```
 
-Until this is performed, R8 state is:
+## 13. Next frontier
 
 ```text
-CODE / ISOLATED REPOSITORY ACCEPTANCE = PASS
-LOCAL H3 GPU / REAL PROJECT ACCEPTANCE = PENDING
-```
-
-## 15. Next frontier
-
-```text
-R9 H3 QC
-→ automatic quality metrics
-→ retry policy
-→ selected attempt/output
-→ repeated failure -> Review Center
-
 R10 Lip Sync
-→ enforce final target TTS
-→ subtitle / ambience / BGM / SFX policy
+→ enforce final target TTS mouth sync on Selected Output
+→ subtitle policy
+→ ambience / BGM / SFX / target voice mix
 → episode assembly
 → preview / export
 
