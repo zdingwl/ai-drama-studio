@@ -2,7 +2,8 @@
 
 当前可用范围：
 多剧集管理、自动初始化 + 拉片、Shot 人工修正、Final Asset / Shot Binding、
-项目重制策略、统一人工复核队列、一键自动理解原短剧，以及统一后台 Task / Progress API。
+项目重制策略、统一人工复核队列、一键自动理解原短剧、SourceDramaSnapshot，
+以及统一后台 Task / Progress API。
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ from engine.app.remake_routes_v1 import router as remake_router
 from engine.app.review_issue_routes_v1 import router as review_issue_router
 from engine.app.shot_cache_routes_v51 import router as shot_cache_router
 from engine.app.shot_edit_routes_v2 import router as shot_edit_router
+from engine.app.source_drama_snapshot_routes_v1 import router as source_drama_snapshot_router
 from engine.app.studio_v2 import (
     create_project,
     delete_episode,
@@ -61,7 +63,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="AI Drama Studio", version="2.5.0", lifespan=lifespan)
+app = FastAPI(title="AI Drama Studio", version="2.6.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -75,6 +77,7 @@ app.include_router(shot_edit_router)
 app.include_router(breakdown_router)
 app.include_router(scene_timeline_router)
 app.include_router(breakdown_read_model_router)
+app.include_router(source_drama_snapshot_router)
 app.include_router(asset_router)
 app.include_router(asset_batch_router)
 app.include_router(character_gallery_router)
@@ -104,7 +107,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "architecture": "localized-remake-h3-local-v1", "app_version": "2.5.0"}
+    return {"status": "ok", "architecture": "localized-remake-h3-local-v1", "app_version": "2.6.0"}
 
 
 @app.get("/api/projects")
