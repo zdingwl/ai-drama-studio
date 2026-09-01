@@ -17,7 +17,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 from typing import Any, Callable, Mapping
 
@@ -25,15 +24,17 @@ from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstr
 from sqlalchemy.orm import Mapped, mapped_column
 
 from engine.app.generation_segment_v1 import get_generation_segments_v1
-from engine.app.generation_selection_v1 import (
-    get_generation_selection_v1,
-    list_generation_selections_v1,
-    selected_generation_output_v1,
-)
+from engine.app.generation_selection_v1 import list_generation_selections_v1, selected_generation_output_v1
 from engine.app.latentsync_provider_v1 import LatentSyncProviderError, get_lip_sync_provider_v1
 from engine.app.lip_sync_provider_v1 import LipSyncProvider, LipSyncRequestV1
 from engine.app.postproduction_contract_v1 import PostProductionPlanV1, PostProductionSegmentV1
-from engine.app.studio_v2 import Base, Project, get_session, new_id, project_dir, utcnow
+from engine.app.postproduction_lipsync_v1 import (
+    PostProductionLipSyncError,
+    plan_lip_sync_v1,
+    render_target_face_windows_v1,
+)
+from engine.app.review_issue_v1 import ReviewIssue, upsert_review_issue
+from engine.app.studio_v2 import Base, Project, get_session, project_dir, utcnow
 
 
 class PostProductionError(RuntimeError):
@@ -155,6 +156,27 @@ def _postproduction_id(segment_id: str) -> str:
     return f"POSTSEG_{hashlib.sha1(segment_id.encode('utf-8')).hexdigest()}"
 
 
+def _lip_sync_issue_key(segment_id: str) -> str:
+    return f"auto:lip-sync-qc:{segment_id}"
+
+
+def _resolve_lip_sync_issue(project_id: str, segment_id: str, reason: str) -> None:
+    with get_session() as session:
+        row = session.scalar(select(ReviewIssue).where(
+            ReviewIssue.project_id == project_id,
+            ReviewIssue.source_key == _lip_sync_issue_key(segment_id),
+            ReviewIssue.status == "OPEN",
+        ))
+        if row is None:
+            return
+        now = utcnow()
+        row.status = "RESOLVED"
+        row.resolution_json = json.dumps({"automatic": True, "reason": reason}, ensure_ascii=False)
+        row.resolved_at = now
+        row.updated_at = now
+        session.commit()
+
+
 def _dialogue_payload(project_id: str, segment: Mapping[str, Any]) -> tuple[list[dict[str, Any]], bool]:
     rows: list[dict[str, Any]] = []
     waiting_audio = False
@@ -209,7 +231,9 @@ def _plan_segment(
     elif visible_character_count == 1 and len(visible_speaker_ids) == 1 and visible_speaker_ids[0] in visible_character_ids:
         lip_sync_mode = "LATENTSYNC_FULL_SEGMENT"
     else:
-        lip_sync_mode = "REVIEW_MULTI_FACE"
+        # The actual SFace locator runs only in the R10 background task. Merely opening the
+        # Output/read-model endpoint must never synchronously execute face models.
+        lip_sync_mode = "LATENTSYNC_TARGET_FACE_ROI"
 
     selection_id = str(selection.get("id")) if selection else None
     selected_attempt_id = str(selection.get("selected_attempt_id")) if selection else None
@@ -235,26 +259,39 @@ def _plan_segment(
     output_path = None
     audio_path = None
     error_message = None
+    locator_input_fingerprint = None
+    lip_sync_windows: list[dict[str, Any]] = []
+    existing_payload = _json(existing.payload_json, {}) if existing is not None else {}
+    same_fingerprint = bool(existing is not None and existing.postproduction_fingerprint == fingerprint)
+    if same_fingerprint:
+        locator_input_fingerprint = existing_payload.get("locator_input_fingerprint")
+        cached_windows = existing_payload.get("lip_sync_windows")
+        lip_sync_windows = list(cached_windows) if isinstance(cached_windows, list) else []
+
     if selection is None:
         status, reason = "WAITING_SELECTION", "当前 GenerationSegment 尚无 R9 Selected Output"
     elif selected_generation_output_v1(project_id, segment_id) is None:
         status, reason = "WAITING_SELECTION", "当前 GenerationSelection 输出文件不可用"
     elif waiting_audio:
         status, reason = "WAITING_AUDIO", "目标对白音频尚未全部 READY"
-    elif lip_sync_mode == "REVIEW_MULTI_FACE":
-        status, reason = "REVIEW", "多人同框存在可见对白；LatentSync 当前只可靠处理单目标脸，禁止自动给错误人物改口型"
-    elif existing is not None and existing.postproduction_fingerprint == fingerprint:
-        existing_output = Path(existing.output_path) if existing.output_path else None
-        if existing.status == "SUCCEEDED" and existing_output is not None and existing_output.is_file() and existing_output.stat().st_size > 0:
+    elif same_fingerprint:
+        existing_output = Path(existing.output_path) if existing and existing.output_path else None
+        if existing and existing.status == "SUCCEEDED" and existing_output is not None and existing_output.is_file() and existing_output.stat().st_size > 0:
             status, reason = "SUCCEEDED", existing.reason
             output_path = existing.output_path
             audio_path = existing.audio_path
-        elif existing.status == "PROCESSING":
+        elif existing and existing.status == "PROCESSING":
             status, reason = "PROCESSING", existing.reason
             audio_path = existing.audio_path
+        elif existing and existing.status == "REVIEW":
+            status, reason = "REVIEW", existing.reason
+            lip_sync_mode = "REVIEW_MULTI_FACE"
+            error_message = existing.error_message
         else:
+            # WAITING_MODEL / FAILED are retriable infrastructure states. Recompile exposes them as
+            # READY so a later background run can retry after the local runtime/models recover.
             status, reason = "READY", "当前 Selected Output 与最终目标音频完整，可进入 R10 后期"
-            error_message = existing.error_message if existing.status == "FAILED" else None
+            error_message = existing.error_message if existing and existing.status == "FAILED" else None
     else:
         status, reason = "READY", "当前 Selected Output 与最终目标音频完整，可进入 R10 后期"
 
@@ -276,6 +313,8 @@ def _plan_segment(
         "lip_sync_mode": lip_sync_mode,
         "visible_character_count": visible_character_count,
         "visible_speaker_ids": visible_speaker_ids,
+        "locator_input_fingerprint": locator_input_fingerprint,
+        "lip_sync_windows": lip_sync_windows,
         "dialogues": clean_dialogues,
         "audio_path": audio_path,
         "output_path": output_path,
@@ -289,11 +328,16 @@ def _plan_segment(
 def _aggregate_status(segments: list[dict[str, Any]]) -> tuple[str, int, int, int]:
     succeeded = sum(item["status"] == "SUCCEEDED" for item in segments)
     review = sum(item["status"] == "REVIEW" for item in segments)
-    waiting = sum(item["status"] in {"WAITING_SELECTION", "WAITING_AUDIO"} for item in segments)
+    waiting = sum(item["status"] in {"WAITING_SELECTION", "WAITING_AUDIO", "WAITING_MODEL"} for item in segments)
     if review:
         status = "REVIEW"
     elif waiting:
-        status = "WAITING_SELECTION" if any(item["status"] == "WAITING_SELECTION" for item in segments) else "WAITING_AUDIO"
+        if any(item["status"] == "WAITING_SELECTION" for item in segments):
+            status = "WAITING_SELECTION"
+        elif any(item["status"] == "WAITING_AUDIO" for item in segments):
+            status = "WAITING_AUDIO"
+        else:
+            status = "WAITING_MODEL"
     elif segments and succeeded == len(segments):
         status = "SUCCEEDED"
     else:
@@ -412,6 +456,45 @@ def get_postproduction_segment_v1(segment_id: str) -> dict[str, Any] | None:
         return PostProductionSegmentV1.model_validate(payload).model_dump(mode="json")
 
 
+def _set_runtime_state(
+    segment_id: str,
+    *,
+    status: str,
+    reason: str,
+    lip_sync_mode: str | None = None,
+    locator_input_fingerprint: str | None = None,
+    lip_sync_windows: list[Mapping[str, Any]] | None = None,
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    now = utcnow()
+    with get_session() as session:
+        row = session.scalar(select(PostProductionSegment).where(PostProductionSegment.generation_segment_id == segment_id))
+        if row is None:
+            raise PostProductionError("PostProductionSegment 记录不存在")
+        row.status = status
+        row.reason = reason
+        if lip_sync_mode is not None:
+            row.lip_sync_mode = lip_sync_mode
+        row.error_message = error_message
+        row.updated_at = now
+        payload = _json(row.payload_json, {})
+        payload.update({
+            "status": status,
+            "reason": reason,
+            "lip_sync_mode": row.lip_sync_mode,
+            "locator_input_fingerprint": locator_input_fingerprint,
+            "lip_sync_windows": [dict(item) for item in (lip_sync_windows or [])],
+            "error_message": error_message,
+            "updated_at": now.isoformat(),
+        })
+        row.payload_json = json.dumps(payload, ensure_ascii=False)
+        session.commit()
+    result = get_postproduction_segment_v1(segment_id)
+    if result is None:
+        raise PostProductionError("PostProductionSegment 状态更新后无法读取")
+    return result
+
+
 def _materialize_dialogue_audio(
     dialogues: list[Mapping[str, Any]],
     duration_us: int,
@@ -506,6 +589,10 @@ def execute_postproduction_segment_v1(
     if current["status"] != "READY":
         raise PostProductionError(f"PostProductionSegment 当前不可执行：{current['reason']}")
 
+    _generation_plan, generation_segments = _segment_map(project_id)
+    generation_segment = generation_segments.get(segment_id)
+    if generation_segment is None:
+        raise PostProductionError("当前 GenerationSegment 已不存在")
     selected = selected_generation_output_v1(project_id, segment_id)
     if selected is None:
         raise PostProductionError("当前 Selected Output 不存在")
@@ -519,15 +606,14 @@ def execute_postproduction_segment_v1(
     final_audio: Path | None = None
     driving_audio: Path | None = None
 
-    with get_session() as session:
-        row = session.scalar(select(PostProductionSegment).where(PostProductionSegment.generation_segment_id == segment_id))
-        if row is None:
-            raise PostProductionError("PostProductionSegment 记录不存在")
-        row.status = "PROCESSING"
-        row.reason = "正在生成最终目标音轨与口型后期"
-        row.error_message = None
-        row.updated_at = utcnow()
-        session.commit()
+    _set_runtime_state(
+        segment_id,
+        status="PROCESSING",
+        reason="正在生成最终目标音轨与口型后期",
+        lip_sync_mode=str(current["lip_sync_mode"]),
+        locator_input_fingerprint=current.get("locator_input_fingerprint"),
+        lip_sync_windows=current.get("lip_sync_windows") or [],
+    )
 
     try:
         if dialogues:
@@ -540,7 +626,8 @@ def execute_postproduction_segment_v1(
             )
 
         visual = selected
-        if current["lip_sync_mode"] == "LATENTSYNC_FULL_SEGMENT":
+        lip_sync_mode = str(current["lip_sync_mode"])
+        if lip_sync_mode != "SKIP_NO_VISIBLE_DIALOGUE":
             driving_audio = _materialize_dialogue_audio(
                 dialogues,
                 int(current["target_duration_us"]),
@@ -549,18 +636,93 @@ def execute_postproduction_segment_v1(
                 stereo=False,
             )
             lip_provider = provider or get_lip_sync_provider_v1()
-            status = lip_provider.status()
-            if not status.get("ready"):
-                raise PostProductionError(f"LatentSync Runtime 尚未 READY：{status.get('error') or status.get('worker')}")
+            runtime = lip_provider.status()
+            if not runtime.get("ready"):
+                raise PostProductionError(f"LatentSync Runtime 尚未 READY：{runtime.get('error') or runtime.get('worker')}")
             seed = int(fingerprint[:8], 16) & 0x7FFFFFFF
-            visual = lip_provider.render(LipSyncRequestV1(
-                video_path=selected,
-                audio_path=driving_audio,
-                output_path=workspace / "latentsync-visual.mp4",
-                seed=seed,
-                inference_steps=max(20, min(50, int(os.getenv("AI_DRAMA_LATENTSYNC_STEPS", "20")))),
-                guidance_scale=max(1.0, min(3.0, float(os.getenv("AI_DRAMA_LATENTSYNC_GUIDANCE", "1.5")))),
-            ))
+            inference_steps = max(20, min(50, int(os.getenv("AI_DRAMA_LATENTSYNC_STEPS", "20"))))
+            guidance_scale = max(1.0, min(3.0, float(os.getenv("AI_DRAMA_LATENTSYNC_GUIDANCE", "1.5"))))
+
+            if lip_sync_mode == "LATENTSYNC_FULL_SEGMENT":
+                visual = lip_provider.render(LipSyncRequestV1(
+                    video_path=selected,
+                    audio_path=driving_audio,
+                    output_path=workspace / "latentsync-visual.mp4",
+                    seed=seed,
+                    inference_steps=inference_steps,
+                    guidance_scale=guidance_scale,
+                ))
+            elif lip_sync_mode == "LATENTSYNC_TARGET_FACE_ROI":
+                locator_plan = plan_lip_sync_v1(
+                    project_id=project_id,
+                    segment=generation_segment,
+                    selected_video=selected,
+                    dialogues=dialogues,
+                    existing_payload=current,
+                )
+                locator_status = str(locator_plan.get("status") or "REVIEW")
+                locator_mode = str(locator_plan.get("mode") or "REVIEW_MULTI_FACE")
+                locator_fp = locator_plan.get("locator_input_fingerprint")
+                locator_windows = list(locator_plan.get("windows") or [])
+                locator_reason = str(locator_plan.get("reason") or "目标说话人定位结果不完整")
+                if locator_status == "WAITING_MODEL":
+                    return _set_runtime_state(
+                        segment_id,
+                        status="WAITING_MODEL",
+                        reason=locator_reason,
+                        lip_sync_mode="LATENTSYNC_TARGET_FACE_ROI",
+                        locator_input_fingerprint=locator_fp,
+                        lip_sync_windows=locator_windows,
+                        error_message=None,
+                    )
+                if locator_status != "READY" or locator_mode != "LATENTSYNC_TARGET_FACE_ROI":
+                    issue = upsert_review_issue(
+                        project_id=project_id,
+                        episode_id=str(current["episode_id"]),
+                        source_key=_lip_sync_issue_key(segment_id),
+                        issue_type="LIP_SYNC_QC",
+                        severity="REVIEW",
+                        reason=locator_reason,
+                        ai_suggestion={
+                            "generation_segment_id": segment_id,
+                            "visible_speaker_ids": current.get("visible_speaker_ids") or [],
+                            "lip_sync_windows": locator_windows,
+                        },
+                        editable_payload={
+                            "generation_segment_id": segment_id,
+                            "selected_attempt_id": current.get("selected_attempt_id"),
+                            "lip_sync_windows": locator_windows,
+                        },
+                    )
+                    return _set_runtime_state(
+                        segment_id,
+                        status="REVIEW",
+                        reason=locator_reason,
+                        lip_sync_mode="REVIEW_MULTI_FACE",
+                        locator_input_fingerprint=locator_fp,
+                        lip_sync_windows=locator_windows,
+                        error_message=f"ReviewIssue {issue['id']}",
+                    )
+                visual = render_target_face_windows_v1(
+                    selected_video=selected,
+                    driving_audio=driving_audio,
+                    windows=locator_windows,
+                    workspace=workspace,
+                    provider=lip_provider,
+                    seed=seed,
+                    inference_steps=inference_steps,
+                    guidance_scale=guidance_scale,
+                )
+                _set_runtime_state(
+                    segment_id,
+                    status="PROCESSING",
+                    reason="目标说话人 ROI 已安全定位，正在完成最终封装",
+                    lip_sync_mode="LATENTSYNC_TARGET_FACE_ROI",
+                    locator_input_fingerprint=locator_fp,
+                    lip_sync_windows=locator_windows,
+                )
+            else:
+                raise PostProductionError(f"未知口型模式：{lip_sync_mode}")
 
         output = _mux_final_video(
             visual,
@@ -602,6 +764,8 @@ def execute_postproduction_segment_v1(
             })
             row.payload_json = json.dumps(payload, ensure_ascii=False)
             session.commit()
+        if still_current:
+            _resolve_lip_sync_issue(project_id, segment_id, "当前目标说话人口型后期已成功完成")
         result = get_postproduction_segment_v1(segment_id)
         if result is None:
             raise PostProductionError("PostProductionSegment 无法重新读取")
@@ -624,7 +788,7 @@ def execute_postproduction_segment_v1(
                 })
                 row.payload_json = json.dumps(payload, ensure_ascii=False)
                 session.commit()
-        if isinstance(exc, (PostProductionError, LatentSyncProviderError)):
+        if isinstance(exc, (PostProductionError, PostProductionLipSyncError, LatentSyncProviderError)):
             raise
         raise PostProductionError(str(exc)) from exc
 
