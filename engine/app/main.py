@@ -2,8 +2,8 @@
 
 当前可用范围：
 多剧集管理、自动初始化 + 拉片、Shot 人工修正、Final Asset / Shot Binding、
-项目重制策略、统一人工复核队列、一键自动理解原短剧、SourceDramaSnapshot，
-以及统一后台 Task / Progress API。
+项目重制策略、统一人工复核队列、一键自动理解原短剧、SourceDramaSnapshot、
+TargetCharacter / SceneLocalizationMapping，以及统一后台 Task / Progress API。
 """
 from __future__ import annotations
 
@@ -50,6 +50,7 @@ from engine.app.studio_v2 import (
     list_shots,
     reorder_episodes,
 )
+from engine.app.target_localization_routes_v1 import router as target_localization_router
 from engine.app.task_progress_v2 import recover_interrupted_tasks
 from engine.app.task_routes_v2 import router as task_router
 
@@ -63,7 +64,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="AI Drama Studio", version="2.6.0", lifespan=lifespan)
+app = FastAPI(title="AI Drama Studio", version="2.7.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -84,6 +85,7 @@ app.include_router(character_gallery_router)
 app.include_router(remake_router)
 app.include_router(review_issue_router)
 app.include_router(auto_remake_router)
+app.include_router(target_localization_router)
 
 
 class ProjectCreate(BaseModel):
@@ -107,7 +109,7 @@ def _bad_request(exc: Exception) -> HTTPException:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "architecture": "localized-remake-h3-local-v1", "app_version": "2.6.0"}
+    return {"status": "ok", "architecture": "localized-remake-h3-local-v1", "app_version": "2.7.0"}
 
 
 @app.get("/api/projects")
