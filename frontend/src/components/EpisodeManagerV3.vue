@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
 import type { Episode, Project } from '../types/studio'
 
@@ -11,12 +12,31 @@ const emit = defineEmits<{
   refresh: []
 }>()
 
+const route = useRoute()
+const router = useRouter()
 const busy = ref('')
 const error = ref('')
 const draggedId = ref<string | null>(null)
 
-function seconds(us: number | null): string {
-  return us === null ? '—' : `${(us / 1_000_000).toFixed(2)}s`
+const totalDurationUs = computed(() => props.project.episodes.reduce((sum, episode) => sum + (episode.duration_us ?? 0), 0))
+const totalShots = computed(() => props.project.episodes.reduce((sum, episode) => sum + episode.shot_count, 0))
+
+function durationLabel(us: number | null): string {
+  if (us === null) return '时长读取中'
+  const seconds = Math.max(0, Math.round(us / 1_000_000))
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`
+}
+
+function episodeState(episode: Episode): { label: string; tone: string } {
+  const status = String(episode.preprocess_status || '').toUpperCase()
+  if (status === 'FAILED') return { label: '素材准备失败', tone: 'blocked' }
+  if (status === 'QUEUED' || status === 'PROCESSING') return { label: '素材准备中', tone: 'processing' }
+  if (status === 'READY_WITH_WARNINGS') return { label: '素材需要检查', tone: 'review' }
+  if (episode.shot_count > 0) return { label: `已有 ${episode.shot_count} 个镜头`, tone: 'ready' }
+  if (status === 'READY') return { label: '素材已准备', tone: 'ready' }
+  return { label: '等待拉片', tone: 'idle' }
 }
 
 /**
@@ -66,47 +86,190 @@ async function removeEpisode(episode: Episode): Promise<void> {
   if (!window.confirm(`删除「${episode.title}」及其当前分析结果？`)) return
   await run('正在删除剧集', () => api.deleteEpisode(episode.id))
 }
+
+function goToBreakdown(): void {
+  void router.replace({ query: { ...route.query, stage: '2' } })
+}
 </script>
 
 <template>
-  <section class="workspace-panel">
-    <div class="section-title">
-      <div><span>01</span><h2>剧集管理</h2></div>
-      <label class="primary-button file-button">导入多个视频<input type="file" multiple accept="video/*" @change="uploadFiles" /></label>
-    </div>
-    <p class="section-help">一个项目代表一部短剧。批量导入后可拖动调整剧集顺序；批量拉片严格按照这里的顺序逐集处理。</p>
+  <section class="source-stage-v1">
+    <header class="source-stage-header">
+      <div>
+        <small>01 · 源片与剧集</small>
+        <h1>先确认剧集顺序</h1>
+        <p>导入原始视频并按真实剧集顺序排列。后续批量拉片会严格按照这里的顺序逐集处理。</p>
+      </div>
+      <label class="primary-button file-button">+ 导入视频<input type="file" multiple accept="video/*" @change="uploadFiles" /></label>
+    </header>
+
     <p v-if="error" class="error-banner">{{ error }}</p>
     <div v-if="busy" class="busy-banner"><span class="spinner"></span>{{ busy }}…</div>
 
-    <div v-if="project.episodes.length === 0" class="empty-state large">
-      <strong>还没有剧集</strong>
-      <span>一次选择多个视频导入即可。Proxy / Audio 等技术准备会在拉片时自动执行。</span>
-    </div>
-    <div v-else class="episode-list">
-      <div
-        v-for="episode in project.episodes"
-        :key="episode.id"
-        class="episode-row"
-        draggable="true"
-        @dragstart="dragStart(episode.id)"
-        @dragover.prevent
-        @drop="dropOn(episode.id)"
-      >
-        <div class="drag-handle">⋮⋮</div>
-        <div class="episode-index">{{ String(episode.sort_order).padStart(2, '0') }}</div>
-        <div class="episode-main"><strong>{{ episode.title }}</strong><small>{{ episode.original_filename }}</small></div>
-        <div class="episode-meta">
-          <span>{{ seconds(episode.duration_us) }}</span>
-          <span>{{ episode.preprocess_status === 'READY' ? '分析素材已准备' : '拉片时自动准备' }}</span>
-          <span>{{ episode.shot_count }} Shots</span>
-        </div>
-        <button class="danger-text" :disabled="!!busy" @click="removeEpisode(episode)">删除</button>
-      </div>
+    <section class="source-summary-strip">
+      <div><small>剧集</small><strong>{{ project.episodes.length }} 集</strong></div>
+      <div><small>总时长</small><strong>{{ project.episodes.length ? durationLabel(totalDurationUs) : '—' }}</strong></div>
+      <div><small>已生成镜头</small><strong>{{ totalShots }} 个</strong></div>
+      <div><small>处理顺序</small><strong>从上到下</strong></div>
+    </section>
+
+    <div v-if="project.episodes.length === 0" class="source-empty">
+      <strong>先导入原始剧集</strong>
+      <p>可以一次选择多个视频。导入后拖动调整顺序，再进入“剧情与镜头”开始拉片。</p>
+      <label class="primary-button file-button">选择视频文件<input type="file" multiple accept="video/*" @change="uploadFiles" /></label>
     </div>
 
-    <div class="architecture-note">
-      <strong>项目设置</strong>
-      <p>{{ project.name }} · {{ project.source_language }} → {{ project.target_language }} · {{ project.target_region }}。语言与目标地区属于项目属性，不占生产阶段。</p>
-    </div>
+    <section v-else class="source-episode-section">
+      <header class="source-list-head">
+        <div><strong>剧集顺序</strong><span>拖动左侧手柄即可调整</span></div>
+        <span>{{ project.episodes.length }} 集</span>
+      </header>
+
+      <div class="source-episode-list">
+        <article
+          v-for="episode in project.episodes"
+          :key="episode.id"
+          class="source-episode-row"
+          draggable="true"
+          @dragstart="dragStart(episode.id)"
+          @dragover.prevent
+          @drop="dropOn(episode.id)"
+        >
+          <div class="source-drag" title="拖动排序">⋮⋮</div>
+          <div class="source-order"><small>第</small><strong>{{ String(episode.sort_order).padStart(2, '0') }}</strong><small>集</small></div>
+          <div class="source-episode-main">
+            <strong>{{ episode.title }}</strong>
+            <span>{{ episode.original_filename }}</span>
+          </div>
+          <div class="source-duration"><small>时长</small><strong>{{ durationLabel(episode.duration_us) }}</strong></div>
+          <div :class="['source-state', `tone-${episodeState(episode).tone}`]">
+            <span></span><strong>{{ episodeState(episode).label }}</strong>
+          </div>
+          <button class="source-delete" :disabled="!!busy" @click="removeEpisode(episode)">删除</button>
+        </article>
+      </div>
+
+      <footer class="source-next-step">
+        <div>
+          <small>下一步</small>
+          <strong>进入「02 剧情与镜头」检查切点并查看拉片结果</strong>
+        </div>
+        <button class="primary-button" @click="goToBreakdown">进入剧情与镜头 →</button>
+      </footer>
+    </section>
   </section>
 </template>
+
+<style scoped>
+.source-stage-v1 {
+  max-width: 1420px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+.source-stage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 24px;
+  border: 1px solid #dfe5ed;
+  border-radius: 16px;
+  background: #fff;
+}
+.source-stage-header > div { min-width: 0; display: grid; gap: 4px; }
+.source-stage-header small { color: #7288ad; font-size: 11px; font-weight: 850; letter-spacing: .04em; }
+.source-stage-header h1 { margin: 0; color: #26384f; font-size: 25px; line-height: 1.2; }
+.source-stage-header p { margin: 0; max-width: 820px; color: #748196; font-size: 13px; }
+.source-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+.source-summary-strip > div {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid #e1e6ed;
+  border-radius: 11px;
+  background: #fff;
+}
+.source-summary-strip small { color: #8793a4; font-size: 10px; }
+.source-summary-strip strong { color: #35465d; font-size: 14px; }
+.source-empty {
+  min-height: 310px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 9px;
+  border: 1px dashed #cfd8e5;
+  border-radius: 16px;
+  background: #fff;
+  text-align: center;
+}
+.source-empty strong { color: #34465f; font-size: 18px; }
+.source-empty p { max-width: 560px; margin: 0 0 5px; color: #7d899b; font-size: 13px; }
+.source-episode-section {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid #dfe5ed;
+  border-radius: 16px;
+  background: #fff;
+}
+.source-list-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 1px 3px 5px; }
+.source-list-head > div { display: flex; gap: 9px; align-items: baseline; }
+.source-list-head strong { color: #35465f; font-size: 14px; }
+.source-list-head span { color: #8995a7; font-size: 11px; }
+.source-episode-list { display: grid; gap: 7px; }
+.source-episode-row {
+  display: grid;
+  grid-template-columns: 34px 58px minmax(260px, 1fr) 90px 150px 52px;
+  gap: 12px;
+  align-items: center;
+  min-height: 70px;
+  padding: 9px 12px;
+  border: 1px solid #e4e8ee;
+  border-radius: 11px;
+  background: #fbfcfe;
+}
+.source-episode-row:hover { border-color: #c7d3e3; background: #fff; }
+.source-drag { color: #98a4b3; font-weight: 900; letter-spacing: -2px; cursor: grab; user-select: none; }
+.source-order { display: flex; gap: 2px; align-items: baseline; color: #8290a3; }
+.source-order strong { color: #38506f; font-size: 19px; }
+.source-order small { font-size: 9px; }
+.source-episode-main { min-width: 0; display: grid; gap: 2px; }
+.source-episode-main strong { overflow: hidden; color: #32445d; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.source-episode-main span { overflow: hidden; color: #8a96a7; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.source-duration { display: grid; gap: 1px; }
+.source-duration small { color: #929dab; font-size: 9px; }
+.source-duration strong { color: #58677b; font-size: 11px; }
+.source-state { display: flex; gap: 7px; align-items: center; min-width: 0; }
+.source-state > span { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #aab3bf; }
+.source-state strong { overflow: hidden; color: #68758a; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.source-state.tone-ready > span { background: #2ca36d; }
+.source-state.tone-ready strong { color: #267653; }
+.source-state.tone-processing > span { background: #5179d6; box-shadow: 0 0 0 3px #edf2ff; }
+.source-state.tone-processing strong { color: #4263aa; }
+.source-state.tone-review > span { background: #d59a2d; }
+.source-state.tone-review strong { color: #94691c; }
+.source-state.tone-blocked > span { background: #d55b5b; }
+.source-state.tone-blocked strong { color: #b54747; }
+.source-delete { border: 0; background: transparent; color: #b95858; font-size: 10px; font-weight: 750; cursor: pointer; }
+.source-next-step {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 4px;
+  padding: 14px 15px;
+  border-radius: 11px;
+  background: #f3f6ff;
+}
+.source-next-step > div { display: grid; gap: 2px; }
+.source-next-step small { color: #7185aa; font-size: 9px; font-weight: 850; }
+.source-next-step strong { color: #40577e; font-size: 12px; }
+@media (max-width: 1200px) {
+  .source-episode-row { grid-template-columns: 30px 54px minmax(220px, 1fr) 80px 120px 48px; gap: 8px; }
+}
+</style>
