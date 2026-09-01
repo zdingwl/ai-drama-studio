@@ -5,7 +5,9 @@ import wave
 
 import pytest
 
+from engine.app import postproduction_lipsync_v1 as lip_windows
 from engine.app import postproduction_v1 as post
+from engine.app.review_issue_v1 import DOMAIN_EDITED_ISSUE_TYPES
 
 
 def _write_wav(path: Path, *, seconds: int = 2, rate: int = 16_000) -> None:
@@ -81,7 +83,10 @@ def test_single_visible_character_is_latentsync_ready(tmp_path: Path, monkeypatc
     assert planned["dialogues"][0]["audio_trim_start_us"] == 1_000_000
 
 
-def test_multi_face_visible_dialogue_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_multi_face_compile_is_ready_for_background_locator_not_sync_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     audio = tmp_path / "dialogue.wav"
     video = tmp_path / "selected.mp4"
     _write_wav(audio)
@@ -90,9 +95,90 @@ def test_multi_face_visible_dialogue_fails_closed(tmp_path: Path, monkeypatch: p
 
     planned = post._plan_segment("PROJECT_TEST", _segment(audio, character_count=2), _selection(), None)
 
-    assert planned["status"] == "REVIEW"
-    assert planned["lip_sync_mode"] == "REVIEW_MULTI_FACE"
-    assert "多人同框" in planned["reason"]
+    assert planned["status"] == "READY"
+    assert planned["lip_sync_mode"] == "LATENTSYNC_TARGET_FACE_ROI"
+    assert planned["lip_sync_windows"] == []
+    assert "进入 R10 后期" in planned["reason"]
+
+
+def test_multi_face_locator_unique_target_becomes_roi_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audio = tmp_path / "dialogue.wav"
+    video = tmp_path / "selected.mp4"
+    _write_wav(audio)
+    video.write_bytes(b"selected-video")
+    segment = _segment(audio, character_count=2)
+    dialogues, waiting = post._dialogue_payload("PROJECT_TEST", segment)
+    assert waiting is False
+
+    monkeypatch.setattr(
+        lip_windows,
+        "_reference_identities",
+        lambda _characters, speaker_ids: {speaker_id: [{"path": f"{speaker_id}.jpg"}] for speaker_id in speaker_ids},
+    )
+    monkeypatch.setattr(
+        lip_windows,
+        "locate_target_speaker_face_v1",
+        lambda **_kwargs: {
+            "status": "READY",
+            "reason": "unique target",
+            "crop_box": [20, 30, 160, 180],
+            "median_similarity": 0.61,
+        },
+    )
+
+    result = lip_windows.plan_lip_sync_v1(
+        project_id="PROJECT_TEST",
+        segment=segment,
+        selected_video=video,
+        dialogues=dialogues,
+    )
+
+    assert result["status"] == "READY"
+    assert result["mode"] == "LATENTSYNC_TARGET_FACE_ROI"
+    assert len(result["windows"]) == 1
+    assert result["windows"][0]["crop_box"] == [20, 30, 160, 180]
+    assert result["windows"][0]["locator_status"] == "READY"
+
+
+def test_multi_face_locator_ambiguity_fails_closed_to_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audio = tmp_path / "dialogue.wav"
+    video = tmp_path / "selected.mp4"
+    _write_wav(audio)
+    video.write_bytes(b"selected-video")
+    segment = _segment(audio, character_count=2)
+    dialogues, _waiting = post._dialogue_payload("PROJECT_TEST", segment)
+
+    monkeypatch.setattr(
+        lip_windows,
+        "_reference_identities",
+        lambda _characters, speaker_ids: {speaker_id: [{"path": f"{speaker_id}.jpg"}] for speaker_id in speaker_ids},
+    )
+    monkeypatch.setattr(
+        lip_windows,
+        "locate_target_speaker_face_v1",
+        lambda **_kwargs: {
+            "status": "REVIEW",
+            "reason": "target face winner margin too small",
+            "median_similarity": 0.43,
+        },
+    )
+
+    result = lip_windows.plan_lip_sync_v1(
+        project_id="PROJECT_TEST",
+        segment=segment,
+        selected_video=video,
+        dialogues=dialogues,
+    )
+
+    assert result["status"] == "REVIEW"
+    assert result["mode"] == "REVIEW_MULTI_FACE"
+    assert "winner margin" in result["reason"]
 
 
 def test_offscreen_dialogue_skips_lipsync_but_keeps_audio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,6 +216,10 @@ def test_dialogue_materializer_applies_cross_segment_trim(tmp_path: Path) -> Non
         assert handle.getnchannels() == 1
         first = int.from_bytes(handle.readframes(1), byteorder="little", signed=True)
     assert first > 2000
+
+
+def test_lip_sync_qc_is_domain_edited_issue() -> None:
+    assert "LIP_SYNC_QC" in DOMAIN_EDITED_ISSUE_TYPES
 
 
 def test_r10_routes_are_registered() -> None:
