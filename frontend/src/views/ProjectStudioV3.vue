@@ -24,9 +24,9 @@ const error = ref('')
 const shotRefreshToken = ref(0)
 
 const stages = [
-  { id: 1, title: '源片与剧集', subtitle: '导入 / 排序 / 预处理', implemented: true },
+  { id: 1, title: '源片与剧集', subtitle: '导入 / 排序 / 素材准备', implemented: true },
   { id: 2, title: '剧情与镜头', subtitle: '镜头管理 / 拉片结果', implemented: true },
-  { id: 3, title: '人物·场景·道具', subtitle: '资产确认 / Shot 绑定', implemented: true },
+  { id: 3, title: '人物·场景·道具', subtitle: '资产确认 / 镜头绑定', implemented: true },
   { id: 4, title: '本土化剧本', subtitle: '对白 / 动作 / 结构化剧本', implemented: false },
   { id: 5, title: '镜头重制方案', subtitle: '本土化 / 镜头规格 / 生成计划', implemented: false },
   { id: 6, title: '生成·质检·交付', subtitle: '视频 / 语音 / 质检 / 导出', implemented: false },
@@ -127,11 +127,52 @@ function onTaskFinished(event: Event): void {
   }
 }
 
+function stageQuery(stageId: number): Record<string, string | string[] | null | undefined> {
+  const query = { ...route.query } as Record<string, string | string[] | null | undefined>
+  query.stage = String(stageId)
+
+  if (stageId === 1) {
+    delete query.breakdown_view
+    delete query.episode
+    delete query.scene
+    delete query.shot
+    delete query.asset_tab
+    delete query.asset_episode
+    delete query.asset_filter
+    delete query.asset_shot
+    return query
+  }
+
+  if (stageId === 2) {
+    delete query.asset_tab
+    delete query.asset_episode
+    delete query.asset_filter
+    delete query.asset_shot
+    const episodes = project.value?.episodes ?? []
+    const episode = episodes.find((item) => item.shot_count > 0) ?? episodes[0] ?? null
+    const hasShots = episodes.some((item) => item.shot_count > 0)
+    query.breakdown_view = hasShots ? 'result' : 'shots'
+    if (episode) query.episode = episode.id
+    if (!hasShots) {
+      delete query.scene
+      delete query.shot
+    }
+    return query
+  }
+
+  delete query.breakdown_view
+  delete query.episode
+  delete query.scene
+  delete query.shot
+  query.asset_tab = 'inbox'
+  return query
+}
+
 function selectStage(stageId: number): void {
   const stage = stages.find((item) => item.id === stageId)
   if (!stage?.implemented) return
   activeStage.value = stageId
-  void router.replace({ query: { ...route.query, stage: String(stageId) } })
+  void router.replace({ query: stageQuery(stageId) })
 }
 
 watch(
@@ -160,7 +201,7 @@ onUnmounted(() => {
   <div v-if="project" class="studio-shell">
     <aside class="studio-sidebar">
       <button class="back-link" @click="router.push('/')">← 返回项目</button>
-      <div class="studio-brand"><span>AI DRAMA STUDIO</span><strong>{{ project.name }}</strong><small>{{ project.source_language }} → {{ project.target_language }} · {{ project.target_region }}</small></div>
+      <div class="studio-brand"><span>短剧重制工作台</span><strong>{{ project.name }}</strong><small>{{ project.source_language }} → {{ project.target_language }} · {{ project.target_region }}</small></div>
       <nav class="stage-nav">
         <button
           v-for="stage in stages"
@@ -180,8 +221,8 @@ onUnmounted(() => {
         </button>
       </nav>
       <div class="sidebar-footer">
-        <span>参考视频 V2.5</span>
-        <small>{{ project.episodes.length }} 集 · 本地工作流</small>
+        <span>本地处理</span>
+        <small>{{ project.episodes.length }} 集 · 01–03 当前可用</small>
       </div>
     </aside>
 
