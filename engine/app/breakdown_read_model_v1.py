@@ -26,7 +26,11 @@ from engine.app.breakdown_character_bridge_v1 import (
     BreakdownCharacterBridgeError,
     load_episode_character_resolution_v1,
 )
-from engine.app.breakdown_final_asset_overlay_v1 import load_episode_final_asset_overlay_v1
+from engine.app.breakdown_final_asset_overlay_v1 import (
+    FINAL_ASSET_STALE_WARNING,
+    empty_final_asset_overlay_v1,
+    load_episode_final_asset_overlay_v1,
+)
 from engine.app.breakdown_read_model_contract_v1 import (
     BREAKDOWN_READ_MODEL_SCHEMA_VERSION,
     BreakdownReadAssetOverlayV1,
@@ -82,10 +86,26 @@ def _anonymous_identity(
 
 def _asset_overlay(
     value: Mapping[str, Any] | BreakdownReadAssetOverlayV1 | None,
+    timeline: SceneTimelinePayloadV1,
 ) -> BreakdownReadAssetOverlayV1 | None:
     if value is None:
         return None
-    return value if isinstance(value, BreakdownReadAssetOverlayV1) else BreakdownReadAssetOverlayV1.model_validate(value)
+    try:
+        overlay = value if isinstance(value, BreakdownReadAssetOverlayV1) else BreakdownReadAssetOverlayV1.model_validate(value)
+    except ValueError:
+        return empty_final_asset_overlay_v1(timeline, warning=FINAL_ASSET_STALE_WARNING)
+
+    expected_scenes = {scene.ordinal for scene in timeline.scenes}
+    actual_scenes = {item.scene_ordinal for item in overlay.scenes}
+    expected_shots = {
+        (scene.ordinal, shot.ordinal)
+        for scene in timeline.scenes
+        for shot in scene.shots
+    }
+    actual_shots = {(item.scene_ordinal, item.shot_ordinal) for item in overlay.shots}
+    if expected_scenes != actual_scenes or expected_shots != actual_shots:
+        return empty_final_asset_overlay_v1(timeline, warning=FINAL_ASSET_STALE_WARNING)
+    return overlay
 
 
 def _anonymous_result(
@@ -140,7 +160,7 @@ def _load_current_character_snapshots(
         rows = list(session.scalars(select(Character).where(
             Character.project_id == project_id,
             Character.id.in_(tuple(sorted(character_ids))),
-        )).all())
+        ).all())
         snapshots: dict[str, dict[str, str | None]] = {}
         for character in rows:
             metadata = _metadata(character.metadata_json)
@@ -162,12 +182,7 @@ def compose_breakdown_read_model_v1(
     asset_overlay: Mapping[str, Any] | BreakdownReadAssetOverlayV1 | None = None,
     unavailable_warning: str = IDENTITY_PENDING_WARNING,
 ) -> dict[str, Any]:
-    """Pure P6 Character composition plus an independently validated Scene/Prop overlay.
-
-    ``timeline`` is validated then embedded unchanged. Character identity is accepted only when every
-    version anchor and every Scene-local P* row agrees with frozen G2/P5. ``asset_overlay`` never
-    participates in Character resolution and therefore cannot make a safe Character anonymous.
-    """
+    """Pure P6 Character composition plus independently validated Scene/Prop overlay."""
 
     timeline = (
         timeline_payload
@@ -175,7 +190,7 @@ def compose_breakdown_read_model_v1(
         else SceneTimelinePayloadV1.model_validate(timeline_payload)
     )
     normalized_timeline = timeline.model_dump(mode="json")
-    assets = _asset_overlay(asset_overlay)
+    assets = _asset_overlay(asset_overlay, timeline)
 
     if resolution_payload is None:
         identity = _anonymous_identity(timeline, warning=unavailable_warning)
