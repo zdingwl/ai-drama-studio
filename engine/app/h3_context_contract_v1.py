@@ -94,7 +94,7 @@ class GenerationAttemptV1(_StrictModel):
     def _terminal_fields(self) -> "GenerationAttemptV1":
         if self.status == "SUCCEEDED" and not self.output_path:
             raise ValueError("SUCCEEDED attempt needs output_path")
-        if self.status in {"SUBMITTED", "RUNNING", "SUCCEEDED", "STALE"} and not self.external_job_id:
+        if self.status in {"SUBMITTED", "RUNNING", "SUCCEEDED"} and not self.external_job_id:
             raise ValueError("submitted attempt needs external_job_id")
         if self.status in {"SUCCEEDED", "FAILED", "STALE"} and not self.completed_at:
             raise ValueError("terminal attempt needs completed_at")
