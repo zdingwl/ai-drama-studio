@@ -28,7 +28,7 @@ const BREAKDOWN_TASK_TYPES = new Set([
   'EPISODE_BREAKDOWN_P2',
   'BATCH_BREAKDOWN_P2',
 ])
-
+const ASSET_TASK_TYPES = new Set(['ASSET_EXTRACTION_V3'])
 const ACTIVE_STATUSES = new Set(['QUEUED', 'PROCESSING'])
 
 export const stageStateLabels: Record<StudioStageState, string> = {
@@ -68,8 +68,13 @@ function breakdownStageState(episodes: StageEpisodeLike[], tasks: StageTaskLike[
   return 'not_started'
 }
 
-function assetStageState(analysis: StageAnalysisLike | null): StudioStageState {
-  if (!analysis) return 'not_started'
+function assetStageState(analysis: StageAnalysisLike | null, tasks: StageTaskLike[]): StudioStageState {
+  const task = latestTask(tasks, ASSET_TASK_TYPES)
+  if (task && ACTIVE_STATUSES.has(task.status)) return 'processing'
+  if (task?.status === 'FAILED') return 'blocked'
+  if (task?.status === 'READY_WITH_WARNINGS') return 'review'
+
+  if (!analysis) return task?.status === 'READY' ? 'review' : 'not_started'
   const status = analysis.status.toUpperCase()
   if (ACTIVE_STATUSES.has(status)) return 'processing'
   if (status === 'FAILED') return 'blocked'
@@ -84,7 +89,7 @@ export function deriveStageStates(context: StageStatusContext): Record<number, S
   return {
     1: sourceStageState(context.episodes),
     2: breakdownStageState(context.episodes, context.tasks),
-    3: assetStageState(context.analysis),
+    3: assetStageState(context.analysis, context.tasks),
     4: 'planned',
     5: 'planned',
     6: 'planned',
