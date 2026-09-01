@@ -11,6 +11,18 @@ export interface FinalCharacterDisplay {
   cover_url: string | null
 }
 
+export interface FinalSceneDisplay {
+  id: string
+  name: string
+  cover_url: string | null
+}
+
+export interface FinalPropDisplay {
+  id: string
+  name: string
+  cover_url: string | null
+}
+
 export interface SceneTimelinePerson {
   ref: string
   display_name: string
@@ -62,6 +74,8 @@ export interface SceneTimelineShot {
   props: SceneTimelineProp[]
   cinematography: SceneTimelineCinematography
   on_screen_text: SceneTimelineOnScreenText[]
+  /** P6 display-only Final Prop bindings; independent from G2 `props` observations. */
+  final_props?: FinalPropDisplay[]
 }
 
 export interface SceneTimelineScene {
@@ -74,6 +88,8 @@ export interface SceneTimelineScene {
   people: SceneTimelinePerson[]
   story_summary: string | null
   shots: SceneTimelineShot[]
+  /** P6 display-only Final Scene; frozen G2 `title/scene_info` remain unchanged. */
+  final_scene?: FinalSceneDisplay | null
 }
 
 export interface SceneTimelinePayload {
