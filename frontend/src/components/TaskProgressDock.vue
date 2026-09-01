@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
 import type { BackgroundTask } from '../types/studio'
 
@@ -11,6 +11,7 @@ const props = withDefaults(defineProps<{
 })
 
 const route = useRoute()
+const router = useRouter()
 const tasks = ref<BackgroundTask[]>([])
 const expanded = ref(false)
 const error = ref('')
@@ -136,6 +137,32 @@ function userTaskMessage(task: BackgroundTask): string {
   if (task.status === 'READY') return '任务已完成，正式结果已经可以在对应阶段查看。'
   if (task.status === 'CANCELLED') return '任务已取消，没有继续处理。'
   return task.message || summaryText(task)
+}
+
+function taskWorkspaceLabel(task: BackgroundTask): string {
+  if (task.task_type === 'EPISODE_SHOTS' || task.task_type === 'BATCH_SHOTS') return '进入镜头管理'
+  if (task.task_type === 'EPISODE_BREAKDOWN_P2' || task.task_type === 'BATCH_BREAKDOWN_P2') return '查看拉片结果'
+  if (task.task_type === 'ASSET_EXTRACTION_V3') return '查看资产待处理'
+  return ''
+}
+
+function openTaskWorkspace(task: BackgroundTask): void {
+  const query: Record<string, string> = {}
+  if (task.task_type === 'EPISODE_SHOTS' || task.task_type === 'BATCH_SHOTS') {
+    query.stage = '2'
+    query.breakdown_view = 'shots'
+  } else if (task.task_type === 'EPISODE_BREAKDOWN_P2' || task.task_type === 'BATCH_BREAKDOWN_P2') {
+    query.stage = '2'
+    query.breakdown_view = 'result'
+    if (task.episode_id) query.episode = task.episode_id
+  } else if (task.task_type === 'ASSET_EXTRACTION_V3') {
+    query.stage = '3'
+    query.asset_tab = 'inbox'
+  } else {
+    return
+  }
+  expanded.value = false
+  void router.replace({ query })
 }
 
 function dismissAttentionTasks(): void {
@@ -329,6 +356,10 @@ onUnmounted(() => {
           <p class="task-user-message">{{ userTaskMessage(task) }}</p>
           <small v-if="task.current_item && (task.status === 'QUEUED' || task.status === 'PROCESSING')" class="task-current-item">当前：{{ task.current_item }}</small>
 
+          <div v-if="taskWorkspaceLabel(task)" class="task-item-actions">
+            <button type="button" @click="openTaskWorkspace(task)">{{ taskWorkspaceLabel(task) }} →</button>
+          </div>
+
           <details v-if="task.error_message" class="task-technical-details">
             <summary>技术详情</summary>
             <pre>{{ task.error_message }}</pre>
@@ -368,6 +399,19 @@ onUnmounted(() => {
 .task-panel-head > div small { color: #8994a4; font-size: 10px; }
 .task-user-message { margin: 7px 0 0 !important; color: #59687d !important; line-height: 1.55; }
 .task-current-item { display: block; margin-top: 4px; color: #7c899b !important; }
+.task-item-actions { display: flex; justify-content: flex-end; margin-top: 7px; }
+.task-item-actions button {
+  min-height: 30px;
+  border: 1px solid #cbd7e8;
+  border-radius: 7px;
+  padding: 0 9px;
+  background: #fff;
+  color: #496386;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.task-item-actions button:hover { border-color: #95acd1; background: #f6f9ff; }
 .task-technical-details {
   margin-top: 8px;
   border-top: 1px solid #e8ecf2;
