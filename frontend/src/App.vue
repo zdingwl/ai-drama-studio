@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
-import TaskProgressDock from './components/TaskProgressDock.vue'
 
 const workspaceKey = ref(0)
 
@@ -15,5 +14,4 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', handleTaskF
 
 <template>
   <RouterView :key="workspaceKey" />
-  <TaskProgressDock />
 </template>
