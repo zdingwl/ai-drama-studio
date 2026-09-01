@@ -97,9 +97,10 @@ def test_episode_media_normalization_and_concat(tmp_path: Path) -> None:
 
 def test_r10_episode_output_routes_are_registered() -> None:
     from engine.app.main import app
+    from engine.app.studio_v2 import Base
 
     paths = {route.path for route in app.routes}
     assert "/api/projects/{project_id}/outputs" in paths
     assert "/api/episodes/{episode_id}/final-video" in paths
     assert "/api/episodes/{episode_id}/subtitles" in paths
-    assert "v2_episode_outputs" in app.router.routes[0].endpoint.__globals__.get("__builtins__", {}) or True
+    assert "v2_episode_outputs" in Base.metadata.tables
