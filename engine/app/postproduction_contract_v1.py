@@ -5,7 +5,7 @@ It never mutates H3 attempts, QC results, source facts, target dialogue, or Rema
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -51,30 +51,6 @@ class PostProductionDialogueV1(_StrictModel):
         return self
 
 
-class LipSyncWindowV1(_StrictModel):
-    target_character_id: str = Field(min_length=1)
-    target_character_name: str | None = None
-    start_offset_us: int = Field(ge=0)
-    end_offset_us: int = Field(ge=1)
-    crop_box: list[int] | None = None
-    locator_status: Literal["NOT_NEEDED", "READY", "WAITING_MODEL", "WAITING_REFERENCE", "REVIEW"]
-    locator_reason: str = Field(min_length=1)
-    locator_confidence: float | None = Field(default=None, ge=-1.0, le=1.0)
-
-    @model_validator(mode="after")
-    def _window(self) -> "LipSyncWindowV1":
-        if self.end_offset_us <= self.start_offset_us:
-            raise ValueError("lip-sync window range invalid")
-        if self.crop_box is not None:
-            if len(self.crop_box) != 4 or any(int(value) < 0 for value in self.crop_box):
-                raise ValueError("crop_box must be [x,y,w,h]")
-            if int(self.crop_box[2]) <= 0 or int(self.crop_box[3]) <= 0:
-                raise ValueError("crop_box width/height must be positive")
-        if self.locator_status == "READY" and self.crop_box is None:
-            raise ValueError("READY target-face locator needs crop_box")
-        return self
-
-
 class PostProductionSegmentV1(_StrictModel):
     id: str = Field(min_length=1)
     project_id: str = Field(min_length=1)
@@ -83,7 +59,6 @@ class PostProductionSegmentV1(_StrictModel):
     segment_input_fingerprint: str = Field(min_length=64, max_length=64)
     selection_id: str | None = None
     selected_attempt_id: str | None = None
-    locator_input_fingerprint: str | None = Field(default=None, min_length=64, max_length=64)
     postproduction_fingerprint: str = Field(min_length=64, max_length=64)
     target_start_us: int = Field(ge=0)
     target_end_us: int = Field(ge=1)
@@ -93,7 +68,8 @@ class PostProductionSegmentV1(_StrictModel):
     lip_sync_mode: LipSyncMode
     visible_character_count: int = Field(ge=0)
     visible_speaker_ids: list[str] = Field(default_factory=list)
-    lip_sync_windows: list[LipSyncWindowV1] = Field(default_factory=list)
+    locator_input_fingerprint: str | None = None
+    lip_sync_windows: list[dict[str, Any]] = Field(default_factory=list)
     dialogues: list[PostProductionDialogueV1] = Field(default_factory=list)
     audio_path: str | None = None
     output_path: str | None = None
@@ -107,8 +83,8 @@ class PostProductionSegmentV1(_StrictModel):
             raise ValueError("postproduction target duration mismatch")
         if self.lip_sync_mode == "LATENTSYNC_FULL_SEGMENT" and self.visible_character_count != 1:
             raise ValueError("LatentSync full-segment auto mode requires exactly one visible character")
-        if self.lip_sync_mode == "LATENTSYNC_TARGET_FACE_ROI" and not self.lip_sync_windows:
-            raise ValueError("target-face lip sync needs at least one window")
+        if self.lip_sync_mode == "LATENTSYNC_TARGET_FACE_ROI" and self.visible_character_count < 2:
+            raise ValueError("target-face ROI mode is reserved for multi-person visible segments")
         if self.status == "SUCCEEDED" and not self.output_path:
             raise ValueError("successful postproduction segment needs output_path")
         return self
@@ -148,7 +124,6 @@ class LipSyncRuntimeStatusV1(_StrictModel):
 __all__ = [
     "LipSyncMode",
     "LipSyncRuntimeStatusV1",
-    "LipSyncWindowV1",
     "PostProductionDialogueV1",
     "PostProductionEpisodeV1",
     "PostProductionPlanV1",
