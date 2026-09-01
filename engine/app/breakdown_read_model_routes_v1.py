@@ -23,13 +23,15 @@ from engine.app.localization_draft_v1 import (
     LocalizationDraftConflictError,
     LocalizationDraftError,
     LocalizationDraftStaleError,
-    create_localization_draft,
-    edit_localization_draft,
     get_current_localization_draft,
     get_localization_revision,
     list_localization_revisions,
-    rebase_localization_draft,
-    set_localization_draft_status,
+)
+from engine.app.localization_draft_workflow_v1 import (
+    create_localization_draft_safe,
+    edit_localization_draft_safe,
+    rebase_localization_draft_safe,
+    set_localization_draft_status_safe,
 )
 from engine.app.localization_source_contract_v1 import LocalizationSourcePackageV1
 from engine.app.localization_source_v1 import LocalizationSourceError, load_episode_localization_source_v1
@@ -127,7 +129,7 @@ def api_get_current_localization_draft(episode_id: str):
 )
 def api_create_localization_draft(episode_id: str, payload: LocalizationDraftCreateRequest):
     try:
-        return create_localization_draft(episode_id, note=payload.note)
+        return create_localization_draft_safe(episode_id, note=payload.note)
     except Exception as exc:
         raise _localization_write_error(exc) from exc
 
@@ -139,7 +141,7 @@ def api_create_localization_draft(episode_id: str, payload: LocalizationDraftCre
 )
 def api_edit_localization_draft(episode_id: str, payload: LocalizationDraftEditRequest):
     try:
-        return edit_localization_draft(
+        return edit_localization_draft_safe(
             episode_id,
             base_revision_id=payload.base_revision_id,
             entries=payload.entries,
@@ -156,7 +158,7 @@ def api_edit_localization_draft(episode_id: str, payload: LocalizationDraftEditR
 )
 def api_set_localization_draft_status(episode_id: str, payload: LocalizationDraftStatusRequest):
     try:
-        return set_localization_draft_status(
+        return set_localization_draft_status_safe(
             episode_id,
             base_revision_id=payload.base_revision_id,
             status=payload.status,
@@ -173,7 +175,7 @@ def api_set_localization_draft_status(episode_id: str, payload: LocalizationDraf
 )
 def api_rebase_localization_draft(episode_id: str, payload: LocalizationDraftRebaseRequest):
     try:
-        return rebase_localization_draft(episode_id, note=payload.note)
+        return rebase_localization_draft_safe(episode_id, note=payload.note)
     except Exception as exc:
         raise _localization_write_error(exc) from exc
 
