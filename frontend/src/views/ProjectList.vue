@@ -153,20 +153,18 @@ onMounted(loadProjects)
 
 <template>
   <main class="home-shell">
-    <section class="home-hero">
+    <section class="home-hero home-hero-simple">
       <div>
-        <div class="eyebrow">AI DRAMA STUDIO · REFERENCE VIDEO V2</div>
-        <h1>短剧本地化重制工作台</h1>
-        <p>先把原片拆成可控制的镜头，再基于 Reference Video 替换人物、语言、声音、场景和关键道具。</p>
+        <div class="eyebrow">短剧本地化重制</div>
+        <h1>从原片到可重制镜头</h1>
+        <p>新建项目后，按顺序完成源片、剧情与镜头、人物场景道具确认。首页会直接告诉你每个项目下一步该做什么。</p>
       </div>
-      <div class="hero-badge"><strong>6</strong><span>阶段生产链</span></div>
     </section>
 
     <section class="home-grid">
       <div class="panel create-panel">
         <div class="panel-heading">
-          <div><div class="panel-kicker">F01</div><h2>新建项目</h2></div>
-          <span class="status-pill ready">可用</span>
+          <div><h2>新建项目</h2><p class="panel-subtitle">先确定原语言、目标语言和目标地区。</p></div>
         </div>
         <form class="project-form" @submit.prevent="submit">
           <label><span>项目名称</span><input v-model="form.name" placeholder="例如：霸总短剧 · 美国版" maxlength="200" /></label>
@@ -179,7 +177,10 @@ onMounted(loadProjects)
       </div>
 
       <div class="panel projects-panel">
-        <div class="panel-heading"><div><div class="panel-kicker">PROJECTS</div><h2>项目进度</h2></div><button class="ghost-button" @click="loadProjects">刷新</button></div>
+        <div class="panel-heading">
+          <div><h2>项目进度</h2><p class="panel-subtitle">点击项目会直接进入当前最需要处理的位置。</p></div>
+          <button class="ghost-button" @click="loadProjects">刷新</button>
+        </div>
         <div v-if="loading" class="empty-state">正在读取项目…</div>
         <div v-else-if="projects.length === 0" class="empty-state"><strong>还没有项目</strong><span>从左侧创建第一个本地化重制项目。</span></div>
         <div v-else class="project-list project-dashboard-list">
@@ -213,6 +214,10 @@ onMounted(loadProjects)
 </template>
 
 <style scoped>
+.home-hero-simple { align-items: flex-start; }
+.home-hero-simple > div { max-width: 980px; }
+.panel-heading > div { min-width: 0; }
+.panel-subtitle { margin: 4px 0 0; color: #7c8798; font-size: 12px; }
 .project-dashboard-card { display: grid; gap: 10px; }
 .project-overall-pill {
   flex: none;
