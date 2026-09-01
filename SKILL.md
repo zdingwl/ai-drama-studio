@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.20.0
-description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6、G2.1-G2.5、P5 已真实验收并冻结，G2.6 与 P4 仍待对应用户本机验收。
+version: 3.21.0
+description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6、G2.1-G2.5、P5 已真实验收并冻结；P6 Final Character/Scene/Prop read-model fill-back 已实现，待用户本机验收；G2.6 与 P4 仍待对应用户本机验收。
 ---
 
 # AI Drama Studio — Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1
@@ -54,6 +54,9 @@ G2.5 Windows/CUDA local acceptance: PASS
 G2.6 ordinary-user Scene Timeline UI: IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 P4 Draft-guided Scene/Prop: IMPLEMENTED / LOCAL ACCEPTANCE PENDING
 P5 Draft ↔ Character: v1 / FINAL PASS / FROZEN
+P6 Final Breakdown read model: v1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+P6 Final Character renderer: IMPLEMENTED / VISUAL ACCEPTANCE PENDING
+P6 Final Scene/Prop fill-back: IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
 ```
 
 Do not reopen frozen layers without a concrete regression.
@@ -154,16 +157,6 @@ P5 merge commit:
 ab4b11716f5c1c5ead7367119d1b2d787defe8f9
 ```
 
-Frozen implementation:
-
-```text
-engine/app/breakdown_character_bridge_contract_v1.py
-engine/app/breakdown_character_bridge_v1.py
-engine/tests/v2/test_breakdown_character_bridge_v1.py
-scripts/run_breakdown_p5_character_bridge_acceptance_v1.py
-docs/P5_BREAKDOWN_CHARACTER_BRIDGE_V1.md
-```
-
 Authority direction:
 
 ```text
@@ -187,26 +180,60 @@ warnings = []
 Scene1 P2 -> 人物 001 / FINAL_SHOT_BINDING_SIGNATURE_V1
 ```
 
-Unique match support:
-
-```text
-Scene1 P2 = Shots 3,4,5,6,9,10,11
-Final 人物 001 projected signature = Shots 3,4,5,6,9,10,11
-```
-
 Other three people correctly remain unresolved. Therefore **P5 = FINAL PASS / FROZEN**.
 
-## 7. Testing / CI discipline
+## 7. P6 implemented composition
 
-Do not claim assistant-local pytest/CUDA execution. User-local evidence is acceptance truth. Hosted GitHub Actions must not be used; commits use `[skip ci]`.
+P6 only reads frozen/current truth and projects ordinary-user display fields.
 
-## 8. Immediate safe work
+```text
+Character:
+  frozen P5 RESOLVED + exact current anchors
+  -> existing Final Character id/name/cover
+  UNRESOLVED -> 人物N
+
+Scene:
+  exact current ShotRevision
+  -> every Shot in G2 Scene has Final ShotSceneBinding
+  -> all point to one same existing Final Scene
+  -> display-only final_scene
+
+Prop:
+  current Final ShotPropBinding
+  -> display-only final_props per Shot
+  G2 props remain separate visible-observation truth
+```
+
+Never use Draft/G2 prose or label similarity as Final Scene/Prop authority.
+
+Character and Scene/Prop overlays fail closed independently. P6 must not mutate G2 Timeline, P5 resolution, Final bindings, ASR or OCR.
+
+Ordinary UI now renders:
+
+```text
+本场人物 -> Final Character cover/name when resolved
+镜头人物 -> Final Character cover/name when resolved
+最终场景 -> separate Final Scene card
+最终道具 -> Final Prop cards
+道具观察 -> frozen G2 prop facts
+```
+
+`PropCandidate` currently has no `cover_path`; Final Prop `cover_url` may therefore be null and the UI intentionally uses a text-avatar fallback rather than inventing an image.
+
+Detailed contract, tests and user-local commands: `docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md`.
+
+## 8. Testing / CI discipline
+
+Do not claim assistant-local full pytest/CUDA execution. User-local evidence is acceptance truth. Hosted GitHub Actions must not be used; commits use `[skip ci]`.
+
+Current assistant-environment evidence is limited to isolated pure TypeScript `tsc --strict` checks; Vue/compiler dependencies are unavailable there.
+
+## 9. Immediate safe work
 
 ```text
 1. keep G1 + G2.1-G2.5 + P5 frozen
-2. finish G2.6 user-local acceptance when needed
-3. P4 Scene/Prop local acceptance remains pending
-4. next code frontier = P6 Final identity/asset fill-back + final Breakdown read model/renderers
+2. user-local accept P6 end-to-end: backend tests + real runner + frontend Vitest/typecheck/build + visual review
+3. close G2.6 visual acceptance together with P6 result-page review
+4. P4 Scene/Prop local acceptance remains separately pending
+5. then continue the next product workflow stage without reopening frozen recognition layers
 ```
-
-P6 must compose frozen G2 + frozen P5 without mutating either. Only P5 `RESOLVED` people may render Final Character names/assets; `UNRESOLVED` people remain anonymous. ASR/OCR and frozen Shot factual objects remain unchanged.
