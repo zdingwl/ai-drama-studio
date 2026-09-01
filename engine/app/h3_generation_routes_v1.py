@@ -14,10 +14,7 @@ from engine.app.generation_attempt_v1 import (
 )
 from engine.app.generation_segment_v1 import GenerationSegmentError, get_generation_segments_v1
 from engine.app.h3_context_compiler_v1 import H3ContextCompilerError, compile_h3_context_v1
-from engine.app.h3_context_contract_v1 import (
-    GenerationAttemptProjectSummaryV1,
-    H3CompiledContextV1,
-)
+from engine.app.h3_context_contract_v1 import GenerationAttemptProjectSummaryV1, H3CompiledContextV1
 from engine.app.minimax_h3_provider_v1 import get_video_generation_provider_v1
 from engine.app.studio_v2 import get_project
 from engine.app.task_progress_v2 import (
@@ -31,7 +28,7 @@ from engine.app.task_progress_v2 import (
 )
 
 
-router = APIRouter(tags=["h3-generation"])
+router = APIRouter(prefix="/api", tags=["h3-generation"])
 H3_BATCH_TASK_TYPE = "H3_GENERATE_READY_V1"
 _HEAVY_TASK_TYPES = {
     H3_BATCH_TASK_TYPE,
@@ -53,6 +50,32 @@ def _http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, (GenerationAttemptError, GenerationSegmentError, H3ContextCompilerError)):
         return HTTPException(status_code=409, detail=str(exc))
     return HTTPException(status_code=409, detail=f"H3 生成当前不可用：{exc}")
+
+
+def _required_runtime_modes(plan: dict) -> set[str]:
+    # FL2VA is always required in R8 because target-character / localized-scene reference
+    # assets are automatically created through text-to-video on the FL2VA endpoint.
+    modes = {"FL2VA"}
+    for episode in plan.get("episodes") or []:
+        for segment in episode.get("segments") or []:
+            if segment.get("status") == "READY" and segment.get("generation_mode") == "REF2VA":
+                modes.add("REF2VA")
+    return modes
+
+
+def _assert_runtime_ready(plan: dict) -> None:
+    runtime = get_video_generation_provider_v1("MINIMAX_H3_LOCAL").status()
+    required = _required_runtime_modes(plan)
+    missing: list[str] = []
+    if "FL2VA" in required and not bool((runtime.get("fl2va") or {}).get("ready")):
+        missing.append("FL2VA(30010)")
+    if "REF2VA" in required and not bool((runtime.get("ref2va") or {}).get("ready")):
+        missing.append("Ref2VA(30011)")
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail="本地 MiniMax H3 Runtime 尚未 READY：" + "、".join(missing),
+        )
 
 
 def _run_h3_batch_task(task_id: str, project_id: str) -> None:
@@ -108,8 +131,11 @@ def api_list_generation_attempts(project_id: str):
         raise _http_error(exc) from exc
 
 
-@router.get("/generation-segments/{segment_id}/h3-context", response_model=H3CompiledContextV1)
-def api_compile_h3_context(segment_id: str, project_id: str):
+@router.post(
+    "/projects/{project_id}/generation-segments/{segment_id}/h3-context/compile",
+    response_model=H3CompiledContextV1,
+)
+def api_compile_h3_context(project_id: str, segment_id: str):
     try:
         return compile_h3_context_v1(project_id, segment_id)
     except Exception as exc:
@@ -120,9 +146,6 @@ def api_compile_h3_context(segment_id: str, project_id: str):
 def api_start_h3_generate_ready(project_id: str, background: BackgroundTasks):
     if get_project(project_id) is None:
         raise HTTPException(status_code=404, detail="项目不存在")
-    runtime = get_video_generation_provider_v1("MINIMAX_H3_LOCAL").status()
-    if not runtime.get("ready"):
-        raise HTTPException(status_code=409, detail="本地 MiniMax H3 Runtime 尚未 READY，请先启动 FL2VA / Ref2VA 服务")
     try:
         plan = get_generation_segments_v1(project_id)
     except Exception as exc:
@@ -134,9 +157,11 @@ def api_start_h3_generate_ready(project_id: str, background: BackgroundTasks):
     )
     if ready_count <= 0:
         raise HTTPException(status_code=409, detail="当前没有可提交 H3 的 GenerationSegment；请先完成自动处理或待确认项")
+    _assert_runtime_ready(plan)
 
     active = [
-        task for task in list_project_tasks(project_id, limit=100)
+        task
+        for task in list_project_tasks(project_id, limit=100)
         if task["status"] in ACTIVE_TASK_STATUSES and task["task_type"] in _HEAVY_TASK_TYPES
     ]
     existing = next((item for item in active if item["task_type"] == H3_BATCH_TASK_TYPE), None)
