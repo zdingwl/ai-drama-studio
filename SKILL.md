@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-reference-video-v2
-version: 3.22.0
-description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6、G2.1-G2.5、P5 已真实验收并冻结；P6 Final Breakdown 与 P7.1 Localization Source 已实现，待用户本机验收；Stage 04-06 仍锁定。
+version: 3.23.0
+description: Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1；G1/P2.6、G2.1-G2.5、P5 已真实验收并冻结；P6、P7.1、P7.2/Stage 04 已实现待用户本机验收；Stage 05-06 仍锁定。
 ---
 
 # AI Drama Studio — Reference Video V2 / Fast Grounded Breakdown V2 / Character V10.1
@@ -26,6 +26,7 @@ Downstream work additionally reads:
 ```text
 docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md
 docs/P7_LOCALIZATION_SOURCE_V1.md
+docs/P7_LOCALIZATION_DRAFT_V1.md
 ```
 
 Executable CURRENT = `PROJECT_STATE + CURRENT_IMPLEMENTATION_MANIFEST + current code/tests`.
@@ -58,7 +59,8 @@ P6 Final Breakdown read model: v1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE 
 P6 Final Character renderer: IMPLEMENTED / VISUAL ACCEPTANCE PENDING
 P6 Final Scene/Prop fill-back: IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
 P7.1 Localization Source Package: v1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
-Stage 04 本土化剧本: LOCKED / REVISIONED DRAFT NOT IMPLEMENTED
+P7.2 Localization Draft: v1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+Stage 04 本土化剧本: IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 Stage 05 镜头重制方案: LOCKED / PLANNED
 Stage 06 生成·质检·交付: LOCKED / PLANNED
 ```
@@ -121,21 +123,9 @@ P7 source_dialogue/source_on_screen_text = immutable downstream source truth
 translated/localized/final copy != source truth
 ```
 
-## 4. Character V10.1 protected baseline
-
-```text
-YOLOX Person Detection
-→ capture-first Person Evidence
-→ mature MOT
-→ YoutuReID project identity
-→ RESOLVED / UNRESOLVED
-→ explicit Shot × known-Character Assignment
-→ Final Character Gate
-```
+## 4. Character V10.1 / frozen G2 + P5
 
 Never weaken Character identity safety because of Breakdown/localization hints.
-
-## 5. Frozen G2 + P5
 
 G2.1 through G2.5 are frozen. G2.3 LLM MAY write only readable title/summary; it MUST NOT own timestamps, boundaries, people identity/count, Shot facts, ASR/OCR, props, cinematography or Final Assets.
 
@@ -161,7 +151,7 @@ Scene1 P2 -> 人物 001 / FINAL_SHOT_BINDING_SIGNATURE_V1
 
 Other three people remain unresolved. **P5 = FINAL PASS / FROZEN**.
 
-## 6. P6 implemented composition
+## 5. P6 implemented composition
 
 P6 reads only frozen/current truth:
 
@@ -173,13 +163,11 @@ current ShotPropBinding -> final_props
 G2 props remain separate visible-observation truth
 ```
 
-Never use Draft/G2 prose or label similarity as Final Scene/Prop authority. Character and Scene/Prop overlays fail closed independently. P6 must not mutate G2 Timeline, P5 resolution, Final bindings, ASR or OCR.
+Never use Draft/G2 prose or label similarity as Final Scene/Prop authority. P6 must not mutate G2 Timeline, P5 resolution, Final bindings, ASR or OCR.
 
 Detailed contract/tests: `docs/P6_FINAL_BREAKDOWN_READ_MODEL_V1.md`.
 
-## 7. P7.1 localization source package
-
-P7.1 is a read-only downstream source handoff:
+## 6. P7.1 immutable localization source
 
 ```text
 current P6 read model
@@ -196,7 +184,7 @@ source_dialogue[].source_text = immutable
 source_on_screen_text[].source_text = immutable
 Scene-local P* = internal join only, not downstream Character identity
 translated_text/localized_text/final_text = forbidden inside P7.1 source package
-old Dialogue/Asset/Voice/Generation tables = not current P7 authority
+old Dialogue/Asset/Voice/Generation tables = not current P7 source authority
 ```
 
 Endpoint:
@@ -205,26 +193,85 @@ Endpoint:
 GET /api/episodes/{episode_id}/localization-source
 ```
 
-Acceptance runner must report:
+Detailed boundary/tests: `docs/P7_LOCALIZATION_SOURCE_V1.md`.
+
+## 7. P7.2 revisioned Localization Draft / Stage 04
+
+Stage 04 now has real persistent business state.
 
 ```text
-source_truth_preserved = true
+P7.1 immutable source snapshot
+→ append-only Episode Localization Revision
+→ DRAFT
+→ IN_REVIEW
+→ FINAL
 ```
 
-Detailed boundary/tests: `docs/P7_LOCALIZATION_SOURCE_V1.md`.
+Write request owns only target-side fields:
+
+```text
+source_key
+decision
+translated_text
+localized_text
+final_text
+note
+```
+
+`source_text` is not writable.
+
+Decisions:
+
+```text
+PENDING
+LOCALIZE
+KEEP_SOURCE
+OMIT
+```
+
+Hard rules:
+
+```text
+all writes create a new Revision
+base_revision_id prevents lost updates
+DRAFT may save partial translation/localization work
+IN_REVIEW / FINAL require no PENDING rows
+IN_REVIEW / FINAL require final_text for every LOCALIZE row
+IN_REVIEW must explicitly return to DRAFT before editing
+FINAL is immutable
+source fingerprint mismatch -> stale/read-only
+stale draft requires explicit rebase
+rebase carries old edits only when source_key + kind + Scene/Shot + timing + source_text all match exactly
+```
+
+Stage 04 states:
+
+```text
+no draft -> 未开始
+DRAFT -> 编辑中
+IN_REVIEW -> 待复核
+stale -> 阻塞
+all Episodes FINAL -> 已完成
+```
+
+UI now shows source text read-only beside Shot context and editable translation/localized/final fields, plus save/review/return/finalize/rebase and Revision history.
+
+Detailed workflow/tests: `docs/P7_LOCALIZATION_DRAFT_V1.md`.
 
 ## 8. Testing / CI discipline
 
 Do not claim assistant-local full pytest/CUDA execution. User-local evidence is acceptance truth. Hosted GitHub Actions must not be used; commits use `[skip ci]`.
+
+P7.2 has deterministic tests plus a read-only real Episode audit runner; it must not create or mutate production draft state during acceptance.
 
 ## 9. Immediate safe work
 
 ```text
 1. keep G1 + G2.1-G2.5 + P5 frozen
 2. user-local accept P6 when available
-3. user-local accept P7.1 source package on a real Episode
+3. user-local accept P7.1/P7.2 backend + real read-only runners + Stage 04 frontend/visual flow
 4. P4 Scene/Prop local acceptance remains separately pending
-5. next code frontier = P7.2 revisioned Localization Draft persistence + edit/review contract
-6. unlock Stage 04 only after real editable/revisioned localization behavior exists
-7. keep Stage 05/06 locked until their own executable workflows exist
+5. next code frontier = Stage 05 versioned Shot Remake Plan / generation-input contract
+6. Stage 05 must consume FINAL P7.2 copy + version-safe P6/P7 anchors
+7. keep Stage 06 locked until its own executable generation/QC/delivery workflow exists
 ```
