@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -52,9 +53,7 @@ def _snapshot(project_id: str, episode_id: str) -> dict:
                     "appearance": "二十多岁女性，长发，干练",
                     "character": {"id": "CHAR_1", "name": "林晚", "cover_url": "/source-char.jpg"},
                 }],
-                "shots": [{
-                    "source_on_screen_text": [{"source_text": "第一集"}],
-                }],
+                "shots": [{"source_on_screen_text": [{"source_text": "第一集"}]}],
             }],
         }],
     }
@@ -83,16 +82,17 @@ def _seed(monkeypatch, tmp_path: Path):
         session.commit()
     snapshot = _snapshot(project["id"], episode_id)
     monkeypatch.setattr(target_localization_v1, "load_project_source_drama_snapshot_v1", lambda _project_id: snapshot)
-    return project["id"], episode_id
+    return project["id"], episode_id, factory, snapshot
 
 
 def test_keep_scene_policy_does_not_require_model(monkeypatch, tmp_path: Path) -> None:
-    project_id, _episode_id = _seed(monkeypatch, tmp_path)
+    project_id, _episode_id, _factory, _snapshot_value = _seed(monkeypatch, tmp_path)
     monkeypatch.setattr(target_localization_v1, "get_project_remake_policy", lambda _project_id: {"scene_policy": "KEEP"})
     monkeypatch.setattr(target_localization_v1, "semantic_model_status", lambda: {"ready": False})
 
     bundle = target_localization_v1.generate_target_localization_v1(project_id)
 
+    assert bundle["scene_mappings"][0]["scene_key"] == "ASSET:SCENE_1"
     assert bundle["scene_mappings"][0]["decision"] == "KEEP"
     assert bundle["scene_mappings"][0]["status"] == "READY"
     assert bundle["target_characters"][0]["status"] == "REVIEW"
@@ -102,7 +102,7 @@ def test_keep_scene_policy_does_not_require_model(monkeypatch, tmp_path: Path) -
 
 
 def test_model_can_auto_localize_character_and_scene(monkeypatch, tmp_path: Path) -> None:
-    project_id, _episode_id = _seed(monkeypatch, tmp_path)
+    project_id, _episode_id, _factory, _snapshot_value = _seed(monkeypatch, tmp_path)
     monkeypatch.setattr(target_localization_v1, "get_project_remake_policy", lambda _project_id: {"scene_policy": "AUTO"})
     monkeypatch.setattr(target_localization_v1, "semantic_model_status", lambda: {"ready": True})
 
@@ -116,7 +116,7 @@ def test_model_can_auto_localize_character_and_scene(monkeypatch, tmp_path: Path
                 "confidence": 0.93,
             }]}
         return {"scenes": [{
-            "scene_key": "EP_1:RUN_1:S1",
+            "scene_key": "ASSET:SCENE_1",
             "decision": "LOCALIZE",
             "target_label": "American apartment living room",
             "target_description": "Contemporary middle-class American apartment living room, same spatial function and blocking capacity.",
@@ -130,12 +130,50 @@ def test_model_can_auto_localize_character_and_scene(monkeypatch, tmp_path: Path
     assert bundle["status"] == "READY"
     assert bundle["review_count"] == 0
     assert bundle["target_characters"][0]["target_name"] == "Emma Miller"
+    assert bundle["scene_mappings"][0]["scene_key"] == "ASSET:SCENE_1"
     assert bundle["scene_mappings"][0]["decision"] == "LOCALIZE"
     assert review_issue_v1.list_review_issues(project_id) == []
 
 
+def test_repeated_final_scene_is_one_project_scene_mapping(monkeypatch, tmp_path: Path) -> None:
+    project_id, _episode_id, factory, snapshot = _seed(monkeypatch, tmp_path)
+    second_episode = deepcopy(snapshot["episodes"][0])
+    second_episode["episode_id"] = "EP_2"
+    second_episode["episode_order"] = 2
+    second_episode["scenes"][0]["scene_key"] = "EP_2:RUN_2:S3"
+    second_episode["scenes"][0]["story_summary"] = "同一个客厅再次出现。"
+    snapshot["episodes"].append(second_episode)
+    snapshot["episode_count"] = 2
+    snapshot["scene_count"] = 2
+    snapshot["shot_count"] = 2
+    snapshot["source_fingerprint"] = "b" * 64
+    with factory() as session:
+        session.add(studio_v2.Episode(
+            id="EP_2",
+            project_id=project_id,
+            title="第二集",
+            original_filename="ep2.mp4",
+            source_path=str(tmp_path / "ep2.mp4"),
+            source_sha256="1" * 64,
+            sort_order=2,
+            status="IMPORTED",
+        ))
+        session.commit()
+    monkeypatch.setattr(target_localization_v1, "get_project_remake_policy", lambda _project_id: {"scene_policy": "KEEP"})
+    monkeypatch.setattr(target_localization_v1, "semantic_model_status", lambda: {"ready": False})
+
+    contexts = target_localization_v1._scene_contexts(snapshot)
+    bundle = target_localization_v1.generate_target_localization_v1(project_id)
+
+    assert len(contexts) == 1
+    assert contexts[0]["scene_key"] == "ASSET:SCENE_1"
+    assert set(contexts[0]["occurrence_scene_keys"]) == {"EP_1:RUN_1:S1", "EP_2:RUN_2:S3"}
+    assert bundle["scene_mapping_count"] == 1
+    assert bundle["scene_mappings"][0]["scene_key"] == "ASSET:SCENE_1"
+
+
 def test_manual_character_edit_closes_review_issue(monkeypatch, tmp_path: Path) -> None:
-    project_id, _episode_id = _seed(monkeypatch, tmp_path)
+    project_id, _episode_id, _factory, _snapshot_value = _seed(monkeypatch, tmp_path)
     monkeypatch.setattr(target_localization_v1, "get_project_remake_policy", lambda _project_id: {"scene_policy": "KEEP"})
     monkeypatch.setattr(target_localization_v1, "semantic_model_status", lambda: {"ready": False})
     bundle = target_localization_v1.generate_target_localization_v1(project_id)
