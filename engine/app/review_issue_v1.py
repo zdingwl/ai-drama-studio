@@ -21,13 +21,13 @@ FINAL_STATUSES = {"RESOLVED", "IGNORED"}
 ALL_STATUSES = OPEN_STATUSES | FINAL_STATUSES
 SEVERITIES = {"REVIEW", "BLOCKING"}
 # These issues represent authoritative domain facts. They may only close as a side effect
-# of writing the real domain row (TargetCharacter/Scene/Dialogue/RemakeTimeline), never by
-# a generic UI acknowledgement.
+# of writing the real domain row, never by a generic UI acknowledgement.
 DOMAIN_EDITED_ISSUE_TYPES = {
     "TARGET_CHARACTER",
     "SCENE_LOCALIZATION",
     "LOCALIZATION",
     "DIALOGUE_TIMING",
+    "H3_QC",
 }
 
 
@@ -142,8 +142,6 @@ def upsert_review_issue(
             row.reason = reason
             row.ai_suggestion_json = json.dumps(ai_suggestion, ensure_ascii=False) if ai_suggestion is not None else None
             row.editable_payload_json = json.dumps(editable_payload, ensure_ascii=False) if editable_payload is not None else None
-            # If the automatic source still reports the problem, reopen it. This makes a
-            # corrected upstream rerun authoritative without deleting review history.
             row.status = "OPEN"
             row.resolution_json = None
             row.resolved_at = None
