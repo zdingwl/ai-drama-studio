@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { breakdownApi } from '../api/breakdown'
 import { sceneTimelineApi } from '../api/scene-timeline'
 import type { BreakdownRunSummary } from '../types/breakdown'
@@ -28,8 +29,11 @@ const emit = defineEmits<{
   (event: 'run-context', run: BreakdownRunSummary | null): void
 }>()
 
+const route = useRoute()
+const router = useRouter()
 const timeline = ref<SceneTimelinePayload | null>(null)
 const selectedSceneOrdinal = ref<number | null>(null)
+const selectedShotOrdinal = ref<number | null>(null)
 const activeVideoOrdinal = ref<number | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -41,6 +45,26 @@ const selectedScene = computed(() => {
   if (!payload) return null
   return payload.scenes.find((scene) => scene.ordinal === selectedSceneOrdinal.value) ?? payload.scenes[0] ?? null
 })
+const selectedShot = computed(() => {
+  const scene = selectedScene.value
+  if (!scene) return null
+  return scene.shots.find((shot) => shot.ordinal === selectedShotOrdinal.value) ?? scene.shots[0] ?? null
+})
+const selectedShotIndex = computed(() => {
+  if (!selectedScene.value || !selectedShot.value) return -1
+  return selectedScene.value.shots.findIndex((shot) => shot.ordinal === selectedShot.value?.ordinal)
+})
+const canSelectPreviousShot = computed(() => selectedShotIndex.value > 0)
+const canSelectNextShot = computed(() => (
+  selectedScene.value !== null
+  && selectedShotIndex.value >= 0
+  && selectedShotIndex.value < selectedScene.value.shots.length - 1
+))
+
+function routeOrdinal(value: unknown): number | null {
+  const numeric = Number(value)
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : null
+}
 
 function episodeLabel(): string {
   const episode = currentEpisode.value
@@ -66,9 +90,68 @@ function hasCinematography(shot: SceneTimelineShot): boolean {
   return cinematographyItems(shot.cinematography).length > 0
 }
 
+function compactShotMeta(shot: SceneTimelineShot): string[] {
+  const items: string[] = []
+  if (shot.people.length) items.push(`${shot.people.length} 人`)
+  if (shot.dialogue.length) items.push(`${shot.dialogue.length} 条对白`)
+  if (shot.props.length) items.push(`${shot.props.length} 个道具`)
+  if (shot.on_screen_text.length) items.push(`${shot.on_screen_text.length} 条画面文字`)
+  return items
+}
+
+function writeSelectionToRoute(sceneOrdinal: number | null, shotOrdinal: number | null): void {
+  const nextQuery = { ...route.query }
+  if (sceneOrdinal) nextQuery.scene = String(sceneOrdinal)
+  else delete nextQuery.scene
+  if (shotOrdinal) nextQuery.shot = String(shotOrdinal)
+  else delete nextQuery.shot
+
+  const currentScene = String(route.query.scene || '')
+  const currentShot = String(route.query.shot || '')
+  if (currentScene === String(sceneOrdinal || '') && currentShot === String(shotOrdinal || '')) return
+  void router.replace({ query: nextQuery })
+}
+
+function syncSelectionFromRoute(payload = timeline.value): void {
+  if (!payload?.scenes.length) {
+    selectedSceneOrdinal.value = null
+    selectedShotOrdinal.value = null
+    return
+  }
+
+  const requestedSceneOrdinal = routeOrdinal(route.query.scene)
+  const requestedShotOrdinal = routeOrdinal(route.query.shot)
+  const requestedScene = payload.scenes.find((scene) => scene.ordinal === requestedSceneOrdinal)
+  const shotScene = requestedShotOrdinal
+    ? payload.scenes.find((scene) => scene.shots.some((shot) => shot.ordinal === requestedShotOrdinal))
+    : null
+  const scene = requestedScene ?? shotScene ?? payload.scenes[0]
+  const shot = scene.shots.find((item) => item.ordinal === requestedShotOrdinal) ?? scene.shots[0] ?? null
+
+  selectedSceneOrdinal.value = scene.ordinal
+  selectedShotOrdinal.value = shot?.ordinal ?? null
+  activeVideoOrdinal.value = null
+  writeSelectionToRoute(scene.ordinal, shot?.ordinal ?? null)
+}
+
 function selectScene(scene: SceneTimelineScene): void {
   selectedSceneOrdinal.value = scene.ordinal
+  selectedShotOrdinal.value = scene.shots[0]?.ordinal ?? null
   activeVideoOrdinal.value = null
+  writeSelectionToRoute(scene.ordinal, selectedShotOrdinal.value)
+}
+
+function selectShot(shot: SceneTimelineShot): void {
+  selectedShotOrdinal.value = shot.ordinal
+  activeVideoOrdinal.value = null
+  writeSelectionToRoute(selectedScene.value?.ordinal ?? null, shot.ordinal)
+}
+
+function selectAdjacentShot(offset: -1 | 1): void {
+  const scene = selectedScene.value
+  if (!scene || selectedShotIndex.value < 0) return
+  const shot = scene.shots[selectedShotIndex.value + offset]
+  if (shot) selectShot(shot)
 }
 
 function toggleVideo(shot: SceneTimelineShot): void {
@@ -90,6 +173,7 @@ async function loadEpisode(episodeId: string): Promise<void> {
   if (!episodeId) {
     timeline.value = null
     selectedSceneOrdinal.value = null
+    selectedShotOrdinal.value = null
     activeVideoOrdinal.value = null
     emit('run-context', null)
     return
@@ -106,11 +190,12 @@ async function loadEpisode(episodeId: string): Promise<void> {
     const payload = await sceneTimelineApi.getEpisode(episodeId)
     if (serial !== requestSerial) return
     timeline.value = payload
-    selectedSceneOrdinal.value = payload?.scenes[0]?.ordinal ?? null
+    syncSelectionFromRoute(payload)
   } catch (err) {
     if (serial !== requestSerial) return
     timeline.value = null
     selectedSceneOrdinal.value = null
+    selectedShotOrdinal.value = null
     error.value = err instanceof Error ? err.message : '拉片结果读取失败'
   } finally {
     if (serial === requestSerial) loading.value = false
@@ -122,10 +207,18 @@ watch(
   async (episodeId) => {
     timeline.value = null
     selectedSceneOrdinal.value = null
+    selectedShotOrdinal.value = null
     activeVideoOrdinal.value = null
     await loadEpisode(episodeId)
   },
   { immediate: true },
+)
+
+watch(
+  () => [route.query.scene, route.query.shot],
+  () => {
+    if (timeline.value) syncSelectionFromRoute()
+  },
 )
 </script>
 
@@ -174,161 +267,179 @@ watch(
           >
             <span>场景 {{ String(scene.ordinal).padStart(2, '0') }}</span>
             <strong>{{ scene.title }}</strong>
-            <small>{{ scene.shots.length }} 个镜头</small>
+            <small>{{ scene.shots.length }} 个镜头 · {{ timelineDuration(scene.duration_us) }}</small>
           </button>
         </div>
       </aside>
 
       <main class="scene-reading-pane">
         <section class="scene-hero">
-          <div class="scene-eyebrow">场景 {{ String(selectedScene.ordinal).padStart(2, '0') }}</div>
-          <h2>{{ selectedScene.title }}</h2>
+          <div class="scene-title-row">
+            <div>
+              <div class="scene-eyebrow">场景 {{ String(selectedScene.ordinal).padStart(2, '0') }}</div>
+              <h2>{{ selectedScene.title }}</h2>
+            </div>
+            <span>{{ selectedScene.shots.length }} 个镜头 · {{ timelineDuration(selectedScene.duration_us) }}</span>
+          </div>
+
           <p v-if="selectedScene.story_summary" class="scene-story">{{ selectedScene.story_summary }}</p>
 
           <div v-if="sceneInfoTags(selectedScene.scene_info).length" class="scene-meta-row">
             <span v-for="item in sceneInfoTags(selectedScene.scene_info)" :key="item">{{ item }}</span>
           </div>
-          <p v-if="selectedScene.scene_info.environment" class="scene-environment">
-            {{ selectedScene.scene_info.environment }}
-          </p>
-        </section>
+          <p v-if="selectedScene.scene_info.environment" class="scene-environment">{{ selectedScene.scene_info.environment }}</p>
 
-        <section v-if="selectedScene.people.length" class="scene-people-card">
-          <header>
-            <strong>本场人物</strong>
-            <span>{{ selectedScene.people.length }} 人</span>
-          </header>
-          <div class="scene-people-list">
-            <article v-for="person in selectedScene.people" :key="person.ref">
-              <span class="person-avatar">人</span>
-              <div>
-                <strong>{{ person.display_name }}</strong>
-                <p v-if="person.appearance">{{ person.appearance }}</p>
-              </div>
-            </article>
+          <div v-if="selectedScene.people.length" class="scene-person-strip">
+            <span class="scene-person-label">本场人物</span>
+            <div>
+              <span v-for="person in selectedScene.people" :key="person.ref" :title="person.appearance || undefined">
+                {{ person.display_name }}
+              </span>
+            </div>
           </div>
         </section>
 
         <section class="scene-shots-section">
           <header class="shots-section-head">
             <div>
-              <strong>镜头内容</strong>
-              <span>{{ selectedScene.shots.length }} 个镜头 · {{ timelineDuration(selectedScene.duration_us) }}</span>
+              <strong>镜头列表</strong>
+              <span>点选镜头，在右侧查看完整内容</span>
             </div>
           </header>
 
-          <div class="shot-card-list">
-            <article v-for="shot in selectedScene.shots" :key="shot.ordinal" class="timeline-shot-card">
-              <header class="shot-card-head">
-                <div>
-                  <span>镜头 {{ String(shot.ordinal).padStart(4, '0') }}</span>
-                  <strong>{{ timelineTime(shot.start_us) }} → {{ timelineTime(shot.end_us) }}</strong>
-                </div>
-                <small>{{ timelineDuration(shot.duration_us) }}</small>
-              </header>
+          <div class="compact-shot-list">
+            <button
+              v-for="shot in selectedScene.shots"
+              :key="shot.ordinal"
+              type="button"
+              :class="['compact-shot-row', { active: selectedShot?.ordinal === shot.ordinal }]"
+              @click="selectShot(shot)"
+            >
+              <span class="compact-shot-thumb">
+                <img v-if="shot.thumbnail_url" :src="shot.thumbnail_url" :alt="`镜头 ${shot.ordinal} 缩略图`" loading="lazy" />
+                <i v-else>无预览</i>
+              </span>
 
-              <div class="shot-card-body">
-                <div class="shot-media">
-                  <video
-                    v-if="activeVideoOrdinal === shot.ordinal && shot.reference_url"
-                    :src="shot.reference_url"
-                    :poster="shot.thumbnail_url || undefined"
-                    controls
-                    preload="metadata"
-                  ></video>
+              <span class="compact-shot-main">
+                <span class="compact-shot-title">
+                  <strong>镜头 {{ String(shot.ordinal).padStart(4, '0') }}</strong>
+                  <small>{{ timelineTime(shot.start_us) }} → {{ timelineTime(shot.end_us) }} · {{ timelineDuration(shot.duration_us) }}</small>
+                </span>
+                <b v-if="shot.visual_description">{{ shot.visual_description }}</b>
+                <b v-else>暂无画面描述</b>
+                <span v-if="shot.people.length" class="compact-shot-people">{{ peopleNames(selectedScene, shot.people) }}</span>
+                <span v-if="compactShotMeta(shot).length" class="compact-shot-meta">
+                  <i v-for="item in compactShotMeta(shot)" :key="item">{{ item }}</i>
+                </span>
+              </span>
 
-                  <button
-                    v-else-if="shot.reference_url"
-                    type="button"
-                    class="shot-preview-button"
-                    :aria-label="`播放镜头 ${shot.ordinal}`"
-                    @click="toggleVideo(shot)"
-                  >
-                    <img v-if="shot.thumbnail_url" :src="shot.thumbnail_url" :alt="`镜头 ${shot.ordinal} 缩略图`" loading="lazy" />
-                    <span v-else class="shot-preview-placeholder">暂无缩略图</span>
-                    <i>▶ 播放镜头</i>
-                  </button>
-
-                  <div v-else class="shot-preview-static">
-                    <img v-if="shot.thumbnail_url" :src="shot.thumbnail_url" :alt="`镜头 ${shot.ordinal} 缩略图`" loading="lazy" />
-                    <span v-else class="shot-preview-placeholder">暂无画面预览</span>
-                  </div>
-
-                  <button
-                    v-if="activeVideoOrdinal === shot.ordinal && shot.reference_url"
-                    type="button"
-                    class="close-video-button"
-                    @click="toggleVideo(shot)"
-                  >收起视频</button>
-                </div>
-
-                <div class="shot-information">
-                  <section v-if="shot.visual_description" class="shot-primary-description">
-                    <span>画面</span>
-                    <p>{{ shot.visual_description }}</p>
-                  </section>
-
-                  <div v-if="shot.people.length" class="shot-person-row">
-                    <span>人物</span>
-                    <div>
-                      <b v-for="ref in shot.people" :key="ref">{{ personDisplayName(selectedScene.people, ref) }}</b>
-                    </div>
-                  </div>
-
-                  <section v-if="shot.performance.length" class="shot-detail-block">
-                    <h4>动作 / 表演</h4>
-                    <ul>
-                      <li v-for="(item, index) in shot.performance" :key="`${shot.ordinal}-performance-${index}`">
-                        {{ performanceLabel(selectedScene, item) }}
-                      </li>
-                    </ul>
-                  </section>
-
-                  <section v-if="shot.dialogue.length" class="shot-detail-block dialogue-block">
-                    <h4>对白</h4>
-                    <div class="dialogue-list">
-                      <article v-for="(item, index) in shot.dialogue" :key="`${shot.ordinal}-dialogue-${index}`">
-                        <header>
-                          <strong>{{ dialogueSpeaker(selectedScene, item) }}</strong>
-                          <span>{{ timelineTime(item.start_us) }}</span>
-                        </header>
-                        <p>{{ item.text }}</p>
-                      </article>
-                    </div>
-                  </section>
-
-                  <section v-if="shot.props.length" class="shot-detail-block">
-                    <h4>道具</h4>
-                    <div class="prop-list">
-                      <article v-for="(prop, index) in shot.props" :key="`${shot.ordinal}-prop-${index}`">
-                        <strong>{{ prop.label }}</strong>
-                        <span v-if="prop.interaction">{{ prop.interaction }}</span>
-                      </article>
-                    </div>
-                  </section>
-
-                  <section v-if="hasCinematography(shot)" class="shot-detail-block">
-                    <h4>镜头语言</h4>
-                    <div class="cinematography-list">
-                      <span v-for="item in cinematographyItems(shot.cinematography)" :key="item">{{ item }}</span>
-                    </div>
-                  </section>
-
-                  <section v-if="shot.on_screen_text.length" class="shot-detail-block">
-                    <h4>画面文字</h4>
-                    <div class="screen-text-list">
-                      <article v-for="(item, index) in shot.on_screen_text" :key="`${shot.ordinal}-screen-${index}`">
-                        <span>{{ timelineTime(item.start_us) }}</span>
-                        <p>{{ item.text }}</p>
-                      </article>
-                    </div>
-                  </section>
-                </div>
-              </div>
-            </article>
+              <span class="compact-shot-arrow">›</span>
+            </button>
           </div>
         </section>
       </main>
+
+      <aside v-if="selectedShot" class="shot-inspector">
+        <header class="inspector-head">
+          <div>
+            <span>镜头详情</span>
+            <strong>镜头 {{ String(selectedShot.ordinal).padStart(4, '0') }}</strong>
+            <small>{{ timelineTime(selectedShot.start_us) }} → {{ timelineTime(selectedShot.end_us) }}</small>
+          </div>
+          <div class="inspector-stepper">
+            <button :disabled="!canSelectPreviousShot" title="上一镜" @click="selectAdjacentShot(-1)">‹</button>
+            <button :disabled="!canSelectNextShot" title="下一镜" @click="selectAdjacentShot(1)">›</button>
+          </div>
+        </header>
+
+        <div class="inspector-scroll">
+          <div class="inspector-media">
+            <video
+              v-if="activeVideoOrdinal === selectedShot.ordinal && selectedShot.reference_url"
+              :src="selectedShot.reference_url"
+              :poster="selectedShot.thumbnail_url || undefined"
+              controls
+              autoplay
+              preload="metadata"
+            ></video>
+            <button
+              v-else-if="selectedShot.reference_url"
+              type="button"
+              class="inspector-preview-button"
+              @click="toggleVideo(selectedShot)"
+            >
+              <img v-if="selectedShot.thumbnail_url" :src="selectedShot.thumbnail_url" :alt="`镜头 ${selectedShot.ordinal} 缩略图`" />
+              <span v-else>暂无画面预览</span>
+              <i>▶ 播放镜头</i>
+            </button>
+            <div v-else class="inspector-preview-static">
+              <img v-if="selectedShot.thumbnail_url" :src="selectedShot.thumbnail_url" :alt="`镜头 ${selectedShot.ordinal} 缩略图`" />
+              <span v-else>暂无画面预览</span>
+            </div>
+          </div>
+
+          <section v-if="selectedShot.visual_description" class="inspector-primary-block">
+            <span>画面内容</span>
+            <p>{{ selectedShot.visual_description }}</p>
+          </section>
+
+          <section v-if="selectedShot.people.length" class="inspector-block">
+            <h4>人物</h4>
+            <div class="inspector-chips">
+              <span v-for="ref in selectedShot.people" :key="ref">{{ personDisplayName(selectedScene.people, ref) }}</span>
+            </div>
+          </section>
+
+          <section v-if="selectedShot.performance.length" class="inspector-block">
+            <h4>动作 / 表演</h4>
+            <ul>
+              <li v-for="(item, index) in selectedShot.performance" :key="`${selectedShot.ordinal}-performance-${index}`">
+                {{ performanceLabel(selectedScene, item) }}
+              </li>
+            </ul>
+          </section>
+
+          <section v-if="selectedShot.dialogue.length" class="inspector-block">
+            <h4>对白</h4>
+            <div class="inspector-dialogue-list">
+              <article v-for="(item, index) in selectedShot.dialogue" :key="`${selectedShot.ordinal}-dialogue-${index}`">
+                <header>
+                  <strong>{{ dialogueSpeaker(selectedScene, item) }}</strong>
+                  <span>{{ timelineTime(item.start_us) }}</span>
+                </header>
+                <p>{{ item.text }}</p>
+              </article>
+            </div>
+          </section>
+
+          <section v-if="selectedShot.props.length" class="inspector-block">
+            <h4>道具</h4>
+            <div class="inspector-prop-list">
+              <article v-for="(prop, index) in selectedShot.props" :key="`${selectedShot.ordinal}-prop-${index}`">
+                <strong>{{ prop.label }}</strong>
+                <span v-if="prop.interaction">{{ prop.interaction }}</span>
+              </article>
+            </div>
+          </section>
+
+          <section v-if="selectedShot.on_screen_text.length" class="inspector-block">
+            <h4>画面文字</h4>
+            <div class="inspector-screen-text-list">
+              <article v-for="(item, index) in selectedShot.on_screen_text" :key="`${selectedShot.ordinal}-screen-${index}`">
+                <span>{{ timelineTime(item.start_us) }}</span>
+                <p>{{ item.text }}</p>
+              </article>
+            </div>
+          </section>
+
+          <details v-if="hasCinematography(selectedShot)" class="inspector-advanced">
+            <summary>镜头语言</summary>
+            <div class="inspector-chips">
+              <span v-for="item in cinematographyItems(selectedShot.cinematography)" :key="item">{{ item }}</span>
+            </div>
+          </details>
+        </div>
+      </aside>
     </div>
   </section>
 </template>
@@ -337,41 +448,39 @@ watch(
 .scene-timeline-results-v1 {
   min-height: 0;
   display: grid;
-  gap: 12px;
+  gap: 10px;
   color: #263650;
 }
-
 .timeline-topbar {
   display: flex;
   justify-content: space-between;
   gap: 14px;
   align-items: center;
   border: 1px solid #dfe5ef;
-  border-radius: 14px;
-  padding: 12px 14px;
+  border-radius: 12px;
+  padding: 10px 12px;
   background: #fff;
-  box-shadow: 0 6px 22px rgba(42, 59, 90, .04);
+  box-shadow: 0 4px 16px rgba(42, 59, 90, .035);
 }
-.timeline-topbar > div { min-width: 0; display: grid; gap: 3px; }
-.timeline-topbar strong { overflow: hidden; color: #30435f; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-.timeline-topbar span { color: #8190a4; font-size: 11px; }
-.timeline-check-pill { flex: none; border-radius: 999px; padding: 6px 9px; background: #fff5dc; color: #96630e !important; font-weight: 800; }
-
+.timeline-topbar > div { min-width: 0; display: grid; gap: 2px; }
+.timeline-topbar strong { overflow: hidden; color: #30435f; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-topbar span { color: #8190a4; font-size: 10px; }
+.timeline-check-pill { flex: none; border-radius: 999px; padding: 5px 8px; background: #fff5dc; color: #96630e !important; font-weight: 800; }
 .timeline-warning-list {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   border: 1px solid #eedca7;
-  border-radius: 11px;
-  padding: 9px 12px;
+  border-radius: 10px;
+  padding: 8px 10px;
   background: #fffaf0;
   color: #805f20;
-  font-size: 11px;
+  font-size: 10px;
 }
 .timeline-alert,
 .timeline-loading,
-.timeline-empty { border: 1px solid #dfe5ef; border-radius: 13px; padding: 16px; background: #fff; }
+.timeline-empty { border: 1px solid #dfe5ef; border-radius: 12px; padding: 14px; background: #fff; }
 .timeline-alert.danger { border-color: #efcccc; background: #fff4f4; color: #a34747; }
-.timeline-loading { display: flex; gap: 8px; align-items: center; color: #6d7b90; font-size: 12px; }
+.timeline-loading { display: flex; gap: 8px; align-items: center; color: #6d7b90; font-size: 11px; }
 .timeline-loading > span { width: 8px; height: 8px; border-radius: 50%; background: #5d82d6; box-shadow: 0 0 0 4px rgba(93, 130, 214, .12); }
 .timeline-empty { display: grid; gap: 5px; place-items: center; min-height: 180px; text-align: center; }
 .timeline-empty strong { color: #40516d; font-size: 14px; }
@@ -380,33 +489,33 @@ watch(
 .timeline-layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 176px minmax(420px, 1fr) minmax(330px, 390px);
+  gap: 10px;
   align-items: start;
 }
-.scene-navigator {
+.scene-navigator,
+.shot-inspector {
   position: sticky;
   top: 8px;
-  max-height: calc(100vh - 170px);
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  max-height: calc(100vh - 184px);
   overflow: hidden;
   border: 1px solid #dfe5ef;
-  border-radius: 14px;
+  border-radius: 12px;
   background: #fff;
-  box-shadow: 0 6px 20px rgba(39, 55, 84, .035);
+  box-shadow: 0 5px 18px rgba(39, 55, 84, .035);
 }
-.scene-navigator > header { display: flex; justify-content: space-between; align-items: center; padding: 11px 12px; border-bottom: 1px solid #edf0f5; }
-.scene-navigator > header strong { color: #40516c; font-size: 12px; }
-.scene-navigator > header span { min-width: 24px; border-radius: 999px; padding: 3px 6px; background: #eef3fb; color: #657b9f; font-size: 10px; font-weight: 800; text-align: center; }
-.scene-nav-list { min-height: 0; display: grid; gap: 5px; overflow: auto; padding: 7px; }
+.scene-navigator { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.scene-navigator > header { display: flex; justify-content: space-between; align-items: center; padding: 10px 11px; border-bottom: 1px solid #edf0f5; }
+.scene-navigator > header strong { color: #40516c; font-size: 11px; }
+.scene-navigator > header span { min-width: 23px; border-radius: 999px; padding: 2px 6px; background: #eef3fb; color: #657b9f; font-size: 9px; font-weight: 800; text-align: center; }
+.scene-nav-list { min-height: 0; display: grid; gap: 4px; overflow: auto; padding: 6px; }
 .scene-nav-item {
   width: 100%;
   display: grid;
-  gap: 4px;
+  gap: 3px;
   border: 1px solid transparent;
-  border-radius: 10px;
-  padding: 9px 10px;
+  border-radius: 9px;
+  padding: 8px 9px;
   background: transparent;
   color: #66758b;
   cursor: pointer;
@@ -414,115 +523,126 @@ watch(
 }
 .scene-nav-item:hover { background: #f7f9fc; }
 .scene-nav-item.active { border-color: #b9ccef; background: #eef4ff; box-shadow: inset 3px 0 0 #5d82d6; }
-.scene-nav-item > span { color: #909bad; font-size: 9px; font-weight: 850; letter-spacing: .03em; }
-.scene-nav-item > strong { color: #3f506c; font-size: 12px; line-height: 1.4; }
-.scene-nav-item > small { color: #8a96a7; font-size: 9px; }
+.scene-nav-item > span { color: #909bad; font-size: 8px; font-weight: 850; letter-spacing: .03em; }
+.scene-nav-item > strong { color: #3f506c; font-size: 11px; line-height: 1.35; }
+.scene-nav-item > small { color: #8a96a7; font-size: 8px; }
 
-.scene-reading-pane { min-width: 0; display: grid; gap: 12px; }
+.scene-reading-pane { min-width: 0; display: grid; gap: 9px; }
 .scene-hero {
   display: grid;
-  gap: 9px;
+  gap: 8px;
   border: 1px solid #dce5f2;
-  border-radius: 16px;
-  padding: 18px 20px;
+  border-radius: 13px;
+  padding: 13px 15px;
   background: linear-gradient(145deg, #f8fbff 0%, #fff 60%);
-  box-shadow: 0 8px 28px rgba(43, 66, 107, .05);
+  box-shadow: 0 5px 18px rgba(43, 66, 107, .04);
 }
-.scene-eyebrow { color: #6782af; font-size: 10px; font-weight: 900; letter-spacing: .08em; }
-.scene-hero h2 { margin: 0; color: #263c5d; font-size: 22px; line-height: 1.2; }
-.scene-story { max-width: 900px; margin: 0; color: #455874; font-size: 13px; line-height: 1.8; }
-.scene-meta-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.scene-meta-row span { border-radius: 999px; padding: 5px 8px; background: #edf3fb; color: #587099; font-size: 10px; font-weight: 750; }
-.scene-environment { margin: 0; border-left: 3px solid #cfdaea; padding-left: 9px; color: #78869a; font-size: 11px; line-height: 1.65; }
+.scene-title-row { display: flex; justify-content: space-between; gap: 12px; align-items: end; }
+.scene-title-row > div { min-width: 0; }
+.scene-title-row > span { flex: none; color: #8a96a7; font-size: 9px; }
+.scene-eyebrow { color: #6782af; font-size: 9px; font-weight: 900; letter-spacing: .07em; }
+.scene-hero h2 { margin: 2px 0 0; color: #263c5d; font-size: 18px; line-height: 1.2; }
+.scene-story { margin: 0; color: #455874; font-size: 11px; line-height: 1.65; }
+.scene-meta-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.scene-meta-row span { border-radius: 999px; padding: 4px 7px; background: #edf3fb; color: #587099; font-size: 9px; font-weight: 750; }
+.scene-environment { margin: 0; border-left: 3px solid #cfdaea; padding-left: 8px; color: #78869a; font-size: 10px; line-height: 1.55; }
+.scene-person-strip { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 7px; align-items: center; padding-top: 2px; }
+.scene-person-label { color: #8a96a7; font-size: 9px; font-weight: 800; }
+.scene-person-strip > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.scene-person-strip > div > span { border: 1px solid #e1e7f0; border-radius: 999px; padding: 3px 7px; background: #fff; color: #4d617f; font-size: 9px; font-weight: 750; }
 
-.scene-people-card { border: 1px solid #dfe5ef; border-radius: 14px; padding: 12px 14px; background: #fff; }
-.scene-people-card > header { display: flex; gap: 8px; align-items: baseline; margin-bottom: 10px; }
-.scene-people-card > header strong { color: #3e506c; font-size: 12px; }
-.scene-people-card > header span { color: #8a96a7; font-size: 10px; }
-.scene-people-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
-.scene-people-list article { min-width: 0; display: flex; gap: 10px; align-items: flex-start; border: 1px solid #edf0f5; border-radius: 10px; padding: 9px 10px; background: #fbfcfe; }
-.person-avatar { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: #eaf1fd; color: #5e78a6; font-size: 10px; font-weight: 900; }
-.scene-people-list article > div { min-width: 0; display: grid; gap: 3px; }
-.scene-people-list strong { color: #40516c; font-size: 11px; }
-.scene-people-list p { margin: 0; color: #7d899b; font-size: 10px; line-height: 1.55; }
-
-.scene-shots-section { display: grid; gap: 9px; }
+.scene-shots-section { display: grid; gap: 7px; }
 .shots-section-head { display: flex; justify-content: space-between; align-items: end; padding: 0 2px; }
-.shots-section-head > div { display: flex; gap: 8px; align-items: baseline; }
-.shots-section-head strong { color: #354965; font-size: 13px; }
-.shots-section-head span { color: #8a96a7; font-size: 10px; }
-.shot-card-list { display: grid; gap: 10px; }
-.timeline-shot-card { overflow: hidden; border: 1px solid #dfe5ef; border-radius: 15px; background: #fff; box-shadow: 0 6px 22px rgba(42, 59, 90, .035); }
-.shot-card-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; border-bottom: 1px solid #edf0f5; padding: 9px 12px; background: #fbfcfe; }
-.shot-card-head > div { display: flex; gap: 9px; align-items: baseline; }
-.shot-card-head span { color: #4f6588; font-size: 11px; font-weight: 900; }
-.shot-card-head strong { color: #7b8798; font-size: 10px; font-weight: 700; }
-.shot-card-head small { color: #8793a4; font-size: 9px; }
-.shot-card-body { display: grid; grid-template-columns: minmax(260px, 34%) minmax(0, 1fr); gap: 0; }
-
-.shot-media { position: relative; min-height: 205px; display: grid; place-items: stretch; overflow: hidden; border-right: 1px solid #edf0f5; background: #111a27; }
-.shot-media video,
-.shot-preview-button,
-.shot-preview-static { width: 100%; min-height: 205px; aspect-ratio: 16 / 9; }
-.shot-media video { display: block; background: #0c1119; object-fit: contain; }
-.shot-preview-button { position: relative; border: 0; padding: 0; background: #111a27; cursor: pointer; overflow: hidden; }
-.shot-preview-button img,
-.shot-preview-static img { width: 100%; height: 100%; display: block; object-fit: cover; }
-.shot-preview-button::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 45%, rgba(8, 14, 24, .62)); }
-.shot-preview-button i { position: absolute; z-index: 1; right: 10px; bottom: 9px; border-radius: 999px; padding: 6px 9px; background: rgba(255, 255, 255, .92); color: #344c72; font-size: 10px; font-style: normal; font-weight: 900; }
-.shot-preview-placeholder { min-height: 205px; display: grid; place-items: center; color: #7f8da3; font-size: 10px; }
-.close-video-button { position: absolute; top: 8px; right: 8px; border: 1px solid rgba(255, 255, 255, .4); border-radius: 999px; padding: 5px 8px; background: rgba(17, 26, 39, .72); color: #fff; cursor: pointer; font-size: 9px; }
-
-.shot-information { min-width: 0; display: grid; align-content: start; gap: 11px; padding: 13px 14px 14px; }
-.shot-primary-description { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 8px; align-items: start; }
-.shot-primary-description > span,
-.shot-person-row > span { color: #8a96a7; font-size: 10px; font-weight: 850; }
-.shot-primary-description p { margin: 0; color: #30445f; font-size: 13px; font-weight: 650; line-height: 1.7; }
-.shot-person-row { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 8px; align-items: start; }
-.shot-person-row > div { display: flex; flex-wrap: wrap; gap: 5px; }
-.shot-person-row b { border-radius: 999px; padding: 4px 7px; background: #eef4ff; color: #5470a1; font-size: 9px; }
-.shot-detail-block { display: grid; gap: 7px; border-top: 1px solid #edf0f5; padding-top: 9px; }
-.shot-detail-block h4 { margin: 0; color: #718097; font-size: 10px; font-weight: 900; }
-.shot-detail-block ul { display: grid; gap: 5px; margin: 0; padding-left: 17px; color: #4b5d76; font-size: 11px; line-height: 1.6; }
-
-.dialogue-list { display: grid; gap: 6px; }
-.dialogue-list article { display: grid; gap: 3px; border-radius: 9px; padding: 8px 9px; background: #f7f9fc; }
-.dialogue-list header { display: flex; justify-content: space-between; gap: 10px; }
-.dialogue-list strong { color: #526b94; font-size: 10px; }
-.dialogue-list span { color: #9aa4b3; font-size: 9px; }
-.dialogue-list p { margin: 0; color: #364a65; font-size: 12px; line-height: 1.65; }
-.prop-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.prop-list article { display: flex; gap: 5px; align-items: center; border: 1px solid #e1e7ef; border-radius: 8px; padding: 5px 7px; background: #fafbfd; }
-.prop-list strong { color: #56677f; font-size: 10px; }
-.prop-list span { color: #8a95a6; font-size: 9px; }
-.cinematography-list { display: flex; flex-wrap: wrap; gap: 5px; }
-.cinematography-list span { border-radius: 7px; padding: 5px 7px; background: #f0f3f7; color: #657289; font-size: 9px; }
-.screen-text-list { display: grid; gap: 5px; }
-.screen-text-list article { display: grid; grid-template-columns: 50px minmax(0, 1fr); gap: 8px; }
-.screen-text-list span { color: #99a3b1; font-size: 9px; }
-.screen-text-list p { margin: 0; color: #526078; font-size: 10px; line-height: 1.55; }
-
-@media (max-width: 980px) {
-  .timeline-layout { grid-template-columns: 180px minmax(0, 1fr); }
-  .shot-card-body { grid-template-columns: 1fr; }
-  .shot-media { min-height: 0; border-right: 0; border-bottom: 1px solid #edf0f5; }
+.shots-section-head > div { display: flex; gap: 7px; align-items: baseline; }
+.shots-section-head strong { color: #354965; font-size: 12px; }
+.shots-section-head span { color: #8a96a7; font-size: 9px; }
+.compact-shot-list { display: grid; gap: 6px; }
+.compact-shot-row {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr) 18px;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #dfe5ef;
+  border-radius: 11px;
+  padding: 7px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(42, 59, 90, .025);
+  text-align: left;
+  cursor: pointer;
+  transition: .15s ease;
 }
+.compact-shot-row:hover { border-color: #c8d5e8; transform: translateY(-1px); }
+.compact-shot-row.active { border-color: #8fa9df; background: #f7faff; box-shadow: inset 3px 0 0 #5d82d6, 0 4px 14px rgba(61, 95, 158, .07); }
+.compact-shot-thumb { width: 116px; aspect-ratio: 16 / 9; overflow: hidden; display: grid; place-items: center; border-radius: 8px; background: #17202d; }
+.compact-shot-thumb img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.compact-shot-thumb i { color: #8290a4; font-size: 9px; font-style: normal; }
+.compact-shot-main { min-width: 0; display: grid; gap: 3px; }
+.compact-shot-title { display: flex; gap: 7px; align-items: baseline; }
+.compact-shot-title strong { flex: none; color: #405879; font-size: 10px; }
+.compact-shot-title small { overflow: hidden; color: #8995a6; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.compact-shot-main > b { display: -webkit-box; overflow: hidden; color: #31445f; font-size: 11px; font-weight: 650; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.compact-shot-people { overflow: hidden; color: #65758d; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.compact-shot-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+.compact-shot-meta i { border-radius: 999px; padding: 2px 5px; background: #f0f3f7; color: #7c899a; font-size: 8px; font-style: normal; }
+.compact-shot-arrow { color: #a0adbd; font-size: 21px; font-weight: 300; text-align: center; }
 
-@media (max-width: 720px) {
-  .timeline-layout { grid-template-columns: 1fr; }
-  .scene-navigator { position: static; max-height: none; }
-  .scene-nav-list { display: flex; overflow-x: auto; }
-  .scene-nav-item { min-width: 180px; }
-  .scene-hero { padding: 15px; }
-  .scene-hero h2 { font-size: 19px; }
-}
+.shot-inspector { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.inspector-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 10px 11px; border-bottom: 1px solid #edf0f5; background: #fbfcfe; }
+.inspector-head > div:first-child { min-width: 0; display: grid; gap: 1px; }
+.inspector-head span { color: #8995a6; font-size: 8px; font-weight: 850; letter-spacing: .05em; }
+.inspector-head strong { color: #334967; font-size: 12px; }
+.inspector-head small { color: #8a96a7; font-size: 8px; }
+.inspector-stepper { display: flex; gap: 4px; }
+.inspector-stepper button { width: 28px; height: 28px; border: 1px solid #dce3ec; border-radius: 7px; background: #fff; color: #526782; font-size: 18px; line-height: 1; }
+.inspector-stepper button:disabled { opacity: .35; }
+.inspector-scroll { min-height: 0; overflow: auto; padding: 9px; display: grid; gap: 8px; align-content: start; }
+.inspector-media { overflow: hidden; border-radius: 9px; background: #111a27; }
+.inspector-media video,
+.inspector-preview-button,
+.inspector-preview-static { width: 100%; aspect-ratio: 16 / 9; }
+.inspector-media video { display: block; object-fit: contain; background: #0c1119; }
+.inspector-preview-button { position: relative; display: block; border: 0; padding: 0; overflow: hidden; background: #111a27; cursor: pointer; }
+.inspector-preview-button img,
+.inspector-preview-static img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.inspector-preview-button::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 44%, rgba(8, 14, 24, .64)); }
+.inspector-preview-button span,
+.inspector-preview-static span { height: 100%; display: grid; place-items: center; color: #8290a4; font-size: 9px; }
+.inspector-preview-button i { position: absolute; z-index: 1; right: 9px; bottom: 8px; border-radius: 999px; padding: 5px 8px; background: rgba(255, 255, 255, .92); color: #344c72; font-size: 9px; font-style: normal; font-weight: 900; }
+.inspector-preview-static { display: grid; place-items: center; }
+.inspector-primary-block,
+.inspector-block,
+.inspector-advanced { border: 1px solid #e3e8ef; border-radius: 9px; padding: 9px 10px; background: #fff; }
+.inspector-primary-block { display: grid; gap: 4px; background: #f8fbff; }
+.inspector-primary-block > span { color: #7184a2; font-size: 8px; font-weight: 850; }
+.inspector-primary-block p { margin: 0; color: #30445f; font-size: 11px; font-weight: 650; line-height: 1.6; }
+.inspector-block { display: grid; gap: 7px; }
+.inspector-block h4 { margin: 0; color: #586a84; font-size: 9px; font-weight: 900; }
+.inspector-block ul { display: grid; gap: 5px; margin: 0; padding-left: 17px; }
+.inspector-block li { color: #40516a; font-size: 10px; line-height: 1.55; }
+.inspector-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.inspector-chips span { border-radius: 999px; padding: 3px 6px; background: #edf2f8; color: #536984; font-size: 9px; }
+.inspector-dialogue-list,
+.inspector-prop-list,
+.inspector-screen-text-list { display: grid; gap: 6px; }
+.inspector-dialogue-list article { border-left: 3px solid #b8c8e4; padding: 2px 0 2px 8px; }
+.inspector-dialogue-list header { display: flex; justify-content: space-between; gap: 8px; }
+.inspector-dialogue-list strong { color: #4b6180; font-size: 9px; }
+.inspector-dialogue-list span,
+.inspector-screen-text-list span { color: #9aa5b4; font-size: 8px; }
+.inspector-dialogue-list p,
+.inspector-screen-text-list p { margin: 3px 0 0; color: #2f4058; font-size: 10px; line-height: 1.55; }
+.inspector-prop-list article { display: flex; justify-content: space-between; gap: 8px; border-radius: 7px; padding: 6px 7px; background: #f7f9fc; }
+.inspector-prop-list strong { color: #465c79; font-size: 9px; }
+.inspector-prop-list span { color: #77859a; font-size: 9px; text-align: right; }
+.inspector-screen-text-list article { border-radius: 7px; padding: 6px 7px; background: #f7f9fc; }
+.inspector-advanced > summary { color: #697a91; font-size: 9px; font-weight: 850; cursor: pointer; }
+.inspector-advanced[open] > summary { margin-bottom: 8px; }
 
-@media (max-width: 520px) {
-  .timeline-topbar { align-items: flex-start; flex-direction: column; }
-  .shot-card-head > div { display: grid; gap: 2px; }
-  .scene-people-list { grid-template-columns: 1fr; }
-  .shot-information { padding: 12px; }
-  .shot-primary-description,
-  .shot-person-row { grid-template-columns: 1fr; gap: 4px; }
+@media (max-width: 1480px) {
+  .timeline-layout { grid-template-columns: 160px minmax(390px, 1fr) minmax(310px, 350px); }
+  .compact-shot-row { grid-template-columns: 100px minmax(0, 1fr) 16px; gap: 8px; }
+  .compact-shot-thumb { width: 100px; }
 }
 </style>
