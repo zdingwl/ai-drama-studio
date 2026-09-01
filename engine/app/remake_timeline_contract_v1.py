@@ -28,7 +28,7 @@ class RemakeDialoguePlanV1(_StrictModel):
     source_start_us: int = Field(ge=0)
     source_end_us: int = Field(ge=0)
     source_window_us: int = Field(ge=0)
-    speech_duration_us: int = Field(ge=1)
+    speech_duration_us: int | None = Field(default=None, ge=1)
     planned_start_offset_us: int = Field(ge=0)
     planned_end_offset_us: int = Field(ge=1)
     planned_start_us: int = Field(ge=0)
@@ -67,6 +67,10 @@ class RemakeShotPlanV1(_StrictModel):
             raise ValueError("planned Shot duration mismatch")
         if self.duration_delta_us != self.planned_duration_us - self.source_duration_us:
             raise ValueError("duration_delta_us mismatch")
+        if self.status == "WAITING_AUDIO" and self.dialogue_plans and all(item.speech_duration_us is not None for item in self.dialogue_plans):
+            raise ValueError("WAITING_AUDIO Shot must expose a missing target speech duration")
+        if self.status != "WAITING_AUDIO" and any(item.speech_duration_us is None for item in self.dialogue_plans):
+            raise ValueError("ready/review Shot cannot hide missing target speech duration")
         return self
 
 
@@ -132,6 +136,12 @@ class RemakeProjectTimelineV1(_StrictModel):
             raise ValueError("episode source fingerprint mismatch")
         if any(item.target_dialogue_fingerprint != self.target_dialogue_fingerprint for item in self.episodes):
             raise ValueError("episode dialogue fingerprint mismatch")
+        if self.status == "READY" and (self.review_count or self.waiting_audio_count):
+            raise ValueError("READY project timeline cannot contain review/waiting episodes")
+        if self.status == "REVIEW" and not self.review_count:
+            raise ValueError("REVIEW project timeline needs review items")
+        if self.status == "WAITING_AUDIO" and self.review_count:
+            raise ValueError("WAITING_AUDIO project timeline cannot hide review items")
         return self
 
 
