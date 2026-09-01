@@ -119,12 +119,16 @@ Frontend:
 frontend/src/types/breakdown-read-model.ts
 frontend/src/types/scene-timeline.ts
 frontend/src/utils/breakdownReadModelUi.ts
+frontend/src/utils/breakdownReadModelUi.test.ts
+frontend/src/utils/sceneTimelineUi.ts
+frontend/src/utils/sceneTimelineUi.test.ts
 frontend/src/api/scene-timeline.ts
+frontend/src/components/SceneTimelineResultsV1.vue
 ```
 
-Ordinary Episode reading now uses the P6 endpoint. Historical/debug Run reading still uses the frozen G2.5 Run endpoint, so current Final Character assets cannot be accidentally projected onto a historical run.
+Ordinary Episode reading uses the P6 endpoint. Historical/debug Run reading still uses the frozen G2.5 Run endpoint, so current Final Character assets cannot be accidentally projected onto a historical run.
 
-The frontend applies a second fail-closed validation before projecting display names. Existing G2.6 rendering then automatically uses the Final Character name wherever it resolves a Scene-local P* for:
+The frontend applies a second fail-closed validation before projecting display names. Existing G2.6 rendering then uses the Final Character name wherever it resolves a Scene-local P* for:
 
 ```text
 本场人物
@@ -133,7 +137,16 @@ performance 人物标签
 dialogue speaker label when G2 already has a speaker ref
 ```
 
-The Final Character `cover_url` is carried in the display-only person object for renderer use; G2 does not own that field.
+Final Character `cover_url` is now rendered directly in the ordinary-user reading page for:
+
+```text
+本场人物
+右侧镜头详情 -> 人物
+```
+
+If a person is anonymous, has no Final Character cover, or the cover image fails to load, the renderer falls back to a compact text avatar derived from the visible display name. It does not expose identity status, Character IDs, P* refs or technical resolution labels to the ordinary user.
+
+The renderer reads only the P6 display-only `final_character` object. It does not mutate the frozen G2 Timeline or P5 resolution.
 
 ## 6. Ordinary-user behavior
 
@@ -142,7 +155,7 @@ Resolved:
 ```text
 G2: 人物2
 P5: RESOLVED -> Character CHAR1 / 人物001
-P6 display: 人物001
+P6 display: [Final Character cover] 人物001
 ```
 
 Unresolved:
@@ -150,7 +163,15 @@ Unresolved:
 ```text
 G2: 人物1
 P5: UNRESOLVED
-P6 display: 人物1
+P6 display: [text avatar] 人物1
+```
+
+Missing/broken cover:
+
+```text
+Final Character name is safely resolved but cover_url is empty or image load fails
+→ keep Final Character display name
+→ fall back to text avatar
 ```
 
 Stale/mismatched:
@@ -191,9 +212,10 @@ Frontend deterministic coverage:
 
 ```text
 frontend/src/utils/breakdownReadModelUi.test.ts
+frontend/src/utils/sceneTimelineUi.test.ts
 ```
 
-It covers safe name/asset projection, anonymous fallback, mismatch handling, input immutability, and preservation of dialogue/OCR/Shot facts while retaining the existing `subject_A/B` display sanitizer.
+It covers safe name/asset projection, anonymous fallback, mismatch handling, input immutability, preservation of dialogue/OCR/Shot facts, existing `subject_A/B` display sanitization, person ref lookup and avatar fallback text.
 
 Real Episode runner:
 
@@ -205,11 +227,11 @@ The runner prints the real Episode/Run/ShotRevision/AssetRevision, resolved vs a
 
 ## 8. Acceptance status
 
-Implemented code is on `main`.
+Implemented code and Final Character cover rendering are on `main`.
 
-An isolated strict TypeScript compile of the new P6 frontend types/projection logic passed in the assistant execution environment.
+Isolated strict TypeScript checks of the P6 frontend projection core and the new person avatar helpers passed in the assistant execution environment.
 
-This is **not** full project acceptance. The execution environment could not resolve `github.com`, so the current repository could not be cloned there for full pytest/Vitest/Vue build execution.
+This is **not** full project acceptance. The execution environment cannot resolve `github.com`, so the current repository cannot be cloned there for full pytest/Vitest/Vue build execution. The Vue renderer therefore still requires user-local typecheck/build plus visual review.
 
 Required user-local acceptance remains:
 
@@ -234,6 +256,15 @@ status = READY
 timeline_preserved = true
 RESOLVED people may show existing Final Character name/assets
 all other people remain ANONYMOUS
+```
+
+Ordinary-user visual review should additionally confirm:
+
+```text
+resolved person -> cover + Final Character name
+anonymous person -> text avatar + 人物N
+broken/missing cover -> text avatar, no broken-image UI
+Scene / Shot / dialogue / OCR contents unchanged
 ```
 
 `npm install` is also expected to synchronize the existing TypeScript `6.0.3` `package.json` change into `package-lock.json`.
