@@ -32,7 +32,8 @@ P6 Final Breakdown read model         = V1 / IMPLEMENTED ON MAIN / USER-LOCAL AC
 P6 Final Character renderer           = IMPLEMENTED ON MAIN / USER-LOCAL VISUAL ACCEPTANCE PENDING
 P6 Final Scene/Prop fill-back         = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 P7.1 Localization Source Package      = V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
-Stage 04 本土化剧本                  = LOCKED / REVISIONED DRAFT NOT IMPLEMENTED YET
+P7.2 Localization Draft               = V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+Stage 04 本土化剧本                  = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
 Stage 05 镜头重制方案                = LOCKED / PLANNED
 Stage 06 生成·质检·交付             = LOCKED / PLANNED
 same-Shot hard safety                 = PASS / conflicts=0
@@ -210,85 +211,138 @@ Final Scene/Prop fill-back = IMPLEMENTED / USER-LOCAL ACCEPTANCE PENDING
 
 Do not mark P6 FINAL PASS until Python tests, real Episode runner, frontend Vitest/typecheck/build, lockfile synchronization and ordinary-user visual review are supplied.
 
-## 7. P7.1 Localization Source Package
+## 7. P7 localization boundary
 
-P7.1 is now the explicit boundary between current accepted Breakdown/Final Asset truth and future Stage 04 localization work.
+### P7.1 immutable source
 
 ```text
 P6 current read model
 + Project source_language / target_language / target_region
-→ immutable localization-source-v1 package
+→ localization-source-v1
 ```
 
-Implemented:
+P7.1 includes Scene/Shot timing, reference URLs, visual/action facts, verbatim ASR dialogue, verbatim OCR, safe people display, Final Scene/Prop overlays, cinematography and source version anchors.
+
+It does not translate and never treats old `v2_dialogues` rows as current Breakdown source truth.
+
+Details: `docs/P7_LOCALIZATION_SOURCE_V1.md`.
+
+### P7.2 revisioned target copy
+
+P7.2 now makes Stage 04 executable:
 
 ```text
-engine/app/localization_source_contract_v1.py
-engine/app/localization_source_v1.py
+P7.1 immutable source snapshot
+→ append-only Episode Localization Revision
+→ DRAFT
+→ IN_REVIEW
+→ FINAL
+```
+
+Implemented backend:
+
+```text
+engine/app/localization_draft_contract_v1.py
+engine/app/localization_draft_v1.py
+engine/app/localization_draft_workflow_v1.py
 engine/app/breakdown_read_model_routes_v1.py
-GET /api/episodes/{episode_id}/localization-source
+```
+
+Implemented frontend:
+
+```text
+frontend/src/types/localization.ts
+frontend/src/api/localization.ts
+frontend/src/components/LocalizationStageV1.vue
+frontend/src/utils/stageStatus.ts
+frontend/src/views/ProjectStudioV3.vue
+frontend/src/views/ProjectList.vue
+```
+
+Write authority rules:
+
+```text
+HTTP edits accept source_key + target-side fields only
+source_text is not a writable request field
+all writes create a new immutable Revision
+base_revision_id prevents lost updates
+DRAFT can save partial translation/localization work
+IN_REVIEW / FINAL require no PENDING rows
+IN_REVIEW / FINAL require final_text on every LOCALIZE row
+IN_REVIEW cannot be edited until explicitly returned to DRAFT
+FINAL cannot be directly edited
+```
+
+Stale-source rule:
+
+```text
+current P7.1 fingerprint changes
+→ draft stale=true / read-only
+→ explicit rebase required
+→ old edit carries only when source_key + kind + Scene/Shot + timing + source_text all still match exactly
+```
+
+Stage 04 state:
+
+```text
+no current draft      -> 未开始
+DRAFT / partial work  -> 编辑中
+IN_REVIEW             -> 待复核
+stale source          -> 阻塞
+all Episodes FINAL    -> 已完成
+```
+
+Stage 04 is now clickable. Stage 05 and Stage 06 remain disabled because they do not yet have their own executable contracts/workspaces.
+
+Details: `docs/P7_LOCALIZATION_DRAFT_V1.md`.
+
+Current status:
+
+```text
+P7.1 = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+P7.2 = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+Stage 04 = IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
+Stage 05 = LOCKED
+Stage 06 = LOCKED
+```
+
+## 8. P7 acceptance
+
+Deterministic backend tests added:
+
+```text
 engine/tests/v2/test_localization_source_v1.py
 engine/tests/v2/test_localization_source_routes_v1.py
+engine/tests/v2/test_localization_draft_v1.py
+engine/tests/v2/test_localization_draft_workflow_v1.py
+engine/tests/v2/test_localization_draft_routes_v1.py
+```
+
+Read-only real Episode runners:
+
+```text
 scripts/run_localization_source_acceptance_v1.py
-docs/P7_LOCALIZATION_SOURCE_V1.md
+scripts/run_localization_draft_acceptance_v1.py
 ```
 
-P7.1 includes:
+Frontend Stage 04 state tests are in:
 
 ```text
-Scene/Shot timing and reference URLs
-visual description
-performance/action
-verbatim source dialogue
-verbatim source OCR text
-safe person display / optional Final Character
-Final Scene
-G2 observed props kept separate from Final Props
-cinematography
-source/target language + target region
-BreakdownRun / ShotRevision / AssetRevision anchors
+frontend/src/utils/stageStatus.test.ts
 ```
 
-P7.1 does not translate and does not persist editable copy. Scene-local P* refs are only internal join keys and are not exported as downstream person identity objects.
+No assistant-local full pytest/Vitest/vue-tsc/Vite build is claimed.
 
-Historical/future-facing `Dialogue / Asset / Voice / Generation` tables in `studio_v2.py` are not silently adopted as current localization truth. In particular, current P7 source truth must keep the P6 version anchors.
-
-Stage 04 remains locked because there is still no revisioned localization draft persistence, edit/review/finalize workflow, or localization UI.
-
-Status:
-
-```text
-P7.1 = V1 / IMPLEMENTED ON MAIN / USER-LOCAL ACCEPTANCE PENDING
-Stage 04 = LOCKED
-```
-
-User-local acceptance:
-
-```bash
-python -m pytest \
-  engine/tests/v2/test_localization_source_v1.py \
-  engine/tests/v2/test_localization_source_routes_v1.py -q
-
-python scripts/run_localization_source_acceptance_v1.py <EPISODE_ID>
-```
-
-Expected real safety signal:
-
-```text
-schema_version = localization-source-v1
-source_truth_preserved = true
-```
-
-## 8. Current implementation frontier
+## 9. Current implementation frontier
 
 ```text
 1. keep G1 + G2.1-G2.5 + P5 frozen
-2. user-local accept P6 end-to-end when available
-3. user-local accept P7.1 source package on a real Episode
+2. user-local accept P6 when convenient: backend + real runner + frontend + visual
+3. user-local accept P7.1/P7.2: deterministic tests + read-only real runners + Stage 04 visual flow
 4. P4 Draft-guided Scene/Prop local acceptance remains separately pending
-5. next code frontier = P7.2 revisioned Localization Draft persistence + edit/review contract
-6. only after P7.2 has real persistence/UI may Stage 04 be unlocked
-7. Stage 05/06 remain locked until their own executable workflows exist
+5. next code frontier = Stage 05 versioned Shot Remake Plan / generation-input contract
+6. Stage 05 must consume FINAL P7.2 copy + P6/P7 source anchors, not raw mutable UI state
+7. Stage 06 remains locked until generation/QC/delivery has its own executable workflow
 ```
 
 No assistant-local full pytest/CUDA PASS is claimed. Hosted GitHub Actions remain intentionally unused.
