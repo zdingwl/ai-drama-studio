@@ -35,7 +35,7 @@ jobs:
         run: python -m compileall -q engine/app
 
       - name: Import FastAPI app
-        run: python -c "from engine.app.main import app; assert app.version == '2.4.1'; print(app.title, app.version)"
+        run: python -c "from engine.app.main import app; assert app.version == '2.7.0'; print(app.title, app.version)"
 
       - name: Run V2 tests
         run: pytest
