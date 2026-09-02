@@ -27,6 +27,7 @@ from engine.app.asset_workspace_v3 import (
     set_shot_bindings,
     split_asset,
 )
+from engine.app.review_issue_sync_v1 import sync_asset_review_issues
 from engine.app.studio_v2 import get_project
 from engine.app.task_progress_v2 import (
     ACTIVE_TASK_STATUSES,
@@ -79,9 +80,19 @@ def _bad(exc: Exception) -> HTTPException:
 
 
 def _workspace_payload(workspace: dict[str, object]) -> dict[str, object]:
-    """Expose V10.1 face-optional/recovered Character Evidence on every workspace response."""
+    """Expose V10.1 Character Evidence and keep its derived review attention state current.
 
-    return decorate_asset_workspace_character_evidence(workspace)
+    ReviewIssue is an attention/read-model cache, not Final Asset truth. Synchronizing it
+    after decoration means existing projects are healed on their next workspace read:
+    a Shot understood as containing people can no longer remain green merely because an
+    older review-sync run did not know about character coverage.
+    """
+
+    payload = decorate_asset_workspace_character_evidence(workspace)
+    project_id = str(payload.get("project_id") or "")
+    if project_id:
+        sync_asset_review_issues(project_id, payload)
+    return payload
 
 
 def _run_full_asset_task(task_id: str, project_id: str) -> None:
