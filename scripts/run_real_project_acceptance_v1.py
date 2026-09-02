@@ -6,8 +6,10 @@ FastAPI workflow only:
 
     auto-remake-prepare -> H3 generation/QC/selection -> postproduction/EpisodeOutput
 
-Any genuine ReviewIssue stops the run. The script never edits business truth, never marks
-review items resolved/ignored, and never upgrades real-project acceptance by itself.
+The runner is resumable: it inspects current product truth first and starts only the first
+missing production stage. Any genuine ReviewIssue stops the run. It never edits business
+truth, never marks review items resolved/ignored, and never upgrades real-project acceptance
+by itself.
 
 Default mode is read-only. Pass ``--run`` to start missing production tasks sequentially.
 The final successful state is only ``READY_FOR_MANUAL_ACCEPTANCE``: a human still has to
@@ -81,9 +83,31 @@ class HttpClient:
 
 
 def _probe_openai_vlm(base_url: str, model: str, timeout: float = 5.0) -> dict[str, Any]:
+    """Prove the configured OpenAI-compatible VLM endpoint is reachable.
+
+    Model lists are informational only. Some local servers expose a canonical model path while
+    accepting the configured alias used by production requests, so an exact `/models` ID mismatch
+    must not create a false runtime blocker.
+    """
+
     base = base_url.strip().rstrip("/")
+    clean_model = model.strip()
     if not base:
-        return {"ready": False, "reachable": False, "base_url": None, "model": model or None, "error": "AI_DRAMA_VLM_BASE_URL 未配置"}
+        return {
+            "ready": False,
+            "reachable": False,
+            "base_url": None,
+            "model": clean_model or None,
+            "error": "AI_DRAMA_VLM_BASE_URL 未配置",
+        }
+    if not clean_model:
+        return {
+            "ready": False,
+            "reachable": False,
+            "base_url": base,
+            "model": None,
+            "error": "AI_DRAMA_VLM_MODEL 未配置",
+        }
     url = f"{base}/models"
     headers = {"Authorization": f"Bearer {os.getenv('AI_DRAMA_VLM_API_KEY', 'EMPTY').strip() or 'EMPTY'}"}
     request = urllib.request.Request(url, headers=headers, method="GET")
@@ -96,17 +120,24 @@ def _probe_openai_vlm(base_url: str, model: str, timeout: float = 5.0) -> dict[s
             for item in (payload.get("data") or [])
             if isinstance(item, dict)
         } if isinstance(payload, dict) else set()
-        model_ok = bool(model and (not ids or model in ids))
+        available = sorted(value for value in ids if value)
         return {
-            "ready": model_ok,
+            "ready": True,
             "reachable": True,
             "base_url": base,
-            "model": model or None,
-            "available_models": sorted(value for value in ids if value),
-            "error": None if model_ok else ("AI_DRAMA_VLM_MODEL 未配置" if not model else f"model not listed: {model}"),
+            "model": clean_model,
+            "available_models": available,
+            "model_list_match": not available or clean_model in ids,
+            "error": None,
         }
     except Exception as exc:
-        return {"ready": False, "reachable": False, "base_url": base, "model": model or None, "error": str(exc)}
+        return {
+            "ready": False,
+            "reachable": False,
+            "base_url": base,
+            "model": clean_model,
+            "error": str(exc),
+        }
 
 
 def collect_runtime_status(client: HttpClient, *, vlm_base_url: str, vlm_model: str) -> dict[str, dict[str, Any]]:
@@ -128,6 +159,8 @@ def collect_runtime_status(client: HttpClient, *, vlm_base_url: str, vlm_model: 
 
 
 def runtime_blockers(runtimes: dict[str, dict[str, Any]]) -> list[str]:
+    # Production can safely fall back to target-dialogue-only audio when the separator is down,
+    # but this runner intentionally validates the complete desired local runtime stack.
     required = (
         "backend",
         "h3_fl2va",
@@ -262,28 +295,41 @@ def _run_task(client: HttpClient, path: str, *, label: str, poll_seconds: float,
     return finished
 
 
-def _reviews_after_stage(client: HttpClient, project_id: str) -> list[dict[str, Any]]:
-    value = client.get(f"/api/projects/{project_id}/review-issues?status=OPEN")
-    return value if isinstance(value, list) else []
+def _needs_prepare(state: dict[str, Any], summary: dict[str, Any]) -> bool:
+    if state.get("generation_segments") is None:
+        return True
+    if int(summary.get("generation_segment_count") or 0) <= 0:
+        return True
+    return any(int(summary.get(key) or 0) > 0 for key in (
+        "generation_segment_review_count",
+        "generation_segment_waiting_audio_count",
+    ))
 
 
 def run_pipeline(client: HttpClient, project_id: str, *, poll_seconds: float, timeout_seconds: float) -> tuple[str, dict[str, Any]]:
-    _run_task(
-        client,
-        f"/api/projects/{project_id}/tasks/auto-remake-prepare",
-        label="自动准备",
-        poll_seconds=poll_seconds,
-        timeout_seconds=timeout_seconds,
-    )
-    issues = _reviews_after_stage(client, project_id)
-    if issues:
-        return "NEEDS_REVIEW", collect_project_state(client, project_id)
+    """Resume from the first missing stage instead of rerunning already-current expensive work."""
 
     state = collect_project_state(client, project_id)
     summary = summarize_state(state)
+    if int(summary["open_review_count"]) > 0:
+        return "NEEDS_REVIEW", state
+
+    if _needs_prepare(state, summary):
+        _run_task(
+            client,
+            f"/api/projects/{project_id}/tasks/auto-remake-prepare",
+            label="自动准备",
+            poll_seconds=poll_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+        state = collect_project_state(client, project_id)
+        summary = summarize_state(state)
+        if int(summary["open_review_count"]) > 0:
+            return "NEEDS_REVIEW", state
+        if _needs_prepare(state, summary):
+            return "NOT_READY", state
+
     segment_count = int(summary["generation_segment_count"])
-    if segment_count <= 0:
-        return "NOT_READY", state
     if int(summary["selected_count"]) < segment_count:
         _run_task(
             client,
@@ -292,17 +338,16 @@ def run_pipeline(client: HttpClient, project_id: str, *, poll_seconds: float, ti
             poll_seconds=poll_seconds,
             timeout_seconds=timeout_seconds,
         )
-        issues = _reviews_after_stage(client, project_id)
-        if issues:
-            return "NEEDS_REVIEW", collect_project_state(client, project_id)
+        state = collect_project_state(client, project_id)
+        summary = summarize_state(state)
+        if int(summary["open_review_count"]) > 0:
+            return "NEEDS_REVIEW", state
 
-    state = collect_project_state(client, project_id)
-    summary = summarize_state(state)
-    if int(summary["selected_count"]) != int(summary["generation_segment_count"]):
+    if int(summary["selected_count"]) != segment_count:
         return "NOT_READY", state
 
     if (
-        int(summary["postproduction_succeeded_count"]) < int(summary["generation_segment_count"])
+        int(summary["postproduction_succeeded_count"]) < segment_count
         or int(summary["episode_output_succeeded_count"]) < int(summary["episode_count"])
     ):
         _run_task(
@@ -312,12 +357,12 @@ def run_pipeline(client: HttpClient, project_id: str, *, poll_seconds: float, ti
             poll_seconds=poll_seconds,
             timeout_seconds=timeout_seconds,
         )
-        issues = _reviews_after_stage(client, project_id)
-        if issues:
-            return "NEEDS_REVIEW", collect_project_state(client, project_id)
+        state = collect_project_state(client, project_id)
+        summary = summarize_state(state)
+        if int(summary["open_review_count"]) > 0:
+            return "NEEDS_REVIEW", state
 
-    final_state = collect_project_state(client, project_id)
-    return acceptance_result(summarize_state(final_state)), final_state
+    return acceptance_result(summary), state
 
 
 def _runtime_line(name: str, payload: dict[str, Any]) -> str:
@@ -362,7 +407,7 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--vlm-base-url", default=os.getenv("AI_DRAMA_VLM_BASE_URL", "http://127.0.0.1:8001/v1"))
     parser.add_argument("--vlm-model", default=os.getenv("AI_DRAMA_VLM_MODEL", "Qwen3-VL-4B-Instruct"))
-    parser.add_argument("--run", action="store_true", help="start missing existing production tasks; default is read-only")
+    parser.add_argument("--run", action="store_true", help="resume missing existing production tasks; default is read-only")
     parser.add_argument("--poll-seconds", type=float, default=3.0)
     parser.add_argument("--timeout-seconds", type=float, default=6 * 60 * 60)
     parser.add_argument("--json", action="store_true", dest="json_output")
