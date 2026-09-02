@@ -157,12 +157,38 @@ def run_auto_output_pipeline_v1(project_id: str, *, progress: ProgressCallback |
     except TargetDialogueError:
         dialogue = run_target_dialogue_pipeline_v1(project_id, synthesize_audio=True)
 
-    if int(dialogue.get("review_count") or 0) > 0:
-        return _blocked(
-            "target_dialogue",
-            f"目标对白还有 {dialogue.get('review_count')} 条真实语义问题需要确认；确认后系统会继续",
-            target_dialogue=dialogue,
-        )
+    dialogue_review_count = int(dialogue.get("review_count") or 0)
+    if dialogue_review_count > 0:
+        # A genuine human decision must exist in the unified ReviewIssue queue.  If the
+        # persisted TargetDialogue bundle says REVIEW while that queue is empty, this is an
+        # internal/stale automatic state (for example an older confidence policy), not user work.
+        open_issues = list_review_issues(project_id, status="OPEN")
+        if not open_issues:
+            _emit(
+                progress,
+                21.0,
+                "target_dialogue",
+                "自动重算目标对白",
+                f"正在自动重算 {dialogue_review_count} 条旧的目标对白判断，不需要人工填写",
+            )
+            dialogue = run_target_dialogue_pipeline_v1(project_id, synthesize_audio=True)
+            dialogue_review_count = int(dialogue.get("review_count") or 0)
+            open_issues = list_review_issues(project_id, status="OPEN")
+
+        if open_issues:
+            return _blocked(
+                "review_gate",
+                f"目标对白自动重算后还有 {len(open_issues)} 项真实语义问题需要确认；处理后系统会继续",
+                review_issue_count=len(open_issues),
+                target_dialogue=dialogue,
+            )
+        if dialogue_review_count > 0:
+            return _blocked(
+                "target_dialogue",
+                f"目标对白自动重算后仍有 {dialogue_review_count} 条内部依赖未闭环；这不是人工填写任务，请查看后台模型/人物绑定诊断后重试",
+                blocked_by="TARGET_DIALOGUE_AUTO_REPAIR",
+                target_dialogue=dialogue,
+            )
 
     audio_ready, audio_total = _ready_audio_count(dialogue)
     if audio_ready < audio_total:
