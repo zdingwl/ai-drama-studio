@@ -2,21 +2,26 @@
 
 Input authority: current SourceDramaSnapshot + ProjectRemakePolicy.
 Output authority: target-only tables. Source Character/Scene/Shot facts are never edited.
-The existing local Qwen3-VL OpenAI-compatible endpoint is reused for text planning.
+Text planning goes through the unified local-Qwen adapter, which can reuse the same isolated
+Qwen3-VL-4B-Instruct runtime/checkpoint already provisioned for Breakdown and keeps the historical
+OpenAI-compatible HTTP endpoint only as an optional compatibility path.
 """
 from __future__ import annotations
 
 from datetime import datetime
 import hashlib
 import json
-import os
 from typing import Any, Mapping
 
-import httpx
 from sqlalchemy import DateTime, Float, ForeignKey, String, Text, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, mapped_column
 
-from engine.app.asset_semantics_v3 import semantic_model_status
+from engine.app.local_qwen_text_v1 import (
+    LocalQwenTextError,
+    local_qwen_text_runtime_status,
+    request_local_qwen_json,
+    request_local_qwen_json_many,
+)
 from engine.app.remake_policy_v1 import get_project_remake_policy
 from engine.app.review_issue_v1 import ReviewIssue, upsert_review_issue
 from engine.app.source_drama_snapshot_v1 import load_project_source_drama_snapshot_v1
@@ -123,27 +128,19 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 
 def _request_text_model(prompt: str) -> dict[str, Any]:
-    status = semantic_model_status()
-    if not status.get("ready"):
-        raise TargetLocalizationError("本地 Qwen3-VL 服务未配置")
-    api_key = os.getenv("AI_DRAMA_VLM_API_KEY", "EMPTY").strip() or "EMPTY"
-    payload = {
-        "model": str(status["model"]),
-        "temperature": 0.1,
-        "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
-    }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    """Compatibility single-request entry point used by tests and small callers."""
+
     try:
-        with httpx.Client(timeout=180.0) as client:
-            response = client.post(f"{status['base_url']}/chat/completions", json=payload, headers=headers)
-            response.raise_for_status()
-            body = response.json()
-        content = body["choices"][0]["message"]["content"]
-    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+        return request_local_qwen_json(prompt, timeout_seconds=240.0, temperature=0.1)
+    except LocalQwenTextError as exc:
         raise TargetLocalizationError(f"目标本土化模型请求失败：{exc}") from exc
-    if isinstance(content, list):
-        content = "".join(str(item.get("text") or "") for item in content if isinstance(item, dict))
-    return _extract_json(str(content))
+
+
+def _request_text_model_many(prompts: list[str]) -> list[dict[str, Any]]:
+    try:
+        return request_local_qwen_json_many(prompts, timeout_seconds=240.0, temperature=0.1)
+    except LocalQwenTextError as exc:
+        raise TargetLocalizationError(f"目标本土化模型批量请求失败：{exc}") from exc
 
 
 def _character_contexts(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -491,28 +488,61 @@ def generate_target_localization_v1(project_id: str) -> dict[str, Any]:
     scene_contexts = _scene_contexts(snapshot)
     character_proposals: dict[str, Mapping[str, Any]] = {}
     scene_proposals: dict[str, Mapping[str, Any]] = {}
-    model_ready = bool(semantic_model_status().get("ready"))
 
-    if model_ready:
+    needs_model = bool(character_contexts) or (policy != "KEEP" and bool(scene_contexts))
+    if needs_model:
+        runtime = local_qwen_text_runtime_status()
+        if not runtime.get("ready"):
+            missing = [str(item) for item in runtime.get("missing") or [] if str(item).strip()]
+            detail = f"；缺少：{'、'.join(missing)}" if missing else ""
+            raise TargetLocalizationError(
+                "目标本土化 Qwen3-VL 运行时未就绪；程序会复用拉片阶段的本地模型，不需要额外启动 HTTP 服务"
+                f"{detail}"
+            )
+
+        jobs: list[tuple[str, list[dict[str, Any]], str]] = []
         for offset in range(0, len(character_contexts), 12):
             chunk = character_contexts[offset:offset + 12]
-            try:
-                raw = _request_text_model(_character_prompt(chunk, project.target_language, project.target_region))
-                for item in raw.get("characters") or []:
-                    if isinstance(item, Mapping) and item.get("source_character_id"):
-                        character_proposals[str(item["source_character_id"])] = item
-            except Exception:
-                pass
+            jobs.append((
+                "characters",
+                chunk,
+                _character_prompt(chunk, project.target_language, project.target_region),
+            ))
         if policy != "KEEP":
             for offset in range(0, len(scene_contexts), 12):
                 chunk = scene_contexts[offset:offset + 12]
-                try:
-                    raw = _request_text_model(_scene_prompt(chunk, project.target_language, project.target_region, policy))
-                    for item in raw.get("scenes") or []:
-                        if isinstance(item, Mapping) and item.get("scene_key"):
-                            scene_proposals[str(item["scene_key"])] = item
-                except Exception:
-                    pass
+                jobs.append((
+                    "scenes",
+                    chunk,
+                    _scene_prompt(chunk, project.target_language, project.target_region, policy),
+                ))
+
+        raw_results = _request_text_model_many([job[2] for job in jobs])
+        if len(raw_results) != len(jobs):
+            raise TargetLocalizationError("目标本土化模型批量返回数量与请求不一致")
+        for (kind, _chunk, _prompt), raw in zip(jobs, raw_results):
+            if kind == "characters":
+                for item in raw.get("characters") or []:
+                    if isinstance(item, Mapping) and item.get("source_character_id"):
+                        character_proposals[str(item["source_character_id"])] = item
+            else:
+                for item in raw.get("scenes") or []:
+                    if isinstance(item, Mapping) and item.get("scene_key"):
+                        scene_proposals[str(item["scene_key"])] = item
+
+        expected_characters = {str(item["source_character_id"]) for item in character_contexts}
+        missing_characters = sorted(expected_characters - set(character_proposals))
+        if missing_characters:
+            raise TargetLocalizationError(
+                f"目标人物模型输出不完整，缺少 {len(missing_characters)} 个人物；本次不写入空白人工任务"
+            )
+        if policy != "KEEP":
+            expected_scenes = {str(item["scene_key"]) for item in scene_contexts}
+            missing_scenes = sorted(expected_scenes - set(scene_proposals))
+            if missing_scenes:
+                raise TargetLocalizationError(
+                    f"目标场景模型输出不完整，缺少 {len(missing_scenes)} 个场景；本次不写入空白人工任务"
+                )
 
     fingerprint = str(snapshot["source_fingerprint"])
     characters = _upsert_character_rows(project, fingerprint, character_contexts, character_proposals)
