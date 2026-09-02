@@ -30,6 +30,10 @@ from engine.app.target_dialogue_auto_review_guard_v1 import (
 from engine.app.target_localization_v1 import get_target_localization_v1
 
 
+class TargetDialogueAutoGenerationError(TargetDialogueError):
+    """Automatic translation runtime/output failed; this is never a human review item."""
+
+
 def _current_target_signatures(project_id: str) -> dict[str, str]:
     bundle = get_target_localization_v1(project_id)
     return {
@@ -107,7 +111,7 @@ def run_target_dialogue_pipeline_v1(project_id: str, *, synthesize_audio: bool =
             project_id,
             dialogue_ids=incomplete_ids,
         )
-        raise TargetDialogueError(
+        raise TargetDialogueAutoGenerationError(
             f"目标对白自动翻译/本土化未生成完整结果（{cleaned or len(incomplete_ids)} 条）；"
             "这是本地 Qwen3-VL 调用或模型输出异常，不需要人工填写，请恢复自动模型后重新处理"
         )
@@ -118,6 +122,7 @@ def run_target_dialogue_pipeline_v1(project_id: str, *, synthesize_audio: bool =
 
 
 __all__ = [
+    "TargetDialogueAutoGenerationError",
     "invalidate_manual_dialogue_for_target_changes_v1",
     "run_target_dialogue_pipeline_v1",
     "validate_target_dialogue_dependencies_v1",
