@@ -190,6 +190,19 @@ def test_audio_separator_worker_import_is_lazy() -> None:
     assert worker._separator_cache == {}
 
 
+def test_audio_separator_runtime_checker_creates_valid_probe_wav(tmp_path: Path) -> None:
+    from scripts import check_audio_separator_runtime as checker
+
+    probe = tmp_path / "probe.wav"
+    checker._write_probe_wav(probe, seconds=0.1, rate=16_000)
+
+    with wave.open(str(probe), "rb") as handle:
+        assert handle.getnchannels() == 2
+        assert handle.getsampwidth() == 2
+        assert handle.getframerate() == 16_000
+        assert handle.getnframes() == 1_600
+
+
 def test_r10_1_background_runtime_route_is_registered() -> None:
     from engine.app.main import app
 
