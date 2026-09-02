@@ -69,24 +69,49 @@ def _current_segments(project_id: str) -> dict[str, dict[str, Any]]:
     }
 
 
+def _selection_is_current(
+    row: GenerationSelection,
+    segment: Mapping[str, Any] | None,
+    attempt: GenerationAttempt | None,
+) -> bool:
+    if segment is None or attempt is None:
+        return False
+    fingerprint = str(segment.get("input_fingerprint") or "")
+    output = Path(str(attempt.output_path)) if attempt.output_path else None
+    return (
+        bool(fingerprint)
+        and fingerprint == row.segment_input_fingerprint
+        and attempt.status == "SUCCEEDED"
+        and attempt.segment_input_fingerprint == row.segment_input_fingerprint
+        and output is not None
+        and output.is_file()
+        and output.stat().st_size > 0
+    )
+
+
+def _attempts_for_rows(session: Any, rows: list[GenerationSelection]) -> dict[str, GenerationAttempt]:
+    attempt_ids = {row.selected_attempt_id for row in rows if row.selected_attempt_id}
+    if not attempt_ids:
+        return {}
+    attempts = session.scalars(
+        select(GenerationAttempt).where(GenerationAttempt.id.in_(attempt_ids))
+    ).all()
+    return {attempt.id: attempt for attempt in attempts}
+
+
 def invalidate_stale_generation_selections_v1(project_id: str) -> int:
+    """Explicitly delete stale selections.
+
+    This is a write-side maintenance operation. Read APIs intentionally do not call it so polling
+    project/output state can never mutate authoritative rows.
+    """
     current = _current_segments(project_id)
     removed = 0
     with get_session() as session:
         rows = session.scalars(select(GenerationSelection).where(GenerationSelection.project_id == project_id)).all()
+        attempts = _attempts_for_rows(session, rows)
         for row in rows:
-            segment = current.get(row.generation_segment_id)
-            attempt = session.get(GenerationAttempt, row.selected_attempt_id)
-            valid = (
-                segment is not None
-                and str(segment.get("input_fingerprint") or "") == row.segment_input_fingerprint
-                and attempt is not None
-                and attempt.status == "SUCCEEDED"
-                and attempt.segment_input_fingerprint == row.segment_input_fingerprint
-                and bool(attempt.output_path)
-                and Path(str(attempt.output_path)).is_file()
-            )
-            if valid:
+            if _selection_is_current(row, current.get(row.generation_segment_id), attempts.get(row.selected_attempt_id)):
                 continue
             session.delete(row)
             removed += 1
@@ -174,24 +199,38 @@ def set_generation_selection_v1(
 
 
 def get_generation_selection_v1(project_id: str, segment_id: str) -> dict[str, Any] | None:
-    invalidate_stale_generation_selections_v1(project_id)
+    current = _current_segments(project_id)
     with get_session() as session:
         row = session.scalar(select(GenerationSelection).where(
             GenerationSelection.project_id == project_id,
             GenerationSelection.generation_segment_id == segment_id,
         ))
-        return _serialize(row) if row else None
+        if row is None:
+            return None
+        attempt = session.get(GenerationAttempt, row.selected_attempt_id)
+        if not _selection_is_current(row, current.get(row.generation_segment_id), attempt):
+            return None
+        return _serialize(row)
 
 
 def list_generation_selections_v1(project_id: str) -> list[dict[str, Any]]:
-    invalidate_stale_generation_selections_v1(project_id)
+    current = _current_segments(project_id)
     with get_session() as session:
         rows = session.scalars(
             select(GenerationSelection)
             .where(GenerationSelection.project_id == project_id)
             .order_by(GenerationSelection.episode_id, GenerationSelection.created_at)
         ).all()
-        return [_serialize(row) for row in rows]
+        attempts = _attempts_for_rows(session, rows)
+        return [
+            _serialize(row)
+            for row in rows
+            if _selection_is_current(
+                row,
+                current.get(row.generation_segment_id),
+                attempts.get(row.selected_attempt_id),
+            )
+        ]
 
 
 def selected_generation_output_v1(project_id: str, segment_id: str) -> Path | None:
