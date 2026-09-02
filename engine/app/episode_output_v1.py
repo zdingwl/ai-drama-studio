@@ -276,9 +276,23 @@ def _aggregate(episodes: list[dict[str, Any]]) -> tuple[str, int, int, int]:
     return status, ready, succeeded, waiting
 
 
-def compile_episode_outputs_v1(project_id: str) -> dict[str, Any]:
+def _serialize_plan(project_id: str, payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    status, ready, succeeded, waiting = _aggregate(payloads)
+    return EpisodeOutputPlanV1.model_validate({
+        "schema_version": "episode-output-plan-v1",
+        "project_id": project_id,
+        "status": status,
+        "episode_count": len(payloads),
+        "ready_count": ready,
+        "succeeded_count": succeeded,
+        "waiting_count": waiting,
+        "episodes": payloads,
+    }).model_dump(mode="json")
+
+
+def compile_episode_outputs_v1(project_id: str, *, persist: bool = True) -> dict[str, Any]:
     generation_plan = get_generation_segments_v1(project_id)
-    post_plan = compile_postproduction_plan_v1(project_id)
+    post_plan = compile_postproduction_plan_v1(project_id, persist=persist)
     post_by_segment = {
         str(segment["generation_segment_id"]): segment
         for episode in post_plan.get("episodes") or []
@@ -313,6 +327,9 @@ def compile_episode_outputs_v1(project_id: str) -> dict[str, Any]:
         )
         for episode in episodes
     ]
+    if not persist:
+        return _serialize_plan(project_id, payloads)
+
     active_ids = {item["episode_id"] for item in payloads}
     now = utcnow()
     with get_session() as session:
@@ -352,38 +369,18 @@ def compile_episode_outputs_v1(project_id: str) -> dict[str, Any]:
             row.updated_at = now
         session.commit()
 
-    status, ready, succeeded, waiting = _aggregate(payloads)
-    return EpisodeOutputPlanV1.model_validate({
-        "schema_version": "episode-output-plan-v1",
-        "project_id": project_id,
-        "status": status,
-        "episode_count": len(payloads),
-        "ready_count": ready,
-        "succeeded_count": succeeded,
-        "waiting_count": waiting,
-        "episodes": payloads,
-    }).model_dump(mode="json")
+    return _serialize_plan(project_id, payloads)
 
 
 def get_episode_output_v1(project_id: str, episode_id: str) -> dict[str, Any] | None:
-    compile_episode_outputs_v1(project_id)
-    with get_session() as session:
-        row = session.scalar(select(EpisodeOutput).where(
-            EpisodeOutput.project_id == project_id,
-            EpisodeOutput.episode_id == episode_id,
-        ))
-        if row is None:
-            return None
-        payload = _json(row.payload_json, {})
-        payload.update({
-            "status": row.status,
-            "reason": row.reason,
-            "subtitle_path": row.subtitle_path,
-            "output_path": row.output_path,
-            "error_message": row.error_message,
-            "updated_at": row.updated_at.isoformat(),
-        })
-        return EpisodeOutputV1.model_validate(payload).model_dump(mode="json")
+    plan = compile_episode_outputs_v1(project_id, persist=False)
+    current = next(
+        (item for item in plan.get("episodes") or [] if item.get("episode_id") == episode_id),
+        None,
+    )
+    if current is None:
+        return None
+    return EpisodeOutputV1.model_validate(current).model_dump(mode="json")
 
 
 def _srt_timestamp(value_us: int) -> str:
