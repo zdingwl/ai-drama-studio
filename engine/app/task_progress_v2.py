@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+from threading import RLock
 from typing import Any
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, select
@@ -23,6 +24,7 @@ from engine.app.studio_v2 import Base, get_session, new_id, utcnow
 
 ACTIVE_TASK_STATUSES = {"QUEUED", "PROCESSING"}
 TERMINAL_TASK_STATUSES = {"READY", "READY_WITH_WARNINGS", "FAILED", "CANCELLED"}
+_TASK_CREATE_LOCK = RLock()
 
 
 class BackgroundTaskRecord(Base):
@@ -94,39 +96,46 @@ def create_task(
     total_items: int | None = None,
     deduplicate_active: bool = True,
 ) -> dict[str, Any]:
-    """创建 Task；同一作用域已有活动任务时默认直接返回旧任务，防止重复点击重复执行。"""
+    """创建 Task；同一作用域已有活动任务时默认直接返回旧任务。
 
-    with get_session() as session:
-        if deduplicate_active:
-            existing = session.scalar(
-                select(BackgroundTaskRecord)
-                .where(
-                    BackgroundTaskRecord.project_id == project_id,
-                    BackgroundTaskRecord.task_type == task_type,
-                    BackgroundTaskRecord.episode_id == episode_id,
-                    BackgroundTaskRecord.status.in_(ACTIVE_TASK_STATUSES),
+    ``_TASK_CREATE_LOCK`` closes the local-process query -> insert race so two nearly
+    simultaneous HTTP clicks cannot both pass the active-task check and create duplicate
+    heavy work.  Full cross-process command receipts / Idempotency-Key semantics belong to
+    Workflow V2 P3; the current local executor intentionally runs as one process.
+    """
+
+    with _TASK_CREATE_LOCK:
+        with get_session() as session:
+            if deduplicate_active:
+                existing = session.scalar(
+                    select(BackgroundTaskRecord)
+                    .where(
+                        BackgroundTaskRecord.project_id == project_id,
+                        BackgroundTaskRecord.task_type == task_type,
+                        BackgroundTaskRecord.episode_id == episode_id,
+                        BackgroundTaskRecord.status.in_(ACTIVE_TASK_STATUSES),
+                    )
+                    .order_by(BackgroundTaskRecord.created_at.desc())
                 )
-                .order_by(BackgroundTaskRecord.created_at.desc())
-            )
-            if existing is not None:
-                return serialize_task(existing)
+                if existing is not None:
+                    return serialize_task(existing)
 
-        task = BackgroundTaskRecord(
-            id=new_id("TASK"),
-            project_id=project_id,
-            episode_id=episode_id,
-            task_type=task_type,
-            title=title,
-            status="QUEUED",
-            progress_mode=progress_mode,
-            progress_percent=0.0 if progress_mode == "determinate" else None,
-            total_items=total_items,
-            message="等待后台执行",
-        )
-        session.add(task)
-        session.commit()
-        session.refresh(task)
-        return serialize_task(task)
+            task = BackgroundTaskRecord(
+                id=new_id("TASK"),
+                project_id=project_id,
+                episode_id=episode_id,
+                task_type=task_type,
+                title=title,
+                status="QUEUED",
+                progress_mode=progress_mode,
+                progress_percent=0.0 if progress_mode == "determinate" else None,
+                total_items=total_items,
+                message="等待后台执行",
+            )
+            session.add(task)
+            session.commit()
+            session.refresh(task)
+            return serialize_task(task)
 
 
 def get_task(task_id: str) -> dict[str, Any] | None:
