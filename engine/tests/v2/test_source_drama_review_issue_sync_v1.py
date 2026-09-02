@@ -109,7 +109,26 @@ def _snapshot() -> dict:
     }
 
 
-def test_missing_speaker_creates_review_issue(monkeypatch) -> None:
+def _add_second_unresolved_person(payload: dict) -> str:
+    scene = payload["episodes"][0]["scenes"][0]
+    second_key = "EP_1:RUN_1:S1:P2"
+    scene["people"].append({
+        "person_key": second_key,
+        "scene_person_ref": "P2",
+        "display_name": "顾言",
+        "appearance": None,
+        "character": None,
+    })
+    scene["shots"][0]["people"].append(second_key)
+    payload["episodes"][0]["unresolved_person_count"] = 1
+    payload["episodes"][0]["status"] = "READY_WITH_WARNINGS"
+    payload["episodes"][0]["warnings"] = ["1 个 Scene-local 人物尚未安全解析到 Final Character"]
+    payload["status"] = "READY_WITH_WARNINGS"
+    payload["warnings"] = ["第01集：1 个 Scene-local 人物尚未安全解析到 Final Character"]
+    return second_key
+
+
+def test_missing_speaker_with_single_scene_person_is_auto_resolved(monkeypatch) -> None:
     created: list[dict] = []
     resolved: list[tuple[str, str, set[str]]] = []
     monkeypatch.setattr(sync, "upsert_review_issue", lambda **kwargs: created.append(kwargs) or kwargs)
@@ -121,13 +140,9 @@ def test_missing_speaker_creates_review_issue(monkeypatch) -> None:
 
     count = sync.sync_source_drama_speaker_issues("PROJECT_1", _snapshot())
 
-    assert count == 1
-    assert created[0]["issue_type"] == "SPEAKER"
-    assert created[0]["episode_id"] == "EP_1"
-    assert created[0]["shot_id"] == "SHOT_1"
-    assert created[0]["editable_payload"]["source_text"] == "你怎么会在这里？"
-    assert resolved[0][0] == "PROJECT_1"
-    assert len(resolved[0][2]) == 1
+    assert count == 0
+    assert created == []
+    assert resolved == [("PROJECT_1", sync.SPEAKER_PREFIX, set())]
 
 
 def test_single_speaker_does_not_create_review_issue(monkeypatch) -> None:
@@ -142,28 +157,27 @@ def test_single_speaker_does_not_create_review_issue(monkeypatch) -> None:
     assert created == []
 
 
+def test_missing_speaker_with_multiple_people_requires_review(monkeypatch) -> None:
+    payload = deepcopy(_snapshot())
+    _add_second_unresolved_person(payload)
+    created: list[dict] = []
+    monkeypatch.setattr(sync, "upsert_review_issue", lambda **kwargs: created.append(kwargs) or kwargs)
+    monkeypatch.setattr(sync, "_auto_resolve_missing", lambda *_args, **_kwargs: None)
+
+    assert sync.sync_source_drama_speaker_issues("PROJECT_1", payload) == 1
+    assert created[0]["issue_type"] == "SPEAKER"
+    assert "自动结合" in created[0]["reason"]
+
+
 def test_multiple_speakers_requires_review(monkeypatch) -> None:
     payload = deepcopy(_snapshot())
     scene = payload["episodes"][0]["scenes"][0]
-    second_key = "EP_1:RUN_1:S1:P2"
-    scene["people"].append({
-        "person_key": second_key,
-        "scene_person_ref": "P2",
-        "display_name": "顾言",
-        "appearance": None,
-        "character": None,
-    })
-    scene["shots"][0]["people"].append(second_key)
+    second_key = _add_second_unresolved_person(payload)
     scene["shots"][0]["source_dialogue"][0]["speakers"] = [scene["people"][0]["person_key"], second_key]
-    payload["episodes"][0]["unresolved_person_count"] = 1
-    payload["episodes"][0]["status"] = "READY_WITH_WARNINGS"
-    payload["episodes"][0]["warnings"] = ["1 个 Scene-local 人物尚未安全解析到 Final Character"]
-    payload["status"] = "READY_WITH_WARNINGS"
-    payload["warnings"] = ["第01集：1 个 Scene-local 人物尚未安全解析到 Final Character"]
 
     created: list[dict] = []
     monkeypatch.setattr(sync, "upsert_review_issue", lambda **kwargs: created.append(kwargs) or kwargs)
     monkeypatch.setattr(sync, "_auto_resolve_missing", lambda *_args, **_kwargs: None)
 
     assert sync.sync_source_drama_speaker_issues("PROJECT_1", payload) == 1
-    assert "多个说话人" in created[0]["reason"]
+    assert "多个不同人物" in created[0]["reason"]
