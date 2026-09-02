@@ -17,6 +17,8 @@ const dialogueBundle = ref<TargetDialogueBundle | null>(null)
 const loading = ref(false)
 const error = ref('')
 const savingId = ref('')
+const translatingDialogues = ref(false)
+const editingDialogueId = ref('')
 const characterDrafts = reactive<Record<string, { target_name: string; appearance_profile: string; generation_prompt: string }>>({})
 const sceneDrafts = reactive<Record<string, { decision: 'KEEP' | 'LOCALIZE'; target_label: string; target_description: string; reason: string }>>({})
 const dialogueDrafts = reactive<Record<string, { translated_text: string; localized_text: string; final_text: string }>>({})
@@ -24,7 +26,13 @@ const dialogueDrafts = reactive<Record<string, { translated_text: string; locali
 const reviewCharacters = computed(() => bundle.value?.target_characters.filter((item) => item.status === 'REVIEW') ?? [])
 const reviewScenes = computed(() => bundle.value?.scene_mappings.filter((item) => item.status === 'REVIEW') ?? [])
 const reviewDialogues = computed(() => dialogueBundle.value?.dialogues.filter((item) => item.status === 'REVIEW' && item.target_character_id) ?? [])
+const completeReviewDialogues = computed(() => reviewDialogues.value.filter((item) => hasCompleteDialogueDraft(item)))
+const incompleteReviewDialogues = computed(() => reviewDialogues.value.filter((item) => !hasCompleteDialogueDraft(item)))
 const hasReview = computed(() => reviewCharacters.value.length + reviewScenes.value.length + reviewDialogues.value.length > 0)
+const dialogueLocaleLabel = computed(() => {
+  const item = reviewDialogues.value[0]
+  return item ? `${item.target_language} / ${item.target_region}` : '项目目标语言 / 地区'
+})
 
 function syncDrafts(): void {
   for (const item of bundle.value?.target_characters ?? []) {
@@ -51,6 +59,15 @@ function syncDrafts(): void {
   }
 }
 
+function hasCompleteDialogueDraft(item: TargetDialogue): boolean {
+  const draft = dialogueDrafts[item.id]
+  return Boolean(
+    draft?.translated_text.trim()
+    && draft.localized_text.trim()
+    && draft.final_text.trim(),
+  )
+}
+
 async function load(): Promise<void> {
   if (!props.projectId) return
   loading.value = true
@@ -59,7 +76,7 @@ async function load(): Promise<void> {
     try {
       dialogueBundle.value = await remakeApi.getTargetDialogue(props.projectId)
     } catch {
-      // TargetDialogue may legitimately not exist yet while R4 issues are still being fixed.
+      // TargetDialogue may legitimately not exist yet while upstream review items are still being fixed.
       dialogueBundle.value = null
     }
     syncDrafts()
@@ -77,12 +94,40 @@ async function regenerate(): Promise<void> {
     bundle.value = await remakeApi.generateTargetLocalization(props.projectId)
     dialogueBundle.value = await remakeApi.generateTargetDialogue(props.projectId, true)
     syncDrafts()
+    editingDialogueId.value = ''
     error.value = ''
     emit('changed')
   } catch (err) {
     error.value = err instanceof Error ? err.message : '自动重新生成出海方案失败'
   } finally {
     loading.value = false
+  }
+}
+
+async function autoTranslateDialogues(): Promise<void> {
+  if (!props.projectId || translatingDialogues.value) return
+  translatingDialogues.value = true
+  try {
+    dialogueBundle.value = await remakeApi.generateTargetDialogueText(props.projectId)
+    syncDrafts()
+    editingDialogueId.value = ''
+    error.value = ''
+
+    // When every line is automatically ready, continue TTS without turning it into another page.
+    if ((dialogueBundle.value.review_count ?? 0) === 0) {
+      try {
+        dialogueBundle.value = await remakeApi.materializeTargetDialogueAudio(props.projectId)
+      } catch {
+        // TTS runtime state is infrastructure state; translated text remains valid and persisted.
+      }
+    }
+    emit('changed')
+  } catch (err) {
+    error.value = err instanceof Error
+      ? err.message
+      : `按 ${dialogueLocaleLabel.value} 自动翻译失败，请确认本地模型可用后重试`
+  } finally {
+    translatingDialogues.value = false
   }
 }
 
@@ -180,6 +225,7 @@ async function saveDialogue(item: TargetDialogue): Promise<void> {
     } catch {
       // TTS runtime unavailable is infrastructure state, not another human-review task.
     }
+    editingDialogueId.value = ''
     await load()
     emit('changed')
   } catch (err) {
@@ -187,6 +233,10 @@ async function saveDialogue(item: TargetDialogue): Promise<void> {
   } finally {
     savingId.value = ''
   }
+}
+
+function toggleDialogueEdit(item: TargetDialogue): void {
+  editingDialogueId.value = editingDialogueId.value === item.id ? '' : item.id
 }
 
 function sourceDuration(item: TargetDialogue): string {
@@ -203,9 +253,9 @@ onMounted(() => void load())
     <header>
       <div>
         <small>出海人物 / 场景 / 对白</small>
-        <strong>只显示自动方案无法安全确定的内容</strong>
+        <strong>系统先自动生成，只把真正需要你确认的结果放在这里</strong>
       </div>
-      <button :disabled="loading" @click="regenerate">重新自动判断</button>
+      <button :disabled="loading || translatingDialogues" @click="regenerate">重新自动判断</button>
     </header>
 
     <p v-if="error" class="error">{{ error }}</p>
@@ -272,27 +322,76 @@ onMounted(() => void load())
     </div>
 
     <div v-if="reviewDialogues.length" class="group">
-      <h3>目标对白 · {{ reviewDialogues.length }}</h3>
-      <article v-for="item in reviewDialogues" :key="item.id" class="card dialogue-card">
+      <div class="group-title">
+        <div>
+          <h3>目标对白 · {{ reviewDialogues.length }}</h3>
+          <p>按项目选择的 {{ dialogueLocaleLabel }} 自动翻译和本土化；你不需要从空白开始填写。</p>
+        </div>
+        <button class="auto-button" :disabled="translatingDialogues || loading" @click="autoTranslateDialogues">
+          {{ translatingDialogues ? '正在自动翻译…' : '按项目设置自动翻译' }}
+        </button>
+      </div>
+
+      <article v-for="item in incompleteReviewDialogues" :key="item.id" class="card dialogue-card dialogue-pending">
         <div class="source">
           <small>原对白 · 原说话区间 {{ sourceDuration(item) }}</small>
           <strong>{{ item.source_text }}</strong>
-          <span>{{ item.target_language }} · {{ item.target_region }} · 当前只确认文本，时长优化由下一阶段自动处理</span>
+          <span>{{ item.target_language }} · {{ item.target_region }}</span>
         </div>
-        <label>
-          <span>忠实翻译</span>
-          <textarea v-model="dialogueDrafts[item.id].translated_text" rows="2" placeholder="保留原剧情事实和信息量" />
-        </label>
-        <label>
-          <span>当地自然表达</span>
-          <textarea v-model="dialogueDrafts[item.id].localized_text" rows="2" placeholder="符合目标地区真实说话方式" />
-        </label>
-        <label>
-          <span>最终成片对白</span>
-          <textarea v-model="dialogueDrafts[item.id].final_text" rows="3" placeholder="这句将进入 TTS 和后续口型/时长规划" />
-        </label>
+        <div class="auto-notice">
+          <strong>这条自动翻译还没有生成完整结果，不需要你手动填写。</strong>
+          <span>点击“按项目设置自动翻译”，系统会根据目标语言和目标地区重新生成。</span>
+        </div>
         <div class="actions">
-          <button class="primary" :disabled="savingId === item.id" @click="saveDialogue(item)">确认对白</button>
+          <button class="primary" :disabled="translatingDialogues" @click="autoTranslateDialogues">自动翻译</button>
+        </div>
+      </article>
+
+      <article v-for="item in completeReviewDialogues" :key="item.id" class="card dialogue-card">
+        <div class="source">
+          <small>原对白 · 原说话区间 {{ sourceDuration(item) }}</small>
+          <strong>{{ item.source_text }}</strong>
+          <span>{{ item.target_language }} · {{ item.target_region }} · 文本已由系统生成，后续时长由 Timing 自动处理</span>
+        </div>
+
+        <template v-if="editingDialogueId !== item.id">
+          <div class="translation-result">
+            <span>忠实翻译</span>
+            <p>{{ dialogueDrafts[item.id].translated_text }}</p>
+          </div>
+          <div class="translation-result">
+            <span>当地自然表达</span>
+            <p>{{ dialogueDrafts[item.id].localized_text }}</p>
+          </div>
+          <div class="translation-result final">
+            <span>最终成片对白</span>
+            <p>{{ dialogueDrafts[item.id].final_text }}</p>
+          </div>
+        </template>
+
+        <template v-else>
+          <label>
+            <span>忠实翻译</span>
+            <textarea v-model="dialogueDrafts[item.id].translated_text" rows="2" />
+          </label>
+          <label>
+            <span>当地自然表达</span>
+            <textarea v-model="dialogueDrafts[item.id].localized_text" rows="2" />
+          </label>
+          <label>
+            <span>最终成片对白</span>
+            <textarea v-model="dialogueDrafts[item.id].final_text" rows="3" />
+          </label>
+        </template>
+
+        <div class="actions">
+          <button class="secondary" :disabled="translatingDialogues || savingId === item.id" @click="autoTranslateDialogues">重新自动翻译</button>
+          <button class="secondary" :disabled="savingId === item.id" @click="toggleDialogueEdit(item)">
+            {{ editingDialogueId === item.id ? '取消修改' : '我要修改' }}
+          </button>
+          <button class="primary" :disabled="savingId === item.id || translatingDialogues" @click="saveDialogue(item)">
+            {{ editingDialogueId === item.id ? '保存修改' : '采用系统翻译' }}
+          </button>
         </div>
       </article>
     </div>
@@ -305,20 +404,33 @@ onMounted(() => void load())
 .target-review > header > div { display: grid; gap: 2px; }
 .target-review small { color: #8793a4; font-size: 9px; }
 .target-review strong { color: #42536a; font-size: 11px; }
-.target-review header button, .actions button, .decision button { min-height: 32px; border: 1px solid #dce2e9; border-radius: 8px; padding: 0 10px; background: #fff; color: #617086; font-size: 9px; cursor: pointer; }
+.target-review header button, .actions button, .decision button, .auto-button { min-height: 32px; border: 1px solid #dce2e9; border-radius: 8px; padding: 0 10px; background: #fff; color: #617086; font-size: 9px; cursor: pointer; }
+.target-review button:disabled { cursor: not-allowed; opacity: .55; }
 .group { display: grid; gap: 8px; }
 .group h3 { margin: 2px 0; color: #506177; font-size: 11px; }
+.group-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.group-title > div { display: grid; gap: 3px; }
+.group-title p { margin: 0; color: #8793a4; font-size: 9px; }
+.group-title .auto-button { border-color: #9ab3e8; background: #f3f7ff; color: #315aa9; white-space: nowrap; }
 .card { display: grid; gap: 9px; padding: 12px; border: 1px solid #e4e8ee; border-radius: 10px; background: #fbfcfe; }
 .dialogue-card { border-color: #e7dcc4; background: #fffdf8; }
+.dialogue-pending { border-style: dashed; }
 .source { display: grid; gap: 2px; }
 .source span { color: #8b96a5; font-size: 9px; }
 label { display: grid; gap: 4px; }
-label span { color: #6f7e91; font-size: 9px; font-weight: 750; }
+label span, .translation-result > span { color: #6f7e91; font-size: 9px; font-weight: 750; }
 input, textarea { width: 100%; box-sizing: border-box; border: 1px solid #dce2e9; border-radius: 7px; padding: 8px 9px; background: #fff; color: #405168; font: inherit; font-size: 10px; resize: vertical; }
+.translation-result { display: grid; gap: 4px; }
+.translation-result p { margin: 0; min-height: 34px; padding: 8px 9px; border: 1px solid #e4e8ee; border-radius: 7px; background: #fff; color: #405168; font-size: 10px; line-height: 1.55; white-space: pre-wrap; }
+.translation-result.final p { border-color: #cfdcf7; background: #f7f9ff; color: #304f89; font-weight: 650; }
+.auto-notice { display: grid; gap: 4px; padding: 10px; border: 1px solid #ead8b7; border-radius: 8px; background: #fff9ed; }
+.auto-notice strong { color: #765823; font-size: 10px; }
+.auto-notice span { color: #9a7b45; font-size: 9px; }
 .decision { display: flex; gap: 7px; }
 .decision button.active { border-color: #91abe0; background: #eef4ff; color: #315aa9; }
-.actions { display: flex; justify-content: flex-end; gap: 7px; }
+.actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 7px; }
 .actions .primary { border-color: #3566d6; background: #3566d6; color: #fff; }
+.actions .secondary { background: #fff; color: #617086; }
 .actions .danger { color: #a45a5a; }
 .error { margin: 0; padding: 8px 10px; border-radius: 7px; background: #fff2f2; color: #a94e4e; font-size: 10px; }
 .empty { margin: 0; color: #8793a4; font-size: 10px; }
