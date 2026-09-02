@@ -6,6 +6,7 @@ import shutil
 import pytest
 
 from engine.app import episode_output_v1 as episode_output
+from engine.app import postproduction_routes_v1 as postproduction_routes
 
 
 def test_subtitle_events_deduplicate_dialogue_spanning_generation_segments() -> None:
@@ -63,6 +64,59 @@ def test_episode_timeline_rejects_unexplained_gap() -> None:
             {"target_start_us": 0, "target_end_us": 1_000_000},
             {"target_start_us": 1_400_000, "target_end_us": 2_000_000},
         ])
+
+
+def test_get_episode_output_uses_read_only_compile(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    def fake_compile(project_id: str, *, persist: bool = True) -> dict[str, object]:
+        calls.append((project_id, persist))
+        return {"episodes": []}
+
+    monkeypatch.setattr(episode_output, "compile_episode_outputs_v1", fake_compile)
+
+    assert episode_output.get_episode_output_v1("PROJECT_READ_ONLY", "EP_1") is None
+    assert calls == [("PROJECT_READ_ONLY", False)]
+
+
+def test_episode_subtitle_requires_current_succeeded_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subtitle = tmp_path / "subtitles.srt"
+    subtitle.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
+    monkeypatch.setattr(
+        episode_output,
+        "get_episode_output_v1",
+        lambda _project_id, _episode_id: {
+            "status": "READY",
+            "subtitle_path": str(subtitle),
+        },
+    )
+
+    assert episode_output.episode_output_subtitle_v1("PROJECT_READ_ONLY", "EP_1") is None
+
+
+def test_output_get_routes_use_read_only_plans(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str, bool | None]] = []
+
+    def fake_post_plan(project_id: str) -> dict[str, object]:
+        calls.append(("postproduction", project_id, False))
+        return {}
+
+    def fake_output_plan(project_id: str, *, persist: bool = True) -> dict[str, object]:
+        calls.append(("outputs", project_id, persist))
+        return {}
+
+    monkeypatch.setattr(postproduction_routes, "get_postproduction_plan_v1", fake_post_plan)
+    monkeypatch.setattr(postproduction_routes, "compile_episode_outputs_v1", fake_output_plan)
+
+    assert postproduction_routes.api_get_postproduction("PROJECT_READ_ONLY") == {}
+    assert postproduction_routes.api_get_episode_outputs("PROJECT_READ_ONLY") == {}
+    assert calls == [
+        ("postproduction", "PROJECT_READ_ONLY", False),
+        ("outputs", "PROJECT_READ_ONLY", False),
+    ]
 
 
 def test_episode_media_normalization_and_concat(tmp_path: Path) -> None:
