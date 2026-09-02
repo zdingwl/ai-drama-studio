@@ -24,6 +24,26 @@ from engine.app.studio_v2 import Base, get_session, new_id, utcnow
 
 ACTIVE_TASK_STATUSES = {"QUEUED", "PROCESSING"}
 TERMINAL_TASK_STATUSES = {"READY", "READY_WITH_WARNINGS", "FAILED", "CANCELLED"}
+
+# Workflow V2 P0: these are real local heavy jobs.  A legacy route is not allowed to opt
+# out of same-scope active-task dedup by passing ``deduplicate_active=False``.  The current
+# executor is intentionally one local Python process; P3 will add durable Idempotency-Key /
+# command receipts for cross-process and request-replay semantics.
+FORCE_ACTIVE_DEDUP_TASK_TYPES = {
+    "EPISODE_PREPROCESS",
+    "BATCH_PREPROCESS",
+    "EPISODE_SHOTS",
+    "BATCH_SHOTS",
+    "EPISODE_BREAKDOWN_P2",
+    "BATCH_BREAKDOWN_P2",
+    "ASSET_EXTRACTION",
+    "ASSET_EXTRACTION_V3",
+    "AUTO_REMAKE_PREP_V1",
+    "AUTO_OUTPUT_V1",
+    "H3_GENERATE_READY_V1",
+    "H3_QC_RETRY_V1",
+    "POSTPRODUCTION_V1",
+}
 _TASK_CREATE_LOCK = RLock()
 
 
@@ -100,13 +120,15 @@ def create_task(
 
     ``_TASK_CREATE_LOCK`` closes the local-process query -> insert race so two nearly
     simultaneous HTTP clicks cannot both pass the active-task check and create duplicate
-    heavy work.  Full cross-process command receipts / Idempotency-Key semantics belong to
-    Workflow V2 P3; the current local executor intentionally runs as one process.
+    heavy work.  Formal heavy task types are always deduplicated even if a historical route
+    passes ``deduplicate_active=False``.  Full cross-process command receipts /
+    Idempotency-Key semantics belong to Workflow V2 P3.
     """
 
+    should_deduplicate = deduplicate_active or task_type in FORCE_ACTIVE_DEDUP_TASK_TYPES
     with _TASK_CREATE_LOCK:
         with get_session() as session:
-            if deduplicate_active:
+            if should_deduplicate:
                 existing = session.scalar(
                     select(BackgroundTaskRecord)
                     .where(
