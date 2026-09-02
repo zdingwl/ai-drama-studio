@@ -52,7 +52,7 @@ def _find_source_dialogue_for_issue(
 
 
 def _legacy_speaker_context_needs_refresh(project_id: str) -> bool:
-    """Detect old speaker rows without recomposing the whole project on every Review Center read."""
+    """Detect old speaker rows without recomposing the whole project."""
 
     with get_session() as session:
         rows = session.scalars(select(ReviewIssue).where(
@@ -74,18 +74,21 @@ def _legacy_speaker_context_needs_refresh(project_id: str) -> bool:
         return False
 
 
-def _refresh_legacy_speaker_context(project_id: str) -> None:
+def _refresh_legacy_speaker_context(project_id: str) -> bool:
+    """Explicit legacy repair helper. Never call this from a GET/read path."""
+
     if not _legacy_speaker_context_needs_refresh(project_id):
-        return
+        return False
     try:
         snapshot = load_project_source_drama_snapshot_v1(project_id)
         sync_source_drama_speaker_issues(project_id, snapshot)
+        return True
     except LookupError:
         raise
     except (SourceDramaSnapshotError, RuntimeError, ValueError):
-        # Review listing itself must remain available when current source truth cannot yet be
-        # recomposed. The old row stays visible and can be repaired after source processing.
-        return
+        # Legacy maintenance must not hide the queue when current source truth cannot yet be
+        # recomposed. Keep old rows for a later explicit repair attempt.
+        return False
 
 
 @router.get("/projects/{project_id}/review-issues")
@@ -93,26 +96,39 @@ def api_list_review_issues(
     project_id: str,
     status: str | None = Query(default="OPEN"),
 ):
+    """Read the current review queue without changing any business data."""
+
     try:
-        # Migration cleanup: old V10.1 raw UNRESOLVED evidence was incorrectly published
-        # as human work. Close it before returning the formal Review Center queue so an
-        # already-processed project is repaired simply by refreshing the page.
-        resolve_legacy_character_evidence_issues(project_id)
-
-        if status is None or status.strip().upper() == "OPEN":
-            # Old TargetDialogue code converted a Qwen runtime/malformed-output failure into
-            # empty LOCALIZATION forms. Those are not human decisions. Remove only strict
-            # AI/REVIEW rows with a known target character but incomplete generated text;
-            # complete low-confidence proposals remain actionable review work.
-            cleanup_incomplete_auto_dialogue_reviews_v1(project_id)
-
-            # Existing projects can contain old SPEAKER rows that predate the actionable review
-            # payload. Upgrade only those old rows; current rows do not trigger a project rebuild.
-            _refresh_legacy_speaker_context(project_id)
-
         return list_review_issues(project_id, status=status)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/projects/{project_id}/review-issues/repair-legacy")
+def api_repair_legacy_review_issues(project_id: str):
+    """Explicitly repair legacy review rows created by older workflow versions.
+
+    This command intentionally contains the old migration behavior that used to run while
+    merely opening Review Center. It must only execute after an explicit POST action.
+    """
+
+    try:
+        character_evidence_resolved = resolve_legacy_character_evidence_issues(project_id)
+        incomplete_dialogue_reviews_removed = cleanup_incomplete_auto_dialogue_reviews_v1(project_id)
+        speaker_context_refreshed = _refresh_legacy_speaker_context(project_id)
+        return {
+            "project_id": project_id,
+            "character_evidence_resolved": character_evidence_resolved,
+            "incomplete_dialogue_reviews_removed": incomplete_dialogue_reviews_removed,
+            "speaker_context_refreshed": speaker_context_refreshed,
+            "open_issues": list_review_issues(project_id, status="OPEN"),
+        }
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SourceDramaSnapshotError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
