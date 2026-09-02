@@ -3,7 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 
-from sqlalchemy import create_engine
+import pytest
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from engine.app import review_issue_v1, studio_v2, target_localization_v1
@@ -85,46 +86,71 @@ def _seed(monkeypatch, tmp_path: Path):
     return project["id"], episode_id, factory, snapshot
 
 
-def test_keep_scene_policy_does_not_require_model(monkeypatch, tmp_path: Path) -> None:
+def _ready_runtime(monkeypatch) -> None:
+    monkeypatch.setattr(
+        target_localization_v1,
+        "local_qwen_text_runtime_status",
+        lambda: {"ready": True, "provider": "qwen3-vl-local-subprocess"},
+    )
+
+
+def _character_proposal(*, confidence: float = 0.93) -> dict:
+    return {"characters": [{
+        "source_character_id": "CHAR_1",
+        "target_name": "Emma Miller",
+        "appearance_profile": "25岁左右的美国女性，干练职业气质，棕色长发",
+        "generation_prompt": "consistent American woman, mid-20s, professional, long brown hair",
+        "confidence": confidence,
+    }]}
+
+
+def test_keep_scene_policy_skips_scene_model_but_still_designs_target_character(monkeypatch, tmp_path: Path) -> None:
     project_id, _episode_id, _factory, _snapshot_value = _seed(monkeypatch, tmp_path)
     monkeypatch.setattr(target_localization_v1, "get_project_remake_policy", lambda _project_id: {"scene_policy": "KEEP"})
-    monkeypatch.setattr(target_localization_v1, "semantic_model_status", lambda: {"ready": False})
+    _ready_runtime(monkeypatch)
+    captured: list[list[str]] = []
 
+    def fake_many(prompts: list[str]):
+        captured.append(prompts)
+        return [_character_proposal()]
+
+    monkeypatch.setattr(target_localization_v1, "_request_text_model_many", fake_many)
     bundle = target_localization_v1.generate_target_localization_v1(project_id)
 
+    assert len(captured) == 1
+    assert len(captured[0]) == 1
+    assert "目标演员角色" in captured[0][0]
+    assert "场景本土化" not in captured[0][0]
     assert bundle["scene_mappings"][0]["scene_key"] == "ASSET:SCENE_1"
     assert bundle["scene_mappings"][0]["decision"] == "KEEP"
     assert bundle["scene_mappings"][0]["status"] == "READY"
-    assert bundle["target_characters"][0]["status"] == "REVIEW"
-    assert bundle["review_count"] == 1
-    issues = review_issue_v1.list_review_issues(project_id)
-    assert [item["issue_type"] for item in issues] == ["TARGET_CHARACTER"]
+    assert bundle["target_characters"][0]["status"] == "READY"
+    assert bundle["review_count"] == 0
+    assert review_issue_v1.list_review_issues(project_id) == []
 
 
 def test_model_can_auto_localize_character_and_scene(monkeypatch, tmp_path: Path) -> None:
     project_id, _episode_id, _factory, _snapshot_value = _seed(monkeypatch, tmp_path)
     monkeypatch.setattr(target_localization_v1, "get_project_remake_policy", lambda _project_id: {"scene_policy": "AUTO"})
-    monkeypatch.setattr(target_localization_v1, "semantic_model_status", lambda: {"ready": True})
+    _ready_runtime(monkeypatch)
 
-    def fake_request(prompt: str):
-        if "目标演员角色" in prompt:
-            return {"characters": [{
-                "source_character_id": "CHAR_1",
-                "target_name": "Emma Miller",
-                "appearance_profile": "25岁左右的美国女性，干练职业气质，棕色长发",
-                "generation_prompt": "consistent American woman, mid-20s, professional, long brown hair",
-                "confidence": 0.93,
-            }]}
-        return {"scenes": [{
-            "scene_key": "ASSET:SCENE_1",
-            "decision": "LOCALIZE",
-            "target_label": "American apartment living room",
-            "target_description": "Contemporary middle-class American apartment living room, same spatial function and blocking capacity.",
-            "reason": "源画面文字具有明显地区特征",
-            "confidence": 0.88,
-        }]}
+    def fake_many(prompts: list[str]):
+        assert len(prompts) == 2
+        assert "目标演员角色" in prompts[0]
+        assert "场景本土化" in prompts[1]
+        return [
+            _character_proposal(),
+            {"scenes": [{
+                "scene_key": "ASSET:SCENE_1",
+                "decision": "LOCALIZE",
+                "target_label": "American apartment living room",
+                "target_description": "Contemporary middle-class American apartment living room, same spatial function and blocking capacity.",
+                "reason": "源画面文字具有明显地区特征",
+                "confidence": 0.88,
+            }]},
+        ]
 
-    monkeypatch.setattr(target_localization_v1, "_request_text_model", fake_request)
+    monkeypatch.setattr(target_localization_v1, "_request_text_model_many", fake_many)
     bundle = target_localization_v1.generate_target_localization_v1(project_id)
 
     assert bundle["status"] == "READY"
@@ -132,6 +158,25 @@ def test_model_can_auto_localize_character_and_scene(monkeypatch, tmp_path: Path
     assert bundle["target_characters"][0]["target_name"] == "Emma Miller"
     assert bundle["scene_mappings"][0]["scene_key"] == "ASSET:SCENE_1"
     assert bundle["scene_mappings"][0]["decision"] == "LOCALIZE"
+    assert review_issue_v1.list_review_issues(project_id) == []
+
+
+def test_incomplete_model_output_fails_before_blank_rows_are_persisted(monkeypatch, tmp_path: Path) -> None:
+    project_id, _episode_id, factory, _snapshot_value = _seed(monkeypatch, tmp_path)
+    monkeypatch.setattr(target_localization_v1, "get_project_remake_policy", lambda _project_id: {"scene_policy": "AUTO"})
+    _ready_runtime(monkeypatch)
+    monkeypatch.setattr(
+        target_localization_v1,
+        "_request_text_model_many",
+        lambda _prompts: [{"characters": []}, {"scenes": []}],
+    )
+
+    with pytest.raises(target_localization_v1.TargetLocalizationError, match="本次不写入空白人工任务"):
+        target_localization_v1.generate_target_localization_v1(project_id)
+
+    with factory() as session:
+        assert session.scalars(select(target_localization_v1.TargetCharacter)).all() == []
+        assert session.scalars(select(target_localization_v1.SceneLocalizationMapping)).all() == []
     assert review_issue_v1.list_review_issues(project_id) == []
 
 
@@ -160,7 +205,8 @@ def test_repeated_final_scene_is_one_project_scene_mapping(monkeypatch, tmp_path
         ))
         session.commit()
     monkeypatch.setattr(target_localization_v1, "get_project_remake_policy", lambda _project_id: {"scene_policy": "KEEP"})
-    monkeypatch.setattr(target_localization_v1, "semantic_model_status", lambda: {"ready": False})
+    _ready_runtime(monkeypatch)
+    monkeypatch.setattr(target_localization_v1, "_request_text_model_many", lambda _prompts: [_character_proposal()])
 
     contexts = target_localization_v1._scene_contexts(snapshot)
     bundle = target_localization_v1.generate_target_localization_v1(project_id)
@@ -172,15 +218,23 @@ def test_repeated_final_scene_is_one_project_scene_mapping(monkeypatch, tmp_path
     assert bundle["scene_mappings"][0]["scene_key"] == "ASSET:SCENE_1"
 
 
-def test_manual_character_edit_closes_review_issue(monkeypatch, tmp_path: Path) -> None:
+def test_manual_character_edit_closes_low_confidence_review_issue(monkeypatch, tmp_path: Path) -> None:
     project_id, _episode_id, _factory, _snapshot_value = _seed(monkeypatch, tmp_path)
     monkeypatch.setattr(target_localization_v1, "get_project_remake_policy", lambda _project_id: {"scene_policy": "KEEP"})
-    monkeypatch.setattr(target_localization_v1, "semantic_model_status", lambda: {"ready": False})
+    _ready_runtime(monkeypatch)
+    monkeypatch.setattr(
+        target_localization_v1,
+        "_request_text_model_many",
+        lambda _prompts: [_character_proposal(confidence=0.55)],
+    )
     bundle = target_localization_v1.generate_target_localization_v1(project_id)
-    target_id = bundle["target_characters"][0]["id"]
+    target = bundle["target_characters"][0]
+    assert target["status"] == "REVIEW"
+    assert target["target_name"] == "Emma Miller"
+    assert [item["issue_type"] for item in review_issue_v1.list_review_issues(project_id)] == ["TARGET_CHARACTER"]
 
     updated = target_localization_v1.update_target_character_v1(
-        target_id,
+        target["id"],
         target_name="Emma Miller",
         appearance_profile="美国女性，二十多岁，职业气质，棕色长发",
         generation_prompt="consistent American woman, mid-20s, professional, long brown hair",
