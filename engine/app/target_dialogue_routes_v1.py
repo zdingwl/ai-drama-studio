@@ -12,6 +12,7 @@ from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError
 from engine.app.studio_v2 import get_session
 from engine.app.target_dialogue_contract_v1 import TargetDialogueBundleV1, TargetDialogueV1
 from engine.app.target_dialogue_pipeline_v1 import (
+    TargetDialogueAutoGenerationError,
     run_target_dialogue_pipeline_v1,
     validate_target_dialogue_dependencies_v1,
 )
@@ -43,6 +44,10 @@ def _error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, SourceDramaSnapshotError):
         return HTTPException(status_code=409, detail="SourceDramaSnapshot 当前不可用")
+    if isinstance(exc, TargetDialogueAutoGenerationError):
+        # Automatic provider/runtime/malformed-output failure is retryable system state,
+        # not a content conflict that should enter human review.
+        return HTTPException(status_code=503, detail=str(exc))
     if isinstance(exc, TargetDialogueError):
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, ValueError):
