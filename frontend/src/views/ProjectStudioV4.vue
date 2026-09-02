@@ -11,6 +11,7 @@ import H3OutputV1 from '../components/H3OutputV1.vue'
 import H3QcReviewV1 from '../components/H3QcReviewV1.vue'
 import LipSyncReviewV1 from '../components/LipSyncReviewV1.vue'
 import ShotWorkbenchV4 from '../components/ShotWorkbenchV4.vue'
+import SpeakerReviewEditorV1 from '../components/SpeakerReviewEditorV1.vue'
 import TargetLocalizationReviewV1 from '../components/TargetLocalizationReviewV1.vue'
 import TaskProgressDock from '../components/TaskProgressDock.vue'
 import TimingReviewV1 from '../components/TimingReviewV1.vue'
@@ -43,7 +44,8 @@ const autoTask = computed(() => tasks.value.find((task) => task.task_type === 'A
 const postTask = computed(() => tasks.value.find((task) => task.task_type === 'POSTPRODUCTION_V1') ?? null)
 const openIssueCount = computed(() => issues.value.length)
 const blockingCount = computed(() => issues.value.filter((item) => item.severity === 'BLOCKING').length)
-const domainEditedIssueTypes = new Set(['TARGET_CHARACTER', 'SCENE_LOCALIZATION', 'LOCALIZATION', 'DIALOGUE_TIMING', 'H3_QC', 'LIP_SYNC_QC'])
+const domainEditedIssueTypes = new Set(['SPEAKER', 'TARGET_CHARACTER', 'SCENE_LOCALIZATION', 'LOCALIZATION', 'DIALOGUE_TIMING', 'H3_QC', 'LIP_SYNC_QC'])
+const speakerIssues = computed(() => issues.value.filter((item) => item.issue_type === 'SPEAKER'))
 const genericIssues = computed(() => issues.value.filter((item) => !domainEditedIssueTypes.has(item.issue_type)))
 const issueGroups = computed(() => {
   const result: Record<string, number> = {}
@@ -231,11 +233,12 @@ onUnmounted(() => {
 
       <main v-else-if="activeView === 'review'" class="panel">
         <section class="review-head">
-          <div><small>人工只处理异常</small><h1>{{ openIssueCount ? `需要确认 ${openIssueCount} 项` : '当前没有需要人工确认的问题' }}</h1><p>目标人物、目标场景、目标对白、极端镜头时长、H3 重试仍失败的版本，以及多人镜头无法安全定位说话人的口型问题，必须修改真实业务结果或重新执行对应处理；不能只关闭提示来绕过问题。</p></div>
+          <div><small>人工只处理异常</small><h1>{{ openIssueCount ? `需要确认 ${openIssueCount} 项` : '当前没有需要人工确认的问题' }}</h1><p>每一条待确认都必须能定位并直接修改真实业务结果。说话人问题会显示具体剧集、场景、镜头和原对白，并允许直接选择正确人物；不再用“忽略提示 / 标记已处理”代替真实修改。</p></div>
           <div class="chips"><span>阻塞 <b>{{ blockingCount }}</b></span><span v-for="(count, key) in issueGroups" :key="key">{{ issueTypeLabel(String(key)) }} <b>{{ count }}</b></span></div>
         </section>
 
         <TargetLocalizationReviewV1 :project-id="project.id" @changed="refresh" />
+        <SpeakerReviewEditorV1 :issues="speakerIssues" @changed="refresh" @open-asset-editor="advancedAssetOpen = true" />
         <TimingReviewV1 :project-id="project.id" @changed="refresh" />
         <H3QcReviewV1 :project-id="project.id" @changed="refresh" />
         <LipSyncReviewV1 :project-id="project.id" :busy="Boolean(activeTask)" @changed="refresh" />
