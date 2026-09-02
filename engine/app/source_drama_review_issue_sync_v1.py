@@ -58,11 +58,18 @@ def sync_source_drama_speaker_issues(
             people_payload = [person.model_dump(mode="json") for person in scene.people]
             for shot in scene.shots:
                 dialogue_payload = [dialogue.model_dump(mode="json") for dialogue in shot.source_dialogue]
+                performance_payload = [item.model_dump(mode="json") for item in shot.performance]
+                performance_people = {
+                    person_key
+                    for item in performance_payload
+                    for person_key in (item.get("people") or [])
+                }
+                visible_people = set(shot.people)
                 resolutions = resolve_shot_dialogue_speakers_v1(
                     dialogue_payload,
                     scene_people=people_payload,
                     shot_people=shot.people,
-                    performance=[item.model_dump(mode="json") for item in shot.performance],
+                    performance=performance_payload,
                 )
                 for dialogue, resolution in zip(shot.source_dialogue, resolutions, strict=True):
                     if resolution.status == "RESOLVED":
@@ -86,25 +93,64 @@ def sync_source_drama_speaker_issues(
                             "character_id": person.character.id if person.character else None,
                             "character_name": person.character.name if person.character else None,
                         })
+
+                    candidate_people = []
+                    for person in scene.people:
+                        candidate_people.append({
+                            "person_key": person.person_key,
+                            "display_name": person.display_name,
+                            "appearance": person.appearance,
+                            "character_id": person.character.id if person.character else None,
+                            "character_name": person.character.name if person.character else None,
+                            "cover_url": person.character.cover_url if person.character else None,
+                            "visible_in_shot": person.person_key in visible_people,
+                            "in_performance": person.person_key in performance_people,
+                        })
+                    candidate_people.sort(
+                        key=lambda item: (
+                            not bool(item["in_performance"]),
+                            not bool(item["visible_in_shot"]),
+                            str(item["character_name"] or item["display_name"] or item["person_key"]),
+                        )
+                    )
+
                     upsert_review_issue(
                         project_id=project_id,
                         episode_id=episode.episode_id,
                         shot_id=shot.source_shot_id,
                         source_key=source_key,
                         issue_type="SPEAKER",
-                        severity="REVIEW",
+                        severity="BLOCKING",
                         reason=reason,
                         ai_suggestion={
                             "dialogue_key": dialogue.dialogue_key,
                             "source_text": dialogue.source_text,
+                            "dialogue_start_us": dialogue.start_us,
+                            "dialogue_end_us": dialogue.end_us,
                             "current_speakers": speaker_rows,
+                            "candidate_people": candidate_people,
+                            "episode_order": episode.episode_order,
+                            "episode_title": episode.episode_title,
+                            "scene_key": scene.scene_key,
+                            "scene_ordinal": scene.ordinal,
+                            "scene_title": scene.title,
+                            "shot_key": shot.shot_key,
+                            "shot_ordinal": shot.ordinal,
+                            "shot_start_us": shot.start_us,
+                            "shot_end_us": shot.end_us,
+                            "thumbnail_url": shot.thumbnail_url,
+                            "reference_url": shot.reference_url,
                             "automatic_resolution_method": resolution.method,
                             "automatic_resolution_reason": resolution.reason,
                         },
                         editable_payload={
                             "dialogue_key": dialogue.dialogue_key,
                             "source_text": dialogue.source_text,
+                            "start_us": dialogue.start_us,
+                            "end_us": dialogue.end_us,
                             "shot_key": shot.shot_key,
+                            "scene_key": scene.scene_key,
+                            "candidate_person_keys": [item["person_key"] for item in candidate_people],
                         },
                     )
                     count += 1
