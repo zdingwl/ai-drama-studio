@@ -91,7 +91,7 @@ jobs:
           ffmpeg -version
           ffprobe -version
       - name: Compile R10 backend and workers
-        run: python -m compileall -q engine/app scripts/latentsync_worker_v1.py scripts/audio_separator_worker_v1.py
+        run: python -m compileall -q engine/app scripts/latentsync_worker_v1.py scripts/audio_separator_worker_v1.py scripts/check_audio_separator_runtime.py
       - name: Import FastAPI with R10 routes
         run: python -c "from engine.app.main import app; paths={r.path for r in app.routes}; assert '/api/lip-sync/runtime' in paths; assert '/api/background-audio/runtime' in paths; assert '/api/projects/{project_id}/tasks/postproduction' in paths; assert '/api/projects/{project_id}/outputs' in paths; assert '/api/episodes/{episode_id}/final-video' in paths; print('R10/R10.1 routes ready')"
       - name: Run R10 acceptance
