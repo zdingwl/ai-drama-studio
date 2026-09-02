@@ -3,6 +3,10 @@
 Human review is item-local. One uncertain line must not block TTS for every other READY
 line. Target-character freshness is also enforced here so edited casting cannot silently
 reuse an old manual target line or old target-character voice.
+
+Automatic model/runtime failure is not human review: a REVIEW row is actionable only when
+the model returned complete translation/localization/final text plus confidence. Empty or
+partial AI output is removed and the automatic task fails so it can be retried.
 """
 from __future__ import annotations
 
@@ -18,6 +22,10 @@ from engine.app.target_dialogue_v1 import (
     _voice_character_signature,
     generate_target_dialogue_text_v1,
     materialize_target_dialogue_audio_v1,
+)
+from engine.app.target_dialogue_auto_review_guard_v1 import (
+    cleanup_incomplete_auto_dialogue_reviews_v1,
+    incomplete_auto_dialogue_review_ids_v1,
 )
 from engine.app.target_localization_v1 import get_target_localization_v1
 
@@ -89,6 +97,21 @@ def validate_target_dialogue_dependencies_v1(project_id: str) -> None:
 def run_target_dialogue_pipeline_v1(project_id: str, *, synthesize_audio: bool = True) -> dict[str, Any]:
     invalidate_manual_dialogue_for_target_changes_v1(project_id)
     text_bundle = generate_target_dialogue_text_v1(project_id)
+
+    # target_dialogue_v1 historically swallowed LocalQwenTextError and converted missing
+    # model output into blank REVIEW rows. Guard the product boundary so infrastructure or
+    # malformed-output failures never become 13/50/etc. empty forms for a human to fill.
+    incomplete_ids = incomplete_auto_dialogue_review_ids_v1(text_bundle)
+    if incomplete_ids:
+        cleaned = cleanup_incomplete_auto_dialogue_reviews_v1(
+            project_id,
+            dialogue_ids=incomplete_ids,
+        )
+        raise TargetDialogueError(
+            f"目标对白自动翻译/本土化未生成完整结果（{cleaned or len(incomplete_ids)} 条）；"
+            "这是本地 Qwen3-VL 调用或模型输出异常，不需要人工填写，请恢复自动模型后重新处理"
+        )
+
     if not synthesize_audio:
         return text_bundle
     return materialize_target_dialogue_audio_v1(project_id)
