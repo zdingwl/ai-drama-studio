@@ -166,9 +166,21 @@ def test_target_dialogue_text_localizes_automatically(monkeypatch, tmp_path: Pat
     assert review_issue_v1.list_review_issues(project_id) == []
 
 
+def test_normal_qwen_self_score_stays_automatic(monkeypatch, tmp_path: Path) -> None:
+    project_id, _episode_id = _seed(monkeypatch, tmp_path)
+    monkeypatch.setattr(target_dialogue_v1, "request_local_qwen_json", lambda _prompt: _translation(0.65))
+
+    bundle = target_dialogue_v1.generate_target_dialogue_text_v1(project_id)
+
+    assert bundle["review_count"] == 0
+    assert bundle["dialogues"][0]["status"] == "READY"
+    assert bundle["dialogues"][0]["translation_confidence"] == 0.65
+    assert review_issue_v1.list_review_issues(project_id) == []
+
+
 def test_low_confidence_dialogue_enters_review_and_manual_edit_closes_it(monkeypatch, tmp_path: Path) -> None:
     project_id, _episode_id = _seed(monkeypatch, tmp_path)
-    monkeypatch.setattr(target_dialogue_v1, "request_local_qwen_json", lambda _prompt: _translation(0.45))
+    monkeypatch.setattr(target_dialogue_v1, "request_local_qwen_json", lambda _prompt: _translation(0.20))
 
     bundle = target_dialogue_v1.generate_target_dialogue_text_v1(project_id)
     row = bundle["dialogues"][0]
