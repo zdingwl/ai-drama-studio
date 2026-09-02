@@ -1,19 +1,21 @@
 """Read-only product state for automatic downstream output.
 
 The Output page must be able to ask "what is ready yet?" without probing every downstream
-endpoint and turning a normal not-generated-yet lifecycle into HTTP 409 noise.  This module is
-therefore deliberately side-effect free: it validates the current persisted dependency chain and
-returns availability flags for the UI, while actual generation remains owned by auto_output_v1.
+endpoint and turning a normal not-generated-yet lifecycle into HTTP 409 noise. This module is
+deliberately side-effect free: it validates persisted dependency state and exposes only resources
+that are safe for the UI to read. Actual generation remains owned by auto_output_v1.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Mapping
 
 from sqlalchemy import select
 
 from engine.app.episode_output_v1 import EpisodeOutput
+from engine.app.generation_attempt_v1 import GenerationAttempt
 from engine.app.generation_segment_v1 import GenerationSegmentError, get_generation_segments_v1
-from engine.app.generation_selection_v1 import selected_generation_output_v1
+from engine.app.generation_selection_v1 import GenerationSelection
 from engine.app.postproduction_v1 import PostProductionSegment
 from engine.app.review_issue_v1 import list_review_issues
 from engine.app.studio_v2 import get_project, get_session, list_episode_records
@@ -72,6 +74,39 @@ def _payload(
         "can_read_outputs": can_read_outputs,
         "active_task": None,
     }
+
+
+def _selected_count(project_id: str, ready_segments: list[Mapping[str, Any]]) -> int:
+    """Count only current, successful selected files without mutating stale selections."""
+
+    if not ready_segments:
+        return 0
+    current = {
+        str(segment.get("id") or ""): str(segment.get("input_fingerprint") or "")
+        for segment in ready_segments
+        if segment.get("id")
+    }
+    selected = 0
+    with get_session() as session:
+        rows = list(session.scalars(select(GenerationSelection).where(
+            GenerationSelection.project_id == project_id,
+        )).all())
+        for row in rows:
+            expected_fingerprint = current.get(row.generation_segment_id)
+            if not expected_fingerprint or row.segment_input_fingerprint != expected_fingerprint:
+                continue
+            attempt = session.get(GenerationAttempt, row.selected_attempt_id)
+            if (
+                attempt is None
+                or attempt.status != "SUCCEEDED"
+                or attempt.segment_input_fingerprint != expected_fingerprint
+                or not attempt.output_path
+            ):
+                continue
+            path = Path(str(attempt.output_path))
+            if path.is_file() and path.stat().st_size > 0:
+                selected += 1
+    return selected
 
 
 def get_auto_output_state_v1(project_id: str) -> dict[str, Any]:
@@ -156,7 +191,6 @@ def get_auto_output_state_v1(project_id: str) -> dict[str, Any]:
         if isinstance(segment, Mapping)
     ]
     segment_count = len(plan_segments)
-    generation_available = True
     if int(generation_plan.get("review_count") or 0) > 0:
         return _payload(
             project_id,
@@ -165,7 +199,7 @@ def get_auto_output_state_v1(project_id: str) -> dict[str, Any]:
             episode_count=episode_count,
             review_issue_count=int(generation_plan.get("review_count") or 0),
             segment_count=segment_count,
-            can_read_generation_segments=generation_available,
+            can_read_generation_segments=True,
             can_read_h3_quality=True,
         )
     if int(generation_plan.get("waiting_audio_count") or 0) > 0:
@@ -175,17 +209,12 @@ def get_auto_output_state_v1(project_id: str) -> dict[str, Any]:
             message="生成分段仍在等待真实目标语音时长",
             episode_count=episode_count,
             segment_count=segment_count,
-            can_read_generation_segments=generation_available,
+            can_read_generation_segments=True,
             can_read_h3_quality=True,
         )
 
     ready_segments = [segment for segment in plan_segments if segment.get("status") == "READY"]
-    selected_segment_count = 0
-    for segment in ready_segments:
-        segment_id = str(segment.get("id") or "")
-        if segment_id and selected_generation_output_v1(project_id, segment_id) is not None:
-            selected_segment_count += 1
-
+    selected_segment_count = _selected_count(project_id, ready_segments)
     if selected_segment_count < len(ready_segments):
         return _payload(
             project_id,
