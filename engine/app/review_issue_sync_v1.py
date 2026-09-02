@@ -48,7 +48,32 @@ def _confidence(item: dict[str, Any] | None, threshold: float) -> bool:
     return isinstance(value, (int, float)) and float(value) >= threshold
 
 
+def _character_coverage_problem(evidence: dict[str, Any]) -> str | None:
+    coverage = evidence.get("character_coverage")
+    if not isinstance(coverage, dict) or coverage.get("complete") is not False:
+        return None
+
+    detected = max(0, int(coverage.get("detected_person_count") or 0))
+    bound = max(0, int(coverage.get("bound_person_count") or 0))
+    unresolved = max(0, int(coverage.get("unresolved_person_count") or 0))
+
+    if detected > 0 and bound == 0:
+        return f"镜头理解识别到 {detected} 个人物，但当前还没有完成最终人物绑定"
+    if detected > bound:
+        return f"镜头理解识别到 {detected} 个人物，当前只绑定 {bound} 个，需要确认缺失人物"
+    if unresolved > 0:
+        return f"镜头仍有 {unresolved} 个未解析人物证据，需要确认人物绑定"
+    return "镜头人物识别与最终人物绑定未完全对应，需要人工确认"
+
+
 def _asset_problem(evidence: dict[str, Any], binding: dict[str, Any]) -> str | None:
+    # Coverage is a hard completeness rule. It must run before confidence-based
+    # consistency checks; otherwise a Shot with two understood people and one valid
+    # binding can incorrectly fall through to “自动一致”.
+    coverage_problem = _character_coverage_problem(evidence)
+    if coverage_problem is not None:
+        return coverage_problem
+
     characters = [item for item in (evidence.get("characters") or []) if isinstance(item, dict)]
     props = [item for item in (evidence.get("props") or []) if isinstance(item, dict)]
     scene = evidence.get("scene") if isinstance(evidence.get("scene"), dict) else None
