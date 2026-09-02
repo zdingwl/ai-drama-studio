@@ -90,12 +90,12 @@ jobs:
           fi
           ffmpeg -version
           ffprobe -version
-      - name: Compile R10 backend and worker
-        run: python -m compileall -q engine/app scripts/latentsync_worker_v1.py
+      - name: Compile R10 backend and workers
+        run: python -m compileall -q engine/app scripts/latentsync_worker_v1.py scripts/audio_separator_worker_v1.py
       - name: Import FastAPI with R10 routes
-        run: python -c "from engine.app.main import app; paths={r.path for r in app.routes}; assert '/api/lip-sync/runtime' in paths; assert '/api/projects/{project_id}/tasks/postproduction' in paths; assert '/api/projects/{project_id}/outputs' in paths; assert '/api/episodes/{episode_id}/final-video' in paths; print('R10 routes ready')"
+        run: python -c "from engine.app.main import app; paths={r.path for r in app.routes}; assert '/api/lip-sync/runtime' in paths; assert '/api/background-audio/runtime' in paths; assert '/api/projects/{project_id}/tasks/postproduction' in paths; assert '/api/projects/{project_id}/outputs' in paths; assert '/api/episodes/{episode_id}/final-video' in paths; print('R10/R10.1 routes ready')"
       - name: Run R10 acceptance
-        run: python -m pytest -q engine/tests/v2/test_postproduction_r10_v1.py engine/tests/v2/test_episode_output_r10_v1.py engine/tests/v2/test_h3_qc_r9_v1.py
+        run: python -m pytest -q engine/tests/v2/test_background_audio_r10_1_v1.py engine/tests/v2/test_postproduction_r10_v1.py engine/tests/v2/test_episode_output_r10_v1.py engine/tests/v2/test_h3_qc_r9_v1.py
 
   backend-v2:
     runs-on: ubuntu-latest
@@ -165,7 +165,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: frontend/.node-version
           cache: npm
