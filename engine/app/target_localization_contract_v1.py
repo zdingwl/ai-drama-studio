@@ -1,8 +1,15 @@
 """Target-side character/scene localization contract for the remake pipeline.
 
 This layer is downstream of SourceDramaSnapshot. It never rewrites source Character,
-Scene, Shot, ASR or OCR truth. Every row stays anchored to the current source fingerprint
-and current project scene policy.
+Scene, Shot, ASR or OCR truth.
+
+`source_fingerprint` on each persisted row is generation provenance, not the semantic
+freshness key for that row. A project-level SourceDramaSnapshot fingerprint can change
+because dialogue speaker/timing/OCR facts changed even when the target Character or Scene
+plan is still perfectly valid. Freshness for TargetCharacter and SceneLocalizationMapping
+is therefore checked by the service against their stable source_character_signature /
+source_scene_signature plus locale / scene policy. The bundle fingerprint always reports
+the current SourceDramaSnapshot fingerprint.
 """
 from __future__ import annotations
 
@@ -99,10 +106,12 @@ class TargetLocalizationBundleV1(_StrictTargetModel):
             raise ValueError("TargetCharacter belongs to another project")
         if any(item.project_id != self.project_id for item in self.scene_mappings):
             raise ValueError("SceneLocalizationMapping belongs to another project")
-        if any(item.source_fingerprint != self.source_fingerprint for item in self.target_characters):
-            raise ValueError("TargetCharacter source fingerprint is stale")
-        if any(item.source_fingerprint != self.source_fingerprint for item in self.scene_mappings):
-            raise ValueError("SceneLocalizationMapping source fingerprint is stale")
+
+        # Do not compare row.source_fingerprint with the current bundle fingerprint here.
+        # The full source fingerprint includes facts outside this domain (for example a
+        # corrected dialogue speaker). target_localization_v1.get_target_localization_v1
+        # validates stable Character / Scene signatures before building this bundle, so an
+        # unrelated source correction must not invalidate an otherwise valid target plan.
         if any(item.project_policy != self.scene_policy for item in self.scene_mappings):
             raise ValueError("SceneLocalizationMapping project policy is stale")
         if any(item.target_language != self.target_language or item.target_region != self.target_region for item in self.target_characters):
