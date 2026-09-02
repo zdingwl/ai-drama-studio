@@ -16,17 +16,42 @@ def test_required_model_unavailable_fails_as_runtime_state(monkeypatch) -> None:
     cleaned: list[str] = []
     monkeypatch.setattr(guard, "load_project_source_drama_snapshot_v1", lambda _project_id: _snapshot())
     monkeypatch.setattr(guard, "get_project_remake_policy", lambda _project_id: {"scene_policy": "AUTO"})
-    monkeypatch.setattr(guard, "semantic_model_status", lambda: {"ready": False})
+    monkeypatch.setattr(
+        guard,
+        "local_qwen_text_runtime_status",
+        lambda: {"ready": False, "missing": ["checkpoint"]},
+    )
     monkeypatch.setattr(
         guard,
         "cleanup_automatic_localization_placeholders_v1",
         lambda project_id: cleaned.append(project_id) or 0,
     )
 
-    with pytest.raises(guard.TargetLocalizationRuntimeUnavailable):
+    with pytest.raises(guard.TargetLocalizationRuntimeUnavailable, match="不需要额外启动 8001"):
         guard.require_target_localization_runtime_v1("PROJECT_1")
 
     assert cleaned == ["PROJECT_1"]
+
+
+def test_breakdown_local_qwen_runtime_is_accepted_without_http_service(monkeypatch) -> None:
+    monkeypatch.setattr(guard, "load_project_source_drama_snapshot_v1", lambda _project_id: _snapshot())
+    monkeypatch.setattr(guard, "get_project_remake_policy", lambda _project_id: {"scene_policy": "AUTO"})
+    monkeypatch.setattr(
+        guard,
+        "local_qwen_text_runtime_status",
+        lambda: {
+            "ready": True,
+            "provider": "qwen3-vl-local-subprocess",
+            "http_configured": False,
+            "local_ready": True,
+        },
+    )
+
+    status = guard.require_target_localization_runtime_v1("PROJECT_1")
+
+    assert status["ready"] is True
+    assert status["provider"] == "qwen3-vl-local-subprocess"
+    assert status["http_configured"] is False
 
 
 def test_model_is_not_required_for_empty_keep_project(monkeypatch) -> None:
@@ -36,7 +61,11 @@ def test_model_is_not_required_for_empty_keep_project(monkeypatch) -> None:
         lambda _project_id: _snapshot(characters=False, scenes=True),
     )
     monkeypatch.setattr(guard, "get_project_remake_policy", lambda _project_id: {"scene_policy": "KEEP"})
-    monkeypatch.setattr(guard, "semantic_model_status", lambda: {"ready": False, "status": "OFFLINE"})
+    monkeypatch.setattr(
+        guard,
+        "local_qwen_text_runtime_status",
+        lambda: {"ready": False, "provider": None, "local_ready": False},
+    )
 
     status = guard.require_target_localization_runtime_v1("PROJECT_1")
 
