@@ -46,7 +46,7 @@ const localModelLabel = computed(() => {
   if (loading.value) return '检查中'
   if (autoState.value?.stage === 'h3_generation') return h3Runtime.value?.ready ? 'H3 已就绪' : 'H3 未就绪'
   if (autoState.value?.stage === 'postproduction' && needsLipSync.value) return lipSyncRuntime.value?.ready ? '口型模型已就绪' : '口型模型未就绪'
-  return '按需自动启动'
+  return '按需使用'
 })
 const localModelWarning = computed(() => Boolean(
   (autoState.value?.stage === 'h3_generation' && h3Runtime.value && !h3Runtime.value.ready)
@@ -149,13 +149,13 @@ const continuationState = computed(() => {
   }
   if (autoAttempted.value) return {
     tone: 'warning',
-    title: stageTitle(autoState.value),
+    title: '自动生成尚未继续',
     detail: autoState.value?.message || '本次自动任务没有走到最终成片，请查看顶部后台任务；恢复对应运行环境后可从当前进度重试。',
   }
   return {
     tone: 'running',
-    title: stageTitle(autoState.value),
-    detail: autoState.value?.message || '无需逐阶段操作，系统会自动从当前有效结果继续。',
+    title: '准备继续自动生成',
+    detail: autoState.value?.message || '点击“继续自动生成”后，系统会从当前有效结果继续，不会重新拉片。',
   }
 })
 
@@ -178,6 +178,7 @@ async function startAutomaticOutput(): Promise<void> {
     await remakeApi.startAutoOutput(props.projectId)
     error.value = ''
     emit('changed')
+    await load()
   } catch (err) {
     const message = err instanceof Error ? err.message : ''
     if (!message.includes('已有本地重任务')) {
@@ -221,14 +222,9 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false
   }
-
-  if (autoState.value && !autoState.value.active_task && !autoAttempted.value && reviewCount.value === 0 && !allCompleted.value) {
-    await startAutomaticOutput()
-  }
 }
 
 async function retryAutomaticOutput(): Promise<void> {
-  autoAttempted.value = false
   await load()
 }
 
@@ -304,10 +300,10 @@ onMounted(() => void load())
         <span>{{ continuationState.detail }}</span>
       </div>
       <button
-        v-if="needsContinuation && !autoState?.active_task && !startingAuto && reviewCount === 0 && autoAttempted"
+        v-if="needsContinuation && !autoState?.active_task && !startingAuto && reviewCount === 0"
         class="primary"
-        @click="retryAutomaticOutput"
-      >重新继续自动生成</button>
+        @click="startAutomaticOutput"
+      >{{ autoAttempted ? '重新继续自动生成' : '继续自动生成' }}</button>
     </section>
 
     <div class="summary">
@@ -348,18 +344,20 @@ onMounted(() => void load())
             <span v-if="reviewCount || postReviewCount">存在真正需要人工确认的问题，请到“待确认”处理。</span>
             <span v-else-if="autoState?.stage === 'h3_generation' && h3Runtime && !h3Runtime.ready">等待本地 MiniMax H3；恢复后从当前镜头继续。</span>
             <span v-else-if="needsLipSync && lipSyncRuntime && !lipSyncRuntime.ready">等待本地 LatentSync；已生成镜头不会重做。</span>
-            <span v-else>系统会自动继续镜头生成、质检、口型、字幕和整集拼接。</span>
+            <span v-else-if="hasActiveOutputWork">系统正在继续镜头生成、质检、口型、字幕和整集拼接。</span>
+            <span v-else>点击“继续自动生成”后，系统会从当前有效结果继续。</span>
           </div>
-          <span class="auto-badge">自动处理</span>
+          <span class="auto-badge">{{ hasActiveOutputWork ? '自动处理中' : '等待继续' }}</span>
         </div>
       </article>
     </section>
 
     <section v-else class="empty">
-      <strong>{{ hasActiveOutputWork ? '正在自动生成第一版成片' : stageTitle(autoState) }}</strong>
+      <strong>{{ hasActiveOutputWork ? '正在自动生成第一版成片' : '等待继续自动生成' }}</strong>
       <span v-if="reviewCount">还有 {{ reviewCount }} 项真实问题需要先确认。</span>
       <span v-else-if="readIncomplete">部分已就绪结果暂时读取失败，请查看顶部后台任务；未生成阶段不会作为错误展示。</span>
-      <span v-else>{{ autoState?.message || '系统正在检查目标对白、H3、口型和整集输出状态。' }}</span>
+      <span v-else-if="hasActiveOutputWork">{{ autoState?.message || '系统正在继续目标对白、H3、口型和整集输出。' }}</span>
+      <span v-else>{{ autoState?.message || '点击“继续自动生成”后，从当前有效结果继续。' }}</span>
     </section>
 
     <details v-if="postproduction" class="diagnostics">
