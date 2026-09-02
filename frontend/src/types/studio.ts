@@ -266,9 +266,21 @@ export interface AssetEvidenceItem {
   recovery_source?: string | null
 }
 
+export interface ShotCharacterCoverage {
+  breakdown_person_count: number
+  visual_candidate_count: number
+  detected_person_count: number
+  bound_person_count: number
+  unresolved_person_count: number
+  missing_person_count: number
+  complete: boolean
+  reason: 'NONE' | 'COMPLETE' | 'NO_BINDING' | 'PARTIAL_BINDING' | 'UNRESOLVED_PERSON' | string
+}
+
 export interface ShotAssetEvidence {
   characters: AssetEvidenceItem[]
   character_diagnostics?: AssetEvidenceItem[]
+  character_coverage?: ShotCharacterCoverage
   scene: AssetEvidenceItem | null
   props: AssetEvidenceItem[]
 }
