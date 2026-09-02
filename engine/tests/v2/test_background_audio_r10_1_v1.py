@@ -21,6 +21,18 @@ def _write_constant_wav(path: Path, *, seconds: float = 1.0, rate: int = 48_000,
         handle.writeframes(frame * frame_count)
 
 
+def _write_two_level_wav(path: Path, *, rate: int = 48_000) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(2)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        low = int(1000).to_bytes(2, "little", signed=True) * 2
+        high = int(5000).to_bytes(2, "little", signed=True) * 2
+        handle.writeframes(low * rate)
+        handle.writeframes(high * rate)
+
+
 def _sample_at(path: Path, seconds: float) -> int:
     with wave.open(str(path), "rb") as handle:
         handle.setpos(min(handle.getnframes() - 1, int(seconds * handle.getframerate())))
@@ -67,6 +79,36 @@ def test_residual_source_dialogue_window_is_hard_muted(tmp_path: Path) -> None:
 
     assert abs(_sample_at(output, 0.30)) <= 8
     assert abs(_sample_at(output, 0.70)) > 1000
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg required for R10.1 media acceptance")
+def test_split_target_segments_take_matching_source_shot_audio_window(tmp_path: Path) -> None:
+    source = tmp_path / "safe-background.wav"
+    output = tmp_path / "segment-2.wav"
+    _write_two_level_wav(source)
+    siblings = [
+        {"id": "SEG_1", "shot_plan_id": "SHOTPLAN_1", "target_start_us": 0, "target_end_us": 2_000_000},
+        {"id": "SEG_2", "shot_plan_id": "SHOTPLAN_1", "target_start_us": 2_000_000, "target_end_us": 4_000_000},
+    ]
+
+    background._conform_background_segment(
+        source,
+        segment={
+            "id": "SEG_2",
+            "shot_plan_id": "SHOTPLAN_1",
+            "target_start_us": 2_000_000,
+            "target_end_us": 4_000_000,
+            "target_duration_us": 2_000_000,
+        },
+        siblings=siblings,
+        source_duration_us=2_000_000,
+        output=output,
+    )
+
+    # Segment 2 corresponds to the second half of the source Shot, so it must start from the high level.
+    assert abs(_sample_at(output, 0.05)) > 3000
+    with wave.open(str(output), "rb") as handle:
+        assert abs(handle.getnframes() - 96_000) <= 16
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg required for R10.1 media acceptance")
