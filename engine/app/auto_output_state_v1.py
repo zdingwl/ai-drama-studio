@@ -12,11 +12,16 @@ from typing import Any, Mapping
 
 from sqlalchemy import select
 
-from engine.app.episode_output_v1 import EpisodeOutput
+from engine.app.episode_output_v1 import (
+    EpisodeOutput,
+    _digest as _episode_digest,
+    _file_identity as _episode_file_identity,
+    _subtitle_events as _episode_subtitle_events,
+)
 from engine.app.generation_attempt_v1 import GenerationAttempt
 from engine.app.generation_segment_v1 import GenerationSegmentError, get_generation_segments_v1
 from engine.app.generation_selection_v1 import GenerationSelection
-from engine.app.postproduction_v1 import PostProductionSegment
+from engine.app.postproduction_v1 import get_postproduction_plan_v1
 from engine.app.review_issue_v1 import list_review_issues
 from engine.app.studio_v2 import get_project, get_session, list_episode_records
 from engine.app.target_dialogue_v1 import TargetDialogueError, get_target_dialogue_v1
@@ -109,6 +114,94 @@ def _selected_count(project_id: str, ready_segments: list[Mapping[str, Any]]) ->
     return selected
 
 
+def _episode_output_fingerprint(
+    episode_id: str,
+    generation_segments: list[Mapping[str, Any]],
+    post_by_segment: Mapping[str, Mapping[str, Any]],
+) -> str:
+    """Rebuild the canonical EpisodeOutput fingerprint without materializing any row."""
+
+    ordered = sorted(
+        [dict(item) for item in generation_segments],
+        key=lambda item: (
+            int(item.get("target_start_us") or 0),
+            int(item.get("target_end_us") or 0),
+            str(item.get("id") or ""),
+        ),
+    )
+    segments: list[dict[str, Any]] = []
+    for segment in ordered:
+        segment_id = str(segment.get("id") or "")
+        post = post_by_segment.get(segment_id)
+        post_status = str(post.get("status") or "MISSING") if post else "MISSING"
+        raw_output = str(post.get("output_path") or "") if post else ""
+        output = Path(raw_output) if raw_output else None
+        output_ready = bool(
+            post_status == "SUCCEEDED"
+            and output is not None
+            and output.is_file()
+            and output.stat().st_size > 0
+        )
+        segments.append({
+            "generation_segment_id": segment_id,
+            "postproduction_fingerprint": str(
+                post.get("postproduction_fingerprint") if post else segment.get("input_fingerprint") or ""
+            ),
+            "postproduction_status": post_status,
+            "target_start_us": int(segment.get("target_start_us") or 0),
+            "target_end_us": int(segment.get("target_end_us") or 0),
+            "output_identity": _episode_file_identity(output) if output_ready else None,
+        })
+
+    return _episode_digest({
+        "episode_id": episode_id,
+        "segments": segments,
+        "subtitles": _episode_subtitle_events(ordered),
+    })
+
+
+def _current_completed_episode_count(
+    project_id: str,
+    generation_plan: Mapping[str, Any],
+    post_plan: Mapping[str, Any],
+) -> int:
+    generation_by_episode = {
+        str(episode.get("episode_id") or ""): [
+            dict(segment)
+            for segment in episode.get("segments") or []
+            if isinstance(segment, Mapping)
+        ]
+        for episode in generation_plan.get("episodes") or []
+        if isinstance(episode, Mapping)
+    }
+    post_by_segment = {
+        str(segment.get("generation_segment_id") or ""): dict(segment)
+        for episode in post_plan.get("episodes") or []
+        if isinstance(episode, Mapping)
+        for segment in episode.get("segments") or []
+        if isinstance(segment, Mapping) and segment.get("generation_segment_id")
+    }
+
+    completed = 0
+    with get_session() as session:
+        rows = list(session.scalars(select(EpisodeOutput).where(
+            EpisodeOutput.project_id == project_id,
+        )).all())
+        for row in rows:
+            if row.status != "SUCCEEDED" or not row.output_path:
+                continue
+            output = Path(str(row.output_path))
+            if not output.is_file() or output.stat().st_size <= 0:
+                continue
+            generation_segments = generation_by_episode.get(row.episode_id)
+            if not generation_segments:
+                continue
+            expected = _episode_output_fingerprint(row.episode_id, generation_segments, post_by_segment)
+            if row.input_fingerprint == expected:
+                completed += 1
+    return completed
+
+
 def get_auto_output_state_v1(project_id: str) -> dict[str, Any]:
     """Return current downstream readiness without creating or regenerating any artifact."""
 
@@ -156,9 +249,6 @@ def get_auto_output_state_v1(project_id: str) -> dict[str, Any]:
         )
     dialogue_review_count = int(dialogue.get("review_count") or 0)
     if dialogue_review_count:
-        # There are no OPEN ReviewIssues here (checked above), so these rows are internal
-        # TargetDialogue state, not user-actionable work.  Expose them as an automatic repair
-        # point and let auto_output_v1 regenerate with the current policy/runtime.
         return _payload(
             project_id,
             stage="target_dialogue",
@@ -229,17 +319,21 @@ def get_auto_output_state_v1(project_id: str) -> dict[str, Any]:
             can_read_h3_quality=True,
         )
 
-    with get_session() as session:
-        post_rows = list(session.scalars(select(PostProductionSegment).where(
-            PostProductionSegment.project_id == project_id,
-        )).all())
-        output_rows = list(session.scalars(select(EpisodeOutput).where(
-            EpisodeOutput.project_id == project_id,
-        )).all())
-
-    postproduction_segment_count = len(post_rows)
+    post_plan = get_postproduction_plan_v1(project_id)
+    post_segments = [
+        segment
+        for episode in post_plan.get("episodes") or []
+        if isinstance(episode, Mapping)
+        for segment in episode.get("segments") or []
+        if isinstance(segment, Mapping)
+    ]
+    postproduction_segment_count = len(post_segments)
     can_read_postproduction = postproduction_segment_count > 0
-    if not post_rows or any(row.status != "SUCCEEDED" for row in post_rows):
+    postproduction_complete = bool(post_segments) and (
+        postproduction_segment_count == len(ready_segments)
+        and all(segment.get("status") == "SUCCEEDED" for segment in post_segments)
+    )
+    if not postproduction_complete:
         return _payload(
             project_id,
             stage="postproduction",
@@ -253,8 +347,8 @@ def get_auto_output_state_v1(project_id: str) -> dict[str, Any]:
             can_read_postproduction=can_read_postproduction,
         )
 
-    completed_episode_count = sum(row.status == "SUCCEEDED" for row in output_rows)
-    can_read_outputs = bool(output_rows)
+    completed_episode_count = _current_completed_episode_count(project_id, generation_plan, post_plan)
+    can_read_outputs = completed_episode_count > 0
     if episode_count > 0 and completed_episode_count >= episode_count:
         return _payload(
             project_id,
