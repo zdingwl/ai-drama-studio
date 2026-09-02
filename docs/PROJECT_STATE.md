@@ -146,6 +146,8 @@ Background enhancement is best-effort quality work. If its worker/model is unava
 | R10 PostProductionSegment | Implemented | `v2_postproduction_segments` |
 | R10 EpisodeOutput | Implemented | `v2_episode_outputs` |
 | R10.1 safe ambience/BGM/SFX reuse mix | Implemented / isolated CI pass | PostProductionSegment derivative output + Shot cache |
+| Local runtime stack checker | Implemented / Windows tooling CI pass | read-only acceptance tooling |
+| Real-project resumable acceptance runner | Implemented / Windows tooling CI pass | public production APIs only |
 
 Repository implementation does **not** mean the user's local GPU/model environment has passed real-project acceptance.
 
@@ -367,17 +369,21 @@ r8-h3-generation
 r9-h3-qc
 r10-postproduction
 frontend-v2
+Real Project Acceptance Orchestrator
 ```
 
-Latest verified R10.1 line:
+Latest verified production/tooling lines:
 
 ```text
-r7-generation-segments = PASS
-r8-h3-generation       = PASS
-r9-h3-qc                = PASS
-r10-postproduction      = PASS
-frontend-v2             = PASS
+r7-generation-segments             = PASS
+r8-h3-generation                   = PASS
+r9-h3-qc                            = PASS
+r10-postproduction                  = PASS
+frontend-v2                         = PASS
+Real Project Acceptance Orchestrator = PASS
 ```
+
+The Windows acceptance-tooling job compiles and parses both the resumable real-project runner and the unified runtime-stack checker, then runs their contract tests. It does not install H3/Qwen/LatentSync/audio-separator model environments and therefore does not replace local GPU/model acceptance.
 
 R10/R10.1 acceptance includes:
 
@@ -406,7 +412,39 @@ The dedicated R10 job installs FFmpeg but deliberately does not install the heav
 
 The general lightweight `backend-v2` and older Breakdown jobs still contain historical dependency/contract debt. They do not redefine R10.1 isolated acceptance unless a new change directly causes their failure.
 
-## 13. Local acceptance still required
+## 13. Local acceptance tooling
+
+Unified read-only Runtime check:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check_local_remake_runtime_stack.ps1
+```
+
+It checks the complete desired local acceptance stack:
+
+```text
+Backend
+H3 FL2VA
+H3 Ref2VA
+Qwen3-VL
+Qwen3-TTS
+LatentSync
+Audio Separator
+```
+
+It never installs models, starts services or modifies project data. A Qwen3-VL `/models` response that exposes a canonical/absolute model path rather than the configured alias is diagnostic only and does not create a false blocker.
+
+Resumable real-project acceptance:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_real_project_acceptance_v1.ps1 `
+  -ProjectId PROJECT_... `
+  -Run
+```
+
+The runner calls public production APIs only, resumes from current product truth, stops on genuine ReviewIssues and never auto-resolves/ignores domain truth. Machine completion is only `READY_FOR_MANUAL_ACCEPTANCE`; human watch/listen acceptance remains mandatory.
+
+## 14. Local acceptance still required
 
 Real end-to-end acceptance requires the user's actual machine:
 
@@ -416,13 +454,14 @@ Real end-to-end acceptance requires the user's actual machine:
 3. start local Qwen3-TTS runtime
 4. start LatentSync 1.6 runtime
 5. start audio-separator R10.1 worker and prepare its model
-6. run a real Project through H3 -> QC -> Selected Output -> R10/R10.1
-7. inspect target identity, scene, action/camera, duration and lip sync
-8. verify multi-person dialogue targets the correct face
-9. listen specifically for any residual source-language dialogue
-10. compare SOURCE_BACKGROUND_SAFE vs TARGET_DIALOGUE_ONLY_FALLBACK on real episodes
-11. verify final Episode MP4/SRT playback and timing
-12. force H3_QC and LIP_SYNC_QC ambiguous cases and verify Review Center recovery
+6. run check_local_remake_runtime_stack.ps1 and require every runtime READY
+7. run a real Project through H3 -> QC -> Selected Output -> R10/R10.1
+8. inspect target identity, scene, action/camera, duration and lip sync
+9. verify multi-person dialogue targets the correct face
+10. listen specifically for any residual source-language dialogue
+11. compare SOURCE_BACKGROUND_SAFE vs TARGET_DIALOGUE_ONLY_FALLBACK on real episodes
+12. verify final Episode MP4/SRT playback and timing
+13. force H3_QC and LIP_SYNC_QC ambiguous cases and verify Review Center recovery
 ```
 
 Current factual state:
@@ -430,10 +469,11 @@ Current factual state:
 ```text
 R7/R8/R9/R10/R10.1 CODE + ISOLATED REPOSITORY ACCEPTANCE = PASS
 FRONTEND BUILD ACCEPTANCE = PASS
+WINDOWS LOCAL ACCEPTANCE TOOLING = PASS
 LOCAL H3 / QWEN / LATENTSYNC / AUDIO-SEPARATOR / REAL PROJECT ACCEPTANCE = PENDING
 ```
 
-## 14. Next frontier
+## 15. Next frontier
 
 The next meaningful product milestone is **local real-project end-to-end acceptance**.
 
