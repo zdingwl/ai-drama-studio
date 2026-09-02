@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { remakeApi } from '../api/remake'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { remakeApi, type AutoOutputState } from '../api/remake'
 import type {
   GenerationAttempt,
   GenerationAttemptSummary,
@@ -14,13 +14,17 @@ import type {
 const props = defineProps<{ projectId: string; busy?: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 
+const rootElement = ref<HTMLElement | null>(null)
 const runtime = ref<H3RuntimeStatus | null>(null)
 const segments = ref<GenerationSegmentPlan | null>(null)
 const attempts = ref<GenerationAttemptSummary | null>(null)
 const quality = ref<GenerationQualitySummary | null>(null)
+const outputState = ref<AutoOutputState | null>(null)
 const loading = ref(false)
 const starting = ref(false)
+const activated = ref(false)
 const error = ref('')
+let parentDetails: HTMLDetailsElement | null = null
 
 const readySegments = computed(() => segments.value?.episodes.flatMap((episode) => episode.segments).filter((segment) => segment.status === 'READY') ?? [])
 const attemptById = computed(() => new Map((attempts.value?.attempts ?? []).map((attempt) => [attempt.id, attempt])))
@@ -33,11 +37,27 @@ const selectedOutputs = computed(() => (quality.value?.selections ?? []).map((se
 const generationFailures = computed(() => attempts.value?.attempts.filter((item) => item.status === 'FAILED') ?? [])
 const qcAttention = computed(() => (quality.value?.retry_count ?? 0) + (quality.value?.review_count ?? 0) + (quality.value?.waiting_model_count ?? 0))
 const canGenerate = computed(() => Boolean(runtime.value?.ready && readySegments.value.length && !props.busy && !starting.value))
+const waitingForSegments = computed(() => Boolean(outputState.value && !outputState.value.can_read_generation_segments))
+
+function clearH3Data(): void {
+  segments.value = null
+  attempts.value = null
+  quality.value = null
+  runtime.value = null
+}
 
 async function load(): Promise<void> {
-  if (!props.projectId) return
+  if (!props.projectId || !activated.value) return
   loading.value = true
   try {
+    const state = await remakeApi.getAutoOutputState(props.projectId)
+    outputState.value = state
+    if (!state.can_read_generation_segments) {
+      clearH3Data()
+      error.value = ''
+      return
+    }
+
     const [runtimeResult, segmentResult, attemptResult, qualityResult] = await Promise.all([
       remakeApi.getH3RuntimeStatus(),
       remakeApi.getGenerationSegments(props.projectId),
@@ -54,6 +74,16 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+async function activate(): Promise<void> {
+  if (activated.value) return
+  activated.value = true
+  await load()
+}
+
+function handleParentToggle(): void {
+  if (parentDetails?.open) void activate()
 }
 
 async function start(): Promise<void> {
@@ -79,78 +109,100 @@ function qcLabel(check: GenerationQualityCheck): string {
   return labels[check.status] || check.status
 }
 
-watch(() => props.projectId, () => void load())
-watch(() => props.busy, (busy, previous) => { if (previous && !busy) void load() })
-onMounted(() => void load())
+watch(() => props.projectId, () => {
+  outputState.value = null
+  clearH3Data()
+  if (activated.value) void load()
+})
+watch(() => props.busy, (busy, previous) => { if (activated.value && previous && !busy) void load() })
+onMounted(() => {
+  parentDetails = rootElement.value?.closest('details') ?? null
+  if (parentDetails) {
+    parentDetails.addEventListener('toggle', handleParentToggle)
+    if (parentDetails.open) void activate()
+  } else {
+    void activate()
+  }
+})
+onBeforeUnmount(() => {
+  parentDetails?.removeEventListener('toggle', handleParentToggle)
+  parentDetails = null
+})
 </script>
 
 <template>
-  <section class="h3-output">
+  <section ref="rootElement" class="h3-output">
     <header>
       <div><small>本地生成</small><strong>MiniMax H3 + 自动质检</strong><span>只有 QC 通过或人工明确采用的版本，才进入后续口型与整集成片</span></div>
       <button :disabled="loading" @click="load">刷新</button>
     </header>
     <p v-if="error" class="error">{{ error }}</p>
-
-    <div class="status-grid">
-      <article :class="{ ready: runtime?.ready }"><small>H3 Runtime</small><strong>{{ runtime?.ready ? '已就绪' : '未就绪' }}</strong><span>FL2VA + Ref2VA</span></article>
-      <article><small>可生成</small><strong>{{ readySegments.length }}</strong><span>当前 READY GenerationSegment</span></article>
-      <article class="ready"><small>已选中</small><strong>{{ quality?.selected_count ?? 0 }}</strong><span>可进入后续成片的镜头</span></article>
-      <article :class="{ warn: qcAttention || generationFailures.length }"><small>需处理</small><strong>{{ qcAttention + generationFailures.length }}</strong><span>自动重试 / 待模型 / 待人工确认</span></article>
-    </div>
-
-    <div class="generate-bar">
-      <div>
-        <strong v-if="runtime?.ready">{{ readySegments.length ? `有 ${readySegments.length} 个分段可执行 H3 生成 + QC` : '当前没有可生成分段' }}</strong>
-        <strong v-else>先启动本地 MiniMax H3 Runtime</strong>
-        <span>生成后先检查解码与真实时长，再由本地 Qwen3-VL 检查人物、场景、动作/镜头和连续性；不通过会自动换 seed 并按 QC 建议重试。</span>
-      </div>
-      <button class="primary" :disabled="!canGenerate" @click="start">{{ starting ? '正在启动…' : props.busy ? '后台任务处理中…' : '生成并质检可用镜头' }}</button>
-    </div>
-
-    <div v-if="segments" class="segment-list">
-      <header><strong>生成分段</strong><span>{{ segments.segment_count }} 段 · {{ quality?.selected_count ?? 0 }} 已选中 · {{ segments.review_count }} 上游需确认 · {{ segments.waiting_audio_count }} 等声音</span></header>
-      <div class="segment-row" v-for="segment in segments.episodes.flatMap((episode) => episode.segments)" :key="segment.id">
-        <b>Shot {{ segment.shot_ordinal }}<template v-if="segment.shot_segment_count > 1"> · {{ segment.shot_segment_index }}/{{ segment.shot_segment_count }}</template></b>
-        <span>{{ segment.generation_mode }}</span>
-        <span>{{ duration(segment.target_duration_us) }} → H3 {{ duration(segment.h3_duration_us) }}</span>
-        <em :class="segment.status.toLowerCase()">{{ segment.status === 'READY' ? '可生成' : segment.status === 'WAITING_AUDIO' ? '等声音' : '需确认' }}</em>
-      </div>
-    </div>
-
-    <div v-if="selectedOutputs.length" class="outputs">
-      <header><strong>当前可用镜头</strong><span>{{ selectedOutputs.length }} 个 Selected Output</span></header>
-      <div class="video-grid">
-        <article v-for="item in selectedOutputs" :key="item.selection.id">
-          <video v-if="item.attempt" controls preload="metadata" :src="attemptVideo(item.attempt)" />
-          <div class="video-meta">
-            <div><strong>{{ item.attempt?.mode }}</strong><span>版本 {{ item.attempt?.attempt_number }}</span></div>
-            <em :class="item.selection.selection_source.toLowerCase()">{{ selectionLabel(item.selection) }}</em>
-          </div>
-          <div class="score"><span>QC {{ score(item.selection.quality_score) }}</span><span>{{ item.check ? qcLabel(item.check) : '人工结构校验通过' }}</span></div>
-        </article>
-      </div>
-    </div>
-
-    <section v-else-if="quality && readySegments.length" class="empty-output">
-      <strong>还没有通过质检的可用镜头</strong>
-      <span>H3 技术生成成功不等于成片可用；完成 QC 后这里只展示 Selected Output。</span>
+    <section v-else-if="waitingForSegments" class="empty-output">
+      <strong>H3 阶段尚未开始</strong>
+      <span>{{ outputState?.message }}。上游完成后这里会自动读取生成与质检明细，不再用 409 表示“尚未生成”。</span>
     </section>
 
-    <details v-if="quality?.checks.length" class="qc-history">
-      <summary>质检历史 · {{ quality.check_count }}</summary>
-      <div v-for="check in quality.checks" :key="check.id" class="qc-row">
-        <strong>{{ check.generation_segment_id }}</strong>
-        <em :class="check.status.toLowerCase()">{{ qcLabel(check) }}</em>
-        <span>质量 {{ score(check.quality_score) }}</span>
-        <p>{{ check.reason }}</p>
+    <template v-else>
+      <div class="status-grid">
+        <article :class="{ ready: runtime?.ready }"><small>H3 Runtime</small><strong>{{ runtime?.ready ? '已就绪' : '未就绪' }}</strong><span>FL2VA + Ref2VA</span></article>
+        <article><small>可生成</small><strong>{{ readySegments.length }}</strong><span>当前 READY GenerationSegment</span></article>
+        <article class="ready"><small>已选中</small><strong>{{ quality?.selected_count ?? 0 }}</strong><span>可进入后续成片的镜头</span></article>
+        <article :class="{ warn: qcAttention || generationFailures.length }"><small>需处理</small><strong>{{ qcAttention + generationFailures.length }}</strong><span>自动重试 / 待模型 / 待人工确认</span></article>
       </div>
-    </details>
 
-    <details v-if="generationFailures.length" class="failures">
-      <summary>生成运行失败 · {{ generationFailures.length }}</summary>
-      <div v-for="attempt in generationFailures" :key="attempt.id"><strong>{{ attempt.generation_segment_id }}</strong><span>{{ attempt.error_message || attempt.provider_status || '生成失败' }}</span></div>
-    </details>
+      <div class="generate-bar">
+        <div>
+          <strong v-if="runtime?.ready">{{ readySegments.length ? `有 ${readySegments.length} 个分段可执行 H3 生成 + QC` : '当前没有可生成分段' }}</strong>
+          <strong v-else>先启动本地 MiniMax H3 Runtime</strong>
+          <span>生成后先检查解码与真实时长，再由本地 Qwen3-VL 检查人物、场景、动作/镜头和连续性；不通过会自动换 seed 并按 QC 建议重试。</span>
+        </div>
+        <button class="primary" :disabled="!canGenerate" @click="start">{{ starting ? '正在启动…' : props.busy ? '后台任务处理中…' : '生成并质检可用镜头' }}</button>
+      </div>
+
+      <div v-if="segments" class="segment-list">
+        <header><strong>生成分段</strong><span>{{ segments.segment_count }} 段 · {{ quality?.selected_count ?? 0 }} 已选中 · {{ segments.review_count }} 上游需确认 · {{ segments.waiting_audio_count }} 等声音</span></header>
+        <div class="segment-row" v-for="segment in segments.episodes.flatMap((episode) => episode.segments)" :key="segment.id">
+          <b>Shot {{ segment.shot_ordinal }}<template v-if="segment.shot_segment_count > 1"> · {{ segment.shot_segment_index }}/{{ segment.shot_segment_count }}</template></b>
+          <span>{{ segment.generation_mode }}</span>
+          <span>{{ duration(segment.target_duration_us) }} → H3 {{ duration(segment.h3_duration_us) }}</span>
+          <em :class="segment.status.toLowerCase()">{{ segment.status === 'READY' ? '可生成' : segment.status === 'WAITING_AUDIO' ? '等声音' : '需确认' }}</em>
+        </div>
+      </div>
+
+      <div v-if="selectedOutputs.length" class="outputs">
+        <header><strong>当前可用镜头</strong><span>{{ selectedOutputs.length }} 个 Selected Output</span></header>
+        <div class="video-grid">
+          <article v-for="item in selectedOutputs" :key="item.selection.id">
+            <video v-if="item.attempt" controls preload="metadata" :src="attemptVideo(item.attempt)" />
+            <div class="video-meta">
+              <div><strong>{{ item.attempt?.mode }}</strong><span>版本 {{ item.attempt?.attempt_number }}</span></div>
+              <em :class="item.selection.selection_source.toLowerCase()">{{ selectionLabel(item.selection) }}</em>
+            </div>
+            <div class="score"><span>QC {{ score(item.selection.quality_score) }}</span><span>{{ item.check ? qcLabel(item.check) : '人工结构校验通过' }}</span></div>
+          </article>
+        </div>
+      </div>
+
+      <section v-else-if="quality && readySegments.length" class="empty-output">
+        <strong>还没有通过质检的可用镜头</strong>
+        <span>H3 技术生成成功不等于成片可用；完成 QC 后这里只展示 Selected Output。</span>
+      </section>
+
+      <details v-if="quality?.checks.length" class="qc-history">
+        <summary>质检历史 · {{ quality.check_count }}</summary>
+        <div v-for="check in quality.checks" :key="check.id" class="qc-row">
+          <strong>{{ check.generation_segment_id }}</strong>
+          <em :class="check.status.toLowerCase()">{{ qcLabel(check) }}</em>
+          <span>质量 {{ score(check.quality_score) }}</span>
+          <p>{{ check.reason }}</p>
+        </div>
+      </details>
+
+      <details v-if="generationFailures.length" class="failures">
+        <summary>生成运行失败 · {{ generationFailures.length }}</summary>
+        <div v-for="attempt in generationFailures" :key="attempt.id"><strong>{{ attempt.generation_segment_id }}</strong><span>{{ attempt.error_message || attempt.provider_status || '生成失败' }}</span></div>
+      </details>
+    </template>
   </section>
 </template>
 
