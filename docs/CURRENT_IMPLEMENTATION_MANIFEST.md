@@ -11,6 +11,7 @@ Product: Localized Remake V1
 Final video target: local MiniMax H3
 Target speech runtime: local Qwen3-TTS
 Lip-sync runtime: local LatentSync 1.6
+Background-audio runtime: local audio-separator worker
 Character runtime: Character V10.1
 Formal UI: ProjectListV4 + ProjectStudioV4
 ```
@@ -63,7 +64,7 @@ prepare target references
 → GenerationSelection / Selected Output
 ```
 
-Heavy R10 postproduction:
+Heavy R10/R10.1 postproduction:
 
 ```text
 POST /api/projects/{project_id}/tasks/postproduction
@@ -72,6 +73,7 @@ Selected Output
 → final target audio
 → LatentSync / target-face ROI LatentSync
 → PostProductionSegment
+→ optional safe source background enhancement
 → SRT
 → normalized media
 → EpisodeOutput
@@ -330,9 +332,89 @@ final Episode result first
 
 H3/PostProduction segment internals stay under advanced diagnostics.
 
+## R10.1 safe background audio enhancement
+
+### Provider and worker
+
+```text
+engine/app/background_audio_provider_v1.py
+engine/app/audio_separator_provider_v1.py
+scripts/audio_separator_worker_v1.py
+scripts/requirements_audio_separator_v1.txt
+```
+
+Boundary:
+
+```text
+postproduction business code
+→ BackgroundAudioProvider
+→ AUDIO_SEPARATOR_LOCAL_V1
+→ localhost audio-separator worker
+```
+
+The heavy separation stack is isolated from `engine/requirements.txt`. The dedicated worker requirements pin `audio-separator[gpu]==0.47.0`.
+
+Default separator model:
+
+```text
+UVR-MDX-NET-Inst_HQ_5.onnx
+```
+
+It is configurable through `AI_DRAMA_BACKGROUND_AUDIO_MODEL`.
+
+### Safety/mix core
+
+```text
+engine/app/background_audio_v1.py
+engine/app/postproduction_audio_mix_v1.py
+```
+
+Safety invariant:
+
+```text
+raw source audio is never mixed into target output
+```
+
+Flow:
+
+```text
+source Episode/Shot audio
+→ exact source-Shot WAV
+→ separator Instrumental stem
+→ SourceDramaSnapshot source-dialogue windows
+→ second hard-mute pass with safety padding
+→ cache by source/profile fingerprint
+→ map the corresponding source window to each target GenerationSegment
+→ FFmpeg atempo conform to target duration
+→ conservative background gain
+→ extra duck during target-dialogue windows
+→ limiter
+→ remux R10 visual with final mixed audio
+```
+
+A Shot split into several target GenerationSegments uses proportional source-Shot windows. Later target segments do not restart the background from source time zero.
+
+Safe fallback:
+
+```text
+separator/model unavailable or enhancement failure
+→ keep already-valid target-dialogue-only R10 output
+→ TARGET_DIALOGUE_ONLY_FALLBACK
+→ no ReviewIssue
+→ Episode assembly continues
+```
+
+Runtime endpoint:
+
+```text
+GET /api/background-audio/runtime
+```
+
+R10.1 currently reuses safely separated source ambience/music/SFX. It does not introduce a speculative generated-BGM/SFX subsystem.
+
 ## Main application wiring
 
-The formal router/model import tree includes generation, R9 QC/selection and R10 postproduction/output models before `init_database()` so all current V2 tables participate in `Base.metadata.create_all()`.
+The formal router/model import tree includes generation, R9 QC/selection and R10/R10.1 postproduction/output code. Heavy LatentSync/audio-separator model stacks remain lazy workers outside the main backend process.
 
 ## Repository acceptance
 
@@ -344,6 +426,7 @@ engine/tests/v2/test_h3_r8_v1.py
 engine/tests/v2/test_h3_qc_r9_v1.py
 engine/tests/v2/test_postproduction_r10_v1.py
 engine/tests/v2/test_episode_output_r10_v1.py
+engine/tests/v2/test_background_audio_r10_1_v1.py
 ```
 
 Dedicated jobs:
@@ -356,7 +439,7 @@ r10-postproduction
 frontend-v2
 ```
 
-Latest verified R10 line:
+Latest verified R10.1 line:
 
 ```text
 r7-generation-segments = PASS
@@ -366,14 +449,28 @@ r10-postproduction      = PASS
 frontend-v2             = PASS
 ```
 
-The dedicated R10 job installs FFmpeg and covers real media normalization/concat. Lightweight full-backend environments without FFmpeg skip those R10 media execution tests rather than reporting false R10 regressions.
+R10.1 CI specifically verifies:
+
+```text
+source-dialogue suppression window conversion + merge
+real FFmpeg hard mute of residual source dialogue
+safe background + target-dialogue mix duration/channel contract
+extreme atempo chaining
+split target segments map to the corresponding source-Shot audio window
+background runtime offline -> safe fallback
+R10 success remains usable during fallback
+audio-separator worker import is lazy
+background runtime route is registered
+```
+
+The dedicated R10 job installs FFmpeg and performs real media tests. It deliberately does not install the heavy audio-separator model environment, so model quality/runtime remains a local acceptance fact rather than a fake CI claim.
 
 ## Acceptance boundary
 
 ```text
-R7/R8/R9/R10 CODE / ISOLATED REPOSITORY ACCEPTANCE = PASS
+R7/R8/R9/R10/R10.1 CODE / ISOLATED REPOSITORY ACCEPTANCE = PASS
 FRONTEND BUILD ACCEPTANCE = PASS
-LOCAL H3 / QWEN / LATENTSYNC / REAL PROJECT ACCEPTANCE = PENDING
+LOCAL H3 / QWEN / LATENTSYNC / AUDIO-SEPARATOR / REAL PROJECT ACCEPTANCE = PENDING
 ```
 
 Historical full-suite backend/older Breakdown failures remain separate legacy/dependency debt unless a current change directly causes them.
@@ -381,9 +478,8 @@ Historical full-suite backend/older Breakdown failures remain separate legacy/de
 ## Current frontier
 
 ```text
-R10.1 ambience / BGM / SFX mix layer = NEXT
-real local GPU end-to-end acceptance  = PENDING
-R11 legacy cleanup                    = LATER
+real local end-to-end project acceptance = NEXT
+R11 legacy cleanup                      = LATER
 ```
 
-R10.1 must not reintroduce source-language dialogue. Non-dialogue source ambience/music may only be preserved when it can be separated safely; otherwise the system should reconstruct/replace it through an explicit mix layer.
+Do not add a generated BGM/SFX subsystem before real R10.1 listening tests show that safely separated source ambience/music is insufficient.
