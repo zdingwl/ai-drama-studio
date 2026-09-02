@@ -3,6 +3,11 @@ from pathlib import Path
 from engine.app.breakdown_p2_vlm_v1 import Qwen3VLSemanticProvider
 
 
+def _repo_root() -> Path:
+    # engine/tests/v2/<test>.py -> repository root
+    return Path(__file__).resolve().parents[3]
+
+
 def test_breakdown_vlm_default_checkpoint_path_matches_setup_script(monkeypatch) -> None:
     monkeypatch.delenv("AI_DRAMA_P2_VLM_MODEL_PATH", raising=False)
     monkeypatch.delenv("AI_DRAMA_P2_VLM_MODEL", raising=False)
@@ -15,8 +20,7 @@ def test_breakdown_vlm_default_checkpoint_path_matches_setup_script(monkeypatch)
 
 
 def test_existing_breakdown_vlm_setup_script_provisions_production_checkpoint() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    script = (repo_root / "scripts" / "setup_breakdown_vlm_runtime.ps1").read_text(encoding="utf-8")
+    script = (_repo_root() / "scripts" / "setup_breakdown_vlm_runtime.ps1").read_text(encoding="utf-8")
 
     assert "Qwen/Qwen3-VL-4B-Instruct" in script
     assert "pretrained\\Qwen3-VL-4B-Instruct" in script
@@ -27,8 +31,7 @@ def test_existing_breakdown_vlm_setup_script_provisions_production_checkpoint() 
 
 
 def test_breakdown_vlm_setup_script_is_ascii_for_windows_powershell_51() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    script = (repo_root / "scripts" / "setup_breakdown_vlm_runtime.ps1").read_text(encoding="utf-8")
+    script = (_repo_root() / "scripts" / "setup_breakdown_vlm_runtime.ps1").read_text(encoding="utf-8")
 
     # Windows PowerShell 5.1 may parse UTF-8-without-BOM .ps1 files through the active ANSI code page.
     # Keeping this setup entrypoint ASCII-only prevents locale-dependent quote/parser corruption.
