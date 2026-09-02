@@ -628,7 +628,7 @@ def episode_output_video_v1(project_id: str, episode_id: str) -> Path | None:
 
 def episode_output_subtitle_v1(project_id: str, episode_id: str) -> Path | None:
     row = get_episode_output_v1(project_id, episode_id)
-    path = Path(str(row.get("subtitle_path"))) if row and row.get("subtitle_path") else None
+    path = Path(str(row.get("subtitle_path"))) if row and row.get("status") == "SUCCEEDED" and row.get("subtitle_path") else None
     return path if path is not None and path.is_file() else None
 
 
