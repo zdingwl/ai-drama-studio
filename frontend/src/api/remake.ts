@@ -25,6 +25,43 @@ import type {
 } from '../types/remake'
 import type { BackgroundTask } from '../types/studio'
 
+export type AutoOutputStage =
+  | 'review_gate'
+  | 'target_localization'
+  | 'target_dialogue'
+  | 'tts'
+  | 'generation_segments'
+  | 'h3_generation'
+  | 'postproduction'
+  | 'episode_output'
+  | 'complete'
+
+export interface AutoOutputState {
+  schema_version: 'auto-output-state-v1'
+  project_id: string
+  stage: AutoOutputStage
+  message: string
+  review_issue_count: number
+  episode_count: number
+  segment_count: number
+  selected_segment_count: number
+  postproduction_segment_count: number
+  completed_episode_count: number
+  can_read_generation_segments: boolean
+  can_read_h3_quality: boolean
+  can_read_postproduction: boolean
+  can_read_outputs: boolean
+  active_task: null | {
+    id?: string
+    task_type?: string
+    status?: string
+    title?: string
+    stage_key?: string | null
+    stage_label?: string | null
+    message?: string | null
+  }
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options)
   if (!response.ok) {
@@ -59,6 +96,7 @@ export const remakeApi = {
     body: JSON.stringify({ scene_policy: scenePolicy, generation_engine: 'MINIMAX_H3_LOCAL' }),
   }),
   startAutoPrepare: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/auto-remake-prepare`),
+  getAutoOutputState: (projectId: string) => request<AutoOutputState>(`/api/projects/${projectId}/auto-output/state`),
   startAutoOutput: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/auto-output`),
   listReviewIssues: (projectId: string, status: ReviewIssueStatus | '' = 'OPEN') => request<ReviewIssue[]>(
     `/api/projects/${projectId}/review-issues${status ? `?status=${status}` : '?status='}`,
