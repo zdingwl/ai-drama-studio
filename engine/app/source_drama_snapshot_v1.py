@@ -17,6 +17,7 @@ from sqlalchemy import select
 from engine.app.breakdown_read_model_contract_v1 import BreakdownReadModelV1
 from engine.app.breakdown_read_model_v1 import load_episode_breakdown_read_model_v1
 from engine.app.shot_revision_v2 import ShotRevisionItem
+from engine.app.source_dialogue_speaker_resolver_v1 import resolve_shot_dialogue_speakers_v1
 from engine.app.source_drama_snapshot_contract_v1 import (
     SourceDramaAssetRefV1,
     SourceDramaEpisodeSnapshotV1,
@@ -161,15 +162,37 @@ def compose_episode_source_drama_snapshot_v1(
             if not shot.reference_url:
                 missing_reference_count += 1
 
-            dialogue_rows: list[dict[str, Any]] = []
-            for index, dialogue in enumerate(shot.dialogue, start=1):
-                dialogue_rows.append({
+            shot_people = [person_key_by_ref[ref] for ref in shot.people if ref in person_key_by_ref]
+            performance_rows = [
+                {
+                    "text": performance.text,
+                    "people": [person_key_by_ref[ref] for ref in performance.people if ref in person_key_by_ref],
+                }
+                for performance in shot.performance
+            ]
+            dialogue_inputs = [
+                {
                     "dialogue_key": f"{shot_key}:D{index}",
                     "start_us": dialogue.start_us,
                     "end_us": dialogue.end_us,
                     "source_text": dialogue.text,
                     "speakers": [person_key_by_ref[ref] for ref in dialogue.speakers if ref in person_key_by_ref],
-                })
+                }
+                for index, dialogue in enumerate(shot.dialogue, start=1)
+            ]
+            speaker_resolutions = resolve_shot_dialogue_speakers_v1(
+                dialogue_inputs,
+                scene_people=people_rows,
+                shot_people=shot_people,
+                performance=performance_rows,
+            )
+            dialogue_rows = [
+                {
+                    **dialogue,
+                    "speakers": list(speaker_resolutions[index].speaker_keys),
+                }
+                for index, dialogue in enumerate(dialogue_inputs)
+            ]
             dialogue_count += len(dialogue_rows)
 
             text_rows = [
@@ -195,14 +218,8 @@ def compose_episode_source_drama_snapshot_v1(
                 "thumbnail_url": shot.thumbnail_url,
                 "reference_url": shot.reference_url,
                 "visual_description": shot.visual_description,
-                "people": [person_key_by_ref[ref] for ref in shot.people if ref in person_key_by_ref],
-                "performance": [
-                    {
-                        "text": performance.text,
-                        "people": [person_key_by_ref[ref] for ref in performance.people if ref in person_key_by_ref],
-                    }
-                    for performance in shot.performance
-                ],
+                "people": shot_people,
+                "performance": performance_rows,
                 "source_dialogue": dialogue_rows,
                 "observed_props": [
                     {"label": prop.label, "interaction": prop.interaction}
