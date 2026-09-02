@@ -49,7 +49,10 @@ def test_preprocess_proxy_keeps_optional_source_audio(tmp_path, monkeypatch) -> 
         output.write_bytes(b"media")
         return SimpleNamespace(stdout="", stderr="")
 
+    # This unit test locks FFmpeg command construction. Full decode validation has its own
+    # production boundary and must not require a host FFmpeg binary in this lightweight test.
     monkeypatch.setattr(media_v2, "_run", fake_run)
+    monkeypatch.setattr(media_v2, "_validate_video_decode", lambda *_args, **_kwargs: None)
     media_v2.preprocess_episode("EP1")
 
     proxy_command = commands[0]
