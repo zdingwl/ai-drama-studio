@@ -1,7 +1,7 @@
 ---
 name: ai-drama-studio-localized-remake-v1
-version: 4.3.0
-description: Localized short-drama remake workflow; SourceDramaSnapshot + target assets + TargetDialogue/Qwen3-TTS + Review Center + local MiniMax H3.
+version: 5.0.0
+description: Localized short-drama remake workflow through local MiniMax H3, QC, lip sync, safe background audio and Episode export.
 ---
 
 # AI Drama Studio — Localized Remake V1
@@ -14,48 +14,65 @@ AGENTS.md
 → docs/PRODUCT_REMAKE_ARCHITECTURE_V1.md
 → docs/PROJECT_STATE.md
 → docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-→ docs/SOURCE_DRAMA_SNAPSHOT_V1.md
-→ docs/TARGET_LOCALIZATION_V1.md
-→ docs/TARGET_DIALOGUE_TTS_V1.md
 → relevant current code/tests
 ```
 
-Rollback:
-
-```text
-backup/pre-h3-remake-restructure-2026-09-01
-37944c693a08c6ff292b08e1f73b1249812cabae
-```
+Rollback branches are recovery-only. `main` is active development.
 
 ## 1. Goal
 
 ```text
 source short drama
-→ understand source story/shots/actions/camera/dialogue
-→ replace characters for target region
-→ KEEP / LOCALIZE scenes
-→ translate/localize dialogue
-→ target-character TTS + real speech duration
-→ timing-adjusted remake timeline
+→ understand source story / shots / actions / camera / dialogue
+→ SourceDramaSnapshot
+→ localized characters + target scene decisions
+→ localized target dialogue + stable target-character voice
+→ real target speech duration
+→ RemakeTimeline
+→ GenerationSegment
 → local MiniMax H3
-→ lip sync / QC / assembly/export
+→ structural + semantic QC / automatic retry
+→ GenerationSelection
+→ target-speaker lip sync
+→ safe non-dialogue background audio
+→ subtitles / Episode assembly / export
 ```
 
 Source drama is a directing/reference template. Characters must change. Target dialogue must not be unnaturally forced into source duration.
 
-## 2. UX rule
+## 2. Product and UX rules
 
-> Automatic work is background work, not a page.
+```text
+characters = always replaced/localized
+scene policy = AUTO | KEEP | LOCALIZE
+source Reference Video = directing/action/camera reference, not source-person identity truth
+Shot != GenerationSegment
+GenerationAttempt != usable output
+only GenerationSelection may enter final-video work
+raw source audio must never be mixed into target output
+SourceDramaSnapshot is the only downstream source-fact boundary
+```
+
+Automatic work is background work, not a page.
+
+Formal user surface:
 
 ```text
 Project
-→ Review Center only when needed
-→ Output
+Review Center
+Output
 ```
 
-Formal UI: `ProjectListV4` + `ProjectStudioV4`.
+Formal UI:
 
-## 3. Current one-click pipeline
+```text
+ProjectListV4
+ProjectStudioV4
+```
+
+Do not add top-level pages for internal generation/QC/lip-sync/audio-separation stages.
+
+## 3. Automatic preparation
 
 ```text
 AUTO_REMAKE_PREP_V1
@@ -63,92 +80,48 @@ AUTO_REMAKE_PREP_V1
 preprocess
 → Shot / Reference Clips
 → ASR / OCR / Qwen3-VL Breakdown / Fusion
-→ Character V10.1 + Scene/Prop extraction
+→ Character V10.1 + Scene / Prop extraction
 → Final Asset
 → source ReviewIssues
 → SourceDramaSnapshot
-→ Speaker ReviewIssues
 → TargetCharacter / SceneLocalizationMapping
-→ target ReviewIssues
-→ TargetDialogue translation/localization
-→ READY-line local Qwen3-TTS when available
+→ TargetDialogue localization
+→ READY-line local Qwen3-TTS
+→ RemakeTimeline
+→ GenerationSegment
 ```
 
-Current ReviewIssue types:
+H3 and final postproduction remain separate heavy tasks so preparation can finish while local model runtimes are offline.
+
+## 4. Current authority chain
+
+### Source truth
 
 ```text
-SHOT_BOUNDARY
-CHARACTER_IDENTITY
-ASSET_BINDING
-SPEAKER
-TARGET_CHARACTER
-SCENE_LOCALIZATION
-LOCALIZATION
+SourceDramaSnapshot
 ```
 
-## 4. R2 SourceDramaSnapshot
+Source ASR/OCR/Shot timing and source dialogue are immutable downstream.
 
-Implemented on main; local acceptance pending.
+### Target/remake truth
 
 ```text
-GET /api/episodes/{episode_id}/source-drama-snapshot
-GET /api/projects/{project_id}/source-drama-snapshot
+TargetCharacter
+SceneLocalizationMapping
+TargetVoiceProfile
+TargetDialogue
+RemakeTimeline
+GenerationSegment
+GenerationAttempt
+GenerationQualityCheck
+GenerationSelection
+PostProductionSegment
+EpisodeOutput
 ```
 
-Source-only deterministic current read truth with stable source keys and `source_fingerprint`.
+`ReviewIssue` is attention state only, not a second truth database.
 
-## 5. R4 Target localization
-
-Implemented on main; local acceptance pending.
-
-### TargetCharacter
-
-```text
-Source Character
-→ one TargetCharacter per Project
-```
-
-Stores target-region name, stable appearance profile, generation prompt and future reference assets.
-
-### SceneLocalizationMapping
-
-```text
-Final Scene SCENE_X
-→ canonical ASSET:SCENE_X
-→ one KEEP / LOCALIZE mapping across episodes
-```
-
-Anonymous source scenes remain occurrence-local.
-
-Policy:
-
-```text
-KEEP     -> KEEP automatically
-LOCALIZE -> target scene description required
-AUTO     -> Qwen KEEP/LOCALIZE; low confidence -> REVIEW
-```
-
-## 6. R5 TargetDialogue + local Qwen3-TTS
-
-Implemented on main; local acceptance pending.
-
-### TargetDialogue
-
-```text
-source dialogue
-+ READY TargetCharacter
-+ scene / Shot context
-+ target locale
-→ translated_text
-→ localized_text
-→ final_text
-```
-
-`final_text` is the downstream dialogue authority. Source ASR text remains immutable.
-
-Low-confidence target text with a known target speaker creates `LOCALIZATION` ReviewIssue.
-
-### Target voice
+## 5. R5 TargetDialogue + local Qwen3-TTS
 
 Runtime profile:
 
@@ -158,85 +131,36 @@ QWEN3_TTS_VOICE_DESIGN_CLONE_V1
 
 ```text
 TargetCharacter
-→ Qwen3-TTS VoiceDesign reference WAV
-→ Base VoiceClone reusable prompt
-→ same character voice across all lines
+→ VoiceDesign reference
+→ reusable character voice
+→ TargetDialogue final WAV
+→ real speech_duration_us
 ```
 
-Worker:
+`TargetDialogue.final_text` is the target dialogue authority. Source text remains immutable.
+
+## 6. R6 RemakeTimeline
+
+Implemented.
+
+Consumes real target TTS duration and plans target time without rewriting source Shot/ASR truth.
+
+Strategies include:
 
 ```text
-scripts/qwen3_tts_worker_v1.py
+KEEP
+TRIM
+CARRY_OVER_REACTION
+EXTEND
+HUMAN_REVIEW
+WAITING_AUDIO
 ```
 
-Main runtime client:
+Do not solve target-language timing by globally slowing video or unnaturally accelerating speech.
 
-```text
-engine/app/qwen3_tts_runtime_v1.py
-```
+## 7. R7 GenerationSegment + H3 provider
 
-Actual WAV duration is stored in:
-
-```text
-speech_duration_us
-```
-
-R6 must use this real duration.
-
-One uncertain dialogue must not block audio for other READY dialogue rows.
-
-If TargetCharacter changes, manual target dialogue is reopened and old target voice/audio is invalidated.
-
-Spec: `docs/TARGET_DIALOGUE_TTS_V1.md`.
-
-## 7. Review Center
-
-ReviewIssue is attention state only.
-
-These types must be fixed through real domain editors, not generic “mark resolved” buttons:
-
-```text
-TARGET_CHARACTER
-SCENE_LOCALIZATION
-LOCALIZATION
-```
-
-Authoritative writes go to:
-
-```text
-TargetCharacter
-SceneLocalizationMapping
-TargetDialogue
-```
-
-## 8. Source invariants
-
-```text
-LocalSubject != Character
-ASR speaker != Character
-Source Character != TargetCharacter
-Source Scene != target Scene decision
-Source Dialogue != TargetDialogue
-same-Shot person observations = hard cannot-link
-ASR/OCR source text = immutable
-SourceDramaSnapshot = source-only
-```
-
-Do not weaken Character V10.1 safety gates to reduce ReviewIssues.
-
-## 9. Next implementation order
-
-```text
-R2 SourceDramaSnapshot                        = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-R4 TargetCharacter + SceneLocalizationMapping = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-R5 TargetDialogue + local Qwen3-TTS           = IMPLEMENTED / LOCAL ACCEPTANCE PENDING
-R6 Dialogue Timing Engine + RemakeTimeline     = NEXT
-R7 H3RuntimeManager (local MiniMax H3)
-R8 H3ContextCompiler + GenerationSegment
-R9 H3 QC + retry
-R10 Lip Sync + subtitle/audio/assembly/export
-R11 legacy cleanup
-```
+Implemented.
 
 Mandatory rule:
 
@@ -244,55 +168,186 @@ Mandatory rule:
 Shot != GenerationSegment
 ```
 
-## 10. R6 input boundary
-
-R6 consumes current READY R5 facts:
+H3 sizing:
 
 ```text
-TargetDialogue.final_text
-TargetDialogue.audio_path
-TargetDialogue.speech_duration_us
-TargetDialogue.target_character_id
-source dialogue timing
-SourceDramaSnapshot Shot / Reference Video / action / camera context
+4..15 seconds
+<4-second target -> render >=4 then exact post-trim
+>15-second target -> split into multiple GenerationSegments
 ```
 
-R6 strategies:
+Provider boundary:
 
 ```text
-KEEP
-REWRITE_SHORTER
-TRIM
-CARRY_OVER_REACTION
-EXTEND
-REGENERATE_EXTENSION
-HUMAN_REVIEW
+business
+→ VideoGenerationProvider
+→ MiniMaxH3Provider
+→ H3RuntimeManager
+→ local SGLang
 ```
 
-## 11. H3 target input
+## 8. R8 H3 Context + GenerationAttempt
+
+Implemented.
+
+Ref2VA receives:
 
 ```text
-Source Reference Video
-+ TargetCharacter reference assets
-+ target scene references when localized
-+ TargetDialogue final audio
-+ action/performance
-+ camera/composition
-+ planned target duration
+silent source Reference Video
++ current TargetCharacter references
++ optional LOCALIZE Scene reference
++ exact target-dialogue audio condition
++ compact action/camera constraints
 ```
+
+Never pass source-language soundtrack as H3 reference audio.
+
+`GenerationAttempt(SUCCEEDED)` means only that a technical output file exists.
+
+## 9. R9 H3 QC / retry / selection
+
+Implemented with isolated CI acceptance.
 
 ```text
-Ref2VA = main remake
-FL2VA  = extension / bridge / repair
+GenerationAttempt
+→ ffprobe + full ffmpeg decode + exact-duration gate
+→ Qwen3-VL semantic QC
+→ PASS -> GenerationSelection
+→ RETRY -> new seed + QC correction prompt
+→ ambiguous/repeated failure -> H3_QC
 ```
 
-## 12. Git / acceptance
+Semantic QC checks target identity, source-actor leakage, scene consistency, action/camera consistency, continuity and visual integrity.
+
+`H3_QC` cannot be generically ignored/resolved. Human action must select a structurally valid version or retry.
+
+## 10. R10 Lip Sync / subtitle / EpisodeOutput
+
+Implemented with isolated CI acceptance.
+
+```text
+GenerationSelection
+→ final target dialogue audio
+→ target-speaker lip sync
+→ PostProductionSegment
+→ target-timeline SRT
+→ normalized media
+→ EpisodeOutput
+→ MP4 + SRT
+```
+
+Lip-sync rules:
+
+```text
+off-screen dialogue -> keep target audio, skip mouth edit
+single visible target speaker -> full-segment LatentSync
+multiple visible faces -> resolve target speaker identity -> ROI LatentSync
+identity ambiguity -> LIP_SYNC_QC
+runtime/model unavailable -> waiting state, not human issue
+```
+
+`LIP_SYNC_QC` cannot be generically ignored/resolved.
+
+## 11. R10.1 safe background audio
+
+Implemented with isolated CI acceptance.
+
+Hard invariant:
+
+```text
+raw source audio is never mixed into target output
+```
+
+Provider boundary:
+
+```text
+PostProduction
+→ BackgroundAudioProvider
+→ AUDIO_SEPARATOR_LOCAL_V1
+→ dedicated audio-separator worker
+```
+
+Safe flow:
+
+```text
+source Shot audio
+→ Instrumental/background separation
+→ SourceDramaSnapshot source-dialogue windows
+→ second hard-mute pass with padding
+→ cache by source/profile fingerprint
+→ map corresponding source window to target GenerationSegment
+→ atempo conform to target duration
+→ conservative gain + target-dialogue duck + limiter
+→ final mixed PostProduction output
+```
+
+If the separator runtime/model fails:
+
+```text
+TARGET_DIALOGUE_ONLY_FALLBACK
+```
+
+The existing target-dialogue-only R10 video remains valid; Episode assembly continues and no ReviewIssue is created.
+
+## 12. Review Center
+
+Current issue families:
+
+```text
+SHOT_BOUNDARY
+CHARACTER_IDENTITY
+ASSET_BINDING
+SPEAKER
+TARGET_CHARACTER
+SCENE_LOCALIZATION
+LOCALIZATION
+DIALOGUE_TIMING
+H3_QC
+LIP_SYNC_QC
+```
+
+Infrastructure-only failures such as H3/TTS/Qwen/LatentSync/audio-separator offline must not become human ReviewIssues.
+
+## 13. Current stage state
+
+```text
+R2 SourceDramaSnapshot                        = IMPLEMENTED
+R4 TargetCharacter + SceneLocalizationMapping = IMPLEMENTED
+R5 TargetDialogue + local Qwen3-TTS           = IMPLEMENTED
+R6 Dialogue Timing + RemakeTimeline            = IMPLEMENTED
+R7 GenerationSegment + H3 Runtime/Provider     = IMPLEMENTED
+R8 H3 Context + GenerationAttempt              = IMPLEMENTED / ISOLATED CI PASS
+R9 H3 QC / automatic retry / selection        = IMPLEMENTED / ISOLATED CI PASS
+R10 Lip Sync + subtitle / assembly / export    = IMPLEMENTED / ISOLATED CI PASS
+R10.1 safe ambience/BGM/SFX reuse              = IMPLEMENTED / ISOLATED CI PASS
+R11 legacy cleanup                            = LATER
+```
+
+The next meaningful milestone is real local end-to-end acceptance on the actual model/GPU machine.
+
+## 14. Acceptance discipline
+
+Repository acceptance and real local model acceptance are separate facts.
+
+Dedicated repository jobs:
+
+```text
+r7-generation-segments
+r8-h3-generation
+r9-h3-qc
+r10-postproduction
+frontend-v2
+```
+
+Latest verified R10.1 line passes all five jobs above. Historical `backend-v2` / old Breakdown failures remain legacy/dependency debt unless a current change directly causes them.
+
+Do **not** claim local H3/Qwen3-TTS/Qwen3-VL/LatentSync/audio-separator PASS until a real Project has run through the actual local runtimes and its final video/audio has been inspected.
+
+## 15. Git discipline
 
 ```text
 main = active development
-backup branch = rollback-only
-all commits = [skip ci]
-hosted GitHub Actions != acceptance evidence
+backup branches = rollback-only
+minimal changes on current architecture
+code/docs -> main unless the user explicitly requests another branch
 ```
-
-Repository edits are not FINAL PASS. R2/R4/R5 local checks are documented in their spec files.
