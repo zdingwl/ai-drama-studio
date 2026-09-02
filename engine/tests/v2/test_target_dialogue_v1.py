@@ -6,7 +6,13 @@ import wave
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from engine.app import review_issue_v1, studio_v2, target_dialogue_v1, target_localization_v1
+from engine.app import (
+    review_issue_v1,
+    studio_v2,
+    target_dialogue_pipeline_v1,
+    target_dialogue_v1,
+    target_localization_v1,
+)
 from engine.app.target_dialogue_pipeline_v1 import run_target_dialogue_pipeline_v1
 
 
@@ -127,8 +133,12 @@ def _seed(monkeypatch, tmp_path: Path, *, speakers: list[str] | None = None):
         ))
         session.commit()
     snapshot = _snapshot(project["id"], episode_id, speakers=speakers)
+    localization = _target_localization(project["id"])
     monkeypatch.setattr(target_dialogue_v1, "load_project_source_drama_snapshot_v1", lambda _project_id: snapshot)
-    monkeypatch.setattr(target_dialogue_v1, "get_target_localization_v1", lambda _project_id: _target_localization(project["id"]))
+    monkeypatch.setattr(target_dialogue_v1, "get_target_localization_v1", lambda _project_id: localization)
+    # The coordinator imports this getter directly. Seed the same current TargetLocalization
+    # contract there so the test exercises invalidation + TTS without falling back to old source data.
+    monkeypatch.setattr(target_dialogue_pipeline_v1, "get_target_localization_v1", lambda _project_id: localization)
     return project["id"], episode_id
 
 
