@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from scripts.run_real_project_acceptance_v1 import (
+    AcceptanceError,
     acceptance_result,
     runtime_blockers,
     run_pipeline,
@@ -103,7 +104,7 @@ class _StageClient:
             return {"id": "PROJECT_1", "name": "Acceptance", "episodes": [{"id": "EP_1"}]}
         if path == "/api/projects/PROJECT_1/generation-segments":
             if self.stage == "unprepared":
-                raise RuntimeError("GenerationSegment unavailable")
+                raise AcceptanceError("GenerationSegment unavailable")
             return {"segment_count": 2, "review_count": 0, "waiting_audio_count": 0}
         if path == "/api/projects/PROJECT_1/h3-quality":
             selected = 2 if self.stage in {"selected", "complete"} else 0
