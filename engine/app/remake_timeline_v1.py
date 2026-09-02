@@ -1,9 +1,16 @@
 """R6 Dialogue Timing Engine + persistent RemakeTimeline V1.
 
-The engine consumes current SourceDramaSnapshot + current TargetDialogue facts. It never
-changes source Shot boundaries or source ASR. It plans a new target timeline from actual
-TTS duration, preferring conservative automatic edits and sending only extreme timing
+The engine consumes current SourceDramaSnapshot + current canonical TargetDialogue facts.
+It never changes source Shot boundaries or source ASR. It plans a new target timeline from
+actual TTS duration, preferring conservative automatic edits and sending only extreme timing
 choices to Review Center.
+
+A canonical TargetDialogue is emitted once per complete source utterance. When that source
+utterance projects across multiple Shots, the dialogue plan is anchored once on the first
+projection Shot and may remain active across later Shot windows. It is never duplicated per
+projection. If target speech exceeds the complete source projection span, timing changes are
+applied to the last projection Shot (or a safe following reaction Shot), not incorrectly to
+the first Shot.
 """
 from __future__ import annotations
 
@@ -150,12 +157,92 @@ def _source_shot_rows(episode: Mapping[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _target_dialogues_by_shot(dialogues: list[Mapping[str, Any]]) -> dict[str, list[Mapping[str, Any]]]:
+def _canonical_utterance_index(episode: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    utterances = episode.get("source_dialogue_utterances")
+    if not isinstance(utterances, list):
+        return {}
+    result: dict[str, Mapping[str, Any]] = {}
+    for item in utterances:
+        if not isinstance(item, Mapping):
+            continue
+        group_id = str(item.get("dialogue_group_id") or "").strip()
+        if not group_id:
+            continue
+        if group_id in result:
+            raise RemakeTimelineError("SourceDramaSnapshot contains duplicate dialogue_group_id")
+        result[group_id] = item
+    return result
+
+
+def _target_dialogues_by_shot(
+    dialogues: list[Mapping[str, Any]],
+    *,
+    episode: Mapping[str, Any],
+    shots: list[dict[str, Any]],
+) -> dict[str, list[Mapping[str, Any]]]:
+    """Anchor one canonical TargetDialogue on its first source projection Shot.
+
+    Internal ``_source_span_*`` fields are timing-only metadata and are never serialized into
+    the public RemakeTimeline contract.
+    """
+
     result: dict[str, list[Mapping[str, Any]]] = {}
+    shot_by_key = {str(item.get("shot_key") or ""): item for item in shots}
+    utterance_by_group = _canonical_utterance_index(episode)
+    canonical_mode = "source_dialogue_utterances" in episode
+
     for row in dialogues:
-        result.setdefault(str(row.get("shot_key") or ""), []).append(row)
+        source_key = str(row.get("source_dialogue_key") or "")
+        enriched = dict(row)
+        anchor_key = str(row.get("shot_key") or "")
+        utterance = utterance_by_group.get(source_key)
+        if canonical_mode:
+            if utterance is None:
+                raise RemakeTimelineError(f"TargetDialogue {source_key} does not exist in current source utterances")
+            projections = [
+                item for item in utterance.get("projections") or []
+                if isinstance(item, Mapping) and item.get("shot_key")
+            ]
+            projections.sort(key=lambda item: (
+                int(item.get("projection_index") or 0),
+                int(item.get("start_us") or 0),
+                str(item.get("dialogue_key") or ""),
+            ))
+            if not projections:
+                raise RemakeTimelineError(f"Source utterance {source_key} has no Shot projections")
+            projection_keys = [str(item["shot_key"]) for item in projections]
+            if any(key not in shot_by_key for key in projection_keys):
+                raise RemakeTimelineError(f"Source utterance {source_key} references a missing Shot")
+            anchor_key = projection_keys[0]
+            last_key = projection_keys[-1]
+            last_shot = shot_by_key[last_key]
+            enriched["shot_key"] = anchor_key
+            enriched["source_start_us"] = int(utterance.get("start_us") or row.get("source_start_us") or 0)
+            enriched["source_end_us"] = int(utterance.get("end_us") or row.get("source_end_us") or 0)
+            enriched["_source_projection_count"] = len(projection_keys)
+            enriched["_source_projection_shot_keys"] = projection_keys
+            enriched["_source_span_last_shot_key"] = last_key
+            # Allow target speech to use the natural visual tail of the last source projection
+            # Shot before declaring that video timing must change.
+            enriched["_source_span_end_us"] = int(last_shot.get("end_us") or enriched["source_end_us"])
+        else:
+            anchor_shot = shot_by_key.get(anchor_key)
+            enriched["_source_projection_count"] = 1
+            enriched["_source_projection_shot_keys"] = [anchor_key]
+            enriched["_source_span_last_shot_key"] = anchor_key
+            enriched["_source_span_end_us"] = int(
+                anchor_shot.get("end_us") if anchor_shot is not None else row.get("source_end_us") or 0
+            )
+
+        if anchor_key not in shot_by_key:
+            raise RemakeTimelineError(f"TargetDialogue {source_key} references a missing anchor Shot")
+        result.setdefault(anchor_key, []).append(enriched)
+
     for values in result.values():
-        values.sort(key=lambda item: (int(item.get("source_start_us") or 0), str(item.get("source_dialogue_key") or "")))
+        values.sort(key=lambda item: (
+            int(item.get("source_start_us") or 0),
+            str(item.get("source_dialogue_key") or ""),
+        ))
     return result
 
 
@@ -188,7 +275,13 @@ def _reaction_carry_candidate(
 def _dialogue_plans_for_shot(
     shot: Mapping[str, Any],
     target_rows: list[Mapping[str, Any]],
-) -> tuple[list[dict[str, Any]], bool, int, str | None]:
+) -> tuple[
+    list[dict[str, Any]],
+    bool,
+    int,
+    str | None,
+    dict[str, dict[str, Any]],
+]:
     source_start = int(shot.get("start_us") or 0)
     cursor = 0
     plans: list[dict[str, Any]] = []
@@ -196,6 +289,7 @@ def _dialogue_plans_for_shot(
     max_end_offset = 0
     sole_source_character_id: str | None = None
     source_characters: set[str] = set()
+    span_meta: dict[str, dict[str, Any]] = {}
 
     for row in target_rows:
         source_line_start = int(row.get("source_start_us") or source_start)
@@ -213,8 +307,9 @@ def _dialogue_plans_for_shot(
         source_character_id = str(row.get("source_character_id") or "") or None
         if source_character_id:
             source_characters.add(source_character_id)
-        plans.append({
-            "target_dialogue_id": str(row.get("id") or ""),
+        target_dialogue_id = str(row.get("id") or "")
+        plan = {
+            "target_dialogue_id": target_dialogue_id,
             "source_dialogue_key": str(row.get("source_dialogue_key") or ""),
             "source_character_id": source_character_id,
             "target_character_id": str(row.get("target_character_id") or "") or None,
@@ -230,10 +325,101 @@ def _dialogue_plans_for_shot(
             "carry_over_shot_key": None,
             "overrun_us": 0,
             "reason": "目标对白按源对白相对起点进入新时间轴" if audio_ready else "等待真实目标语音，当前仅保留源对白位置作为占位",
-        })
+        }
+        plans.append(plan)
+        span_end_us = int(row.get("_source_span_end_us") or shot.get("end_us") or source_line_end)
+        span_meta[target_dialogue_id] = {
+            "span_end_offset_us": max(source_duration := int(shot.get("duration_us") or 0), span_end_us - source_start),
+            "last_shot_key": str(row.get("_source_span_last_shot_key") or shot.get("shot_key") or ""),
+            "projection_count": max(1, int(row.get("_source_projection_count") or 1)),
+        }
     if len(source_characters) == 1:
         sole_source_character_id = next(iter(source_characters))
-    return plans, waiting_audio, max_end_offset, sole_source_character_id
+    return plans, waiting_audio, max_end_offset, sole_source_character_id, span_meta
+
+
+def _cross_projection_adjustments(
+    shots: list[dict[str, Any]],
+    *,
+    origin_index: int,
+    dialogue_plans: list[dict[str, Any]],
+    span_meta: Mapping[str, Mapping[str, Any]],
+    target_dialogues_by_shot: Mapping[str, list[Mapping[str, Any]]],
+) -> tuple[list[dict[str, Any]], bool]:
+    """Plan timing changes that belong to a later (last-projection) Shot.
+
+    Returns deferred Shot adjustments plus whether any cross-shot dialogue carries into a
+    following reaction Shot. The origin Shot duration is never changed for these cases.
+    """
+
+    shot_index_by_key = {str(item.get("shot_key") or ""): index for index, item in enumerate(shots)}
+    adjustments: list[dict[str, Any]] = []
+    has_carry = False
+
+    for plan in dialogue_plans:
+        meta = span_meta.get(str(plan["target_dialogue_id"])) or {}
+        if int(meta.get("projection_count") or 1) <= 1:
+            continue
+        span_end_offset = int(meta.get("span_end_offset_us") or 0)
+        planned_end = int(plan["planned_end_offset_us"])
+        if planned_end <= span_end_offset:
+            plan["reason"] = "完整对白跨多个源镜头，目标语音可在原投影视觉范围内自然播放"
+            continue
+
+        last_key = str(meta.get("last_shot_key") or "")
+        last_index = shot_index_by_key.get(last_key)
+        if last_index is None or last_index < origin_index:
+            raise RemakeTimelineError("完整对白的最后投影 Shot 无法定位")
+        overrun = planned_end - span_end_offset
+        source_character_id = str(plan.get("source_character_id") or "") or None
+        carry = _reaction_carry_candidate(
+            shots,
+            last_index,
+            source_character_id=source_character_id,
+            speech_overrun_us=overrun,
+            target_dialogues_by_shot=target_dialogues_by_shot,
+        )
+        if carry is not None:
+            carry_key = str(carry.get("shot_key") or "")
+            plan["strategy"] = "CARRY_OVER_REACTION"
+            plan["carry_over_shot_key"] = carry_key
+            plan["overrun_us"] = overrun
+            plan["reason"] = "完整对白已跨原投影镜头，额外语音尾部自动延续到后一无对白反应镜"
+            has_carry = True
+            continue
+
+        last_shot = shots[last_index]
+        last_source_duration = max(1, int(last_shot.get("duration_us") or 0))
+        required_duration = last_source_duration + overrun + TRAILING_HOLD_US
+        extension_delta = required_duration - last_source_duration
+        extreme = (
+            required_duration / last_source_duration > EXTREME_DURATION_RATIO
+            and extension_delta > EXTREME_OVERRUN_US
+        )
+        if extreme:
+            plan["strategy"] = "HUMAN_REVIEW"
+            plan["overrun_us"] = overrun
+            plan["reason"] = "完整对白目标语音明显超过全部源投影视觉范围，需要确认最后投影镜延长方案或回到目标对白改写"
+            adjustments.append({
+                "shot_key": last_key,
+                "strategy": "HUMAN_REVIEW",
+                "status": "REVIEW",
+                "required_duration_us": required_duration,
+                "reason": plan["reason"],
+            })
+        else:
+            plan["strategy"] = "EXTEND"
+            plan["overrun_us"] = overrun
+            plan["reason"] = "完整对白目标语音超过全部源投影视觉范围，延长最后一个投影镜承接尾部语音"
+            adjustments.append({
+                "shot_key": last_key,
+                "strategy": "EXTEND",
+                "status": "READY",
+                "required_duration_us": required_duration,
+                "reason": plan["reason"],
+            })
+
+    return adjustments, has_carry
 
 
 def _auto_shot_plan(
@@ -241,12 +427,30 @@ def _auto_shot_plan(
     index: int,
     *,
     target_dialogues_by_shot: Mapping[str, list[Mapping[str, Any]]],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     shot = shots[index]
     shot_key = str(shot.get("shot_key") or "")
     source_duration = max(1, int(shot.get("duration_us") or 0))
     target_rows = list(target_dialogues_by_shot.get(shot_key) or [])
-    dialogue_plans, waiting_audio, max_dialogue_end, source_character_id = _dialogue_plans_for_shot(shot, target_rows)
+    dialogue_plans, waiting_audio, max_dialogue_end, source_character_id, span_meta = _dialogue_plans_for_shot(shot, target_rows)
+    deferred_adjustments: list[dict[str, Any]] = []
+
+    cross_adjustments, cross_carry = _cross_projection_adjustments(
+        shots,
+        origin_index=index,
+        dialogue_plans=dialogue_plans,
+        span_meta=span_meta,
+        target_dialogues_by_shot=target_dialogues_by_shot,
+    )
+    deferred_adjustments.extend(cross_adjustments)
+
+    # Local overrun is calculated only for one-Projection utterances. Cross-shot utterances
+    # are handled against their complete visual span above and must not extend the first Shot.
+    local_plans = [
+        plan for plan in dialogue_plans
+        if int((span_meta.get(str(plan["target_dialogue_id"])) or {}).get("projection_count") or 1) == 1
+    ]
+    max_local_end = max((int(plan["planned_end_offset_us"]) for plan in local_plans), default=0)
 
     if not target_rows:
         strategy, status, planned_duration = "KEEP", "READY", source_duration
@@ -255,22 +459,22 @@ def _auto_shot_plan(
         strategy, status, planned_duration = "KEEP", "WAITING_AUDIO", source_duration
         reason = "目标对白尚缺真实 TTS 时长，保持原时长等待音频；不使用估算时长替代事实"
     else:
-        speech_overrun = max(0, max_dialogue_end - source_duration)
-        if speech_overrun > 0:
-            planned_extension_duration = max_dialogue_end + TRAILING_HOLD_US
+        local_overrun = max(0, max_local_end - source_duration)
+        if local_overrun > 0:
+            planned_extension_duration = max_local_end + TRAILING_HOLD_US
             extension_delta = planned_extension_duration - source_duration
             carry = _reaction_carry_candidate(
                 shots,
                 index,
                 source_character_id=source_character_id,
-                speech_overrun_us=speech_overrun,
+                speech_overrun_us=local_overrun,
                 target_dialogues_by_shot=target_dialogues_by_shot,
             )
             if carry is not None:
                 strategy, status, planned_duration = "CARRY_OVER_REACTION", "READY", source_duration
                 reason = "目标对白越过当前切点，自动延续到下一无对白反应镜；当前镜头不做慢放"
                 carry_key = str(carry.get("shot_key") or "")
-                for plan in dialogue_plans:
+                for plan in local_plans:
                     if int(plan["planned_end_offset_us"]) > source_duration:
                         plan["strategy"] = "CARRY_OVER_REACTION"
                         plan["carry_over_shot_key"] = carry_key
@@ -279,7 +483,7 @@ def _auto_shot_plan(
             elif planned_extension_duration / source_duration > EXTREME_DURATION_RATIO and extension_delta > EXTREME_OVERRUN_US:
                 strategy, status, planned_duration = "HUMAN_REVIEW", "REVIEW", planned_extension_duration
                 reason = "目标对白比原镜头显著更长，直接延长可能破坏动作/节奏，需要确认延长方案或回到目标对白改写"
-                for plan in dialogue_plans:
+                for plan in local_plans:
                     if int(plan["planned_end_offset_us"]) > source_duration:
                         plan["strategy"] = "HUMAN_REVIEW"
                         plan["overrun_us"] = int(plan["planned_end_offset_us"]) - source_duration
@@ -287,14 +491,19 @@ def _auto_shot_plan(
             else:
                 strategy, status, planned_duration = "EXTEND", "READY", planned_extension_duration
                 reason = "真实目标语音越过原切点，延长镜头到语音结束并保留自然尾部停顿"
-                for plan in dialogue_plans:
+                for plan in local_plans:
                     if int(plan["planned_end_offset_us"]) > source_duration:
                         plan["strategy"] = "EXTEND"
                         plan["overrun_us"] = int(plan["planned_end_offset_us"]) - source_duration
                         plan["reason"] = "目标语音超出原镜头，随镜头一起延长"
         else:
-            # Conservative trim: only one line, source dialogue originally ended near the Shot
-            # tail, and target speech creates a meaningful shortening without cutting most action.
+            has_cross_projection = any(
+                int((span_meta.get(str(plan["target_dialogue_id"])) or {}).get("projection_count") or 1) > 1
+                for plan in dialogue_plans
+            )
+            # Conservative trim is only safe when the utterance itself belongs to this Shot.
+            # Cross-shot source utterances keep the source Shot rhythm and are never compressed
+            # by treating the first projection as if it owned the whole line.
             candidate_duration = max_dialogue_end + TRAILING_HOLD_US
             source_line_tail = source_duration
             if len(target_rows) == 1:
@@ -303,7 +512,8 @@ def _auto_shot_plan(
             saving = source_duration - candidate_duration
             min_allowed = max(TRIM_MIN_DURATION_US, int(round(source_duration * TRIM_MIN_SOURCE_RATIO)))
             if (
-                len(target_rows) == 1
+                not has_cross_projection
+                and len(target_rows) == 1
                 and source_line_tail <= TRIM_MAX_SOURCE_TAIL_US
                 and saving >= TRIM_MIN_SAVING_US
                 and candidate_duration >= min_allowed
@@ -314,10 +524,18 @@ def _auto_shot_plan(
                     plan["strategy"] = "TRIM"
                     plan["reason"] = reason
             else:
-                strategy, status, planned_duration = "KEEP", "READY", source_duration
-                reason = "真实目标语音可在原镜头内完成，保持原镜头节奏"
+                strategy, status, planned_duration = (
+                    "CARRY_OVER_REACTION" if cross_carry else "KEEP",
+                    "READY",
+                    source_duration,
+                )
+                reason = (
+                    "完整对白跨多个源镜头，目标音频只生成一次并按原投影范围连续播放"
+                    if has_cross_projection
+                    else "真实目标语音可在原镜头内完成，保持原镜头节奏"
+                )
 
-    return {
+    return ({
         "shot_plan_id": f"SHOTPLAN_{hashlib.sha1(shot_key.encode('utf-8')).hexdigest()[:24]}",
         "scene_key": str(shot.get("scene_key") or ""),
         "shot_key": shot_key,
@@ -336,7 +554,31 @@ def _auto_shot_plan(
         "decision_source": "AUTO",
         "reason": reason,
         "dialogue_plans": dialogue_plans,
-    }
+    }, deferred_adjustments)
+
+
+def _apply_deferred_adjustments(
+    shot_plans: list[dict[str, Any]],
+    adjustments: list[dict[str, Any]],
+) -> None:
+    if not adjustments:
+        return
+    by_key = {str(item.get("shot_key") or ""): item for item in shot_plans}
+    priority = {"KEEP": 0, "TRIM": 1, "CARRY_OVER_REACTION": 2, "EXTEND": 3, "HUMAN_REVIEW": 4}
+    for adjustment in adjustments:
+        shot = by_key.get(str(adjustment.get("shot_key") or ""))
+        if shot is None:
+            raise RemakeTimelineError("跨镜对白时间调整引用了不存在的 Shot")
+        required = max(int(shot["planned_duration_us"]), int(adjustment.get("required_duration_us") or 0))
+        shot["planned_duration_us"] = required
+        candidate_strategy = str(adjustment.get("strategy") or "EXTEND")
+        if priority.get(candidate_strategy, 0) >= priority.get(str(shot.get("strategy") or "KEEP"), 0):
+            shot["strategy"] = candidate_strategy
+            shot["reason"] = str(adjustment.get("reason") or shot.get("reason") or "跨镜对白时间调整")
+        # Missing audio remains the nearer blocker; after audio becomes READY regeneration
+        # will surface the deferred human timing decision if it is still necessary.
+        if shot.get("status") != "WAITING_AUDIO" and adjustment.get("status") == "REVIEW":
+            shot["status"] = "REVIEW"
 
 
 def _reflow_shot_plans(shot_plans: list[dict[str, Any]]) -> None:
@@ -363,8 +605,14 @@ def _episode_payload(
     updated_at: datetime,
 ) -> dict[str, Any]:
     shots = _source_shot_rows(episode)
-    by_shot = _target_dialogues_by_shot(dialogue_rows)
-    shot_plans = [_auto_shot_plan(shots, index, target_dialogues_by_shot=by_shot) for index in range(len(shots))]
+    by_shot = _target_dialogues_by_shot(dialogue_rows, episode=episode, shots=shots)
+    shot_plans: list[dict[str, Any]] = []
+    adjustments: list[dict[str, Any]] = []
+    for index in range(len(shots)):
+        plan, deferred = _auto_shot_plan(shots, index, target_dialogues_by_shot=by_shot)
+        shot_plans.append(plan)
+        adjustments.extend(deferred)
+    _apply_deferred_adjustments(shot_plans, adjustments)
     _reflow_shot_plans(shot_plans)
     source_duration = sum(int(item["source_duration_us"]) for item in shot_plans)
     planned_duration = sum(int(item["planned_duration_us"]) for item in shot_plans)
@@ -594,7 +842,7 @@ def update_remake_shot_timing_v1(
         if not carry_over_shot_key:
             raise ValueError("CARRY_OVER_REACTION 必须指定下一反应镜")
         _validate_manual_carry(shot_plans, index, carry_over_shot_key, required_end_offset)
-    elif planned_duration_us < required_end_offset + TRAILING_HOLD_US:
+    elif shot.get("dialogue_plans") and planned_duration_us < required_end_offset + TRAILING_HOLD_US:
         raise ValueError("目标镜头时长不足以容纳当前真实目标语音和自然尾部停顿")
 
     shot["strategy"] = strategy
@@ -608,6 +856,26 @@ def update_remake_shot_timing_v1(
         dialogue["overrun_us"] = max(0, int(dialogue["planned_end_offset_us"]) - planned_duration_us)
         dialogue["reason"] = shot["reason"]
     _reflow_shot_plans(shot_plans)
+
+    # A cross-shot HUMAN_REVIEW lives on the last projection Shot while its dialogue plan is
+    # anchored on the first projection Shot. Once the user confirms that last Shot's duration,
+    # resolve matching cross-shot dialogue plans whose source utterance ends inside this Shot.
+    if strategy in {"KEEP", "EXTEND"}:
+        edited_source_start = int(shot["source_start_us"])
+        edited_source_end = int(shot["source_end_us"])
+        edited_target_end = int(shot["planned_end_us"])
+        for origin in shot_plans:
+            for dialogue in origin.get("dialogue_plans") or []:
+                if dialogue.get("strategy") != "HUMAN_REVIEW":
+                    continue
+                source_end = int(dialogue.get("source_end_us") or 0)
+                if not (edited_source_start < source_end <= edited_source_end):
+                    continue
+                if int(dialogue.get("planned_end_us") or 0) > edited_target_end:
+                    continue
+                dialogue["strategy"] = "EXTEND" if strategy == "EXTEND" else "KEEP"
+                dialogue["carry_over_shot_key"] = None
+                dialogue["reason"] = shot["reason"]
 
     payload["shot_plans"] = shot_plans
     payload["source_duration_us"] = sum(int(item["source_duration_us"]) for item in shot_plans)
