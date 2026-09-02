@@ -35,6 +35,7 @@ from engine.app.generation_segment_routes_v1 import router as generation_segment
 from engine.app.h3_generation_routes_v1 import router as h3_generation_router
 from engine.app.media_v2 import MediaPipelineError, detect_episode_shots, preprocess_episode
 from engine.app.postproduction_routes_v1 import router as postproduction_router
+from engine.app.project_flow_state_routes_v1 import router as project_flow_state_router
 from engine.app.remake_routes_v1 import router as remake_router
 from engine.app.review_issue_routes_v1 import router as review_issue_router
 from engine.app.shot_cache_routes_v51 import router as shot_cache_router
@@ -93,6 +94,7 @@ app.include_router(target_localization_router)
 app.include_router(generation_segment_router)
 app.include_router(h3_generation_router)
 app.include_router(postproduction_router)
+app.include_router(project_flow_state_router)
 
 
 class ProjectCreate(BaseModel):
