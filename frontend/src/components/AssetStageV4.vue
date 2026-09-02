@@ -61,9 +61,24 @@ const userStatus = computed(() => {
   if (loading.value) return { title: '正在读取资产状态', detail: '正在检查人物、场景和道具结果。', tone: 'neutral' }
   if (!status.value) return { title: '资产状态暂时不可用', detail: '可以继续查看已经保存的结果。', tone: 'warning' }
   if (!status.value.ready) return { title: '需要先准备识别环境', detail: '现有资产结果不会丢失；重新提取前先完成模型准备。', tone: 'warning' }
-  if (unresolvedEvidenceCount.value > 0) return { title: '有内容需要人工确认', detail: `${unresolvedEvidenceCount.value} 条人物证据还没有安全归属到最终人物。`, tone: 'review' }
-  if (resolvedCount.value > 0) return { title: '资产结果可继续使用', detail: `当前已有 ${resolvedCount.value} 个最终人物，继续检查场景、道具和镜头绑定。`, tone: 'ready' }
-  return { title: '等待资产提取结果', detail: '完成资产提取后，这里会汇总人物、场景和道具的确认状态。', tone: 'neutral' }
+  if (resolvedCount.value > 0) {
+    const evidenceNote = unresolvedEvidenceCount.value > 0
+      ? `；另有 ${unresolvedEvidenceCount.value} 条未归属人物 Evidence 仅作为内部识别证据保留，不计入人工待办`
+      : ''
+    return {
+      title: '资产结果已生成',
+      detail: `当前已形成 ${resolvedCount.value} 个最终人物${evidenceNote}。真正需要人工处理的内容只看下方“待处理”。`,
+      tone: 'ready',
+    }
+  }
+  if (unresolvedEvidenceCount.value > 0) {
+    return {
+      title: '人物识别证据已归档',
+      detail: `${unresolvedEvidenceCount.value} 条证据尚未形成安全 Final Character，系统会保留用于后续自动判断；它们本身不是人工待办。`,
+      tone: 'neutral',
+    }
+  }
+  return { title: '等待资产提取结果', detail: '完成资产提取后，这里会汇总人物、场景和道具的识别结果。', tone: 'neutral' }
 })
 
 function selectWorkspaceMode(next: AssetWorkspaceMode): void {
@@ -159,8 +174,8 @@ onUnmounted(() => {
           <small>最终人物</small>
           <strong>{{ resolvedCount }}</strong>
         </div>
-        <div :class="{ attention: unresolvedEvidenceCount > 0 }">
-          <small>待归属</small>
+        <div class="evidence" title="未安全归属到 Final Character 的识别 Evidence，仅用于追溯和后续自动判断，不需要人工逐条处理">
+          <small>内部证据</small>
           <strong>{{ unresolvedEvidenceCount }}</strong>
         </div>
         <div>
@@ -179,7 +194,7 @@ onUnmounted(() => {
     <nav class="asset-workspace-tabs" aria-label="资产工作区">
       <button :class="{ active: workspaceMode === 'inbox' }" type="button" @click="selectWorkspaceMode('inbox')">
         <strong>待处理</strong>
-        <span>只看冲突、未绑定和低置信度镜头</span>
+        <span>只看真正需要人工判断的冲突、未绑定和低置信度镜头</span>
       </button>
       <button :class="{ active: workspaceMode === 'matrix' }" type="button" @click="selectWorkspaceMode('matrix')">
         <strong>完整绑定</strong>
@@ -187,7 +202,7 @@ onUnmounted(() => {
       </button>
       <button :class="{ active: workspaceMode === 'people' }" type="button" @click="selectWorkspaceMode('people')">
         <strong>人物结果</strong>
-        <span>{{ resolvedCount }} 个最终人物<template v-if="unresolvedEvidenceCount"> · {{ unresolvedEvidenceCount }} 条待归属证据</template></span>
+        <span>{{ resolvedCount }} 个最终人物<template v-if="unresolvedEvidenceCount"> · {{ unresolvedEvidenceCount }} 条内部识别证据</template></span>
       </button>
     </nav>
 
@@ -211,6 +226,7 @@ onUnmounted(() => {
       <p v-if="missingModels.length">缺少模型：{{ missingModels.map((item) => item.filename).join('、') }}</p>
       <p v-if="status.tracking_runtime && !status.tracking_runtime.ready">MOT：{{ status.tracking_runtime.error || 'trackers/supervision 未准备' }}</p>
       <p v-if="status.runtime?.fallback">当前正在使用 CPU fallback；结果逻辑不变，但处理速度会更慢。</p>
+      <p v-if="unresolvedEvidenceCount">{{ unresolvedEvidenceCount }} 条未归属人物 Evidence 仅用于算法追溯和后续自动判断，不属于人工待确认数量。</p>
       <p>人物身份仍遵守 Final Character Gate：动态表情、动作、姿态、说话状态和画面位置不能作为身份主键。</p>
     </details>
   </div>
@@ -230,7 +246,6 @@ onUnmounted(() => {
   border-radius: 12px;
   background: #fff;
 }
-.asset-user-summary.tone-review { border-color: #ead7a0; background: #fffaf0; }
 .asset-user-summary.tone-warning { border-color: #efcf9b; background: #fff8eb; }
 .asset-user-summary.tone-ready { border-color: #c8e5d7; background: #f5fbf8; }
 .asset-user-summary-copy { min-width: 0; display: grid; gap: 2px; }
@@ -249,8 +264,9 @@ onUnmounted(() => {
 }
 .asset-user-stats small { color: #8994a4; font-size: 9px; }
 .asset-user-stats strong { color: #3d4c61; font-size: 12px; }
-.asset-user-stats > div.attention { border-color: #ead7a0; background: #fff7e6; }
-.asset-user-stats > div.attention strong { color: #96630e; }
+.asset-user-stats > div.evidence { background: #f7f9fb; }
+.asset-user-stats > div.evidence small,
+.asset-user-stats > div.evidence strong { color: #7a8798; }
 .asset-prepare-button {
   min-height: 38px;
   border: 0;
