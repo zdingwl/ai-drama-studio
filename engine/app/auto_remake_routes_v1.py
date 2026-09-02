@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
+from engine.app.auto_output_state_v1 import get_auto_output_state_v1
 from engine.app.auto_output_v1 import AUTO_OUTPUT_TASK_TYPE, run_auto_output_task
 from engine.app.auto_remake_prepare_v1 import run_auto_remake_prepare_task
 from engine.app.studio_v2 import get_project, list_episode_records
@@ -40,6 +41,30 @@ def _active_heavy_tasks(project_id: str) -> list[dict]:
         task for task in list_project_tasks(project_id, limit=100)
         if task["status"] in ACTIVE_TASK_STATUSES and task["task_type"] in HEAVY_TASK_TYPES
     ]
+
+
+@router.get("/projects/{project_id}/auto-output/state")
+def api_get_auto_output_state(project_id: str):
+    """Return lifecycle/readiness state without probing unavailable downstream HTTP APIs."""
+
+    _project_episodes(project_id)
+    try:
+        state = get_auto_output_state_v1(project_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    active = _active_heavy_tasks(project_id)
+    if active:
+        task = active[0]
+        state["active_task"] = {
+            "id": task.get("id"),
+            "task_type": task.get("task_type"),
+            "status": task.get("status"),
+            "title": task.get("title"),
+            "stage_key": task.get("stage_key"),
+            "stage_label": task.get("stage_label"),
+            "message": task.get("message"),
+        }
+    return state
 
 
 @router.post("/projects/{project_id}/tasks/auto-remake-prepare", status_code=202)
