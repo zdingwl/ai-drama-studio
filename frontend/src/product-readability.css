@@ -95,3 +95,317 @@
 .next-action-button {
   min-height: 38px;
 }
+
+/* --------------------------------------------------------------------------
+ * ProjectStudio V4 visual hierarchy
+ * -------------------------------------------------------------------------- */
+.studio {
+  grid-template-columns: 232px minmax(0, 1fr) !important;
+  background: #f6f8fb !important;
+}
+.studio .sidebar {
+  padding: 22px 16px !important;
+  gap: 22px !important;
+  border-right-color: #e3e8ef !important;
+}
+.studio .back { font-size: 12px !important; }
+.studio .brand { gap: 6px !important; }
+.studio .brand small,
+.studio .brand span,
+.studio .engine span,
+.studio .engine small { font-size: 11px !important; }
+.studio .brand strong { font-size: 18px !important; }
+.studio .sidebar nav { gap: 8px !important; }
+.studio .sidebar nav button {
+  min-height: 58px !important;
+  gap: 4px !important;
+  padding: 12px 13px !important;
+  border-radius: 12px !important;
+}
+.studio .sidebar nav button.active {
+  border-color: #c9d7ec !important;
+  background: #eef4ff !important;
+}
+.studio .sidebar nav strong { font-size: 14px !important; }
+.studio .sidebar nav span { font-size: 11px !important; line-height: 1.35 !important; }
+.studio .sidebar nav i { min-width: 22px !important; height: 22px !important; font-size: 10px !important; }
+.studio .engine { padding: 13px !important; border-radius: 12px !important; }
+.studio .engine strong { font-size: 13px !important; }
+
+.studio .topbar {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 80 !important;
+  min-height: 66px !important;
+  grid-template-columns: minmax(260px, 1fr) auto minmax(260px, 360px) !important;
+  gap: 18px !important;
+  padding: 10px 24px !important;
+  border-bottom-color: #e4e8ee !important;
+  background: rgba(255,255,255,.97) !important;
+  backdrop-filter: blur(12px) !important;
+}
+.studio .topbar > div:first-child { gap: 3px !important; }
+.studio .topbar small { font-size: 10px !important; }
+.studio .topbar strong { font-size: 15px !important; }
+.studio .topbar span { font-size: 11px !important; }
+.studio .stats { gap: 8px !important; }
+.studio .stats span {
+  min-height: 34px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  padding: 0 10px !important;
+  border-radius: 10px !important;
+  font-size: 11px !important;
+}
+.studio .stats b { font-size: 12px !important; }
+
+.studio .panel {
+  max-width: 1320px !important;
+  gap: 16px !important;
+  padding: 24px 28px 52px !important;
+}
+.studio .hero,
+.studio .scene-policy,
+.studio .auto-run,
+.studio .review-head,
+.studio .review-tool,
+.studio .advanced,
+.studio .review-empty,
+.studio .maintenance-tools,
+.studio .pipeline {
+  border-color: #e0e5ec !important;
+  border-radius: 16px !important;
+  box-shadow: 0 1px 2px rgba(35, 48, 68, .025) !important;
+}
+.studio .hero { padding: 24px 26px !important; }
+.studio .hero small,
+.studio .scene-policy small,
+.studio .auto-run small,
+.studio .review-head small,
+.studio .review-tool small,
+.studio .maintenance-tools small { font-size: 11px !important; }
+.studio .hero h1,
+.studio .review-head h1 {
+  margin: 5px 0 8px !important;
+  color: #253b57 !important;
+  font-size: 25px !important;
+  line-height: 1.25 !important;
+}
+.studio .hero p,
+.studio .review-head p,
+.studio .auto-run p {
+  max-width: 980px !important;
+  font-size: 13px !important;
+  line-height: 1.7 !important;
+}
+.studio .locale {
+  min-width: 132px !important;
+  border: 1px solid #e4e9f0 !important;
+  border-radius: 14px !important;
+  background: #f6f8fc !important;
+}
+.studio .locale span { font-size: 11px !important; }
+.studio .locale strong { font-size: 18px !important; }
+
+/* The three rules are explanatory metadata, not three competing actions. */
+.studio .rules {
+  gap: 10px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+.studio .rules article {
+  min-height: 76px !important;
+  gap: 4px !important;
+  padding: 14px 16px !important;
+  border: 1px solid #e3e8ef !important;
+  border-radius: 13px !important;
+  background: #fff !important;
+}
+.studio .rules small,
+.studio .rules span { font-size: 11px !important; line-height: 1.45 !important; }
+.studio .rules strong { font-size: 14px !important; }
+
+.studio .scene-policy { gap: 12px !important; padding: 18px !important; }
+.studio .scene-policy header strong { font-size: 14px !important; }
+.studio .scene-policy > div { gap: 10px !important; }
+.studio .scene-policy button {
+  min-height: 70px !important;
+  gap: 5px !important;
+  padding: 13px 14px !important;
+  border-radius: 11px !important;
+}
+.studio .scene-policy button.active {
+  border-color: #6f94dd !important;
+  box-shadow: inset 0 0 0 1px #6f94dd !important;
+  background: #f1f6ff !important;
+}
+.studio .scene-policy button strong { font-size: 13px !important; }
+.studio .scene-policy button span { font-size: 11px !important; line-height: 1.45 !important; }
+
+.studio .auto-run { min-height: 92px !important; padding: 19px 22px !important; }
+.studio .auto-run > div { gap: 5px !important; }
+.studio .auto-run > div > strong { font-size: 16px !important; }
+.studio .primary {
+  min-height: 42px !important;
+  padding: 0 18px !important;
+  border-radius: 10px !important;
+  font-size: 12px !important;
+}
+.studio .secondary {
+  min-height: 40px !important;
+  padding: 0 15px !important;
+  border-radius: 10px !important;
+  font-size: 12px !important;
+}
+
+.studio .review-head { padding: 22px 24px !important; }
+.studio .chips { gap: 7px !important; }
+.studio .chips span { padding: 7px 10px !important; font-size: 11px !important; }
+.studio .review-empty {
+  min-height: 112px !important;
+  padding: 24px 26px !important;
+  border-color: #c9e2d4 !important;
+  background: #f6fbf8 !important;
+}
+.studio .review-empty-icon { width: 44px !important; height: 44px !important; font-size: 21px !important; }
+.studio .review-empty strong { font-size: 16px !important; }
+.studio .review-empty span { font-size: 12px !important; line-height: 1.5 !important; }
+.studio .review-tool > header { padding: 16px 18px 4px !important; }
+.studio .review-tool > header strong { font-size: 13px !important; }
+.studio .maintenance-tools > header { padding: 16px 18px !important; }
+.studio .maintenance-tools > header strong { font-size: 14px !important; }
+.studio .maintenance-tools > header span,
+.studio .maintenance-picker span { font-size: 11px !important; }
+.studio .maintenance-picker { gap: 10px !important; padding: 14px 18px !important; }
+.studio .maintenance-picker button { min-height: 68px !important; padding: 12px 14px !important; }
+.studio .maintenance-picker strong { font-size: 13px !important; }
+.studio .maintenance-placeholder { font-size: 12px !important; }
+.studio .advanced > summary { padding: 14px 16px !important; font-size: 12px !important; }
+
+/* Six output stages should read as one progress rail, not six equal dashboard cards. */
+.studio .pipeline {
+  grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+  gap: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+.studio .pipeline article {
+  position: relative !important;
+  min-height: 82px !important;
+  gap: 5px !important;
+  padding: 14px 13px !important;
+  border: 0 !important;
+  border-right: 1px solid #e5e9ef !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+}
+.studio .pipeline article:last-child { border-right: 0 !important; }
+.studio .pipeline article.ready { background: #f5fbf7 !important; }
+.studio .pipeline article.ready::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: #58a979;
+}
+.studio .pipeline b { font-size: 10px !important; }
+.studio .pipeline strong { font-size: 12px !important; line-height: 1.35 !important; }
+.studio .pipeline span { font-size: 10px !important; line-height: 1.45 !important; }
+
+/* --------------------------------------------------------------------------
+ * FinalOutput V1 — progress/result first, diagnostics second
+ * -------------------------------------------------------------------------- */
+.final-output { gap: 14px !important; }
+.final-output > .topbar,
+.final-output > .continuation,
+.final-output > .episode-list,
+.final-output > .empty,
+.final-output > .diagnostics {
+  border-radius: 14px !important;
+}
+.final-output > .topbar { padding: 16px 18px !important; }
+.final-output > .topbar strong { font-size: 15px !important; }
+.final-output > .topbar span { font-size: 11px !important; }
+.final-output > .topbar button { min-height: 36px !important; padding: 0 12px !important; font-size: 11px !important; }
+.final-output small { font-size: 11px !important; }
+.final-output strong { font-size: 13px !important; }
+.final-output span { font-size: 11px !important; line-height: 1.5 !important; }
+.final-output .continuation {
+  min-height: 86px !important;
+  padding: 17px 19px !important;
+}
+.final-output .continuation > div { gap: 5px !important; }
+.final-output .continuation strong { font-size: 17px !important; }
+.final-output .continuation .primary { min-height: 40px !important; font-size: 11px !important; }
+
+.final-output .summary {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 0 !important;
+  overflow: hidden !important;
+  border: 1px solid #e1e6ed !important;
+  border-radius: 14px !important;
+  background: #fff !important;
+}
+.final-output .summary article {
+  min-height: 82px !important;
+  padding: 14px 16px !important;
+  border: 0 !important;
+  border-right: 1px solid #e7ebf0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+.final-output .summary article:last-child { border-right: 0 !important; }
+.final-output .summary article.success { background: #f6fbf8 !important; }
+.final-output .summary article.warn { background: #fffaf2 !important; }
+.final-output .summary article strong { font-size: 20px !important; }
+.final-output .episode-card { padding: 18px 20px !important; }
+.final-output .episode-heading { grid-template-columns: 42px 1fr auto !important; gap: 13px !important; }
+.final-output .number { width: 38px !important; height: 38px !important; font-size: 13px !important; }
+.final-output .title strong { font-size: 15px !important; }
+.final-output .episode-heading em { padding: 6px 10px !important; font-size: 10px !important; }
+.final-output .finished { gap: 20px !important; margin-top: 16px !important; padding-left: 55px !important; }
+.final-output .finished-actions strong { font-size: 15px !important; }
+.final-output .buttons a,
+.final-output .buttons a.primary { min-height: 38px !important; display: inline-flex !important; align-items: center !important; padding: 0 13px !important; font-size: 11px !important; }
+.final-output .pending { margin-top: 14px !important; margin-left: 55px !important; padding: 14px 16px !important; }
+.final-output .pending strong { font-size: 13px !important; }
+.final-output .auto-badge { padding: 6px 9px !important; font-size: 10px !important; }
+.final-output .empty {
+  min-height: 132px !important;
+  place-content: center !important;
+  text-align: center !important;
+  padding: 30px !important;
+}
+.final-output .empty strong { font-size: 17px !important; }
+.final-output .diagnostics > summary { padding: 13px 15px !important; font-size: 11px !important; }
+.final-output .diag-grid span { font-size: 11px !important; }
+
+@media (max-width: 1180px) {
+  .studio .topbar { grid-template-columns: minmax(220px,1fr) auto minmax(220px,300px) !important; }
+  .studio .pipeline { grid-template-columns: repeat(3, minmax(0,1fr)) !important; }
+  .studio .pipeline article:nth-child(3) { border-right: 0 !important; }
+  .studio .pipeline article:nth-child(-n+3) { border-bottom: 1px solid #e5e9ef !important; }
+}
+@media (max-width: 1050px) {
+  .studio { grid-template-columns: 192px minmax(0,1fr) !important; }
+  .studio .panel { padding: 20px 18px 44px !important; }
+  .studio .topbar { position: static !important; grid-template-columns: 1fr !important; }
+}
+@media (max-width: 900px) {
+  .studio .rules,
+  .studio .scene-policy > div,
+  .studio .pipeline,
+  .studio .maintenance-picker { grid-template-columns: 1fr !important; }
+  .studio .pipeline article { border-right: 0 !important; border-bottom: 1px solid #e5e9ef !important; }
+  .studio .pipeline article:last-child { border-bottom: 0 !important; }
+  .final-output .summary { grid-template-columns: 1fr 1fr !important; }
+  .final-output .summary article:nth-child(2) { border-right: 0 !important; }
+  .final-output .summary article:nth-child(-n+2) { border-bottom: 1px solid #e7ebf0 !important; }
+  .final-output .finished,
+  .final-output .pending { margin-left: 0 !important; padding-left: 0 !important; }
+}
