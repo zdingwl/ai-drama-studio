@@ -73,38 +73,95 @@ def test_runtime_blockers_require_the_complete_local_acceptance_stack() -> None:
     assert runtime_blockers(ready) == ["audio_separator"]
 
 
-class _FakeClient:
-    def __init__(self) -> None:
+class _StageClient:
+    def __init__(self, stage: str, *, review: bool = False, review_after_prepare: bool = False) -> None:
+        self.stage = stage
+        self.review = review
+        self.review_after_prepare = review_after_prepare
         self.posts: list[str] = []
-        self.review_calls = 0
 
     def post(self, path: str, payload=None):
         self.posts.append(path)
+        if path.endswith("/tasks/auto-remake-prepare"):
+            self.stage = "segments"
+            if self.review_after_prepare:
+                self.review = True
+        elif path.endswith("/tasks/h3-generate-ready"):
+            self.stage = "selected"
+        elif path.endswith("/tasks/postproduction"):
+            self.stage = "complete"
+        else:
+            raise AssertionError(path)
         return {"id": f"TASK_{len(self.posts)}"}
 
     def get(self, path: str):
         if path.startswith("/api/tasks/"):
             return {"id": path.rsplit("/", 1)[-1], "status": "READY", "message": "done"}
         if path == "/api/projects/PROJECT_1/review-issues?status=OPEN":
-            self.review_calls += 1
-            # First call is the post-prepare gate. A real issue must stop H3 immediately.
-            return [{"issue_type": "DIALOGUE_TIMING", "severity": "BLOCKING"}]
+            return [{"issue_type": "DIALOGUE_TIMING", "severity": "BLOCKING"}] if self.review else []
         if path == "/api/projects/PROJECT_1":
             return {"id": "PROJECT_1", "name": "Acceptance", "episodes": [{"id": "EP_1"}]}
         if path == "/api/projects/PROJECT_1/generation-segments":
+            if self.stage == "unprepared":
+                raise RuntimeError("GenerationSegment unavailable")
             return {"segment_count": 2, "review_count": 0, "waiting_audio_count": 0}
         if path == "/api/projects/PROJECT_1/h3-quality":
-            return {"selected_count": 0, "review_count": 0, "waiting_model_count": 0}
+            selected = 2 if self.stage in {"selected", "complete"} else 0
+            return {"selected_count": selected, "review_count": 0, "waiting_model_count": 0}
         if path == "/api/projects/PROJECT_1/postproduction":
-            return {"segment_count": 2, "succeeded_count": 0, "review_count": 0, "waiting_count": 2, "episodes": []}
+            succeeded = 2 if self.stage == "complete" else 0
+            return {
+                "segment_count": 2,
+                "succeeded_count": succeeded,
+                "review_count": 0,
+                "waiting_count": 0 if succeeded else 2,
+                "episodes": [{"segments": [{"audio_mix_mode": "SOURCE_BACKGROUND_SAFE"}] * succeeded}],
+            }
         if path == "/api/projects/PROJECT_1/outputs":
-            return {"episode_count": 1, "succeeded_count": 0, "waiting_count": 1}
+            succeeded = 1 if self.stage == "complete" else 0
+            return {"episode_count": 1, "succeeded_count": succeeded, "waiting_count": 0 if succeeded else 1}
         raise AssertionError(path)
 
 
-def test_run_pipeline_stops_at_review_center_instead_of_launching_h3() -> None:
-    client = _FakeClient()
-    result, state = run_pipeline(client, "PROJECT_1", poll_seconds=0.001, timeout_seconds=1.0)
+def _run(client: _StageClient):
+    return run_pipeline(client, "PROJECT_1", poll_seconds=0.001, timeout_seconds=1.0)
+
+
+def test_run_pipeline_stops_immediately_when_review_center_is_already_open() -> None:
+    client = _StageClient("segments", review=True)
+    result, state = _run(client)
+    assert result == "NEEDS_REVIEW"
+    assert client.posts == []
+    assert summarize_state(state)["open_review_count"] == 1
+
+
+def test_run_pipeline_stops_after_prepare_when_prepare_creates_review_issue() -> None:
+    client = _StageClient("unprepared", review_after_prepare=True)
+    result, state = _run(client)
     assert result == "NEEDS_REVIEW"
     assert client.posts == ["/api/projects/PROJECT_1/tasks/auto-remake-prepare"]
     assert summarize_state(state)["open_review_count"] == 1
+
+
+def test_run_pipeline_resumes_at_h3_when_generation_segments_are_already_current() -> None:
+    client = _StageClient("segments")
+    result, _state_after = _run(client)
+    assert result == "READY_FOR_MANUAL_ACCEPTANCE"
+    assert client.posts == [
+        "/api/projects/PROJECT_1/tasks/h3-generate-ready",
+        "/api/projects/PROJECT_1/tasks/postproduction",
+    ]
+
+
+def test_run_pipeline_resumes_at_postproduction_when_selected_outputs_already_exist() -> None:
+    client = _StageClient("selected")
+    result, _state_after = _run(client)
+    assert result == "READY_FOR_MANUAL_ACCEPTANCE"
+    assert client.posts == ["/api/projects/PROJECT_1/tasks/postproduction"]
+
+
+def test_run_pipeline_does_nothing_when_project_is_already_ready_for_manual_acceptance() -> None:
+    client = _StageClient("complete")
+    result, _state_after = _run(client)
+    assert result == "READY_FOR_MANUAL_ACCEPTANCE"
+    assert client.posts == []
