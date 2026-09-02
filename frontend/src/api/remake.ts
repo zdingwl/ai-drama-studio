@@ -59,6 +59,7 @@ export const remakeApi = {
     body: JSON.stringify({ scene_policy: scenePolicy, generation_engine: 'MINIMAX_H3_LOCAL' }),
   }),
   startAutoPrepare: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/auto-remake-prepare`),
+  startAutoOutput: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/auto-output`),
   listReviewIssues: (projectId: string, status: ReviewIssueStatus | '' = 'OPEN') => request<ReviewIssue[]>(
     `/api/projects/${projectId}/review-issues${status ? `?status=${status}` : '?status='}`,
   ),
