@@ -35,6 +35,8 @@ from engine.app.target_localization_v1 import TargetCharacter, get_target_locali
 
 LOCALIZATION_REVIEW_PREFIX = "auto:target-dialogue:"
 TRANSLATION_CONFIDENCE_MIN = 0.74
+TRANSLATION_BATCH_SIZE = 4
+TRANSLATION_SINGLE_RETRIES = 2
 
 
 class TargetDialogueError(RuntimeError):
@@ -305,7 +307,18 @@ def _dialogue_contexts(snapshot: Mapping[str, Any], target_characters: Mapping[s
 
 
 def _translation_prompt(rows: list[dict[str, Any]], *, source_language: str, target_language: str, target_region: str, name_map: Mapping[str, str]) -> str:
-    payload = [{k: v for k, v in row.items() if k != "signature"} for row in rows]
+    # Target dialogue does not need internal IDs, timings or full visual payload. Keeping the
+    # prompt compact materially reduces Qwen context pressure and JSON truncation risk.
+    payload = [
+        {
+            "source_dialogue_key": row.get("source_dialogue_key"),
+            "source_text": row.get("source_text"),
+            "target_speaker_name": row.get("target_speaker_name"),
+            "scene_title": row.get("scene_title"),
+            "story_summary": row.get("story_summary"),
+        }
+        for row in rows
+    ]
     return f"""你正在把短剧对白本土化到目标市场。源语言={source_language}，目标语言={target_language}，目标地区={target_region}。
 目标不是逐字直译，而是在不改变剧情事实、人物关系、威胁/承诺/反转/信息量的前提下，写成目标地区观众自然会说的短剧对白。
 必须保留每条 source_dialogue_key，不新增、不合并、不拆分对白。人物姓名按 name_map 使用目标人物姓名；不要继续输出原人物姓名。
@@ -314,6 +327,134 @@ translated_text=忠实翻译层；localized_text=目标地区自然表达层；f
 只返回 JSON object：{{"dialogues":[{{"source_dialogue_key":"","translated_text":"","localized_text":"","final_text":"","confidence":0.0}}]}}。
 name_map={json.dumps(name_map, ensure_ascii=False)}
 input={json.dumps(payload, ensure_ascii=False)}"""
+
+
+def _complete_translation_items(
+    result: Mapping[str, Any],
+    expected_keys: set[str],
+) -> dict[str, Mapping[str, Any]]:
+    raw_rows = result.get("dialogues")
+    if not isinstance(raw_rows, list):
+        raise LocalQwenTextError("target dialogue response is missing dialogues array")
+    complete: dict[str, Mapping[str, Any]] = {}
+    for item in raw_rows:
+        if not isinstance(item, Mapping):
+            continue
+        source_key = str(item.get("source_dialogue_key") or "").strip()
+        if not source_key or source_key not in expected_keys:
+            continue
+        if not (
+            _clean(item.get("translated_text"))
+            and _clean(item.get("localized_text"))
+            and _clean(item.get("final_text"))
+            and _confidence(item.get("confidence")) is not None
+        ):
+            continue
+        complete[source_key] = item
+    return complete
+
+
+def _request_translation_chunk(
+    rows: list[dict[str, Any]],
+    *,
+    source_language: str,
+    target_language: str,
+    target_region: str,
+    name_map: Mapping[str, str],
+) -> tuple[dict[str, Mapping[str, Any]], list[dict[str, str]]]:
+    if not rows:
+        return {}, []
+
+    expected = {str(row["source_dialogue_key"]): row for row in rows}
+    expected_keys = set(expected)
+    complete: dict[str, Mapping[str, Any]] = {}
+    last_error = "模型没有返回完整对白 JSON"
+    attempts = TRANSLATION_SINGLE_RETRIES if len(rows) == 1 else 1
+
+    for _attempt in range(attempts):
+        try:
+            result = request_local_qwen_json(_translation_prompt(
+                rows,
+                source_language=source_language,
+                target_language=target_language,
+                target_region=target_region,
+                name_map=name_map,
+            ))
+            complete = _complete_translation_items(result, expected_keys)
+            missing_keys = expected_keys - set(complete)
+            if not missing_keys:
+                return complete, []
+            last_error = "模型返回缺失或字段不完整：" + ", ".join(sorted(missing_keys))
+        except LocalQwenTextError as exc:
+            complete = {}
+            missing_keys = expected_keys
+            last_error = str(exc)
+
+        if len(rows) > 1:
+            break
+
+    missing_rows = [expected[key] for key in expected_keys if key not in complete]
+    if len(rows) > 1 and missing_rows:
+        midpoint = max(1, len(missing_rows) // 2)
+        left_rows = missing_rows[:midpoint]
+        right_rows = missing_rows[midpoint:]
+        left_complete, left_failures = _request_translation_chunk(
+            left_rows,
+            source_language=source_language,
+            target_language=target_language,
+            target_region=target_region,
+            name_map=name_map,
+        )
+        right_complete, right_failures = _request_translation_chunk(
+            right_rows,
+            source_language=source_language,
+            target_language=target_language,
+            target_region=target_region,
+            name_map=name_map,
+        )
+        complete.update(left_complete)
+        complete.update(right_complete)
+        return complete, left_failures + right_failures
+
+    if not missing_rows:
+        return complete, []
+    source_key = str(missing_rows[0]["source_dialogue_key"])
+    return complete, [{"source_dialogue_key": source_key, "error": last_error[:1200]}]
+
+
+def _generate_translation_proposals(
+    rows: list[dict[str, Any]],
+    *,
+    source_language: str,
+    target_language: str,
+    target_region: str,
+    name_map: Mapping[str, str],
+) -> dict[str, Mapping[str, Any]]:
+    proposals: dict[str, Mapping[str, Any]] = {}
+    failures: list[dict[str, str]] = []
+    for offset in range(0, len(rows), TRANSLATION_BATCH_SIZE):
+        chunk = rows[offset:offset + TRANSLATION_BATCH_SIZE]
+        chunk_proposals, chunk_failures = _request_translation_chunk(
+            chunk,
+            source_language=source_language,
+            target_language=target_language,
+            target_region=target_region,
+            name_map=name_map,
+        )
+        proposals.update(chunk_proposals)
+        failures.extend(chunk_failures)
+
+    if failures:
+        details = "; ".join(
+            f"{item['source_dialogue_key']}: {item['error']}"
+            for item in failures[:5]
+        )
+        if len(failures) > 5:
+            details += f"；另有 {len(failures) - 5} 条"
+        raise LocalQwenTextError(
+            f"目标对白自动拆批/重试后仍有 {len(failures)} 条未获得完整结构化结果；{details}"
+        )
+    return proposals
 
 
 def _upsert_voice_profiles(project: Project, fingerprint: str, target_characters: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -397,23 +538,14 @@ def generate_target_dialogue_text_v1(project_id: str) -> dict[str, Any]:
         str(item.get("source_character_name") or source_id): str(item["target_name"])
         for source_id, item in target_characters.items()
     }
-    proposals: dict[str, Mapping[str, Any]] = {}
     translatable = [item for item in contexts if item.get("target_character_id")]
-    for offset in range(0, len(translatable), 20):
-        chunk = translatable[offset:offset + 20]
-        try:
-            result = request_local_qwen_json(_translation_prompt(
-                chunk,
-                source_language=str(snapshot.get("source_language") or project.source_language),
-                target_language=project.target_language,
-                target_region=project.target_region,
-                name_map=name_map,
-            ))
-            for item in result.get("dialogues") or []:
-                if isinstance(item, Mapping) and item.get("source_dialogue_key"):
-                    proposals[str(item["source_dialogue_key"])] = item
-        except LocalQwenTextError:
-            pass
+    proposals = _generate_translation_proposals(
+        translatable,
+        source_language=str(snapshot.get("source_language") or project.source_language),
+        target_language=project.target_language,
+        target_region=project.target_region,
+        name_map=name_map,
+    )
 
     active_localization_issues: set[str] = set()
     dialogue_rows: list[dict[str, Any]] = []
@@ -471,7 +603,7 @@ def generate_target_dialogue_text_v1(project_id: str) -> dict[str, Any]:
                 row.translation_confidence = confidence
                 row.decision_source = "AI"
                 row.status = "READY" if valid_text else "REVIEW"
-                row.audio_status = "PENDING" if valid_text else "PENDING"
+                row.audio_status = "PENDING"
                 row.audio_input_signature = None
                 row.audio_path = None
                 row.speech_duration_us = None
