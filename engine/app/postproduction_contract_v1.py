@@ -31,6 +31,11 @@ LipSyncMode = Literal[
     "LATENTSYNC_TARGET_FACE_ROI",
     "REVIEW_MULTI_FACE",
 ]
+AudioMixMode = Literal[
+    "TARGET_DIALOGUE_ONLY",
+    "TARGET_DIALOGUE_ONLY_FALLBACK",
+    "SOURCE_BACKGROUND_SAFE",
+]
 
 
 class PostProductionDialogueV1(_StrictModel):
@@ -71,6 +76,9 @@ class PostProductionSegmentV1(_StrictModel):
     locator_input_fingerprint: str | None = None
     lip_sync_windows: list[dict[str, Any]] = Field(default_factory=list)
     dialogues: list[PostProductionDialogueV1] = Field(default_factory=list)
+    audio_mix_mode: AudioMixMode = "TARGET_DIALOGUE_ONLY"
+    background_audio_path: str | None = None
+    background_audio_reason: str | None = None
     audio_path: str | None = None
     output_path: str | None = None
     error_message: str | None = None
@@ -87,6 +95,8 @@ class PostProductionSegmentV1(_StrictModel):
             raise ValueError("target-face ROI mode is reserved for multi-person visible segments")
         if self.status == "SUCCEEDED" and not self.output_path:
             raise ValueError("successful postproduction segment needs output_path")
+        if self.audio_mix_mode == "SOURCE_BACKGROUND_SAFE" and not self.background_audio_path:
+            raise ValueError("safe source background mix needs background_audio_path")
         return self
 
 
@@ -121,7 +131,19 @@ class LipSyncRuntimeStatusV1(_StrictModel):
     error: str | None = None
 
 
+class BackgroundAudioRuntimeStatusV1(_StrictModel):
+    runtime_profile: Literal["AUDIO_SEPARATOR_LOCAL_V1"] = "AUDIO_SEPARATOR_LOCAL_V1"
+    ready: bool
+    reachable: bool
+    base_url: str
+    model_filename: str
+    worker: dict = Field(default_factory=dict)
+    error: str | None = None
+
+
 __all__ = [
+    "AudioMixMode",
+    "BackgroundAudioRuntimeStatusV1",
     "LipSyncMode",
     "LipSyncRuntimeStatusV1",
     "PostProductionDialogueV1",
