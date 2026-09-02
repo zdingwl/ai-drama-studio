@@ -15,6 +15,9 @@ from engine.app.source_drama_snapshot_v1 import (
 )
 
 
+DIALOGUE_GROUP_1 = "BREAKDOWN_1:DG:UTTERANCE_1"
+
+
 def _read_model() -> dict:
     return {
         "schema_version": "breakdown-read-model-v1",
@@ -69,9 +72,11 @@ def _read_model() -> dict:
                             ],
                             "dialogue": [
                                 {
+                                    "dialogue_group_id": DIALOGUE_GROUP_1,
                                     "start_us": 1_000_000,
                                     "end_us": 2_200_000,
                                     "text": "你怎么会在这里？",
+                                    "source_language": "zh-CN",
                                     "speakers": ["P1"],
                                 }
                             ],
@@ -152,17 +157,29 @@ def _read_model() -> dict:
     }
 
 
+def _revision_items(read_model: dict) -> dict[int, SimpleNamespace]:
+    rows: dict[int, SimpleNamespace] = {}
+    for scene in read_model["timeline"]["scenes"]:
+        for shot in scene["shots"]:
+            ordinal = int(shot["ordinal"])
+            rows[ordinal] = SimpleNamespace(
+                id=f"ITEM_{ordinal}",
+                original_shot_id=f"SHOT_{ordinal}",
+                ordinal=ordinal,
+            )
+    return rows
+
+
 def _episode_snapshot(read_model: dict | None = None, *, speaker_overrides: dict | None = None) -> dict:
+    source = read_model or _read_model()
     return compose_episode_source_drama_snapshot_v1(
-        read_model or _read_model(),
+        source,
         project_id="PROJECT_1",
         episode_id="EP_1",
         episode_title="第一集",
         episode_order=1,
         source_language="zh-CN",
-        revision_items_by_ordinal={
-            1: SimpleNamespace(id="ITEM_1", original_shot_id="SHOT_1", ordinal=1),
-        },
+        revision_items_by_ordinal=_revision_items(source),
         speaker_overrides=speaker_overrides,
     )
 
@@ -177,6 +194,8 @@ def test_episode_snapshot_exposes_remake_source_truth_without_legacy_layers() ->
     assert snapshot["shot_count"] == 1
     assert snapshot["resolved_character_count"] == 1
     assert snapshot["unresolved_person_count"] == 1
+    assert snapshot["source_dialogue_count"] == 1
+    assert snapshot["source_dialogue_projection_count"] == 1
     assert snapshot["status"] == "READY_WITH_WARNINGS"
 
     scene = snapshot["scenes"][0]
@@ -191,9 +210,17 @@ def test_episode_snapshot_exposes_remake_source_truth_without_legacy_layers() ->
     assert shot["source_revision_item_id"] == "ITEM_1"
     assert shot["reference_url"] == "/api/shot-revision-items/ITEM_1/reference"
     assert shot["source_dialogue"][0]["source_text"] == "你怎么会在这里？"
+    assert shot["source_dialogue"][0]["dialogue_group_id"] == DIALOGUE_GROUP_1
+    assert shot["source_dialogue"][0]["projection_index"] == 1
     assert shot["source_dialogue"][0]["speakers"] == [resolved_person["person_key"]]
     assert shot["final_props"][0]["id"] == "PROP_1"
     assert scene["final_scene"]["id"] == "SCENE_1"
+
+    utterance = snapshot["source_dialogue_utterances"][0]
+    assert utterance["dialogue_group_id"] == DIALOGUE_GROUP_1
+    assert utterance["source_text"] == "你怎么会在这里？"
+    assert utterance["projection_count"] == 1
+    assert utterance["projections"][0]["shot_key"] == shot["shot_key"]
     assert len(snapshot["source_fingerprint"]) == 64
 
 
@@ -233,6 +260,7 @@ def test_manual_speaker_override_updates_source_truth_and_fingerprint() -> None:
     corrected = _episode_snapshot(read_model, speaker_overrides=override)
 
     assert corrected["scenes"][0]["shots"][0]["source_dialogue"][0]["speakers"] == [person_key]
+    assert corrected["source_dialogue_utterances"][0]["speakers"] == [person_key]
     assert corrected["source_fingerprint"] != baseline["source_fingerprint"]
 
 
@@ -249,6 +277,60 @@ def test_stale_speaker_override_is_ignored_fail_closed() -> None:
     })
 
     assert snapshot["scenes"][0]["shots"][0]["source_dialogue"][0]["speakers"] == []
+
+
+def test_cross_shot_group_becomes_one_utterance_with_two_projections() -> None:
+    read_model = _read_model()
+    scene = read_model["timeline"]["scenes"][0]
+    first = scene["shots"][0]
+    first["end_us"] = 2_000_000
+    first["duration_us"] = 2_000_000
+    first["dialogue"] = [{
+        "dialogue_group_id": DIALOGUE_GROUP_1,
+        "start_us": 1_400_000,
+        "end_us": 2_000_000,
+        "text": "你怎么",
+        "source_language": "zh-CN",
+        "speakers": ["P1"],
+    }]
+    second = deepcopy(first)
+    second["ordinal"] = 2
+    second["start_us"] = 2_000_000
+    second["end_us"] = 4_000_000
+    second["duration_us"] = 2_000_000
+    second["thumbnail_url"] = "/api/shot-revision-items/ITEM_2/thumbnail"
+    second["reference_url"] = "/api/shot-revision-items/ITEM_2/reference"
+    second["visual_description"] = "镜头切到男人反应，女人继续说话。"
+    second["dialogue"] = [{
+        "dialogue_group_id": DIALOGUE_GROUP_1,
+        "start_us": 2_000_000,
+        "end_us": 2_600_000,
+        "text": "会在这里？",
+        "source_language": "zh-CN",
+        "speakers": ["P1"],
+    }]
+    second["on_screen_text"] = []
+    scene["shots"] = [first, second]
+    read_model["timeline"]["shot_count"] = 2
+
+    snapshot = _episode_snapshot(read_model)
+
+    assert snapshot["shot_count"] == 2
+    assert snapshot["source_dialogue_count"] == 1
+    assert snapshot["source_dialogue_projection_count"] == 2
+    utterance = snapshot["source_dialogue_utterances"][0]
+    assert utterance["dialogue_group_id"] == DIALOGUE_GROUP_1
+    assert utterance["source_text"] == "你怎么会在这里？"
+    assert utterance["start_us"] == 1_400_000
+    assert utterance["end_us"] == 2_600_000
+    assert utterance["projection_count"] == 2
+    assert [item["projection_index"] for item in utterance["projections"]] == [1, 2]
+    assert [item["shot_key"] for item in utterance["projections"]] == [
+        "EP_1:SHOTREV_1:H1",
+        "EP_1:SHOTREV_1:H2",
+    ]
+    assert snapshot["scenes"][0]["shots"][0]["source_dialogue"][0]["projection_index"] == 1
+    assert snapshot["scenes"][0]["shots"][1]["source_dialogue"][0]["projection_index"] == 2
 
 
 def test_target_side_fields_are_forbidden_from_source_snapshot() -> None:
@@ -271,6 +353,8 @@ def test_project_snapshot_deduplicates_resolved_character_catalog() -> None:
     assert project["episode_count"] == 1
     assert project["shot_count"] == 1
     assert project["resolved_character_count"] == 1
+    assert project["source_dialogue_count"] == 1
+    assert project["source_dialogue_projection_count"] == 1
     assert project["characters"] == [
         {"id": "CHAR_1", "name": "林晚", "cover_url": "/character/1.jpg"}
     ]
