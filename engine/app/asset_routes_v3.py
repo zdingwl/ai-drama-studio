@@ -79,19 +79,22 @@ def _bad(exc: Exception) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
-def _workspace_payload(workspace: dict[str, object]) -> dict[str, object]:
-    """Expose V10.1 Character Evidence and keep its derived review attention state current.
+def _workspace_payload(
+    workspace: dict[str, object],
+    *,
+    sync_review: bool = False,
+) -> dict[str, object]:
+    """Decorate workspace and optionally refresh derived ReviewIssue state.
 
-    ReviewIssue is an attention/read-model cache, not Final Asset truth. Synchronizing it
-    after decoration means existing projects are healed on their next workspace read:
-    a Shot understood as containing people can no longer remain green merely because an
-    older review-sync run did not know about character coverage.
+    GET callers must keep ``sync_review=False``. ReviewIssue synchronization is a write
+    operation and therefore belongs only to explicit asset writes/background commands.
     """
 
     payload = decorate_asset_workspace_character_evidence(workspace)
-    project_id = str(payload.get("project_id") or "")
-    if project_id:
-        sync_asset_review_issues(project_id, payload)
+    if sync_review:
+        project_id = str(payload.get("project_id") or "")
+        if project_id:
+            sync_asset_review_issues(project_id, payload)
     return payload
 
 
@@ -216,7 +219,10 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
             total_items=None,
             message=f"V10.1 只发布 {resolved_characters} 个确认人物类别；{unresolved_evidence} 个待归属 Evidence 不计入人物数",
         )
-        workspace = apply_analysis_to_assets(project_id, run_id)
+        workspace = _workspace_payload(
+            apply_analysis_to_assets(project_id, run_id),
+            sync_review=True,
+        )
         manual_preserved = bool(workspace.get("stale"))
         warning = semantic_warning or manual_preserved or unresolved_evidence > 0
         if manual_preserved:
@@ -246,7 +252,10 @@ def _run_full_asset_task(task_id: str, project_id: str) -> None:
 @router.get("/projects/{project_id}/assets/workspace")
 def api_asset_workspace(project_id: str):
     try:
-        return _workspace_payload(get_asset_workspace(project_id))
+        return _workspace_payload(
+            get_asset_workspace(project_id, auto_bootstrap=False),
+            sync_review=False,
+        )
     except (LookupError, AssetWorkspaceError) as exc:
         raise _bad(exc) from exc
 
@@ -284,7 +293,10 @@ def api_apply_analysis(project_id: str):
     if not analysis:
         raise _bad(ValueError("当前没有可用资产 AI Run"))
     try:
-        return _workspace_payload(apply_analysis_to_assets(project_id, analysis["id"], force=True))
+        return _workspace_payload(
+            apply_analysis_to_assets(project_id, analysis["id"], force=True),
+            sync_review=True,
+        )
     except (LookupError, AssetWorkspaceError) as exc:
         raise _bad(exc) from exc
 
@@ -292,13 +304,16 @@ def api_apply_analysis(project_id: str):
 @router.put("/projects/{project_id}/assets/shots/{shot_id}/bindings")
 def api_set_shot_bindings(project_id: str, shot_id: str, payload: ShotBindingsRequest):
     try:
-        return _workspace_payload(set_shot_bindings(
-            project_id,
-            shot_id,
-            character_ids=payload.character_ids,
-            scene_id=payload.scene_id,
-            prop_ids=payload.prop_ids,
-        ))
+        return _workspace_payload(
+            set_shot_bindings(
+                project_id,
+                shot_id,
+                character_ids=payload.character_ids,
+                scene_id=payload.scene_id,
+                prop_ids=payload.prop_ids,
+            ),
+            sync_review=True,
+        )
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -306,7 +321,10 @@ def api_set_shot_bindings(project_id: str, shot_id: str, payload: ShotBindingsRe
 @router.post("/projects/{project_id}/assets")
 def api_create_asset(project_id: str, payload: AssetCreateRequest):
     try:
-        return _workspace_payload(create_asset(project_id, payload.entity_type, payload.name, shot_id=payload.shot_id))
+        return _workspace_payload(
+            create_asset(project_id, payload.entity_type, payload.name, shot_id=payload.shot_id),
+            sync_review=True,
+        )
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -314,7 +332,10 @@ def api_create_asset(project_id: str, payload: AssetCreateRequest):
 @router.patch("/projects/{project_id}/assets/{entity_type}/{entity_id}")
 def api_rename_asset(project_id: str, entity_type: AssetType, entity_id: str, payload: AssetRenameRequest):
     try:
-        return _workspace_payload(rename_asset(project_id, entity_type, entity_id, payload.name))
+        return _workspace_payload(
+            rename_asset(project_id, entity_type, entity_id, payload.name),
+            sync_review=True,
+        )
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -322,7 +343,10 @@ def api_rename_asset(project_id: str, entity_type: AssetType, entity_id: str, pa
 @router.delete("/projects/{project_id}/assets/{entity_type}/{entity_id}")
 def api_delete_asset(project_id: str, entity_type: AssetType, entity_id: str):
     try:
-        return _workspace_payload(delete_asset(project_id, entity_type, entity_id))
+        return _workspace_payload(
+            delete_asset(project_id, entity_type, entity_id),
+            sync_review=True,
+        )
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -330,7 +354,10 @@ def api_delete_asset(project_id: str, entity_type: AssetType, entity_id: str):
 @router.post("/projects/{project_id}/assets/merge")
 def api_merge_assets(project_id: str, payload: AssetMergeRequest):
     try:
-        return _workspace_payload(merge_assets(project_id, payload.entity_type, payload.entity_ids, target_id=payload.target_id))
+        return _workspace_payload(
+            merge_assets(project_id, payload.entity_type, payload.entity_ids, target_id=payload.target_id),
+            sync_review=True,
+        )
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -340,7 +367,10 @@ def api_split_asset(project_id: str, entity_type: AssetType, entity_id: str, pay
     if payload.entity_type != entity_type:
         raise _bad(ValueError("entity_type 不一致"))
     try:
-        return _workspace_payload(split_asset(project_id, entity_type, entity_id, payload.shot_ids, new_name=payload.new_name))
+        return _workspace_payload(
+            split_asset(project_id, entity_type, entity_id, payload.shot_ids, new_name=payload.new_name),
+            sync_review=True,
+        )
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -348,7 +378,10 @@ def api_split_asset(project_id: str, entity_type: AssetType, entity_id: str, pay
 @router.patch("/projects/{project_id}/assets/{entity_type}/{entity_id}/cover")
 def api_set_asset_cover(project_id: str, entity_type: AssetType, entity_id: str, payload: AssetCoverRequest):
     try:
-        return _workspace_payload(set_asset_cover(project_id, entity_type, entity_id, payload.cover_url))
+        return _workspace_payload(
+            set_asset_cover(project_id, entity_type, entity_id, payload.cover_url),
+            sync_review=True,
+        )
     except AssetWorkspaceError as exc:
         raise _bad(exc) from exc
 
@@ -356,6 +389,9 @@ def api_set_asset_cover(project_id: str, entity_type: AssetType, entity_id: str,
 @router.post("/asset-revisions/{revision_id}/restore")
 def api_restore_asset_revision(revision_id: str):
     try:
-        return _workspace_payload(restore_asset_revision(revision_id))
+        return _workspace_payload(
+            restore_asset_revision(revision_id),
+            sync_review=True,
+        )
     except (LookupError, AssetWorkspaceError) as exc:
         raise _bad(exc) from exc
