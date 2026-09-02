@@ -1,10 +1,12 @@
 """HTTP API for the unified human-review queue."""
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from engine.app.character_review_issue_sync_v1 import resolve_legacy_character_evidence_issues
 from engine.app.review_issue_v1 import (
@@ -30,10 +32,15 @@ class SpeakerReviewResolutionPatch(BaseModel):
     person_key: str = Field(min_length=1, max_length=220)
 
 
-def _find_source_dialogue_for_issue(snapshot: dict[str, Any], issue: ReviewIssue) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    dialogue_key = issue.source_key.removeprefix(SPEAKER_PREFIX)
+def _find_source_dialogue_for_issue(
+    snapshot: dict[str, Any],
+    *,
+    source_key: str,
+    episode_id: str | None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    dialogue_key = source_key.removeprefix(SPEAKER_PREFIX)
     for episode in snapshot.get("episodes") or []:
-        if issue.episode_id and episode.get("episode_id") != issue.episode_id:
+        if episode_id and episode.get("episode_id") != episode_id:
             continue
         for scene in episode.get("scenes") or []:
             for shot in scene.get("shots") or []:
@@ -41,6 +48,43 @@ def _find_source_dialogue_for_issue(snapshot: dict[str, Any], issue: ReviewIssue
                     if dialogue.get("dialogue_key") == dialogue_key:
                         return episode, scene, dialogue
     raise LookupError("这条说话人问题对应的源对白已经不存在，请刷新待确认列表")
+
+
+def _legacy_speaker_context_needs_refresh(project_id: str) -> bool:
+    """Detect old speaker rows without recomposing the whole project on every Review Center read."""
+
+    with get_session() as session:
+        rows = session.scalars(select(ReviewIssue).where(
+            ReviewIssue.project_id == project_id,
+            ReviewIssue.status == "OPEN",
+            ReviewIssue.issue_type == "SPEAKER",
+        )).all()
+        for row in rows:
+            try:
+                suggestion = json.loads(row.ai_suggestion_json or "null")
+            except (TypeError, ValueError):
+                return True
+            if not isinstance(suggestion, dict):
+                return True
+            if not isinstance(suggestion.get("candidate_people"), list):
+                return True
+            if not suggestion.get("episode_order") or not suggestion.get("shot_ordinal"):
+                return True
+        return False
+
+
+def _refresh_legacy_speaker_context(project_id: str) -> None:
+    if not _legacy_speaker_context_needs_refresh(project_id):
+        return
+    try:
+        snapshot = load_project_source_drama_snapshot_v1(project_id)
+        sync_source_drama_speaker_issues(project_id, snapshot)
+    except LookupError:
+        raise
+    except (SourceDramaSnapshotError, RuntimeError, ValueError):
+        # Review listing itself must remain available when current source truth cannot yet be
+        # recomposed. The old row stays visible and can be repaired after source processing.
+        return
 
 
 @router.get("/projects/{project_id}/review-issues")
@@ -55,14 +99,9 @@ def api_list_review_issues(
         resolve_legacy_character_evidence_issues(project_id)
 
         # Existing projects can contain old SPEAKER rows that predate the actionable review
-        # payload. Refresh them from current source truth on normal OPEN-list reads so a page
-        # refresh is enough to gain episode/scene/shot/dialogue/candidate context.
+        # payload. Upgrade only those old rows; current rows do not trigger a project rebuild.
         if status is None or status.strip().upper() == "OPEN":
-            try:
-                snapshot = load_project_source_drama_snapshot_v1(project_id)
-                sync_source_drama_speaker_issues(project_id, snapshot)
-            except SourceDramaSnapshotError:
-                pass
+            _refresh_legacy_speaker_context(project_id)
 
         return list_review_issues(project_id, status=status)
     except LookupError as exc:
@@ -100,11 +139,16 @@ def api_resolve_speaker_review_issue(issue_id: str, payload: SpeakerReviewResolu
                 raise ValueError("这条说话人问题已经处理，请刷新页面")
             project_id = issue.project_id
             episode_id = issue.episode_id
+            source_key = issue.source_key
             if not episode_id:
                 raise ValueError("说话人问题缺少 Episode 定位信息")
 
         snapshot = load_project_source_drama_snapshot_v1(project_id)
-        _episode, scene, dialogue = _find_source_dialogue_for_issue(snapshot, issue)
+        _episode, scene, dialogue = _find_source_dialogue_for_issue(
+            snapshot,
+            source_key=source_key,
+            episode_id=episode_id,
+        )
         person_key = payload.person_key.strip()
         people = {
             str(person.get("person_key") or ""): person
