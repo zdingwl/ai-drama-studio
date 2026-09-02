@@ -23,6 +23,7 @@ SEVERITIES = {"REVIEW", "BLOCKING"}
 # These issues represent authoritative domain facts. They may only close as a side effect
 # of writing the real domain row, never by a generic UI acknowledgement.
 DOMAIN_EDITED_ISSUE_TYPES = {
+    "SPEAKER",
     "TARGET_CHARACTER",
     "SCENE_LOCALIZATION",
     "LOCALIZATION",
