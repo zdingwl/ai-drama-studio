@@ -125,17 +125,18 @@ function highConfidence(item: AssetEvidenceItem | null | undefined, threshold = 
 }
 
 /**
- * 职责：根据 Final Binding 与 AI Evidence 计算 Shot 是否真的需要人看。
- * 输入：一个 Shot；输出：自动一致 / AI 冲突 / 未绑定 / 低置信度。
- * 为什么：资产页只应把异常主动推给用户，而不是要求逐镜确认全部结果。
+ * 职责：根据 Final Binding、AI Evidence 和人物覆盖完整度计算 Shot 是否真的需要人看。
+ * 输入：一个 Shot；输出：自动一致 / 待确定 / AI 冲突 / 未绑定 / 低置信度。
+ * 为什么：镜头理解已经看到人物时，Final Character 没有完整覆盖绝不能显示“自动一致”。
  */
 function reviewState(shot: Shot): ReviewState {
   const binding = bindingsFor(shot.id)
   const evidence = evidenceFor(shot.id)
+  const coverageIncomplete = evidence.character_coverage?.complete === false
   const strongCharacters = evidence.characters.filter((item) => highConfidence(item) && item.final_asset_id)
   const strongProps = evidence.props.filter((item) => highConfidence(item, 0.8) && item.final_asset_id)
 
-  const characterUnbound = binding.character_ids.length === 0 && strongCharacters.length > 0
+  const characterUnbound = coverageIncomplete || (binding.character_ids.length === 0 && strongCharacters.length > 0)
   const sceneUnbound = !binding.scene_id && highConfidence(evidence.scene) && Boolean(evidence.scene?.final_asset_id)
   const unbound = characterUnbound || sceneUnbound
 
@@ -156,6 +157,7 @@ function reviewState(shot: Shot): ReviewState {
   ].filter((value): value is number => value !== null)
   const low = confidenceValues.some((value) => value < 0.75)
 
+  if (coverageIncomplete) return { key: 'unbound', label: '待确定', conflict, unbound: true, low }
   if (conflict) return { key: 'conflict', label: 'AI 冲突', conflict, unbound, low }
   if (unbound) return { key: 'unbound', label: '未绑定', conflict, unbound, low }
   if (low) return { key: 'low', label: '低置信度', conflict, unbound, low }
@@ -699,7 +701,8 @@ onUnmounted(() => window.removeEventListener('studio-task-finished', onTaskFinis
                     <button v-for="id in bindingsFor(shot.id).character_ids" :key="id" class="matrix-chip" title="点击移除" @click.stop="toggleRowEntity(shot, 'character', id)">{{ assetName('character', id) }} <span>×</span></button>
                     <button class="matrix-add" @click.stop="togglePicker(shot.id, 'character')">+</button>
                   </div>
-                  <small class="matrix-ai-line">AI: {{ evidenceFor(shot.id).characters.length ? evidenceFor(shot.id).characters.map((item) => `${item.label} ${confidenceLabel(item.confidence)}`).join(' · ') : '—' }}</small>
+                  <small v-if="evidenceFor(shot.id).character_coverage?.complete === false" class="matrix-ai-line">待确认：识别 {{ evidenceFor(shot.id).character_coverage?.detected_person_count ?? 0 }} 人 · 已绑定 {{ evidenceFor(shot.id).character_coverage?.bound_person_count ?? 0 }} 人</small>
+                  <small v-else class="matrix-ai-line">AI: {{ evidenceFor(shot.id).characters.length ? evidenceFor(shot.id).characters.map((item) => `${item.label} ${confidenceLabel(item.confidence)}`).join(' · ') : '—' }}</small>
                   <div v-if="picker?.shotId === shot.id && picker.kind === 'character'" class="matrix-picker">
                     <strong>人物</strong>
                     <label v-for="item in workspace?.characters ?? []" :key="item.id"><input type="checkbox" :checked="bindingsFor(shot.id).character_ids.includes(item.id)" @change="toggleRowEntity(shot, 'character', item.id)" />{{ item.name }}</label>
