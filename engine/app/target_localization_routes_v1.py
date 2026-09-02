@@ -16,7 +16,6 @@ from engine.app.target_localization_contract_v1 import (
 )
 from engine.app.target_localization_runtime_guard_v1 import (
     TargetLocalizationRuntimeUnavailable,
-    cleanup_automatic_localization_placeholders_v1,
     require_target_localization_runtime_v1,
     validate_target_localization_generation_v1,
 )
@@ -78,9 +77,6 @@ def api_generate_target_localization(project_id: str):
 @router.get("/projects/{project_id}/target-localization", response_model=TargetLocalizationBundleV1)
 def api_get_target_localization(project_id: str):
     try:
-        # Old versions persisted "待确认目标角色" when the model was unavailable. Those
-        # rows are system failure artifacts, not domain truth or human work.
-        cleanup_automatic_localization_placeholders_v1(project_id)
         return get_target_localization_v1(project_id)
     except Exception as exc:
         raise _error(exc) from exc
