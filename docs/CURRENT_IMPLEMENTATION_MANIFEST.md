@@ -1,6 +1,6 @@
 # AI Drama Studio — Current Implementation Manifest
 
-> Last synchronized: **2026-09-01 +08:00**
+> Last synchronized: **2026-09-02 +08:00**
 
 ## Baseline
 
@@ -10,6 +10,7 @@ Branch: main
 Product: Localized Remake V1
 Final video target: local MiniMax H3
 Target speech runtime: local Qwen3-TTS
+Lip-sync runtime: local LatentSync 1.6
 Character runtime: Character V10.1
 Formal UI: ProjectListV4 + ProjectStudioV4
 ```
@@ -30,7 +31,7 @@ Review Center
 Output
 ```
 
-Automatic internals do not create new top-level product pages.
+Automatic internals do not create new top-level product pages. `Output` prioritizes final Episode MP4/SRT; H3/PostProduction internals are advanced diagnostics.
 
 ## Automatic preparation chain
 
@@ -49,21 +50,32 @@ Preprocess
 → GenerationSegment
 ```
 
-Heavy H3 execution remains separate:
+Heavy H3 execution:
 
 ```text
 POST /api/projects/{project_id}/tasks/h3-generate-ready
-```
 
-R9 changes that task from raw generation into:
-
-```text
 prepare target references
 → H3 GenerationAttempt
 → structural QC
 → semantic Qwen3-VL QC
 → automatic retry when safe
 → GenerationSelection / Selected Output
+```
+
+Heavy R10 postproduction:
+
+```text
+POST /api/projects/{project_id}/tasks/postproduction
+
+Selected Output
+→ final target audio
+→ LatentSync / target-face ROI LatentSync
+→ PostProductionSegment
+→ SRT
+→ normalized media
+→ EpisodeOutput
+→ MP4 + SRT
 ```
 
 ## Persistent remake tables
@@ -80,6 +92,8 @@ v2_generation_segments
 v2_generation_attempts
 v2_generation_quality_checks
 v2_generation_selections
+v2_postproduction_segments
+v2_episode_outputs
 ```
 
 ## R2 SourceDramaSnapshot
@@ -128,31 +142,22 @@ engine/app/remake_timeline_v1.py
 engine/app/remake_timeline_routes_v1.py
 ```
 
-Persistent table:
-
-```text
-v2_remake_timelines
-```
+Persistent table: `v2_remake_timelines`.
 
 Consumes real target speech duration and plans target timing without rewriting source facts.
 
 ## R7 GenerationSegment + H3 provider
 
-GenerationSegment:
-
 ```text
 engine/app/generation_segment_contract_v1.py
 engine/app/generation_segment_v1.py
 engine/app/generation_segment_routes_v1.py
-```
-
-Provider boundary:
-
-```text
 engine/app/h3_runtime_v1.py
 engine/app/video_generation_provider_v1.py
 engine/app/minimax_h3_provider_v1.py
 ```
+
+Provider boundary:
 
 ```text
 business
@@ -180,40 +185,24 @@ engine/app/generation_attempt_v1.py
 engine/app/h3_generation_routes_v1.py
 ```
 
-Persistent table:
+Persistent table: `v2_generation_attempts`.
 
-```text
-v2_generation_attempts
-```
+Ref2VA receives current TargetCharacter references, optional LOCALIZE Scene reference, silent source directing/reference video and exact target-dialogue audio timeline. Source soundtrack is removed from the reference derivative.
 
-Ref2VA receives:
-
-```text
-current TargetCharacter image reference(s)
-+ optional LOCALIZE Scene reference
-+ silent source directing/reference video
-+ exact target-dialogue audio timeline
-```
-
-Source soundtrack is removed from the H3 reference derivative. Target TTS is supplied separately.
-
-GenerationAttempt lifecycle:
-
-```text
-PLANNED → SUBMITTED → RUNNING → SUCCEEDED | FAILED
-upstream changed → STALE
-```
-
-`SUCCEEDED` only means the provider returned a usable technical file. R9 decides whether that file becomes product-current output.
+`GenerationAttempt(SUCCEEDED)` only means the provider returned a usable technical file. R9 decides whether it becomes product-current output.
 
 ## R9 H3 QC / automatic retry / selected output
-
-### Contracts / persistence
 
 ```text
 engine/app/h3_qc_contract_v1.py
 engine/app/h3_qc_core_v1.py
+engine/app/h3_qc_orchestrator_v1.py
+engine/app/h3_qc_v1.py
+engine/app/h3_retry_execution_v1.py
 engine/app/generation_selection_v1.py
+engine/app/h3_qc_routes_v1.py
+frontend/src/components/H3QcReviewV1.vue
+frontend/src/components/H3OutputV1.vue
 ```
 
 Persistent tables:
@@ -231,196 +220,170 @@ GenerationQualityCheck = QC result for an Attempt
 GenerationSelection = current usable output pointer for one GenerationSegment
 ```
 
-Downstream final-video work must consume `GenerationSelection`, not merely the latest `SUCCEEDED` Attempt.
+Downstream R10 consumes `GenerationSelection`, never merely the latest `SUCCEEDED` Attempt.
 
-### Structural hard gate
+Structural gate uses ffprobe + full ffmpeg decode + target-duration tolerance. Semantic Qwen3-VL QC checks visual integrity, source actor leakage, target identity, scene, action/camera and FL2VA continuity.
 
 ```text
-ffprobe video stream / real duration / size / fps
-+ full ffmpeg video decode
-+ target-duration tolerance
+PASS -> GenerationSelection
+RETRY -> new seed + QC correction prompt
+WAITING_MODEL -> infrastructure wait, not human issue
+ambiguous/repeated failure -> H3_QC
 ```
 
-Corrupt or wrong-duration output cannot be manually selected.
+`H3_QC` is domain-edited; generic Ignore/Resolve is forbidden.
 
-### Semantic Qwen3-VL QC
+## R10 PostProduction / Lip Sync / EpisodeOutput
+
+### Contracts and persistence
 
 ```text
-engine/app/h3_qc_core_v1.py
+engine/app/postproduction_contract_v1.py
+engine/app/postproduction_v1.py
+engine/app/episode_output_contract_v1.py
+engine/app/episode_output_v1.py
 ```
 
-Generated frames are compared with:
+Persistent tables:
 
 ```text
-TargetCharacter references
-TargetScene reference/description
-source Reference Video samples for action/blocking/camera only
-Selected Output continuity frame when applicable
+v2_postproduction_segments
+v2_episode_outputs
 ```
 
-Scored dimensions:
+Authority flow:
 
 ```text
-visual_integrity
-target_character_consistency
-scene_consistency
-action_camera_consistency
-continuity_consistency
-confidence
-source_actor_leak
-obvious_visual_artifact
+GenerationSelection
+→ PostProductionSegment
+→ EpisodeOutput
 ```
 
-Source actor leakage and obvious generation corruption force RETRY.
-
-Qwen3-VL unavailable/failing is `WAITING_MODEL`, not a fake human content issue.
-
-### Retry executor
+### Lip sync
 
 ```text
-engine/app/h3_retry_execution_v1.py
-engine/app/h3_qc_orchestrator_v1.py
-engine/app/h3_qc_v1.py
+engine/app/postproduction_lipsync_v1.py
+engine/app/speaker_face_locator_v1.py
+engine/app/latentsync_provider_v1.py
+scripts/latentsync_worker_v1.py
 ```
 
-Each retry:
+Policy:
 
 ```text
-uses a different deterministic seed
-+ appends the previous QC retry_instruction to H3 prompt
-+ preserves current authoritative segment fingerprint
+off-screen dialogue -> target audio only, no mouth edit
+single visible target speaker -> LATENTSYNC_FULL_SEGMENT
+multi-face target speaker -> locate target identity -> LATENTSYNC_TARGET_FACE_ROI
+locator/model unavailable -> waiting/model state
+identity ambiguity -> REVIEW_MULTI_FACE + LIP_SYNC_QC
 ```
 
-For FL2VA continuation, retries use the **previous GenerationSelection output** as first frame. A technically SUCCEEDED but unselected bad output is never propagated forward.
+Multi-face localization is executed inside the background R10 task, not during read/compile APIs.
 
-Automatic attempt limit:
+`LIP_SYNC_QC` is a domain-edited issue. Generic Ignore/Resolve is forbidden. The dedicated retry action re-enters real localization/postproduction and only closes the issue after successful work.
+
+### Audio and subtitle behavior
+
+TargetDialogue audio is materialized on the target timeline. If one dialogue starts in an earlier GenerationSegment, the later segment trims already-played audio instead of replaying the sentence start.
+
+SRT behavior:
 
 ```text
-AI_DRAMA_H3_QC_MAX_ATTEMPTS
+UTF-8
+uses target RemakeTimeline timestamps
+one dialogue spanning multiple GenerationSegments is deduplicated
 ```
 
-default `3`, clamp `1..5`.
+### Episode assembly
 
-### H3_QC ReviewIssue
+`EpisodeOutput` only uses `SUCCEEDED` PostProductionSegments. Segments are normalized before concat so mixed size/fps/audio-presence inputs do not silently break assembly.
 
-`H3_QC` is included in `DOMAIN_EDITED_ISSUE_TYPES`.
+Current output endpoints:
 
 ```text
-generic Ignore / Resolve = forbidden
-Adopt version -> GenerationSelection
-Retry -> new H3 Attempt + QC
+GET /api/projects/{project_id}/outputs
+GET /api/episodes/{episode_id}/final-video?project_id=...
+GET /api/episodes/{episode_id}/subtitles?project_id=...
 ```
 
-Only repeated/ambiguous quality failure enters Review Center.
-
-### R9 APIs
+### R10 frontend
 
 ```text
-GET  /api/projects/{project_id}/h3-quality
-POST /api/generation-attempts/{attempt_id}/quality-check
-POST /api/generation-attempts/{attempt_id}/select
-GET  /api/generation-segments/{segment_id}/selected-video?project_id=...
-POST /api/projects/{project_id}/generation-segments/{segment_id}/tasks/h3-qc-retry
-```
-
-## R9 frontend
-
-```text
+frontend/src/components/FinalOutputV1.vue
+frontend/src/components/LipSyncReviewV1.vue
 frontend/src/components/H3OutputV1.vue
-frontend/src/components/H3QcReviewV1.vue
 frontend/src/views/ProjectStudioV4.vue
 frontend/src/api/remake.ts
 frontend/src/types/remake.ts
 ```
 
-Output page now shows only Selected Output as current usable video.
-
-Review Center exposes H3-specific actions only:
+Normal Output UX:
 
 ```text
-采用这个版本
-再生成一次
+final Episode result first
+→ play final video
+→ download MP4
+→ download SRT
+→ if H3 is pending, start H3 from Output
+→ if postproduction is pending, continue finalization from Output
 ```
 
-No separate H3/QC top-level page was added.
-
-Frontend toolchain compatibility was stabilized during R9 acceptance:
-
-```text
-frontend/package.json / package-lock.json -> TypeScript 6.0.3 line for vue-tsc compatibility
-frontend/.node-version -> 22.18.0 for current Babel/Vite engine requirements
-```
-
-Formal `frontend-v2` CI now passes `npm ci` followed by `vue-tsc --noEmit && vite build`.
+H3/PostProduction segment internals stay under advanced diagnostics.
 
 ## Main application wiring
 
-Formal H3 router tree imports R9 QC/selection models before `init_database()` runs:
-
-```text
-generation_segment_router
-h3_generation_router
-  └─ h3_qc_router
-```
-
-Therefore all R8/R9 tables participate in safe `Base.metadata.create_all()` without a schema rewrite.
+The formal router/model import tree includes generation, R9 QC/selection and R10 postproduction/output models before `init_database()` so all current V2 tables participate in `Base.metadata.create_all()`.
 
 ## Repository acceptance
 
-Tests:
+Tests include:
 
 ```text
 engine/tests/v2/test_generation_segment_v1.py
 engine/tests/v2/test_h3_r8_v1.py
 engine/tests/v2/test_h3_qc_r9_v1.py
+engine/tests/v2/test_postproduction_r10_v1.py
+engine/tests/v2/test_episode_output_r10_v1.py
 ```
 
-Jobs:
+Dedicated jobs:
 
 ```text
 r7-generation-segments
 r8-h3-generation
 r9-h3-qc
+r10-postproduction
 frontend-v2
 ```
 
-R9 acceptance covers:
-
-```text
-QC threshold policy
-source actor leak retry
-low-confidence human review
-structural duration/decode gate
-retry seed + QC feedback
-H3_QC domain-edit protection
-FastAPI R9 routes
-R8/R7 regression
-```
-
-On 2026-09-01:
+Latest verified R10 line:
 
 ```text
 r7-generation-segments = PASS
 r8-h3-generation       = PASS
 r9-h3-qc                = PASS
+r10-postproduction      = PASS
 frontend-v2             = PASS
 ```
+
+The dedicated R10 job installs FFmpeg and covers real media normalization/concat. Lightweight full-backend environments without FFmpeg skip those R10 media execution tests rather than reporting false R10 regressions.
 
 ## Acceptance boundary
 
 ```text
-R7/R8/R9 CODE / REPOSITORY ACCEPTANCE = PASS
+R7/R8/R9/R10 CODE / ISOLATED REPOSITORY ACCEPTANCE = PASS
 FRONTEND BUILD ACCEPTANCE = PASS
-LOCAL H3 GPU / QWEN QC / REAL PROJECT ACCEPTANCE = PENDING
+LOCAL H3 / QWEN / LATENTSYNC / REAL PROJECT ACCEPTANCE = PENDING
 ```
 
-Historical full-suite backend/older Breakdown failures are separate legacy/dependency debt and do not redefine the isolated R7/R8/R9 acceptance result.
+Historical full-suite backend/older Breakdown failures remain separate legacy/dependency debt unless a current change directly causes them.
 
 ## Current frontier
 
 ```text
-R10 Lip Sync + subtitle/audio/assembly/export = NEXT
-R11 legacy cleanup
+R10.1 ambience / BGM / SFX mix layer = NEXT
+real local GPU end-to-end acceptance  = PENDING
+R11 legacy cleanup                    = LATER
 ```
 
-R10 must consume **Selected Output** and final target TTS, not raw GenerationAttempt output.
+R10.1 must not reintroduce source-language dialogue. Non-dialogue source ambience/music may only be preserved when it can be separated safely; otherwise the system should reconstruct/replace it through an explicit mix layer.
