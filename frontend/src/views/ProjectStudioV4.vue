@@ -52,6 +52,15 @@ const issueGroups = computed(() => {
   for (const issue of issues.value) result[issue.issue_type] = (result[issue.issue_type] || 0) + 1
   return result
 })
+const hasTargetLocalizationIssues = computed(() => (
+  Boolean(issueGroups.value.TARGET_CHARACTER)
+  || Boolean(issueGroups.value.SCENE_LOCALIZATION)
+  || Boolean(issueGroups.value.LOCALIZATION)
+))
+const hasTimingIssues = computed(() => Boolean(issueGroups.value.DIALOGUE_TIMING))
+const hasH3Issues = computed(() => Boolean(issueGroups.value.H3_QC))
+const hasLipSyncIssues = computed(() => Boolean(issueGroups.value.LIP_SYNC_QC))
+const hasAssetBindingIssues = computed(() => Boolean(issueGroups.value.ASSET_BINDING))
 
 const viewItems: Array<{ id: StudioView; title: string; subtitle: string }> = [
   { id: 'project', title: '项目', subtitle: '素材、出海规则、自动处理' },
@@ -237,11 +246,11 @@ onUnmounted(() => {
           <div class="chips"><span>阻塞 <b>{{ blockingCount }}</b></span><span v-for="(count, key) in issueGroups" :key="key">{{ issueTypeLabel(String(key)) }} <b>{{ count }}</b></span></div>
         </section>
 
-        <TargetLocalizationReviewV1 :project-id="project.id" @changed="refresh" />
-        <SpeakerReviewEditorV1 :issues="speakerIssues" @changed="refresh" @open-asset-editor="advancedAssetOpen = true" />
-        <TimingReviewV1 :project-id="project.id" @changed="refresh" />
-        <H3QcReviewV1 :project-id="project.id" @changed="refresh" />
-        <LipSyncReviewV1 :project-id="project.id" :busy="Boolean(activeTask)" @changed="refresh" />
+        <TargetLocalizationReviewV1 v-if="hasTargetLocalizationIssues" :project-id="project.id" @changed="refresh" />
+        <SpeakerReviewEditorV1 v-if="speakerIssues.length" :issues="speakerIssues" @changed="refresh" @open-asset-editor="advancedAssetOpen = true" />
+        <TimingReviewV1 v-if="hasTimingIssues" :project-id="project.id" @changed="refresh" />
+        <H3QcReviewV1 v-if="hasH3Issues" :project-id="project.id" @changed="refresh" />
+        <LipSyncReviewV1 v-if="hasLipSyncIssues" :project-id="project.id" :busy="Boolean(activeTask)" @changed="refresh" />
 
         <section v-if="genericIssues.length" class="issues">
           <article v-for="issue in genericIssues" :key="issue.id" :class="{ blocking: issue.severity === 'BLOCKING' }">
@@ -251,7 +260,7 @@ onUnmounted(() => {
           </article>
         </section>
 
-        <section class="review-tool"><header><small>原片人物 / 场景 / 道具</small><strong>只显示冲突、未绑定和低置信度镜头</strong></header><AssetReviewInboxV1 :project-id="project.id" :episodes="project.episodes" @open-matrix="advancedAssetOpen = true" /></section>
+        <section v-if="hasAssetBindingIssues" class="review-tool"><header><small>原片人物 / 场景 / 道具</small><strong>只显示冲突、未绑定和低置信度镜头</strong></header><AssetReviewInboxV1 :project-id="project.id" :episodes="project.episodes" @open-matrix="advancedAssetOpen = true" /></section>
         <details class="advanced" :open="advancedAssetOpen" @toggle="onAdvancedAssetToggle"><summary>高级：修改全部原片资产绑定</summary><AssetStageV4 :project-id="project.id" :episodes="project.episodes" /></details>
         <details class="advanced"><summary>镜头切点修正</summary><ShotWorkbenchV4 :project-id="project.id" :episodes="project.episodes" @refresh-project="refresh" /></details>
       </main>
