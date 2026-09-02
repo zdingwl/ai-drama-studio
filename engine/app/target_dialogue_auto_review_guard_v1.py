@@ -3,6 +3,9 @@
 A LOCALIZATION ReviewIssue is only actionable when the model produced a complete
 translation proposal and the proposal itself is uncertain. Missing model output is a
 system/runtime failure and must never become an empty human form.
+
+Current-flow cleanup can be scoped by SourceDrama fingerprint so historical TargetDialogue
+rows are preserved instead of being rewritten by a later automatic retry.
 """
 from __future__ import annotations
 
@@ -61,21 +64,26 @@ def cleanup_incomplete_auto_dialogue_reviews_v1(
     project_id: str,
     *,
     dialogue_ids: set[str] | None = None,
+    source_fingerprint: str | None = None,
 ) -> int:
-    """Remove legacy empty TargetDialogue rows and close their fake review issues.
+    """Remove invalid automatic-review rows within the requested source scope.
 
     The filter is deliberately strict: only AI REVIEW rows with a known target character
     and incomplete generated text are removed. Complete low-confidence proposals and all
-    MANUAL rows are preserved.
+    MANUAL rows are preserved. When ``source_fingerprint`` is provided, historical rows
+    from earlier source versions are never touched.
     """
 
     with get_session() as session:
-        rows = list(session.scalars(select(TargetDialogue).where(
+        conditions = [
             TargetDialogue.project_id == project_id,
             TargetDialogue.status == "REVIEW",
             TargetDialogue.decision_source == "AI",
             TargetDialogue.target_character_id.is_not(None),
-        )).all())
+        ]
+        if source_fingerprint is not None:
+            conditions.append(TargetDialogue.source_fingerprint == source_fingerprint)
+        rows = list(session.scalars(select(TargetDialogue).where(*conditions)).all())
         invalid_rows = [
             row for row in rows
             if (dialogue_ids is None or row.id in dialogue_ids)
@@ -95,8 +103,8 @@ def cleanup_incomplete_auto_dialogue_reviews_v1(
         issue_keys = {_issue_key(row.source_dialogue_key) for row in invalid_rows}
         for row in invalid_rows:
             # These rows never represented a valid target-language business result. Deleting
-            # them makes later reads truthfully report "not generated" until the automatic
-            # pipeline retries, instead of reporting a fake human REVIEW state.
+            # the current invalid rows makes later reads truthfully report "not generated"
+            # until the automatic pipeline retries, while historical source versions survive.
             session.delete(row)
 
         now = utcnow()
