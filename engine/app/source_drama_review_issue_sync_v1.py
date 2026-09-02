@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 
 from engine.app.review_issue_v1 import ReviewIssue, upsert_review_issue
+from engine.app.source_dialogue_speaker_resolver_v1 import resolve_shot_dialogue_speakers_v1
 from engine.app.source_drama_snapshot_contract_v1 import SourceDramaProjectSnapshotV1
 from engine.app.studio_v2 import get_session, utcnow
 
@@ -54,20 +55,28 @@ def sync_source_drama_speaker_issues(
     for episode in snapshot.episodes:
         for scene in episode.scenes:
             people_by_key = {person.person_key: person for person in scene.people}
+            people_payload = [person.model_dump(mode="json") for person in scene.people]
             for shot in scene.shots:
-                for dialogue in shot.source_dialogue:
-                    reason: str | None = None
-                    if not dialogue.speakers:
-                        reason = "对白已识别，但未能可靠绑定说话人；目标 Voice / TTS / Lip Sync 前需要确认说话角色"
-                    elif len(dialogue.speakers) > 1:
-                        reason = "同一条对白关联多个说话人；目标语音生成前需要确认是否为重叠说话或应拆分对白"
-                    if reason is None:
+                dialogue_payload = [dialogue.model_dump(mode="json") for dialogue in shot.source_dialogue]
+                resolutions = resolve_shot_dialogue_speakers_v1(
+                    dialogue_payload,
+                    scene_people=people_payload,
+                    shot_people=shot.people,
+                    performance=[item.model_dump(mode="json") for item in shot.performance],
+                )
+                for dialogue, resolution in zip(shot.source_dialogue, resolutions, strict=True):
+                    if resolution.status == "RESOLVED":
                         continue
+
+                    if len(resolution.speaker_keys) > 1:
+                        reason = "同一条对白仍关联多个不同人物；自动上下文判断后仍无法安全确定唯一说话人"
+                    else:
+                        reason = "对白已识别，但自动结合 Scene / Shot / 表演 / 相邻对白后仍无法可靠绑定说话人"
 
                     source_key = f"{SPEAKER_PREFIX}{dialogue.dialogue_key}"
                     active.add(source_key)
                     speaker_rows = []
-                    for person_key in dialogue.speakers:
+                    for person_key in resolution.speaker_keys:
                         person = people_by_key.get(person_key)
                         if person is None:
                             continue
@@ -89,6 +98,8 @@ def sync_source_drama_speaker_issues(
                             "dialogue_key": dialogue.dialogue_key,
                             "source_text": dialogue.source_text,
                             "current_speakers": speaker_rows,
+                            "automatic_resolution_method": resolution.method,
+                            "automatic_resolution_reason": resolution.reason,
                         },
                         editable_payload={
                             "dialogue_key": dialogue.dialogue_key,
