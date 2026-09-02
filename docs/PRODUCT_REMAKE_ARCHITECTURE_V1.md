@@ -16,7 +16,8 @@ The source drama is used as:
 - acting/action reference;
 - blocking/composition/camera reference;
 - timing reference;
-- Reference Video input for generation.
+- Reference Video input for generation;
+- optional source of safely separated non-dialogue ambience/music/SFX.
 
 The target drama changes:
 
@@ -73,7 +74,7 @@ Only issues needing human judgement:
 - one-click continue generation/finalization;
 - advanced H3/PostProduction diagnostics only when needed.
 
-No top-level GenerationSegment, H3 Context, QC, Lip Sync or evidence pages.
+No top-level GenerationSegment, H3 Context, QC, Lip Sync, audio separation or evidence pages.
 
 ## 4. Automatic pipeline
 
@@ -114,12 +115,14 @@ automatic retry / GenerationSelection
         ↓
 Target-speaker Lip Sync
         ↓
+Safe non-dialogue background enhancement when available
+        ↓
 Final target audio + Subtitle
         ↓
 EpisodeOutput assembly / export
 ```
 
-Any stage that cannot decide safely creates a `ReviewIssue` instead of a new product page.
+Any stage that cannot decide safely creates a `ReviewIssue` instead of a new product page. Infrastructure-only model/runtime failure must remain a runtime/wait/fallback state rather than a fake human decision.
 
 ## 5. Source truth boundary
 
@@ -332,22 +335,59 @@ Only `SUCCEEDED` PostProductionSegments enter EpisodeOutput. Media is normalized
 
 EpisodeOutput is the normal user-facing final video authority.
 
-## 14. Audio mix boundary
+## 14. R10.1 safe background-audio mix
 
-Current R10 guarantees final target dialogue audio, but it does not yet own a complete ambience/BGM/SFX mix layer.
+R10.1 is implemented as a **best-effort enhancement after a valid R10 result**. It must never make an otherwise valid target-dialogue video unusable.
 
-R10.1 must follow these rules:
+Hard safety invariant:
 
 ```text
-never reintroduce source-language dialogue
-preserve source ambience/music only when it can be separated safely
-otherwise reconstruct/replace non-dialogue audio explicitly
-mix around target dialogue rather than competing with it
-apply deterministic loudness/peak control
-keep postproduction reruns idempotent
+raw source audio is never mixed into target output
 ```
 
-Do not hide source dialogue leakage under a lower volume mix.
+Provider boundary:
+
+```text
+postproduction business code
+→ BackgroundAudioProvider
+→ audio-separator local worker
+```
+
+The heavy audio-separation model stack stays in a dedicated worker environment rather than the main backend environment.
+
+Current safe flow:
+
+```text
+source Episode/Shot audio
+→ extract exact source Shot
+→ separate Instrumental/background stem
+→ read source-dialogue windows from SourceDramaSnapshot
+→ hard-mute those windows again with safety padding
+→ cache safe source-Shot background by source/profile fingerprint
+→ map source-Shot window to the matching target GenerationSegment window
+→ time-conform with FFmpeg atempo chain
+→ conservative gain
+→ further duck during target-dialogue intervals
+→ limiter
+→ replace the R10 output audio only
+```
+
+For a source Shot split into several target GenerationSegments, each target Segment uses the proportional source-Shot audio window. The background must not restart from source time zero for every split Segment.
+
+Safe fallback:
+
+```text
+audio-separator runtime/model offline
+or separation/mix enhancement failure
+        ↓
+keep existing R10 target-dialogue-only result
+        ↓
+TARGET_DIALOGUE_ONLY_FALLBACK
+```
+
+This fallback does not create a human ReviewIssue and does not block EpisodeOutput.
+
+R10.1 currently reuses safely separated source ambience/music/SFX. Do not add a separate BGM/SFX generation system until real-project listening acceptance shows the reuse approach is insufficient.
 
 ## 15. ReviewIssue contract
 
@@ -368,7 +408,7 @@ H3_QC
 LIP_SYNC_QC
 ```
 
-Infrastructure-only states such as H3/TTS/Qwen/LatentSync service offline do not become human ReviewIssues.
+Infrastructure-only states such as H3/TTS/Qwen/LatentSync/audio-separator service offline do not become human ReviewIssues.
 
 ## 16. Existing internals to preserve
 
@@ -392,6 +432,7 @@ Keep accepted capabilities that already work:
 - GenerationSegment;
 - GenerationAttempt / QC / Selection;
 - PostProductionSegment;
+- safe background-audio Provider/Worker/cache/mix;
 - EpisodeOutput.
 
 Do not weaken accepted Character identity gates merely to reduce ReviewIssues.
@@ -404,7 +445,7 @@ Safe order:
 
 1. V4 workflow remains stable;
 2. current remake code depends on formal source/target authorities rather than legacy page contracts;
-3. local H3/Qwen/LatentSync real-project acceptance passes;
+3. local H3/Qwen/LatentSync/audio-separator real-project acceptance passes;
 4. global import/API/test search confirms legacy code is no longer required;
 5. remove legacy UI and compatibility backend layers incrementally.
 
@@ -419,8 +460,10 @@ R7 GenerationSegment + H3 Runtime/Provider     = IMPLEMENTED
 R8 H3 ContextCompiler + GenerationAttempt      = IMPLEMENTED / ISOLATED CI PASS
 R9 automatic QC / retry / GenerationSelection = IMPLEMENTED / ISOLATED CI PASS
 R10 Lip Sync + subtitle + assembly/export      = IMPLEMENTED / ISOLATED CI PASS
-R10.1 ambience / BGM / SFX mix layer          = NEXT
+R10.1 safe ambience/BGM/SFX reuse mix          = IMPLEMENTED / ISOLATED CI PASS
 R11 legacy cleanup                            = LATER
 ```
 
-Local real-project H3/Qwen/LatentSync acceptance remains pending and must not be confused with repository CI acceptance.
+Local real-project H3/Qwen/LatentSync/audio-separator acceptance remains pending and must not be confused with repository CI acceptance.
+
+The next meaningful product milestone is **real local end-to-end acceptance**, not another speculative pipeline stage.
