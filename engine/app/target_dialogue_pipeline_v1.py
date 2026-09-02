@@ -14,6 +14,7 @@ from typing import Any
 
 from sqlalchemy import select
 
+from engine.app.local_qwen_text_v1 import LocalQwenTextError
 from engine.app.studio_v2 import get_session, utcnow
 from engine.app.target_dialogue_v1 import (
     TargetDialogue,
@@ -100,11 +101,18 @@ def validate_target_dialogue_dependencies_v1(project_id: str) -> None:
 
 def run_target_dialogue_pipeline_v1(project_id: str, *, synthesize_audio: bool = True) -> dict[str, Any]:
     invalidate_manual_dialogue_for_target_changes_v1(project_id)
-    text_bundle = generate_target_dialogue_text_v1(project_id)
+    try:
+        text_bundle = generate_target_dialogue_text_v1(project_id)
+    except LocalQwenTextError as exc:
+        cleanup_incomplete_auto_dialogue_reviews_v1(project_id)
+        raise TargetDialogueAutoGenerationError(
+            "目标对白自动翻译/本土化失败；系统已自动缩小批次、拆分并重试，"
+            f"仍未取得完整结构化结果。模型诊断：{exc}"
+        ) from exc
 
-    # target_dialogue_v1 historically swallowed LocalQwenTextError and converted missing
-    # model output into blank REVIEW rows. Guard the product boundary so infrastructure or
-    # malformed-output failures never become 13/50/etc. empty forms for a human to fill.
+    # Legacy guard: older target_dialogue_v1 versions swallowed LocalQwenTextError and
+    # converted missing model output into blank REVIEW rows. Keep cleaning those rows so
+    # upgrades never leave fake human work behind.
     incomplete_ids = incomplete_auto_dialogue_review_ids_v1(text_bundle)
     if incomplete_ids:
         cleaned = cleanup_incomplete_auto_dialogue_reviews_v1(
