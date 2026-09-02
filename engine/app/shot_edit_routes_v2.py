@@ -7,12 +7,14 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from engine.app.playback_proxy_read_v2 import get_playback_proxy_read_only_v2
 from engine.app.playback_proxy_v2 import PlaybackProxyError, ensure_playback_proxy
 from engine.app.shot_editor_v2 import ShotEditError, adjust_boundary, merge_with_next, split_shot
+from engine.app.shot_revision_read_v2 import list_shot_revisions_read_only_v2
 from engine.app.shot_revision_v2 import (
+    ensure_current_revision,
     get_revision_item_path,
     get_shot_revision,
-    list_shot_revisions,
     restore_shot_revision,
 )
 
@@ -42,19 +44,14 @@ def _not_found(message: str) -> HTTPException:
 
 @router.get("/episodes/{episode_id}/proxy")
 def api_episode_proxy(episode_id: str) -> FileResponse:
-    """给拉片工作台返回专用的整集有声播放代理。
-
-    输入：Episode ID；输出：浏览器可播放 MP4。
-    为什么：分析 Proxy 与播放器文件必须分离。历史 video-only Proxy 不再原地改写，
-    而是快速封装成 playback-v2.mp4；同时禁止浏览器复用旧无声 MP4 缓存。
-    """
+    """只读取已经准备好的整集有声播放代理，不在 GET 中生成/重封装文件。"""
 
     try:
-        path = ensure_playback_proxy(episode_id)
+        path = get_playback_proxy_read_only_v2(episode_id)
     except LookupError as exc:
         raise _not_found(str(exc)) from exc
     except PlaybackProxyError as exc:
-        raise _bad_request(exc) from exc
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return FileResponse(
         path,
         media_type="video/mp4",
@@ -64,6 +61,24 @@ def api_episode_proxy(episode_id: str) -> FileResponse:
             "X-Playback-Proxy": "v2",
         },
     )
+
+
+@router.post("/episodes/{episode_id}/proxy/prepare")
+def api_prepare_episode_proxy(episode_id: str) -> dict[str, str]:
+    """显式准备/刷新播放代理；这是文件写操作，禁止由 GET 隐式触发。"""
+
+    try:
+        path = ensure_playback_proxy(episode_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+    except PlaybackProxyError as exc:
+        raise _bad_request(exc) from exc
+    return {
+        "episode_id": episode_id,
+        "status": "READY",
+        "proxy_url": f"/api/episodes/{episode_id}/proxy",
+        "path": str(path),
+    }
 
 
 @router.patch("/shots/{shot_id}/boundary")
@@ -92,12 +107,24 @@ def api_merge_shot_with_next(shot_id: str):
 
 @router.get("/episodes/{episode_id}/shot-revisions")
 def api_list_shot_revisions(episode_id: str):
-    """列出某一集全部 Shot Revision；第一次读取旧项目会自动补 BASELINE R1。"""
+    """只列出现有 Shot Revision；旧项目缺 BASELINE 时返回空列表，不在 GET 中补写。"""
 
     try:
-        return list_shot_revisions(episode_id)
+        return list_shot_revisions_read_only_v2(episode_id)
     except LookupError as exc:
         raise _not_found(str(exc)) from exc
+
+
+@router.post("/episodes/{episode_id}/shot-revisions/ensure-baseline")
+def api_ensure_shot_revision_baseline(episode_id: str):
+    """显式为历史项目补建 BASELINE Revision；已有 Current 时幂等返回。"""
+
+    try:
+        return ensure_current_revision(episode_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
 
 
 @router.get("/shot-revisions/{revision_id}")
