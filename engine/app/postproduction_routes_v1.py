@@ -1,4 +1,4 @@
-"""R10 postproduction, subtitle and episode-output HTTP APIs."""
+"""R10/R10.1 postproduction, subtitle and episode-output HTTP APIs."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 
+from engine.app.audio_separator_provider_v1 import get_background_audio_provider_v1
 from engine.app.episode_output_contract_v1 import EpisodeOutputPlanV1
 from engine.app.episode_output_v1 import (
     assemble_ready_episodes_v1,
@@ -15,13 +16,13 @@ from engine.app.episode_output_v1 import (
     get_episode_output_v1,
 )
 from engine.app.latentsync_provider_v1 import get_lip_sync_provider_v1
-from engine.app.postproduction_contract_v1 import LipSyncRuntimeStatusV1, PostProductionPlanV1
+from engine.app.postproduction_audio_mix_v1 import run_ready_postproduction_with_audio_mix_v1
+from engine.app.postproduction_contract_v1 import BackgroundAudioRuntimeStatusV1, LipSyncRuntimeStatusV1, PostProductionPlanV1
 from engine.app.postproduction_review_v1 import retry_lip_sync_review_v1
 from engine.app.postproduction_v1 import (
     compile_postproduction_plan_v1,
     get_postproduction_segment_v1,
     postproduction_output_v1,
-    run_ready_postproduction_v1,
 )
 from engine.app.studio_v2 import get_project
 from engine.app.task_progress_v2 import (
@@ -63,8 +64,8 @@ def _run_task(task_id: str, project_id: str) -> None:
         start_task(
             task_id,
             stage_key="postproduction",
-            stage_label="口型、最终音轨与整集成片",
-            message="正在处理 R10 Selected Output 后期",
+            stage_label="口型、背景音、最终音轨与整集成片",
+            message="正在处理 R10/R10.1 Selected Output 后期",
         )
 
         def post_progress(current: int, total: int, message: str) -> None:
@@ -73,14 +74,14 @@ def _run_task(task_id: str, project_id: str) -> None:
                 progress_mode="determinate",
                 progress_percent=(current - 1) / max(1, total) * 68.0,
                 stage_key="postproduction",
-                stage_label="口型与最终目标音轨",
+                stage_label="口型、目标对白与安全背景音",
                 current_item=message,
                 current_index=current,
                 total_items=total,
                 message=message,
             )
 
-        post_result = run_ready_postproduction_v1(project_id, progress=post_progress)
+        post_result = run_ready_postproduction_with_audio_mix_v1(project_id, progress=post_progress)
 
         def assembly_progress(current: int, total: int, message: str) -> None:
             update_task(
@@ -103,6 +104,7 @@ def _run_task(task_id: str, project_id: str) -> None:
         review_count = int(post_plan.get("review_count") or 0)
         waiting_count = int(post_plan.get("waiting_count") or 0)
         output_waiting = int(output_plan.get("waiting_count") or 0)
+        background_fallbacks = int((post_result.get("background_audio") or {}).get("fallback_count") or 0)
         warning_count = len(post_failed) + len(assembly_failed) + review_count + waiting_count + output_waiting
         result = {
             "project_id": project_id,
@@ -121,6 +123,7 @@ def _run_task(task_id: str, project_id: str) -> None:
                 else (
                     f"R10 完成：{post_result.get('succeeded_now', 0)} 段新后期，"
                     f"{assembly_result.get('succeeded_now', 0)} 集新成片"
+                    + (f"；{background_fallbacks} 段背景音安全降级" if background_fallbacks else "")
                 )
             ),
         )
@@ -131,6 +134,11 @@ def _run_task(task_id: str, project_id: str) -> None:
 @router.get("/lip-sync/runtime", response_model=LipSyncRuntimeStatusV1)
 def api_lip_sync_runtime():
     return get_lip_sync_provider_v1().status()
+
+
+@router.get("/background-audio/runtime", response_model=BackgroundAudioRuntimeStatusV1)
+def api_background_audio_runtime():
+    return get_background_audio_provider_v1().status()
 
 
 @router.post("/projects/{project_id}/postproduction/compile", response_model=PostProductionPlanV1)
@@ -211,7 +219,7 @@ def api_start_postproduction(project_id: str, background: BackgroundTasks):
     task = create_task(
         project_id=project_id,
         task_type=POSTPRODUCTION_TASK_TYPE,
-        title="口型、字幕与整集成片",
+        title="口型、背景音、字幕与整集成片",
         progress_mode="indeterminate",
         total_items=len(ready_segments) + len(ready_episodes),
         deduplicate_active=False,
