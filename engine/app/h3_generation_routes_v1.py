@@ -2,25 +2,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
-from sqlalchemy import select
 
-from engine.app.generation_attempt_v1 import (
-    GenerationAttempt,
-    GenerationAttemptError,
-    _serialize as _serialize_generation_attempt,
-    get_generation_attempt_v1,
-)
+from engine.app.generation_attempt_read_v1 import list_generation_attempts_read_only_v1
+from engine.app.generation_attempt_v1 import GenerationAttemptError, get_generation_attempt_v1
 from engine.app.generation_segment_v1 import GenerationSegmentError, get_generation_segments_v1
 from engine.app.h3_context_compiler_v1 import H3ContextCompilerError, compile_h3_context_v1
 from engine.app.h3_context_contract_v1 import GenerationAttemptProjectSummaryV1, H3CompiledContextV1
 from engine.app.h3_qc_routes_v1 import router as h3_qc_router
 from engine.app.h3_qc_v1 import H3QualityError, run_generation_with_qc_v1
 from engine.app.minimax_h3_provider_v1 import get_video_generation_provider_v1
-from engine.app.studio_v2 import Project, get_project, get_session
+from engine.app.studio_v2 import get_project
 from engine.app.task_progress_v2 import (
     ACTIVE_TASK_STATUSES,
     create_task,
@@ -79,52 +73,6 @@ def _assert_runtime_ready(plan: dict) -> None:
         raise HTTPException(status_code=409, detail="本地 MiniMax H3 Runtime 尚未 READY：" + "、".join(missing))
 
 
-def _list_generation_attempts_read_only_v1(project_id: str) -> dict[str, Any]:
-    """Return effective Attempt state without persisting STALE markers during a GET."""
-
-    plan = get_generation_segments_v1(project_id)
-    current_segments = {
-        str(segment.get("id") or ""): str(segment.get("input_fingerprint") or "")
-        for episode in plan.get("episodes") or []
-        if isinstance(episode, Mapping)
-        for segment in episode.get("segments") or []
-        if isinstance(segment, Mapping) and segment.get("id")
-    }
-    with get_session() as session:
-        if session.get(Project, project_id) is None:
-            raise LookupError("项目不存在")
-        rows = list(session.scalars(
-            select(GenerationAttempt)
-            .where(GenerationAttempt.project_id == project_id)
-            .order_by(GenerationAttempt.created_at.asc(), GenerationAttempt.attempt_number.asc())
-        ).all())
-
-    attempts: list[dict[str, Any]] = []
-    for row in rows:
-        payload = _serialize_generation_attempt(row)
-        current_fingerprint = current_segments.get(row.generation_segment_id)
-        if (
-            row.status in {"SUCCEEDED", "FAILED"}
-            and (
-                not current_fingerprint
-                or current_fingerprint != row.segment_input_fingerprint
-            )
-        ):
-            payload["status"] = "STALE"
-        attempts.append(payload)
-
-    return GenerationAttemptProjectSummaryV1.model_validate({
-        "schema_version": "generation-attempt-summary-v1",
-        "project_id": project_id,
-        "attempt_count": len(attempts),
-        "succeeded_count": sum(item["status"] == "SUCCEEDED" for item in attempts),
-        "running_count": sum(item["status"] in {"PLANNED", "SUBMITTED", "RUNNING"} for item in attempts),
-        "failed_count": sum(item["status"] == "FAILED" for item in attempts),
-        "stale_count": sum(item["status"] == "STALE" for item in attempts),
-        "attempts": attempts,
-    }).model_dump(mode="json")
-
-
 def _run_h3_batch_task(task_id: str, project_id: str) -> None:
     try:
         start_task(
@@ -174,7 +122,7 @@ def _run_h3_batch_task(task_id: str, project_id: str) -> None:
 @router.get("/projects/{project_id}/generation-attempts", response_model=GenerationAttemptProjectSummaryV1)
 def api_list_generation_attempts(project_id: str):
     try:
-        return _list_generation_attempts_read_only_v1(project_id)
+        return list_generation_attempts_read_only_v1(project_id)
     except Exception as exc:
         raise _http_error(exc) from exc
 
