@@ -129,7 +129,9 @@ def _fixture_payload() -> dict[str, Any]:
                                 "source_start_us": 900_000,
                                 "source_end_us": 1_300_000,
                                 "content_text": "人物A，你  怎么现在才回来？",
+                                "language": "zh-CN",
                                 "origin": "ASR",
+                                "metadata": {"asr_segment_id": "ASR_SEGMENT_FIXTURE_1"},
                                 "participants": [
                                     {
                                         "local_subject_id": "LOCAL_A_SEG1",
@@ -289,14 +291,14 @@ def test_scene_timeline_uses_g1_truth_without_exposing_debug_internals() -> None
     assert shot2["props"] == [{"label": "手机", "interaction": "人物2手持手机"}]
 
     # ASR 是对白文本真相：即使原文包含“人物A”以及双空格，也绝不能做匿名标签替换或空白归一化。
-    assert shot2["dialogue"] == [
-        {
-            "start_us": 900_000,
-            "end_us": 1_300_000,
-            "text": "人物A，你  怎么现在才回来？",
-            "speakers": ["P1"],
-        }
-    ]
+    assert len(shot2["dialogue"]) == 1
+    dialogue = shot2["dialogue"][0]
+    assert dialogue["start_us"] == 900_000
+    assert dialogue["end_us"] == 1_300_000
+    assert dialogue["text"] == "人物A，你  怎么现在才回来？"
+    assert dialogue["source_language"] == "zh-CN"
+    assert dialogue["speakers"] == ["P1"]
+    assert dialogue["dialogue_group_id"].startswith("BREAKDOWNRUN_G2_FIXTURE:DG:")
     assert "模型猜测的一句对白" not in str(shot2["dialogue"])
     assert any("非 ASR 来源对白" in item for item in result["warnings"])
 
@@ -320,6 +322,48 @@ def test_scene_timeline_uses_g1_truth_without_exposing_debug_internals() -> None
     assert "EVIDENCE_SHOULD_NOT_LEAK" not in str(result)
     assert "LOCAL_A_SEG1" not in str(result)
     assert "LOCAL_A_SEG2" not in str(result)
+
+
+def test_same_asr_segment_crossing_shots_keeps_one_dialogue_group_id() -> None:
+    payload = deepcopy(_fixture_payload())
+    first_shot = payload["scene_segments"][0]["shots"][0]
+    second_shot = payload["scene_segments"][0]["shots"][1]
+    shared_segment_id = "ASR_SEGMENT_CROSS_SHOT_1"
+
+    first_shot["events"] = [{
+        "id": "EVENT_DIALOGUE_PART_1",
+        "ordinal": 1,
+        "event_type": "DIALOGUE",
+        "source_start_us": 400_000,
+        "source_end_us": 500_000,
+        "content_text": "你怎么",
+        "language": "zh-CN",
+        "origin": "ASR",
+        "metadata": {"asr_segment_id": shared_segment_id},
+        "participants": [{
+            "local_subject_id": "LOCAL_A_SEG1",
+            "role": "SPEAKER",
+            "subject": {"id": "LOCAL_A_SEG1"},
+        }],
+    }]
+    second_dialogue = next(
+        item for item in second_shot["events"]
+        if item["id"] == "EVENT_DIALOGUE_ASR"
+    )
+    second_dialogue["source_start_us"] = 500_000
+    second_dialogue["source_end_us"] = 900_000
+    second_dialogue["content_text"] = "现在才回来？"
+    second_dialogue["metadata"] = {"asr_segment_id": shared_segment_id}
+
+    result = assemble_scene_timeline_v1(payload)
+    first, second = result["scenes"][0]["shots"]
+
+    assert len(first["dialogue"]) == 1
+    assert len(second["dialogue"]) == 1
+    assert first["dialogue"][0]["dialogue_group_id"] == second["dialogue"][0]["dialogue_group_id"]
+    assert first["dialogue"][0]["dialogue_group_id"].startswith("BREAKDOWNRUN_G2_FIXTURE:DG:")
+    assert first["dialogue"][0]["text"] == "你怎么"
+    assert second["dialogue"][0]["text"] == "现在才回来？"
 
 
 def test_scene_timeline_preserves_stale_history_instead_of_publishing_new_truth() -> None:
