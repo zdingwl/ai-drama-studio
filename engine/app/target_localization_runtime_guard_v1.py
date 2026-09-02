@@ -12,7 +12,7 @@ from typing import Any, Mapping
 
 from sqlalchemy import select
 
-from engine.app.asset_semantics_v3 import semantic_model_status
+from engine.app.local_qwen_text_v1 import local_qwen_text_runtime_status
 from engine.app.remake_policy_v1 import get_project_remake_policy
 from engine.app.review_issue_v1 import ReviewIssue
 from engine.app.source_drama_snapshot_v1 import load_project_source_drama_snapshot_v1
@@ -113,7 +113,12 @@ def cleanup_automatic_localization_placeholders_v1(project_id: str) -> int:
 
 
 def require_target_localization_runtime_v1(project_id: str) -> dict[str, Any]:
-    """Fail before R4 writes blank placeholders when a model is actually required."""
+    """Fail before R4 writes blank placeholders when a model is actually required.
+
+    The target pipeline accepts either an explicitly configured OpenAI-compatible endpoint or the
+    same isolated Qwen3-VL runtime/checkpoint already provisioned for Breakdown.  A second port-8001
+    model service is therefore not required.
+    """
 
     snapshot = load_project_source_drama_snapshot_v1(project_id)
     policy = str((get_project_remake_policy(project_id) or {}).get("scene_policy") or "AUTO")
@@ -124,11 +129,15 @@ def require_target_localization_runtime_v1(project_id: str) -> dict[str, Any]:
         if isinstance(episode, Mapping)
     )
     needs_model = has_characters or (policy != "KEEP" and has_scenes)
-    status = dict(semantic_model_status() or {})
+    status = dict(local_qwen_text_runtime_status() or {})
     if needs_model and not status.get("ready"):
         cleanup_automatic_localization_placeholders_v1(project_id)
+        missing = [str(item) for item in status.get("missing") or [] if str(item).strip()]
+        detail = f"；本地运行时缺少：{'、'.join(missing)}" if missing else ""
         raise TargetLocalizationRuntimeUnavailable(
-            "目标人物/场景自动设计需要本地 Qwen3-VL，但当前模型服务未就绪；请恢复模型服务后重新自动处理"
+            "目标人物/场景自动设计需要 Qwen3-VL，但当前统一运行时未就绪。"
+            "程序会优先复用拉片阶段已经安装的本地 Qwen3-VL，不需要额外启动 8001 模型服务"
+            f"{detail}"
         )
     return status
 
@@ -171,7 +180,7 @@ def validate_target_localization_generation_v1(project_id: str, bundle: Mapping[
     if missing_proposal:
         cleanup_automatic_localization_placeholders_v1(project_id)
         raise TargetLocalizationRuntimeUnavailable(
-            "本地 Qwen3-VL 已启动，但本次目标人物/场景自动设计没有返回可用方案；未生成的内容不会转成人工填写任务"
+            "本地 Qwen3-VL 已运行，但本次目标人物/场景自动设计没有返回完整可用方案；未生成的内容不会转成人工填写任务"
         )
     return dict(bundle)
 
