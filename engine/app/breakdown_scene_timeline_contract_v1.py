@@ -50,11 +50,19 @@ class SceneTimelinePerformanceV1(_StrictTimelineModel):
 
 
 class SceneTimelineDialogueV1(_StrictTimelineModel):
-    """ASR 对白投影；text 必须保持 G1 ASR/Fusion 已落库文本原样。"""
+    """ASR 完整对白在当前 Shot 上的投影；text 必须保持 G1 ASR/Fusion 已落库文本原样。"""
 
-    start_us: int = Field(ge=0, description="对白在原片时间轴的开始微秒。")
-    end_us: int = Field(ge=0, description="对白在原片时间轴的结束微秒。")
-    text: str = Field(min_length=1, description="ASR 对白文本真相；G2 禁止改写、纠错或总结。")
+    dialogue_group_id: str | None = Field(
+        default=None,
+        description=(
+            "同一条完整源对白在多个 Shot 投影时共享的业务分组 ID。"
+            "历史手工 fixture 可为空；正式 assembler 会为 ASR 投影生成。"
+        ),
+    )
+    start_us: int = Field(ge=0, description="当前对白投影在原片时间轴的开始微秒。")
+    end_us: int = Field(ge=0, description="当前对白投影在原片时间轴的结束微秒。")
+    text: str = Field(min_length=1, description="当前 Shot 上的 ASR 对白投影原文；G2 禁止改写、纠错或总结。")
+    source_language: str | None = Field(default=None, description="ASR 已有语言标签；只用于后续完整对白确定性拼接。")
     speakers: list[str] = Field(default_factory=list, description="仅已有 SPEAKER 关系可映射时填写 Scene-local P*；不允许 G2 猜说话人。")
 
 
@@ -93,7 +101,7 @@ class SceneTimelineShotV1(_StrictTimelineModel):
     visual_description: str | None = Field(default=None, description="Exact-Shot 优先的当前镜头可见事实；缺失时不让 G2 猜。")
     people: list[str] = Field(default_factory=list, description="当前 Shot 已确认出现的 Scene-local P* 引用。")
     performance: list[SceneTimelinePerformanceV1] = Field(default_factory=list, description="当前 Shot 已有动作/表演事实。")
-    dialogue: list[SceneTimelineDialogueV1] = Field(default_factory=list, description="按原片时间排序的 ASR 对白。")
+    dialogue: list[SceneTimelineDialogueV1] = Field(default_factory=list, description="按原片时间排序的 ASR 对白投影。")
     props: list[SceneTimelinePropV1] = Field(default_factory=list, description="当前 Shot 已有可见道具/交互。")
     cinematography: SceneTimelineCinematographyV1 = Field(description="当前 Shot 已有景别、构图、运镜事实。")
     on_screen_text: list[SceneTimelineOnScreenTextV1] = Field(default_factory=list, description="当前 Shot OCR 可见文字。")
