@@ -14,6 +14,11 @@ from engine.app.target_localization_contract_v1 import (
     TargetCharacterV1,
     TargetLocalizationBundleV1,
 )
+from engine.app.target_localization_runtime_guard_v1 import (
+    TargetLocalizationRuntimeUnavailable,
+    require_target_localization_runtime_v1,
+    validate_target_localization_generation_v1,
+)
 from engine.app.target_localization_v1 import (
     delete_scene_localization_v1,
     delete_target_character_v1,
@@ -47,6 +52,8 @@ class SceneLocalizationEditRequest(BaseModel):
 def _error(exc: Exception) -> HTTPException:
     if isinstance(exc, LookupError):
         return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, TargetLocalizationRuntimeUnavailable):
+        return HTTPException(status_code=503, detail=str(exc))
     if isinstance(exc, SourceDramaSnapshotError):
         return HTTPException(status_code=409, detail="SourceDramaSnapshot 当前不可用")
     if isinstance(exc, ValueError):
@@ -57,7 +64,9 @@ def _error(exc: Exception) -> HTTPException:
 @router.post("/projects/{project_id}/target-localization/generate", response_model=TargetLocalizationBundleV1)
 def api_generate_target_localization(project_id: str):
     try:
-        return generate_target_localization_v1(project_id)
+        require_target_localization_runtime_v1(project_id)
+        bundle = generate_target_localization_v1(project_id)
+        return validate_target_localization_generation_v1(project_id, bundle)
     except Exception as exc:
         raise _error(exc) from exc
 
