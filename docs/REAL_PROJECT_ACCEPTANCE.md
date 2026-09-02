@@ -1,7 +1,7 @@
 # AI Drama Studio — 本机真实项目验收
 
 > 适用架构：Localized Remake V1  
-> 当前状态：**验收编排器已实现并有独立 Windows 契约测试；真实 H3 / Qwen / LatentSync / Audio Separator / 成片人工看听验收仍为 PENDING。**
+> 当前状态：**Runtime stack checker + 验收编排器已实现并有独立 Windows 契约测试；真实 H3 / Qwen / LatentSync / Audio Separator / 成片人工看听验收仍为 PENDING。**
 
 ## 1. 这一步验收什么
 
@@ -22,11 +22,12 @@
 → 人工看听成片
 ```
 
-验收脚本只是现有生产 API 的编排器，不是另一套业务流水线。
+验收工具只是现有 Runtime / 生产 API 的检查和编排器，不是另一套业务流水线。
 
-它不会：
+它们不会：
 
 ```text
+安装或猜测模型 Runtime
 修改人物/场景/对白/时间轴业务真相
 直接关闭 ReviewIssue
 绕过 H3_QC / LIP_SYNC_QC
@@ -61,9 +62,50 @@ Audio Separator  7863
 
 说明：正式生产在 Audio Separator 不可用时允许安全降级为 `TARGET_DIALOGUE_ONLY_FALLBACK`；但“完整本地栈验收”仍要求 Audio Separator READY，以便真正验证 R10.1。
 
-## 3. 只读检查
+具体 Runtime 安装/启动边界见 `docs/INSTALL_AND_RUN_WINDOWS.md`。仓库对 Audio Separator 提供完整 setup/start/check；对 H3、Qwen3-VL、Qwen3-TTS、LatentSync 不会提供未经当前环境验证的猜测启动参数。
 
-先启动 Backend 和全部本地 Runtime，然后在仓库根目录执行：
+## 3. Runtime stack 预检
+
+Backend 和模型服务启动后，先在仓库根目录执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check_local_remake_runtime_stack.ps1
+```
+
+它只检查：
+
+```text
+Backend
+H3 FL2VA
+H3 Ref2VA
+Qwen3-VL
+Qwen3-TTS
+LatentSync
+Audio Separator
+```
+
+全部必须显示 `READY` 才进入完整真实项目验收。
+
+机器可读结果：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check_local_remake_runtime_stack.ps1 -Json
+```
+
+退出码：
+
+```text
+0  READY
+3  BLOCKED
+```
+
+这个 checker 是只读工具：不下载模型、不启动服务、不改项目数据。
+
+Qwen3-VL 的 `/models` 在部分本地 OpenAI-compatible server 上会返回模型绝对路径，而生产请求可能使用配置 alias。checker 会把 exact model-id mismatch 作为诊断信息，不会因为这个差异制造假 blocker；真正的门禁仍是明确配置 + endpoint 可达。
+
+## 4. Project 只读检查
+
+Runtime 全 READY 后，再检查具体 Project 当前状态：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_real_project_acceptance_v1.ps1 `
@@ -80,7 +122,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_real_project_acceptance_v
   -Json
 ```
 
-## 4. 执行 / 断点续跑真实生产链
+## 5. 执行 / 断点续跑真实生产链
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_real_project_acceptance_v1.ps1 `
@@ -101,9 +143,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_real_project_acceptance_v
 → 不再启动任何重任务
 ```
 
-如果自动准备 / H3 QC / Lip Sync 产生真实 `ReviewIssue`，脚本立即返回 `NEEDS_REVIEW`。请到现有“待确认”页面修改真实业务数据，然后重新执行同一个命令。
+如果自动准备 / H3 QC / Lip Sync 产生真实 `ReviewIssue`，脚本立即返回 `NEEDS_REVIEW`。请到现有 Review Center 修改真实业务数据，然后重新执行同一个命令。
 
-## 5. Result 与退出码
+## 6. Project Result 与退出码
 
 ```text
 0  READY_FOR_MANUAL_ACCEPTANCE
@@ -121,7 +163,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_real_project_acceptance_v
 - `PIPELINE_FAILED`：现有生产任务或 HTTP 链执行失败，应先修真实运行问题。
 - `NOT_READY`：当前没有人工问题，但生产结果尚未覆盖完整项目，例如 QC 仍等待模型或输出尚未齐全。
 
-## 6. 最终人工看听清单
+## 7. 最终人工看听清单
 
 只有看完真实导出的 Episode MP4/SRT 后，才能判定真实项目验收是否通过。
 
@@ -149,16 +191,21 @@ H3_QC 模糊/失败 → Review Center → 修正/重试 → Selected Output
 LIP_SYNC_QC 多人身份模糊 → Review Center → 修正/重试 → PostProduction
 ```
 
-## 7. 相关文件
+## 8. 相关文件
 
 ```text
+scripts/check_local_remake_runtime_stack.py
+scripts/check_local_remake_runtime_stack.ps1
 scripts/run_real_project_acceptance_v1.py
 scripts/run_real_project_acceptance_v1.ps1
+engine/tests/v2/test_local_remake_runtime_stack_v1.py
 engine/tests/v2/test_real_project_acceptance_v1.py
 .github/workflows/real-project-acceptance.yml
 ```
 
-现阶段不要因为验收脚本存在就把以下状态改成 PASS：
+Dedicated Windows tooling CI validates Python compilation, PowerShell parsing and contract gates for both tools. It intentionally does not install or fake the heavy local model environments.
+
+现阶段不要因为验收工具存在就把以下状态改成 PASS：
 
 ```text
 LOCAL H3 / QWEN / LATENTSYNC / AUDIO-SEPARATOR / REAL PROJECT ACCEPTANCE = PENDING
