@@ -1,113 +1,113 @@
-# AI Drama Studio — Reference Video V2
+# AI Drama Studio — Localized Remake V1
 
-本项目是 Windows 本地使用的 AI 短剧本地化重制工作台。
+AI Drama Studio 是面向 Windows 本地 GPU 工作站的 **AI 短剧本土化重拍系统**。
 
-> **新对话 / 新开发者先读：**
-> `AGENTS.md` → `SKILL.md` → `docs/PROJECT_STATE.md` → `docs/CURRENT_IMPLEMENTATION_MANIFEST.md`
+它不是单纯做视频翻译，也不是只生成拉片报告。原短剧作为“导演参考”：系统理解原剧剧情、人物关系、动作、镜头、对白和节奏，然后用目标地区人物、必要的本土化场景、目标语言对白、目标人物声音和重新规划的时间轴，生成一部新的本土化短剧。
+
+> 新开发者先读：`AGENTS.md` → `SKILL.md` → `docs/PROJECT_STATE.md` → `docs/CURRENT_IMPLEMENTATION_MANIFEST.md`
 >
-> **Windows 首次安装 / Runtime / 前后端启动 / 更新 / 故障排查：**
-> `docs/INSTALL_AND_RUN_WINDOWS.md`
+> Windows 安装/运行：`docs/INSTALL_AND_RUN_WINDOWS.md`
+>
+> 真实项目验收：`docs/REAL_PROJECT_ACCEPTANCE.md`
 
-当前架构不把“拉片”理解为生成一份尽可能详细的文字报告，而是把原视频拆成独立 Shot，并保存每个 Shot 的 **Reference Video**。后续人物、场景、关键道具、目标语言对白和声音作为控制条件参与重制。
-
-## 当前实现
-
-```text
-01 剧集管理                         ✅ IMPLEMENTED
-02 拉片 / Reference Clip             ✅ IMPLEMENTED，真实 Windows 视频仍是 Release Gate
-03 资产                              ✅ Character V10.1 已实现，最新 Shot Binding 修复待真实视频复验
-04 内容剧本                           ⏳ PLANNED / 部分底层兼容代码存在
-05 重制设计                           ⏳ PLANNED
-06 生成 / 导出                        ⏳ PLANNED
-```
-
-当前人物正式基线：
+## 当前产品主线
 
 ```text
-Character V10.1
-runtime:  character-v10.1-capture-first-model-classification
-asset:    f05-assets-v10.1-person-evidence-model-classification
-resolver: person-evidence-model-classifier-v10.1
-```
-
-完整当前状态：`docs/PROJECT_STATE.md`  
-实现清单：`docs/CURRENT_IMPLEMENTATION_MANIFEST.md`  
-人物 V10.1：`docs/ASSET_CHARACTER_RECOGNITION_V10_1.md`
-
-## 核心流程
-
-```text
-项目
-→ 多个 Episode
-→ 顺序预处理
-→ 顺序自动拉片
+原短剧 / Episodes
 → Shot + Reference Clip
-→ 人物 / Scene / Key Prop / Dialogue
-→ Final Asset / Binding
-→ 替换资产 / Voice / 本地化
-→ 按 Shot 规划重制策略
-→ Reference Video 视频重制
-→ 弹性 Production Timeline
-→ QC / Export
+→ ASR / OCR / Qwen3-VL 内容理解
+→ Character V10.1 / Scene / Prop
+→ SourceDramaSnapshot
+→ TargetCharacter + SceneLocalizationMapping
+→ TargetDialogue + Qwen3-TTS + 真实目标语音时长
+→ RemakeTimeline
+→ GenerationSegment
+→ H3 Context + 目标人物/场景参考
+→ Local MiniMax H3 GenerationAttempt
+→ Structural + Qwen3-VL Semantic QC
+→ 自动重试
+→ GenerationSelection / Selected Output
+→ LatentSync 目标说话人口型
+→ 目标对白 + 安全背景音 + 字幕
+→ EpisodeOutput MP4 + SRT
+→ 本土化短剧
 ```
 
-批量处理始终按 `Episode.sort_order` 一集一集执行，不并行跑多个剧集。
+核心规则：
 
-## 当前人物技术链
+- 人物始终替换成本土化目标人物；
+- 场景支持 `AUTO / KEEP / LOCALIZE`；
+- 原 Shot 时间不是最终时间，目标语言真实说话时长决定 RemakeTimeline；
+- `Shot != GenerationSegment`，长/短镜头可以根据 H3 能力重新分段；
+- `GenerationAttempt != 可交付镜头`，只有 `GenerationSelection` 能进入后期；
+- 可见说话人才做口型，off-screen 对白不做无意义 Lip Sync；
+- 多人镜头先定位目标说话人的脸，再做 ROI Lip Sync；
+- 原语言音轨不能直接混入成片；背景音乐/环境音/SFX 必须先分离并再次硬抑制原语言对白窗口；
+- Source ASR / OCR / Shot truth 下游不可篡改。
+
+## 当前实现状态
+
+| 能力 | 状态 |
+|---|---|
+| 多 Episode / 顺序处理 / Reference Clips | Implemented |
+| Breakdown / ASR / OCR / Qwen3-VL | Implemented |
+| Character V10.1 / Scene / Prop | Implemented |
+| SourceDramaSnapshot | Implemented |
+| Target Character / Scene Localization | Implemented |
+| Target Dialogue / Qwen3-TTS | Implemented |
+| Dialogue Timing / RemakeTimeline | Implemented |
+| GenerationSegment | Implemented |
+| MiniMax H3 Context / GenerationAttempt | Implemented |
+| H3 structural + semantic QC / retry / selection | Implemented |
+| LatentSync PostProduction | Implemented |
+| Safe background audio R10.1 | Implemented |
+| SRT + Episode MP4 assembly/export | Implemented |
+| Repository isolated CI | Passing on current R7–R10.1/front-end lines |
+| User machine real GPU/model/project acceptance | **PENDING** |
+
+“代码已实现”不等于“你的本机模型链和真实成片已经验收通过”。当前真正的下一里程碑是拿真实短剧完成本机端到端看/听验收，而不是继续增加新的 R11 业务层。
+
+## 正式用户界面
+
+当前普通用户只需要理解三个区域：
 
 ```text
-Reference Clip
-→ YOLOX Person Detection
-→ isolated Person Instance crops
-→ capture-first Person Evidence
-→ YoutuReID primary identity signal
-   + clothing/body support
-   + optional YuNet/SFace Face support
-→ temporal MOT
-→ Project-level identity classification
-→ RESOLVED / UNRESOLVED
-→ V10.1 unresolved Track → known identity recovery
-→ Final Gate
-→ Character + ShotCharacterBinding
+Project
+Review Center（待确认）
+Output
 ```
 
-关键原则：
+自动分析、资产解析、时间轴规划、H3 生成、QC 和后期任务都在后台执行。只有真正不确定、冲突、高风险或重复失败的问题进入 Review Center。
 
-- Track 不是 Character；
-- Face 不是 V10.1 人物身份的必需条件；
-- 新身份至少需要 3 个独立 Shot / 3 张可用 Person Evidence；
-- 同一采样时刻不同人物 cannot-link；
-- 强 Face 冲突阻断合并；
-- Shot-level Track recovery 只能挂已有已确认 Character，不能创造新人；
-- `UNRESOLVED` 不进入 Final Character。
+正式前端入口：
 
-## 当前拉片技术栈
+```text
+frontend/src/views/ProjectListV4.vue
+frontend/src/views/ProjectStudioV4.vue
+```
 
-Backend：
-- Python / FastAPI / SQLAlchemy / SQLite
-- FFmpeg / FFprobe
-- 当前 Shot pipeline 以仓库正式 wiring 和 `PROJECT_STATE.md` 为准
-- Source PTS / frame ownership
-- Reference Clip
+## 当前主要 Runtime
 
-Frontend：
-- Vue 3
-- TypeScript
-- Vue Router
-- Vite
+| Runtime | 默认地址 | 用途 |
+|---|---|---|
+| Studio FastAPI | `127.0.0.1:8000` | 业务 API / SQLite / Task orchestration |
+| Qwen3-VL OpenAI-compatible | 默认 `127.0.0.1:8001/v1` | 内容语义 + H3 semantic QC |
+| Qwen3-TTS worker | `127.0.0.1:7861` | 目标人物音色设计/克隆/对白 |
+| LatentSync 1.6 worker | `127.0.0.1:7862` | 目标说话人口型 |
+| Audio Separator worker | `127.0.0.1:7863` | 安全复用原剧非对白背景 |
+| MiniMax H3 FL2VA | `127.0.0.1:30010` | H3 生成 |
+| MiniMax H3 Ref2VA | `127.0.0.1:30011` | Reference Video 驱动 H3 生成 |
 
-仓库中仍保留多个历史 Shot/Character 版本模块作为兼容或算法参考。不要根据文件名或旧 Feature 文档判断当前正式版本。
+H3、Qwen3-TTS、LatentSync、Audio Separator 使用隔离 Runtime。不要把所有模型依赖硬塞进主 `.venv`。
 
 ## 快速运行
 
-完整首次安装请阅读 `docs/INSTALL_AND_RUN_WINDOWS.md`。
-
-### 后端
+### 1. 后端
 
 ```powershell
-cd E:\ai-drama-studio
+cd D:\ai-drama-studio
 .\.venv\Scripts\Activate.ps1
-uvicorn engine.app.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn engine.app.main:app --host 127.0.0.1 --port 8000
 ```
 
 健康检查：
@@ -116,28 +116,59 @@ uvicorn engine.app.main:app --reload --host 127.0.0.1 --port 8000
 Invoke-RestMethod http://127.0.0.1:8000/api/health
 ```
 
-当前 FastAPI app version：
+当前 FastAPI app version：`2.7.0`。
 
-```text
-2.4.1
-```
-
-### 前端
+### 2. 前端
 
 ```powershell
-cd E:\ai-drama-studio\frontend
+cd D:\ai-drama-studio\frontend
+npm install
 npm run dev
 ```
 
-浏览器：
+浏览器：`http://127.0.0.1:5173`
 
-```text
-http://127.0.0.1:5173
+### 3. 检查完整本地 Runtime 栈
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check_local_remake_runtime_stack.ps1
 ```
 
-## V2 本地数据
+这个检查是只读的，不会安装或启动模型。任何 `NOT READY` 都会给出对应处理提示。
 
-默认：
+### 4. 真实项目端到端验收
+
+只看当前状态：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_real_project_acceptance_v1.ps1 `
+  -ProjectId PROJECT_你的项目ID
+```
+
+按当前缺口断点续跑：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_real_project_acceptance_v1.ps1 `
+  -ProjectId PROJECT_你的项目ID `
+  -Run
+```
+
+脚本只调用正式生产 API。遇到真实 ReviewIssue 会停在 `NEEDS_REVIEW`，不会自动忽略；全部机器门禁通过后也只会到 `READY_FOR_MANUAL_ACCEPTANCE`，最终仍必须人工看/听成片。
+
+## 人物正式基线
+
+```text
+Character V10.1
+runtime:  character-v10.1-capture-first-model-classification
+asset:    f05-assets-v10.1-person-evidence-model-classification
+resolver: person-evidence-model-classifier-v10.1
+```
+
+原则仍然是：Track 不是 Character、Face 不是身份本身、强冲突不能硬合并、无法确认的 Evidence 保持 unresolved。
+
+## 本地数据
+
+默认业务数据：
 
 ```text
 data_v2/
@@ -146,95 +177,49 @@ data_v2/
 └ workspace/
 ```
 
-可以设置：
+可通过：
 
 ```powershell
-$env:AI_DRAMA_STUDIO_HOME="E:\ai-drama-studio-data"
+$env:AI_DRAMA_STUDIO_HOME="D:\ai-drama-studio-data"
 ```
 
-模型 Runtime 和业务数据都不应提交到 Git。
+改变业务数据目录。模型权重、隔离 Runtime 和生成媒体均不应提交 Git。
 
-## 当前用户操作
+## 测试
 
-### 01 剧集管理
-
-支持项目建立、多集导入、排序和删除/替换。
-
-### 02 拉片
-
-支持单集/顺序批量拉片，并保存 Shot Reference Clip、Thumbnail 与 Revision。
-
-### 03 资产
-
-当前重点是人物、场景、关键道具 Evidence 与 Final Binding。
-
-人物 V10.1 已支持：
+核心独立 CI 目前拆分为：
 
 ```text
-Person Instance capture
-multi-channel Person features
-cross-Shot identity classification
-risky-view strict confirmation
-known-identity Track recovery
-Final Character materialization
-ShotCharacterBinding
+r7-generation-segments
+r8-h3-generation
+r9-h3-qc
+r10-postproduction
+frontend-v2
+Real Project Acceptance Orchestrator (Windows tooling)
 ```
 
-**代码更新不会自动重算旧 Run。** 验证最新人物/绑定逻辑必须重新执行资产提取。
+本地普通代码测试不能替代真实 GPU/模型/视频验收。最终必须检查：
 
-## 模型准备
-
-人物当前固定模型集：
-
-```text
-YOLOX
-YoutuReID
-YuNet
-SFace
-```
-
-模型准备/状态入口仍为：
-
-```text
-GET  /api/models/f05/status
-POST /api/models/f05/prepare
-```
-
-V10.1 复用 V10 的模型文件，因此模型状态中看到 V10 model-package profile 不代表正式 runtime 已回退。
-
-## 测试现实
-
-V2 测试目录：
-
-```powershell
-python -m pytest engine/tests/v2 -q
-```
-
-当前整个 GitHub Actions **不是全绿**。已知失败类别包括轻量 CI 缺少完整 `cv2`/MOT/FFmpeg runtime、旧 V6 断言、部分 legacy workspace 预期以及 frontend `vue-tsc` / TypeScript compatibility。
-
-因此仓库单元测试不能替代用户 Windows 本机真实短剧验收。
-
-最新人物验收重点：
-
-- Final Character 数量是否等于真实主要人物数量；
-- 同框不同人是否保持 cannot-link；
-- 侧身/背影/遮挡是否能正确归入已有身份；
-- 人物资产识别正确时，Shot 是否也绑定到正确 Character；
-- ambiguous Track 是否保持 unresolved 而不是误绑；
-- 旧 Run 是否通过显式 rerun 才更新绑定。
+- 目标人物是否稳定且没有原演员泄漏；
+- LOCALIZE 场景是否符合目标地区；
+- 动作、构图、运镜、节奏是否满足参考意图；
+- 目标语言对白是否自然且时长合理；
+- 多人镜头是否同步到正确说话人；
+- 是否仍残留任何原语言对白；
+- 安全背景音与目标对白混音是否自然；
+- 字幕和整集时间轴是否正确；
+- MP4 / SRT 是否可正常播放和导出。
 
 ## Legacy
 
-仓库里保留旧业务代码、旧模型入口、旧 Feature/Frozen 文档和旧 Character V1–V10 资料用于历史参考。
+仓库保留旧 Shot、Breakdown、Character V1–V10 和历史 Feature 文档用于回归、兼容和算法参考。不要根据旧文件名推断当前正式产品状态。
 
-正式当前事实以：
+当前事实优先级：
 
 ```text
-AGENTS.md
-SKILL.md
 docs/PROJECT_STATE.md
-docs/CURRENT_IMPLEMENTATION_MANIFEST.md
 当前可执行代码
+docs/CURRENT_IMPLEMENTATION_MANIFEST.md
+AGENTS.md / SKILL.md
+历史文档
 ```
-
-为准。
