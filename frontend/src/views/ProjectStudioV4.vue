@@ -19,6 +19,7 @@ import type { ProjectRemakePolicy, ReviewIssue, ScenePolicy } from '../types/rem
 import type { BackgroundTask, Project } from '../types/studio'
 
 type StudioView = 'project' | 'review' | 'output'
+type MaintenanceTool = 'asset' | 'shot' | null
 
 const route = useRoute()
 const router = useRouter()
@@ -31,7 +32,8 @@ const loading = ref(true)
 const savingPolicy = ref(false)
 const startingAuto = ref(false)
 const error = ref('')
-const advancedAssetOpen = ref(false)
+const maintenanceToolsOpen = ref(false)
+const maintenanceTool = ref<MaintenanceTool>(null)
 
 function viewFromRoute(): StudioView {
   const value = String(route.query.view || '')
@@ -44,7 +46,24 @@ const autoTask = computed(() => tasks.value.find((task) => task.task_type === 'A
 const postTask = computed(() => tasks.value.find((task) => task.task_type === 'POSTPRODUCTION_V1') ?? null)
 const openIssueCount = computed(() => issues.value.length)
 const blockingCount = computed(() => issues.value.filter((item) => item.severity === 'BLOCKING').length)
-const domainEditedIssueTypes = new Set(['SPEAKER', 'TARGET_CHARACTER', 'SCENE_LOCALIZATION', 'LOCALIZATION', 'DIALOGUE_TIMING', 'H3_QC', 'LIP_SYNC_QC'])
+const needsSourceProcessing = computed(() => Boolean(project.value?.episodes.some((episode) => episode.shot_count <= 0)))
+const autoPrepareFinished = computed(() => (
+  ['READY', 'READY_WITH_WARNINGS'].includes(String(autoTask.value?.status || ''))
+  && !needsSourceProcessing.value
+))
+
+// Issues with a real editor must never fall back to generic “mark handled” actions.
+const domainEditedIssueTypes = new Set([
+  'ASSET_BINDING',
+  'SHOT_BOUNDARY',
+  'SPEAKER',
+  'TARGET_CHARACTER',
+  'SCENE_LOCALIZATION',
+  'LOCALIZATION',
+  'DIALOGUE_TIMING',
+  'H3_QC',
+  'LIP_SYNC_QC',
+])
 const speakerIssues = computed(() => issues.value.filter((item) => item.issue_type === 'SPEAKER'))
 const genericIssues = computed(() => issues.value.filter((item) => !domainEditedIssueTypes.has(item.issue_type)))
 const issueGroups = computed(() => {
@@ -61,11 +80,58 @@ const hasTimingIssues = computed(() => Boolean(issueGroups.value.DIALOGUE_TIMING
 const hasH3Issues = computed(() => Boolean(issueGroups.value.H3_QC))
 const hasLipSyncIssues = computed(() => Boolean(issueGroups.value.LIP_SYNC_QC))
 const hasAssetBindingIssues = computed(() => Boolean(issueGroups.value.ASSET_BINDING))
+const hasShotBoundaryIssues = computed(() => Boolean(issueGroups.value.SHOT_BOUNDARY))
+
+const projectPrimaryState = computed(() => {
+  if (!project.value?.episodes.length) {
+    return {
+      tone: 'idle',
+      title: '先导入并排好原短剧剧集',
+      detail: '导入后只需要确认剧集顺序，后续镜头、人物、场景和对白分析都由系统自动完成。',
+      label: '先导入视频',
+      action: 'none' as const,
+    }
+  }
+  if (activeTask.value) {
+    return {
+      tone: 'running',
+      title: activeTask.value.stage_label || '正在自动处理',
+      detail: activeTask.value.message || '系统正在后台处理当前项目，不需要手动进入内部阶段。',
+      label: '处理中…',
+      action: 'none' as const,
+    }
+  }
+  if (openIssueCount.value) {
+    return {
+      tone: 'review',
+      title: `自动处理已暂停，有 ${openIssueCount.value} 项需要你决定`,
+      detail: '只处理系统真正无法安全判断的内容；修改完成后会继续自动生成，不需要重新拉片。',
+      label: `处理 ${openIssueCount.value} 项待确认`,
+      action: 'review' as const,
+    }
+  }
+  if (autoPrepareFinished.value) {
+    return {
+      tone: 'ready',
+      title: '原短剧理解已完成，可以继续生成成片',
+      detail: '没有人工待办。进入成片后系统会从当前有效进度继续对白、TTS、Timing、H3 和后期。',
+      label: '查看成片进度',
+      action: 'output' as const,
+    }
+  }
+  return {
+    tone: 'start',
+    title: '剧集顺序确认后，开始一次自动处理',
+    detail: '系统会逐集完成镜头理解、人物/场景/对白、目标版本设计和生成准备；只有真正异常才进入待确认。',
+    label: autoTask.value?.status === 'FAILED' ? '重新自动处理' : '开始自动处理',
+    action: 'start' as const,
+  }
+})
 
 const viewItems: Array<{ id: StudioView; title: string; subtitle: string }> = [
-  { id: 'project', title: '项目', subtitle: '素材、出海规则、自动处理' },
-  { id: 'review', title: '待确认', subtitle: '只处理 AI 不确定或高风险内容' },
-  { id: 'output', title: '成片', subtitle: '整集预览、字幕、下载' },
+  { id: 'project', title: '项目', subtitle: '导入、出海规则、自动处理' },
+  { id: 'review', title: '待确认', subtitle: '只处理真正需要你决定的内容' },
+  { id: 'output', title: '成片', subtitle: '自动生成、预览、下载' },
 ]
 
 const scenePolicyOptions: Array<{ value: ScenePolicy; label: string; detail: string }> = [
@@ -137,24 +203,32 @@ async function startAutoPrepare(): Promise<void> {
   }
 }
 
-async function closeIssue(issue: ReviewIssue, status: 'RESOLVED' | 'IGNORED'): Promise<void> {
-  if (domainEditedIssueTypes.has(issue.issue_type)) return
-  try {
-    await remakeApi.setReviewIssueStatus(issue.id, status, { manual: true })
-    await refresh()
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : '待确认状态更新失败'
-  }
-}
-
 function selectView(view: StudioView): void {
   activeView.value = view
   void router.replace({ query: { ...route.query, view } })
 }
 
-function onAdvancedAssetToggle(event: Event): void {
-  const target = event.currentTarget
-  advancedAssetOpen.value = target instanceof HTMLDetailsElement ? target.open : false
+function runProjectPrimaryAction(): void {
+  const action = projectPrimaryState.value.action
+  if (action === 'review') {
+    selectView('review')
+    return
+  }
+  if (action === 'output') {
+    selectView('output')
+    return
+  }
+  if (action === 'start') void startAutoPrepare()
+}
+
+function openMaintenanceTool(tool: Exclude<MaintenanceTool, null>): void {
+  maintenanceToolsOpen.value = true
+  maintenanceTool.value = tool
+}
+
+function closeMaintenanceTools(): void {
+  maintenanceToolsOpen.value = false
+  maintenanceTool.value = null
 }
 
 function onTaskCreated(event: Event): void {
@@ -167,7 +241,13 @@ function onTaskFinished(event: Event): void {
   const task = (event as CustomEvent<BackgroundTask>).detail
   if (!task || task.project_id !== projectId.value) return
   void refresh().then(() => {
-    if (issues.value.length) selectView('review')
+    if (issues.value.length) {
+      selectView('review')
+      return
+    }
+    if (task.task_type === 'AUTO_REMAKE_PREP_V1' && ['READY', 'READY_WITH_WARNINGS'].includes(task.status)) {
+      selectView('output')
+    }
   })
 }
 
@@ -219,13 +299,13 @@ onUnmounted(() => {
 
       <main v-if="activeView === 'project'" class="panel">
         <section class="hero">
-          <div><small>出海规则</small><h1>原短剧作为导演参考，重新拍成目标地区版本</h1><p>人物必须更换；场景按策略保留或本土化；对白自动翻译、本土化并生成固定角色声音；目标语音时长自动重排镜头，最终由本地 MiniMax H3 重拍。</p></div>
+          <div><small>出海规则</small><h1>原短剧作为导演参考，重新拍成目标地区版本</h1><p>人物自动替换并保持全剧一致；场景按策略保留或本土化；对白按目标语言和地区自动翻译、配音并适配时长；最终自动重拍并合成新短剧。</p></div>
           <div class="locale"><span>{{ project.target_language }}</span><strong>{{ project.target_region }}</strong></div>
         </section>
         <section class="rules">
-          <article><small>人物</small><strong>必须替换</strong><span>原 Character → TargetCharacter，全剧一致</span></article>
-          <article><small>对白</small><strong>{{ project.target_language }}</strong><span>自动翻译 / Qwen3-TTS / Timing</span></article>
-          <article><small>生成</small><strong>H3 Local</strong><span>原 Shot 作为导演 Reference Video</span></article>
+          <article><small>人物</small><strong>自动替换</strong><span>新人物保持全剧外观和身份一致</span></article>
+          <article><small>对白</small><strong>{{ project.target_language }}</strong><span>自动翻译、本土化、固定角色声音和时长适配</span></article>
+          <article><small>生成</small><strong>H3 Local</strong><span>保留原镜头动作与导演意图，重拍目标版本</span></article>
         </section>
         <section class="scene-policy">
           <header><small>场景策略</small><strong>场景是否跟随目标地区改变</strong></header>
@@ -233,47 +313,89 @@ onUnmounted(() => {
             <button v-for="item in scenePolicyOptions" :key="item.value" :class="{ active: policy?.scene_policy === item.value }" :disabled="savingPolicy" @click="updateScenePolicy(item.value)"><strong>{{ item.label }}</strong><span>{{ item.detail }}</span></button>
           </div>
         </section>
-        <section class="auto-run">
-          <div><small>自动流程</small><strong>能自动完成的全部在后台完成</strong><p>素材 → 镜头 → ASR/OCR/VLM → 原片资产 → SourceDramaSnapshot → 目标人物/场景 → 目标对白/TTS → Timing → GenerationSegment。只有异常进入待确认。</p></div>
-          <button class="primary" :disabled="startingAuto || Boolean(activeTask) || !project.episodes.length" @click="startAutoPrepare">{{ startingAuto ? '正在启动…' : activeTask ? '处理中…' : project.episodes.length ? '开始自动处理' : '先导入原短剧' }}</button>
-        </section>
+
         <EpisodeManagerV3 :project="project" @refresh="refresh" />
+
+        <section :class="['auto-run', `tone-${projectPrimaryState.tone}`]">
+          <div>
+            <small>02 · 下一步</small>
+            <strong>{{ projectPrimaryState.title }}</strong>
+            <p>{{ projectPrimaryState.detail }}</p>
+          </div>
+          <button
+            class="primary"
+            :disabled="projectPrimaryState.action === 'none' || startingAuto"
+            @click="runProjectPrimaryAction"
+          >{{ startingAuto ? '正在启动…' : projectPrimaryState.label }}</button>
+        </section>
       </main>
 
       <main v-else-if="activeView === 'review'" class="panel">
         <section class="review-head">
-          <div><small>人工只处理异常</small><h1>{{ openIssueCount ? `需要确认 ${openIssueCount} 项` : '当前没有需要人工确认的问题' }}</h1><p>每一条待确认都必须能定位并直接修改真实业务结果。说话人问题会显示具体剧集、场景、镜头和原对白，并允许直接选择正确人物；不再用“忽略提示 / 标记已处理”代替真实修改。</p></div>
+          <div><small>人工只处理异常</small><h1>{{ openIssueCount ? `需要确认 ${openIssueCount} 项` : '当前没有需要人工确认的问题' }}</h1><p>这里只出现系统无法安全自动决定的内容，并且每一项都必须能定位并直接修改真实业务结果。内部证据、日志和模型中间状态不会算作人工待办。</p></div>
           <div class="chips"><span>阻塞 <b>{{ blockingCount }}</b></span><span v-for="(count, key) in issueGroups" :key="key">{{ issueTypeLabel(String(key)) }} <b>{{ count }}</b></span></div>
         </section>
 
+        <section v-if="!openIssueCount" class="review-empty">
+          <div class="review-empty-icon">✓</div>
+          <div>
+            <strong>不需要你处理任何内容</strong>
+            <span>当前自动结果没有需要人工判断的问题，可以直接继续生成成片。</span>
+          </div>
+          <div class="review-empty-actions">
+            <button class="primary" @click="selectView('output')">去看成片</button>
+            <button class="secondary" @click="maintenanceToolsOpen ? closeMaintenanceTools() : (maintenanceToolsOpen = true)">{{ maintenanceToolsOpen ? '收起高级工具' : '高级维护工具' }}</button>
+          </div>
+        </section>
+
         <TargetLocalizationReviewV1 v-if="hasTargetLocalizationIssues" :project-id="project.id" @changed="refresh" />
-        <SpeakerReviewEditorV1 v-if="speakerIssues.length" :issues="speakerIssues" @changed="refresh" @open-asset-editor="advancedAssetOpen = true" />
+        <SpeakerReviewEditorV1 v-if="speakerIssues.length" :issues="speakerIssues" @changed="refresh" @open-asset-editor="openMaintenanceTool('asset')" />
         <TimingReviewV1 v-if="hasTimingIssues" :project-id="project.id" @changed="refresh" />
         <H3QcReviewV1 v-if="hasH3Issues" :project-id="project.id" @changed="refresh" />
         <LipSyncReviewV1 v-if="hasLipSyncIssues" :project-id="project.id" :busy="Boolean(activeTask)" @changed="refresh" />
 
+        <section v-if="hasAssetBindingIssues" class="review-tool">
+          <header><small>原片人物 / 场景 / 道具</small><strong>只显示真正冲突、未绑定或低置信度的镜头</strong></header>
+          <AssetReviewInboxV1 :project-id="project.id" :episodes="project.episodes" @open-matrix="openMaintenanceTool('asset')" />
+        </section>
+
+        <section v-if="hasShotBoundaryIssues" class="review-tool">
+          <header><small>镜头切点</small><strong>只处理系统明确标记为异常的镜头边界</strong></header>
+          <ShotWorkbenchV4 :project-id="project.id" :episodes="project.episodes" @refresh-project="refresh" />
+        </section>
+
         <section v-if="genericIssues.length" class="issues">
           <article v-for="issue in genericIssues" :key="issue.id" :class="{ blocking: issue.severity === 'BLOCKING' }">
-            <div><small>{{ issue.severity === 'BLOCKING' ? '必须处理' : '建议确认' }}</small><strong>{{ issueTypeLabel(issue.issue_type) }}</strong></div>
+            <div><small>{{ issue.severity === 'BLOCKING' ? '必须处理' : '需要检查' }}</small><strong>{{ issueTypeLabel(issue.issue_type) }}</strong></div>
             <p>{{ issue.reason }}</p>
-            <div class="issue-actions"><button @click="closeIssue(issue, 'IGNORED')">忽略提示</button><button @click="closeIssue(issue, 'RESOLVED')">标记已处理</button></div>
+            <div class="issue-actions"><button @click="selectView('project')">返回项目重新自动处理</button></div>
           </article>
         </section>
 
-        <section v-if="hasAssetBindingIssues" class="review-tool"><header><small>原片人物 / 场景 / 道具</small><strong>只显示冲突、未绑定和低置信度镜头</strong></header><AssetReviewInboxV1 :project-id="project.id" :episodes="project.episodes" @open-matrix="advancedAssetOpen = true" /></section>
-        <details class="advanced" :open="advancedAssetOpen" @toggle="onAdvancedAssetToggle"><summary>高级：修改全部原片资产绑定</summary><AssetStageV4 :project-id="project.id" :episodes="project.episodes" /></details>
-        <details class="advanced"><summary>镜头切点修正</summary><ShotWorkbenchV4 :project-id="project.id" :episodes="project.episodes" @refresh-project="refresh" /></details>
+        <section v-if="maintenanceToolsOpen" class="maintenance-tools">
+          <header>
+            <div><small>高级维护工具</small><strong>仅在需要主动排查源数据时使用</strong><span>这里的内容不计入“待确认”，正常流程不需要打开。</span></div>
+            <button class="secondary" @click="closeMaintenanceTools">关闭</button>
+          </header>
+          <div class="maintenance-picker">
+            <button :class="{ active: maintenanceTool === 'asset' }" @click="maintenanceTool = 'asset'"><strong>完整资产绑定</strong><span>查看和修改全部人物、场景、道具 Binding</span></button>
+            <button :class="{ active: maintenanceTool === 'shot' }" @click="maintenanceTool = 'shot'"><strong>全部镜头切点</strong><span>主动检查完整镜头时间线</span></button>
+          </div>
+          <div v-if="maintenanceTool === 'asset'" class="maintenance-content"><AssetStageV4 :project-id="project.id" :episodes="project.episodes" /></div>
+          <div v-else-if="maintenanceTool === 'shot'" class="maintenance-content"><ShotWorkbenchV4 :project-id="project.id" :episodes="project.episodes" @refresh-project="refresh" /></div>
+          <div v-else class="maintenance-placeholder">选择上面的工具后才会加载详细数据。</div>
+        </section>
       </main>
 
       <main v-else class="panel">
-        <section class="hero"><div><small>生成交付</small><h1>直接查看和下载本土化短剧成片</h1><p>MiniMax H3 镜头生成、自动质检、目标人物口型、最终目标对白音轨、字幕和整集拼接全部在后台完成；正常情况下这里只需要看最终剧集。</p></div></section>
+        <section class="hero"><div><small>生成交付</small><h1>自动生成并交付本土化短剧</h1><p>进入这里后系统会从当前有效进度继续生成；正常情况下只需要等待、预览和下载，内部生成阶段不需要手动推进。</p></div></section>
         <section class="pipeline">
-          <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>01</b><strong>原片理解</strong><span>SourceDramaSnapshot</span></article>
-          <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>02</b><strong>目标人物 / 场景</strong><span>TargetCharacter + Scene Mapping</span></article>
-          <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>03</b><strong>对白 / TTS / Timing</strong><span>真实目标语音 → RemakeTimeline → GenerationSegment</span></article>
-          <article><b>04</b><strong>MiniMax H3</strong><span>Ref2VA / FL2VA → 自动生成目标镜头</span></article>
-          <article><b>05</b><strong>自动质检</strong><span>人物 / 场景 / 动作镜头 / 连续性 → Selected Output</span></article>
-          <article :class="{ ready: postTask?.status === 'READY' || postTask?.status === 'READY_WITH_WARNINGS' }"><b>06</b><strong>口型 / 字幕 / 成片</strong><span>LatentSync → 最终目标音轨 → Episode Output</span></article>
+          <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>01</b><strong>理解原短剧</strong><span>镜头、人物、场景、道具和对白</span></article>
+          <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>02</b><strong>设计目标版本</strong><span>目标人物、场景和本土化方案</span></article>
+          <article :class="{ ready: autoTask?.status === 'READY' || autoTask?.status === 'READY_WITH_WARNINGS' }"><b>03</b><strong>对白与时长适配</strong><span>自动翻译、角色声音和镜头时长</span></article>
+          <article><b>04</b><strong>重拍目标镜头</strong><span>MiniMax H3 按原镜头导演参考生成</span></article>
+          <article><b>05</b><strong>自动质检</strong><span>人物、场景、动作和连续性自动检查</span></article>
+          <article :class="{ ready: postTask?.status === 'READY' || postTask?.status === 'READY_WITH_WARNINGS' }"><b>06</b><strong>合成最终成片</strong><span>口型、目标音轨、字幕和整集拼接</span></article>
         </section>
         <FinalOutputV1 :project-id="project.id" :busy="Boolean(activeTask)" @changed="refresh" />
         <details class="advanced output-diagnostics"><summary>高级：查看 H3 镜头生成与质检明细</summary><H3OutputV1 :project-id="project.id" :busy="Boolean(activeTask)" @changed="refresh" /></details>
@@ -285,5 +407,5 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.studio{min-height:100vh;display:grid;grid-template-columns:220px minmax(0,1fr);background:#f4f6f9;color:#34465e}.sidebar{height:100vh;position:sticky;top:0;box-sizing:border-box;padding:18px 13px;display:flex;flex-direction:column;gap:18px;border-right:1px solid #dde3eb;background:#fff}.back{align-self:start;border:0;background:none;color:#77869a;font-size:10px;cursor:pointer}.brand{display:grid;gap:4px;padding:4px 6px}.brand small,.engine span,.engine small{color:#8190a5;font-size:9px}.brand strong{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.brand span{color:#8a96a7;font-size:9px}.sidebar nav{display:grid;gap:7px}.sidebar nav button{position:relative;display:grid;gap:2px;padding:11px;border:1px solid transparent;border-radius:10px;background:none;text-align:left;cursor:pointer}.sidebar nav button.active{border-color:#cfdaeb;background:#f2f6fd}.sidebar nav strong{font-size:12px;color:#405168}.sidebar nav span{font-size:9px;color:#8793a4}.sidebar nav i{position:absolute;right:8px;top:8px;min-width:19px;height:19px;display:grid;place-items:center;border-radius:99px;background:#c98522;color:#fff;font-size:8px;font-style:normal}.engine{margin-top:auto;display:grid;gap:2px;padding:11px;border-radius:10px;background:#eef4ff}.engine strong{color:#315bab;font-size:11px}.workspace{min-width:0}.topbar{min-height:72px;display:grid;grid-template-columns:minmax(240px,1fr) auto minmax(250px,350px);gap:16px;align-items:center;padding:9px 20px;border-bottom:1px solid #dfe5ed;background:#fff}.topbar>div:first-child{display:grid;gap:2px}.topbar small{font-size:9px;color:#8995a5}.topbar strong{font-size:13px}.topbar span{font-size:9px;color:#7d8a9d}.stats{display:flex;gap:6px}.stats span{padding:7px 9px;border:1px solid #e1e6ed;border-radius:8px}.stats b{color:#465a75}.stats .attention{background:#fff8e8;border-color:#ecd69c}.error{margin:12px 20px 0;padding:9px 11px;border:1px solid #ebcccc;border-radius:8px;background:#fff3f3;color:#a84a4a;font-size:10px}.panel{max-width:1480px;margin:auto;padding:18px 22px 34px;display:grid;gap:13px}.hero,.rules,.scene-policy,.auto-run,.review-head,.review-tool,.advanced,.pipeline{border:1px solid #dfe5ed;border-radius:13px;background:#fff}.hero{display:flex;justify-content:space-between;gap:18px;padding:18px}.hero small,.scene-policy small,.auto-run small,.review-head small,.review-tool small{font-size:9px;color:#8693a5}.hero h1,.review-head h1{margin:3px 0 5px;font-size:21px}.hero p,.review-head p,.auto-run p{margin:0;max-width:900px;color:#78869a;font-size:10px;line-height:1.6}.locale{min-width:140px;display:grid;place-items:center;align-content:center;border-radius:10px;background:#f3f6fb}.locale span{font-size:9px;color:#8794a5}.locale strong{font-size:14px;color:#466080}.rules{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:10px}.rules article{display:grid;gap:2px;padding:9px;border-radius:8px;background:#f8fafc}.rules small,.rules span{font-size:9px;color:#8793a4}.rules strong{font-size:11px}.scene-policy{padding:14px;display:grid;gap:9px}.scene-policy header{display:grid;gap:2px}.scene-policy header strong{font-size:11px}.scene-policy>div{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.scene-policy button{display:grid;gap:3px;padding:10px;border:1px solid #dfe5ed;border-radius:8px;background:#fff;text-align:left;cursor:pointer}.scene-policy button.active{border-color:#91abe0;background:#f1f6ff}.scene-policy button strong{font-size:10px}.scene-policy button span{font-size:9px;color:#8793a4}.auto-run{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:20px}.auto-run>div{display:grid;gap:3px}.auto-run>div>strong{font-size:13px}.primary{min-height:38px;border:0;border-radius:8px;padding:0 15px;background:#3566d6;color:#fff;font-size:10px;font-weight:800;cursor:pointer}.primary:disabled{opacity:.45}.review-head{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:16px}.chips{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.chips span{padding:5px 8px;border-radius:99px;background:#f2f4f7;color:#718096;font-size:9px}.issues{display:grid;gap:7px}.issues article{display:grid;grid-template-columns:130px 1fr auto;align-items:center;gap:12px;padding:10px 12px;border:1px solid #e8d7a7;border-radius:9px;background:#fffaf0}.issues article.blocking{border-color:#e8c4c4;background:#fff4f4}.issues article>div:first-child{display:grid}.issues small{font-size:8px;color:#9b7837}.issues strong,.issues p{font-size:10px}.issues p{margin:0;color:#6f6048}.issue-actions{display:flex;gap:6px}.issue-actions button{min-height:30px;border:1px solid #d7dfe8;border-radius:7px;background:#fff;color:#66758a;font-size:9px;cursor:pointer}.review-tool{overflow:hidden}.review-tool>header{display:grid;gap:2px;padding:12px 15px 0}.review-tool>header strong{font-size:10px}.advanced{overflow:hidden}.advanced>summary{padding:12px 15px;font-size:10px;font-weight:750;cursor:pointer}.advanced[open]>summary{border-bottom:1px solid #e5e9ef}.output-diagnostics{background:#f9fafc}.pipeline{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:10px}.pipeline article{min-height:90px;display:grid;align-content:start;gap:4px;padding:12px;border:1px solid #e2e7ee;border-radius:9px}.pipeline article.ready{border-color:#cce2d7;background:#f6fbf8}.pipeline b{font-size:9px;color:#9ba5b3}.pipeline strong{font-size:11px}.pipeline span{font-size:9px;color:#8793a4}.state{min-height:100vh;display:grid;place-items:center;align-content:center;gap:8px;background:#f4f6f9;color:#748297}.state button{border:1px solid #d8e0e9;border-radius:8px;padding:8px;background:#fff;cursor:pointer}@media(max-width:1050px){.studio{grid-template-columns:185px minmax(0,1fr)}.topbar{grid-template-columns:1fr}.rules,.scene-policy>div,.pipeline{grid-template-columns:1fr}.auto-run,.review-head,.hero{align-items:stretch;flex-direction:column}.issues article{grid-template-columns:1fr}}
+.studio{min-height:100vh;display:grid;grid-template-columns:220px minmax(0,1fr);background:#f4f6f9;color:#34465e}.sidebar{height:100vh;position:sticky;top:0;box-sizing:border-box;padding:18px 13px;display:flex;flex-direction:column;gap:18px;border-right:1px solid #dde3eb;background:#fff}.back{align-self:start;border:0;background:none;color:#77869a;font-size:10px;cursor:pointer}.brand{display:grid;gap:4px;padding:4px 6px}.brand small,.engine span,.engine small{color:#8190a5;font-size:9px}.brand strong{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.brand span{color:#8a96a7;font-size:9px}.sidebar nav{display:grid;gap:7px}.sidebar nav button{position:relative;display:grid;gap:2px;padding:11px;border:1px solid transparent;border-radius:10px;background:none;text-align:left;cursor:pointer}.sidebar nav button.active{border-color:#cfdaeb;background:#f2f6fd}.sidebar nav strong{font-size:12px;color:#405168}.sidebar nav span{font-size:9px;color:#8793a4}.sidebar nav i{position:absolute;right:8px;top:8px;min-width:19px;height:19px;display:grid;place-items:center;border-radius:99px;background:#c98522;color:#fff;font-size:8px;font-style:normal}.engine{margin-top:auto;display:grid;gap:2px;padding:11px;border-radius:10px;background:#eef4ff}.engine strong{color:#315bab;font-size:11px}.workspace{min-width:0}.topbar{min-height:72px;display:grid;grid-template-columns:minmax(240px,1fr) auto minmax(250px,350px);gap:16px;align-items:center;padding:9px 20px;border-bottom:1px solid #dfe5ed;background:#fff}.topbar>div:first-child{display:grid;gap:2px}.topbar small{font-size:9px;color:#8995a5}.topbar strong{font-size:13px}.topbar span{font-size:9px;color:#7d8a9d}.stats{display:flex;gap:6px}.stats span{padding:7px 9px;border:1px solid #e1e6ed;border-radius:8px}.stats b{color:#465a75}.stats .attention{background:#fff8e8;border-color:#ecd69c}.error{margin:12px 20px 0;padding:9px 11px;border:1px solid #ebcccc;border-radius:8px;background:#fff3f3;color:#a84a4a;font-size:10px}.panel{max-width:1480px;margin:auto;padding:18px 22px 34px;display:grid;gap:13px}.hero,.rules,.scene-policy,.auto-run,.review-head,.review-tool,.advanced,.pipeline,.review-empty,.maintenance-tools{border:1px solid #dfe5ed;border-radius:13px;background:#fff}.hero{display:flex;justify-content:space-between;gap:18px;padding:18px}.hero small,.scene-policy small,.auto-run small,.review-head small,.review-tool small,.maintenance-tools small{font-size:9px;color:#8693a5}.hero h1,.review-head h1{margin:3px 0 5px;font-size:21px}.hero p,.review-head p,.auto-run p{margin:0;max-width:960px;color:#78869a;font-size:10px;line-height:1.6}.locale{min-width:140px;display:grid;place-items:center;align-content:center;border-radius:10px;background:#f3f6fb}.locale span{font-size:9px;color:#8794a5}.locale strong{font-size:14px;color:#466080}.rules{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:10px}.rules article{display:grid;gap:2px;padding:9px;border-radius:8px;background:#f8fafc}.rules small,.rules span{font-size:9px;color:#8793a4}.rules strong{font-size:11px}.scene-policy{padding:14px;display:grid;gap:9px}.scene-policy header{display:grid;gap:2px}.scene-policy header strong{font-size:11px}.scene-policy>div{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.scene-policy button{display:grid;gap:3px;padding:10px;border:1px solid #dfe5ed;border-radius:8px;background:#fff;text-align:left;cursor:pointer}.scene-policy button.active{border-color:#91abe0;background:#f1f6ff}.scene-policy button strong{font-size:10px}.scene-policy button span{font-size:9px;color:#8793a4}.auto-run{padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:20px}.auto-run>div{display:grid;gap:3px}.auto-run>div>strong{font-size:13px}.auto-run.tone-review{border-color:#ead29c;background:#fffaf0}.auto-run.tone-ready{border-color:#cbe0d4;background:#f7fbf8}.auto-run.tone-running{border-color:#cbd8ef;background:#f7f9ff}.primary{min-height:38px;border:0;border-radius:8px;padding:0 15px;background:#3566d6;color:#fff;font-size:10px;font-weight:800;cursor:pointer}.primary:disabled{opacity:.45;cursor:not-allowed}.secondary{min-height:34px;border:1px solid #d6dee9;border-radius:8px;padding:0 12px;background:#fff;color:#5f7088;font-size:10px;font-weight:750;cursor:pointer}.review-head{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:16px}.chips{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.chips span{padding:5px 8px;border-radius:99px;background:#f2f4f7;color:#718096;font-size:9px}.review-empty{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;padding:18px 20px}.review-empty-icon{width:36px;height:36px;display:grid;place-items:center;border-radius:50%;background:#e9f7ef;color:#2b8b5c;font-size:18px;font-weight:900}.review-empty>div:nth-child(2){display:grid;gap:3px}.review-empty strong{font-size:13px;color:#344960}.review-empty span{font-size:10px;color:#7c899b}.review-empty-actions{display:flex;gap:8px}.issues{display:grid;gap:7px}.issues article{display:grid;grid-template-columns:130px 1fr auto;align-items:center;gap:12px;padding:10px 12px;border:1px solid #e8d7a7;border-radius:9px;background:#fffaf0}.issues article.blocking{border-color:#e8c4c4;background:#fff4f4}.issues article>div:first-child{display:grid}.issues small{font-size:8px;color:#9b7837}.issues strong,.issues p{font-size:10px}.issues p{margin:0;color:#6f6048}.issue-actions{display:flex;gap:6px}.issue-actions button{min-height:30px;border:1px solid #d7dfe8;border-radius:7px;background:#fff;color:#66758a;font-size:9px;cursor:pointer}.review-tool{overflow:hidden}.review-tool>header{display:grid;gap:2px;padding:12px 15px 0}.review-tool>header strong{font-size:10px}.maintenance-tools{overflow:hidden}.maintenance-tools>header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 15px;border-bottom:1px solid #e8ecf1}.maintenance-tools>header>div{display:grid;gap:2px}.maintenance-tools>header strong{font-size:11px}.maintenance-tools>header span{font-size:9px;color:#8a96a6}.maintenance-picker{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px 15px}.maintenance-picker button{display:grid;gap:3px;padding:10px 12px;border:1px solid #dfe5ed;border-radius:9px;background:#fff;text-align:left;cursor:pointer}.maintenance-picker button.active{border-color:#91abe0;background:#f1f6ff}.maintenance-picker strong{font-size:10px}.maintenance-picker span{font-size:9px;color:#8793a4}.maintenance-content{border-top:1px solid #e8ecf1;padding-top:10px}.maintenance-placeholder{margin:0 15px 15px;padding:18px;border:1px dashed #d8e0e9;border-radius:9px;color:#8490a1;font-size:10px;text-align:center}.advanced{overflow:hidden}.advanced>summary{padding:12px 15px;font-size:10px;font-weight:750;cursor:pointer}.advanced[open]>summary{border-bottom:1px solid #e5e9ef}.output-diagnostics{background:#f9fafc}.pipeline{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:10px}.pipeline article{min-height:90px;display:grid;align-content:start;gap:4px;padding:12px;border:1px solid #e2e7ee;border-radius:9px}.pipeline article.ready{border-color:#cce2d7;background:#f6fbf8}.pipeline b{font-size:9px;color:#9ba5b3}.pipeline strong{font-size:11px}.pipeline span{font-size:9px;color:#8793a4}.state{min-height:100vh;display:grid;place-items:center;align-content:center;gap:8px;background:#f4f6f9;color:#748297}.state button{border:1px solid #d8e0e9;border-radius:8px;padding:8px;background:#fff;cursor:pointer}@media(max-width:1050px){.studio{grid-template-columns:185px minmax(0,1fr)}.topbar{grid-template-columns:1fr}.rules,.scene-policy>div,.pipeline,.maintenance-picker{grid-template-columns:1fr}.auto-run,.review-head,.hero,.maintenance-tools>header{align-items:stretch;flex-direction:column}.review-empty{grid-template-columns:1fr}.review-empty-icon{display:none}.review-empty-actions{justify-content:flex-start}.issues article{grid-template-columns:1fr}}
 </style>
