@@ -17,6 +17,10 @@ from sqlalchemy import select
 from engine.app.breakdown_read_model_contract_v1 import BreakdownReadModelV1
 from engine.app.breakdown_read_model_v1 import load_episode_breakdown_read_model_v1
 from engine.app.shot_revision_v2 import ShotRevisionItem
+from engine.app.source_dialogue_speaker_override_v1 import (
+    load_episode_source_dialogue_speaker_overrides_v1,
+    source_dialogue_signature_v1,
+)
 from engine.app.source_dialogue_speaker_resolver_v1 import resolve_shot_dialogue_speakers_v1
 from engine.app.source_drama_snapshot_contract_v1 import (
     SourceDramaAssetRefV1,
@@ -80,6 +84,7 @@ def compose_episode_source_drama_snapshot_v1(
     episode_order: int,
     source_language: str,
     revision_items_by_ordinal: Mapping[int, ShotRevisionItem] | None = None,
+    speaker_overrides: Mapping[str, Mapping[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Pure composition from one current P6 read model into product-facing source truth."""
 
@@ -118,6 +123,7 @@ def compose_episode_source_drama_snapshot_v1(
             raise SourceDramaSnapshotError("Final Prop overlay contains duplicate Shot keys")
 
     revision_items = dict(revision_items_by_ordinal or {})
+    speaker_override_map = dict(speaker_overrides or {})
     scenes: list[dict[str, Any]] = []
     unresolved_people = 0
     resolved_character_ids: set[str] = set()
@@ -153,6 +159,7 @@ def compose_episode_source_drama_snapshot_v1(
                 "character": character,
             })
 
+        scene_person_keys = set(person_key_by_ref.values())
         shot_rows: list[dict[str, Any]] = []
         for shot in scene.shots:
             item = revision_items.get(shot.ordinal)
@@ -180,6 +187,18 @@ def compose_episode_source_drama_snapshot_v1(
                 }
                 for index, dialogue in enumerate(shot.dialogue, start=1)
             ]
+            for dialogue in dialogue_inputs:
+                override = speaker_override_map.get(str(dialogue["dialogue_key"]))
+                if not isinstance(override, Mapping):
+                    continue
+                person_key = str(override.get("person_key") or "").strip()
+                dialogue_signature = str(override.get("dialogue_signature") or "").strip()
+                if person_key not in scene_person_keys:
+                    continue
+                if dialogue_signature != source_dialogue_signature_v1(dialogue):
+                    continue
+                dialogue["speakers"] = [person_key]
+
             speaker_resolutions = resolve_shot_dialogue_speakers_v1(
                 dialogue_inputs,
                 scene_people=people_rows,
@@ -284,6 +303,7 @@ def load_episode_source_drama_snapshot_v1(episode_id: str) -> dict[str, Any] | N
     if read_model_raw is None:
         return None
     read_model = BreakdownReadModelV1.model_validate(read_model_raw)
+    speaker_overrides = load_episode_source_dialogue_speaker_overrides_v1(episode_id)
 
     with get_session() as session:
         episode = session.get(Episode, episode_id)
@@ -306,6 +326,7 @@ def load_episode_source_drama_snapshot_v1(episode_id: str) -> dict[str, Any] | N
             episode_order=episode.sort_order,
             source_language=project.source_language,
             revision_items_by_ordinal=item_map,
+            speaker_overrides=speaker_overrides,
         )
 
 
