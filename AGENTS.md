@@ -1,58 +1,44 @@
-# AI Drama Studio — Agent Entry Rules
+# AI Drama Studio — 当前开发规则
 
-Current product architecture: **Localized Remake V1 + local MiniMax H3**.
+> 本文件给开发者和开发代理使用。
+>
+> `README.md / AGENTS.md / SKILL.md` 保留约定文件名，内容统一使用中文；正式业务文档使用中文文件名。
 
-Current rollback points:
+## 1. 先读当前正式文档
 
-```text
-backup/pre-r9-20260901
-backup/pre-r7-20260901
-backup/pre-h3-remake-restructure-2026-09-01
-```
-
-Rollback branches are recovery-only. `main` is active development.
-
-## 1. Highest product definition
-
-Input an existing short drama, understand its story/directing structure, then remake a localized drama for the Project target language/region.
+任何开发前按顺序读取：
 
 ```text
-source story / shots / actions / camera / Reference Video
-→ localized characters
-→ KEEP / LOCALIZE target scenes
-→ target-language dialogue + target-character voice
-→ real target speech duration
-→ timing-adjusted RemakeTimeline
-→ GenerationSegment
-→ H3 Context Compiler
-→ local MiniMax H3 GenerationAttempt
-→ H3 structural + semantic QC
-→ automatic retry
-→ GenerationSelection / Selected Output
-→ target-speaker lip sync
-→ final target dialogue + safe non-dialogue background audio + subtitles
-→ EpisodeOutput assembly / export
+1. docs/00_短剧重做系统开发总纲.md
+2. docs/01_十个模块详细设计.md
+3. docs/02_工作流V2技术实现规范.md
+4. docs/03_当前项目状态与验收.md
+5. 当前相关代码和测试
+6. 历史文档仅作算法/兼容/回归参考
 ```
 
-Hard product rules:
+如果旧文档和上面 00/01/02 冲突，以当前中文正式文档为准。
+
+## 2. 产品目标
+
+输入现有短剧，理解原片剧情、人物、动作、镜头、对白和节奏，然后根据项目目标语言、目标地区和场景策略，用本地 MiniMax H3 重新生成一部本土化短剧。
+
+当前 10 个业务模块：
 
 ```text
-characters must be replaced
-scene policy = AUTO | KEEP | LOCALIZE
-source Reference Video = directing/performance reference, not source-person identity truth
-target speech must not be unnaturally forced into source timing
-Shot != GenerationSegment
-GenerationAttempt != usable output
-only Selected Output may flow into downstream final-video work
-multi-face lip sync must identify the target speaker before modifying a face
-raw source audio must never be mixed into target output
-source-derived background audio must pass separation + source-dialogue suppression before mixing
-source ASR/OCR/Shot facts remain immutable downstream
+1 创建项目
+2 拆分原片
+3 看懂原片
+4 整理原片人物和场景
+5 固化 SourceDramaSnapshot
+6 设计目标人物/场景/声音
+7 目标对白 + TTS
+8 RemakeTimeline + GenerationSegment
+9 H3 重拍 + QC + Selection
+10 口型 + 音轨 + 字幕 + EpisodeOutput
 ```
 
-**UX rule:** automatic work is background work, not a page. Only uncertainty/conflict/high-risk/repeated failure enters Review Center.
-
-## 2. Formal user surface
+正式用户工作区只有：
 
 ```text
 Project
@@ -60,340 +46,276 @@ Review Center
 Output
 ```
 
-Formal UI:
+不要给内部算法和中间数据随意新增顶层产品页面。
+
+## 3. 修改代码的基本原则
+
+1. 先看现有代码、目录、模型、接口和数据库，再决定怎么改；
+2. 优先最小改动，不为“架构漂亮”推翻已经可用的实现；
+3. 新功能必须明确属于 10 个模块中的哪一个；
+4. 输入、正式输出、下游消费者和完成条件必须明确；
+5. 不把临时证据当正式业务数据；
+6. 不用前端状态掩盖后端数据问题；
+7. 不为了减少人工审核而降低人物身份、H3 QC、Lip Sync 等安全门槛；
+8. 代码完成、CI 通过、本地模型真实运行、用户成片验收必须分开记录。
+
+## 4. 原片事实硬规则
 
 ```text
-ProjectListV4
-ProjectStudioV4
+SourceDramaSnapshot = 模块 6—10 唯一原片正式事实入口
 ```
 
-Do not create top-level pages for GenerationSegment, H3 Context, target references, retries, QC, lip-sync internals, audio-separation internals or raw evidence.
+必须保持：
 
-`Output` is product-first: final Episode video is primary; H3/PostProduction segment details are advanced diagnostics only.
+- Source ASR / OCR / Shot truth 下游只读；
+- LocalSubject / Track / Face != Final Character；
+- Source Character != TargetCharacter；
+- Source Scene != Target Scene；
+- 完整 Dialogue Utterance 与 Shot Projection 为 1:N；
+- 一条完整对白跨多个 Shot 不能变成多条独立业务对白；
+- 人物/说话人/场景绑定修改后，应形成新 revision / fingerprint 并让下游失效，而不是静默修改历史结果。
 
-## 3. Automatic preparation workflow
+Character V10.1 的身份阈值和 fail-closed 原则不得为了“让页面少几个 Review”而降低。
+
+## 5. 目标版本和时间轴硬规则
+
+人物始终替换/本土化。
+
+场景策略：
 
 ```text
-AUTO_REMAKE_PREP_V1
+AUTO | KEEP | LOCALIZE
+```
 
-Project/Episodes
-→ preprocess
-→ Shot / Reference Clip
-→ ASR / OCR / Qwen3-VL Breakdown / Fusion
-→ Character V10.1 / Scene / Prop
-→ Final Asset
-→ SourceDramaSnapshot
-→ TargetCharacter / SceneLocalizationMapping
-→ TargetDialogue
-→ READY-line local Qwen3-TTS
+AUTO 最终必须固化为明确业务决定。
+
+目标对白顺序固定：
+
+```text
+完整源对白
+→ 翻译
+→ 本土化
+→ 最终目标台词
+→ 目标说话人 / Voice
+→ TTS
+→ 真实语音时长
 → RemakeTimeline
 → GenerationSegment
 ```
 
-H3 generation/QC is a separate heavy background task so preparation can finish while H3 runtime is offline:
+禁止先猜目标语音时长再排最终时间轴。
+
+禁止用全局不自然加速语音/慢放视频解决目标语言时长差异。
+
+## 6. H3 硬规则
 
 ```text
-POST /api/projects/{project_id}/tasks/h3-generate-ready
+Shot != GenerationSegment
+GenerationAttempt != 可用镜头
+GenerationSelection = 当前正式可用版本指针
 ```
 
-That task means:
+业务代码通过 Provider：
 
 ```text
-prepare target references
-→ generate H3 attempt
-→ structural QC
-→ Qwen3-VL semantic QC
-→ PASS -> Selected Output
-→ RETRY -> new seed + QC correction prompt
-→ repeated/ambiguous failure -> Review Center
-```
-
-R10/R10.1 postproduction is also a separate heavy background task:
-
-```text
-POST /api/projects/{project_id}/tasks/postproduction
-```
-
-It means:
-
-```text
-Selected Output
-→ target-dialogue final audio
-→ single-face LatentSync or multi-face target-speaker localization + ROI LatentSync
-→ PostProductionSegment
-→ optional safe source background enhancement
-   source Shot audio -> Instrumental separation -> source-dialogue hard suppression -> target-time conform -> duck/limit mix
-→ target-timeline UTF-8 SRT
-→ normalized segment media
-→ EpisodeOutput assembly
-→ final MP4 + SRT
-```
-
-If the background-audio worker is unavailable or separation fails, keep the already-valid target-dialogue-only R10 output. Do not block the Episode and do not create a ReviewIssue.
-
-## 4. Authority boundaries
-
-### Source truth
-
-`SourceDramaSnapshot` is the only downstream source-fact interface.
-
-### Target/remake truth
-
-Persistent target/remake authority includes:
-
-```text
-TargetCharacter
-SceneLocalizationMapping
-TargetDialogue
-TargetVoiceProfile
-RemakeTimeline
-GenerationSegment
-GenerationAttempt
-GenerationQualityCheck
-GenerationSelection
-PostProductionSegment
-EpisodeOutput
-```
-
-`ReviewIssue` is attention state, not domain truth.
-
-### H3 provider boundary
-
-```text
-business code
+业务层
 → VideoGenerationProvider
 → MiniMaxH3Provider
 → H3RuntimeManager
 → local SGLang
 ```
 
-Never call SGLang directly from remake business services.
+不要从 remake 业务 Service 直接调用 SGLang。
 
-### Lip-sync boundary
+当前 H3 生成窗口：
 
 ```text
-postproduction business code
-→ LipSyncProvider
-→ LatentSync local worker
+4..15 秒
+<4 秒：生成至少 4 秒后精确裁切
+>15 秒：拆分多个 GenerationSegment
 ```
 
-Multi-face target identity resolution is a separate safety gate before ROI lip sync. Do not let LatentSync choose an arbitrary detected face.
+Ref2VA 的源 Reference Video 只能作为动作、表演、构图、运镜参考；源语言音轨必须去掉，目标 TTS 作为独立音频条件。
 
-### Background-audio boundary
+## 7. H3 QC / Retry / Selection 硬规则
+
+GenerationAttempt 技术成功后仍需：
 
 ```text
-postproduction business code
-→ BackgroundAudioProvider
-→ audio-separator local worker
+ffprobe
+→ 完整 ffmpeg decode
+→ 时长硬门禁
+→ Qwen3-VL 语义 QC
+→ PASS / RETRY / REVIEW
 ```
 
-The heavy separator stack stays outside the main backend environment. The provider may return only a separated background/Instrumental stem; Studio must still apply SourceDramaSnapshot dialogue-window suppression before mixing.
+QC 至少检查：
 
-## 5. H3 execution rules
+- 视觉结构；
+- 原演员身份泄漏；
+- TargetCharacter 一致性；
+- 场景；
+- 动作/表演；
+- 构图/运镜；
+- 前后 Selected Output 连续性。
 
-R8 H3 execution is implemented.
+安全重试必须：
 
-Ref2VA:
+- 有最大次数；
+- 更换 seed；
+- 加入具体 QC correction；
+- 不允许无限循环。
 
-```text
-source Reference Clip -> visual-only derivative (`-an`)
-target TTS -> separate aligned 32 kHz stereo audio condition
-target character identity -> current target reference image(s)
-LOCALIZE scene -> current target scene reference image when available
-```
+结构失败不能人工绕过。
 
-Never send source-language soundtrack as Ref2VA reference audio.
+后期只能读取 `GenerationSelection / Selected Output`，不能读取“最近一次 SUCCEEDED Attempt”。
 
-H3 sizing:
-
-```text
-4..15 seconds
-<4-second target -> H3 render >=4 -> exact FFmpeg post-trim
->15-second target shot -> multiple GenerationSegments
-```
-
-## 6. R9 H3 QC / retry / selection rules
-
-R9 is implemented on `main`.
-
-A technically successful H3 download is **not** final truth.
+## 8. 后期硬规则
 
 ```text
-GenerationAttempt(SUCCEEDED)
-→ ffprobe structure + duration
-→ full ffmpeg video decode
-→ Qwen3-VL semantic QC
-→ PASS
-→ GenerationSelection
-```
-
-Semantic QC compares generated samples with:
-
-```text
-TargetCharacter references
-TargetScene reference/description
-source Reference Video for action/blocking/camera only
-previous Selected Output for FL2VA continuity
-```
-
-Rules:
-
-```text
-Qwen3-VL unavailable -> WAITING_MODEL, not human content issue
-QC retry -> change seed + append concrete QC correction prompt
-automatic attempts default max = 3 (`AI_DRAMA_H3_QC_MAX_ATTEMPTS`, clamp 1..5)
-repeated/ambiguous content failure -> H3_QC ReviewIssue
-H3_QC cannot be generic ignored/resolved
-human may select a structurally valid successful version
-hard decode/duration failure cannot be manually bypassed
-FL2VA retry continuity must use previous Selected Output, never merely latest SUCCEEDED attempt
-```
-
-## 7. R10 / R10.1 postproduction rules
-
-R10 core and R10.1 safe background-audio enhancement are implemented on `main` and have isolated CI acceptance.
-
-```text
-GenerationSelection only
+GenerationSelection
 → PostProductionSegment
-→ optional safe background enhancement
 → EpisodeOutput
 ```
 
-Lip-sync rules:
+Lip Sync：
+
+- off-screen 对白：保留目标音频，不改嘴；
+- 单一可见目标说话人：可做整段 LatentSync；
+- 多脸：先做目标身份定位，再对目标 ROI 做 LatentSync；
+- 身份无法安全确认：进入 LIP_SYNC_QC；
+- 模型离线：WAITING_RUNTIME，不是假人工 Case。
+
+音频：
 
 ```text
-off-screen dialogue keeps target audio but skips lip sync
-single visible target speaker -> full-segment LatentSync
-multi-face visible speaker -> target identity localization first, then ROI LatentSync
-identity/model infrastructure unavailable -> WAITING_MODEL / waiting state, not fake human issue
-identity ambiguity -> LIP_SYNC_QC
-LIP_SYNC_QC cannot be generic ignored/resolved
-retrying LIP_SYNC_QC reopens real postproduction work; it does not merely close the warning
-cross-GenerationSegment dialogue audio must be trimmed, not replayed from sentence start
-EpisodeOutput only assembles SUCCEEDED PostProductionSegments
-subtitles use target RemakeTimeline and deduplicate one dialogue spanning multiple GenerationSegments
+raw source audio 永远不能直接混入目标成片
 ```
 
-Background-audio rules:
+源背景如果复用：
 
 ```text
-never mix raw source audio
-source Shot audio -> Instrumental separation in dedicated worker
-known source-dialogue windows -> hard mute again with padding
-split target segments -> take the corresponding source-Shot audio window, not source time 0
-conform safe background to target duration
-mix under target dialogue with conservative gain + dialogue duck + limiter
-separator unavailable/fails -> TARGET_DIALOGUE_ONLY_FALLBACK, still valid output
-background infrastructure failure -> no human ReviewIssue
+源 Shot 音频
+→ audio separator
+→ SourceDramaSnapshot 对白窗口再次硬抑制
+→ 映射目标时间
+→ 保守混音 / duck / limiter
 ```
 
-Current R10.1 reuses safely separated source ambience/music/SFX. Dedicated reconstruction/generation of missing BGM/SFX is not yet a product requirement and should not be added unless real-project acceptance shows separation quality is insufficient.
+背景 Worker 失败允许安全降级到目标对白-only，不阻塞 EpisodeOutput。
 
-## 8. Current ReviewIssue families
+## 9. 页面和 API 硬规则
+
+打开页面、刷新、切换 Tab/Route：
 
 ```text
-SHOT_BOUNDARY
-CHARACTER_IDENTITY
-ASSET_BINDING
-SPEAKER
-TARGET_CHARACTER
-SCENE_LOCALIZATION
-LOCALIZATION
-DIALOGUE_TIMING
-H3_QC
-LIP_SYNC_QC
+只读
 ```
 
-Do not create human ReviewIssues for infrastructure-only states such as H3/TTS/Qwen/LatentSync/audio-separator service offline.
+绝对不能因为 mount / refresh / task finished 自动启动下一项重任务。
 
-## 9. Existing internals to preserve
+GET 必须：
+
+- 不写数据库；
+- 不创建任务；
+- 不同步/关闭 Review Case；
+- 不启动模型；
+- 不隐式重算。
+
+重任务只能由用户明确动作通过 POST command/task 创建。
+
+服务端必须有幂等保护：
+
+- Idempotency-Key；
+- expected workflow revision；
+- input fingerprint；
+- processing scope。
+
+不能只依赖前端按钮 disabled。
+
+## 10. Workflow 状态规则
+
+阶段至少分开：
 
 ```text
-FFmpeg / FFprobe
-Source PTS
-ShotRevision + manual Shot edits
-Reference Clips
-Faster-Whisper
-RapidOCR
-Qwen3-VL Breakdown
-Scene Timeline
-Character V10.1
-Final Character/Scene/Prop + bindings
-AssetRevision
-SourceDramaSnapshot
-BackgroundTask / progress
-Target localization / dialogue / TTS
-RemakeTimeline
-GenerationSegment
-GenerationAttempt
-GenerationQualityCheck
-GenerationSelection
-PostProductionSegment
-safe background-audio provider/worker/cache
-EpisodeOutput
+Validity  = NOT_BUILT | CURRENT | STALE
+Readiness = READY | BLOCKED_REVIEW | BLOCKED_DEPENDENCY | WAITING_RUNTIME
+Execution = IDLE | QUEUED | PROCESSING | SUCCEEDED | FAILED | INTERRUPTED
 ```
 
-Do not weaken accepted Character identity gates merely to reduce ReviewIssues.
-
-## 10. Development frontier
+只有：
 
 ```text
-R2 SourceDramaSnapshot                        = IMPLEMENTED
-R4 TargetCharacter + SceneLocalizationMapping = IMPLEMENTED
-R5 TargetDialogue + local Qwen3-TTS           = IMPLEMENTED
-R6 Dialogue Timing + RemakeTimeline            = IMPLEMENTED
-R7 GenerationSegment + H3 Runtime/Provider     = IMPLEMENTED
-R8 H3 Context + GenerationAttempt              = IMPLEMENTED / ISOLATED CI PASS / LOCAL GPU PENDING
-R9 H3 QC / automatic retry / selected output  = IMPLEMENTED / ISOLATED CI PASS / LOCAL REAL-PROJECT PENDING
-R10 Lip Sync + subtitle/audio/assembly/export  = IMPLEMENTED / ISOLATED CI PASS / LOCAL REAL-PROJECT PENDING
-R10.1 safe ambience/BGM/SFX reuse mix          = IMPLEMENTED / ISOLATED CI PASS / LOCAL MODEL/REAL-PROJECT PENDING
-R11 legacy cleanup                            = LATER
+Validity = CURRENT
+Readiness = READY
 ```
 
-The next meaningful product milestone is **real local end-to-end acceptance**, not another speculative pipeline stage.
+才允许下游消费。
 
-Do not return to old Stage 05/R6/R8 planning unless debugging a regression.
+`Execution = SUCCEEDED` 不等于业务完成。
 
-## 11. Acceptance discipline
+Project / Review Center / Output / Header / Task Center 必须消费同一个 `ProjectFlowState` revision，前端不要自己猜流程状态。
 
-Repository CI acceptance and local model acceptance are different facts.
+## 11. Review Center 规则
 
-Current isolated jobs:
+Review Case = 用户需要做的一次正式决定。
+
+一个上游根问题只创建一个 Case；下游只显示被阻塞，不复制几十个待办。
+
+用户操作必须写正式业务对象，然后运行 Validator；只有阻塞条件真正消失后才能把 Case 标记 RESOLVED。
+
+禁止通用“忽略/已处理”绕过：
+
+- CHARACTER_IDENTITY；
+- SPEAKER；
+- H3_QC；
+- LIP_SYNC_QC；
+- 其他硬质量门禁。
+
+## 12. 后台任务规则
+
+重任务应支持：
+
+- input fingerprint；
+- checkpoint；
+- heartbeat；
+- 有限 retry；
+- cancellable（任务支持时）；
+- 中断恢复；
+- 已通过检查点复用；
+- 清晰 last_error；
+- 带时区时间字段。
+
+任务完成只刷新 Workflow Snapshot 和通知用户，不自动创建下一项重任务。
+
+## 13. 当前开发顺序
 
 ```text
-r7-generation-segments
-r8-h3-generation
-r9-h3-qc
-r10-postproduction
-frontend-v2
+P0 停止隐式任务 / GET 写入 / stale 误计数
+P1 SourceDialogueUtterance / Projection / Person Mapping / Snapshot V2 / ReviewCase / FlowState
+P2 每模块只读 Validator
+P3 幂等、checkpoint、heartbeat、恢复和复用
+P4 前端统一 Workflow Snapshot
+P5 迁移当前测试项目并真实端到端验收
 ```
 
-The R10 job also covers R10.1 safety logic with real FFmpeg media tests, including source-dialogue hard suppression and split-Shot source-time mapping. It deliberately does not install/load the heavy audio-separator model stack; worker import must remain lazy.
+不要绕过 P0/P1 直接继续堆新的 H3 后续业务层。
 
-On the latest R10.1 commit line, R7/R8/R9/R10/frontend isolated jobs pass. Historical `backend-v2` and older Breakdown failures remain separate legacy/dependency debt unless a new change directly causes them.
-
-Do not claim local H3/Qwen QC/LatentSync/audio-separator PASS until a real Project is generated and inspected on the user's actual GPU/runtime machine.
-
-Frontend build acceptance uses the real repository lockfile and current Node version; do not dismiss a frontend failure as unrelated without reading its concrete CI cause.
-
-## 12. Recovery order
+## 14. Git 规则
 
 ```text
-1. AGENTS.md
-2. SKILL.md
-3. docs/PRODUCT_REMAKE_ARCHITECTURE_V1.md
-4. docs/PROJECT_STATE.md
-5. docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-6. current R2/R4/R5/R6/R7/R8/R9/R10/R10.1 code/tests
-7. old P/G docs only for compatibility maintenance
+main = 当前开发
+backup/* = 回滚恢复，不做普通开发
 ```
 
-## 13. Git discipline
+当前已有回滚点：
 
 ```text
-main = active development
-backup branches = rollback-only
-minimal changes on current architecture
-code/docs -> main unless user explicitly requests another branch
+backup/pre-r9-20260901
+backup/pre-r7-20260901
+backup/pre-h3-remake-restructure-2026-09-01
 ```
+
+代码和文档默认修改 `main`，除非用户明确指定其他分支。
+
+每次涉及数据契约、用户流程或完成条件的代码修改，都应同步检查 `docs/00/01/02/03` 是否需要更新。
