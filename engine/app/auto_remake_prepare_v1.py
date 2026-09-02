@@ -24,6 +24,10 @@ from engine.app.source_drama_review_issue_sync_v1 import sync_source_drama_speak
 from engine.app.source_drama_snapshot_v1 import load_project_source_drama_snapshot_v1
 from engine.app.studio_v2 import get_episode, list_episode_records
 from engine.app.target_dialogue_pipeline_v1 import run_target_dialogue_pipeline_v1
+from engine.app.target_localization_runtime_guard_v1 import (
+    require_target_localization_runtime_v1,
+    validate_target_localization_generation_v1,
+)
 from engine.app.target_localization_v1 import generate_target_localization_v1
 from engine.app.task_progress_v2 import fail_task, finish_task, start_task, update_task
 
@@ -192,7 +196,7 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             progress_percent=96.0,
             stage_key="auto_review_sync",
             stage_label="整理源片待确认问题",
-            message="高置信度结果自动通过，只把异常镜头、人物身份和资产绑定推入待确认",
+            message="高置信度结果自动通过；原始人物 Evidence 只保留在内部，只有真实镜头/资产冲突才进入待确认",
         )
         workspace = apply_analysis_to_assets(project_id, run_id)
         shot_issue_count = sync_shot_review_issues(project_id)
@@ -216,7 +220,11 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
             stage_label="自动设计目标人物与场景",
             message="正在按目标语言、地区和场景策略生成 TargetCharacter / SceneLocalizationMapping",
         )
-        target_localization = generate_target_localization_v1(project_id)
+        require_target_localization_runtime_v1(project_id)
+        target_localization = validate_target_localization_generation_v1(
+            project_id,
+            generate_target_localization_v1(project_id),
+        )
         target_review_count = int(target_localization.get("review_count") or 0)
 
         update_task(
@@ -258,13 +266,13 @@ def run_auto_remake_prepare_task(task_id: str, project_id: str) -> None:
         warnings: list[str] = []
         unresolved = int((analysis.get("counts") or {}).get("unresolved_character_candidates") or character_issue_count)
         if unresolved:
-            warnings.append(f"{unresolved} 个人物 Evidence 尚未形成安全身份，需要在人物复核中处理")
+            warnings.append(f"{unresolved} 个人物 Evidence 尚未形成安全身份，已保留为内部证据；不会仅因此增加人工待确认")
         if semantic_result.get("status") in {"FAILED", "READY_WITH_WARNINGS", "NOT_CONFIGURED"}:
             warnings.append("场景 / 道具语义验证存在降级")
         if source_snapshot.get("status") == "READY_WITH_WARNINGS":
             warnings.append("SourceDramaSnapshot 已形成，但仍包含需要下游尊重的源片警告")
         if speaker_issue_count:
-            warnings.append(f"{speaker_issue_count} 条对白需要确认说话人")
+            warnings.append(f"{speaker_issue_count} 条对白在自动上下文解析后仍需要确认说话人")
         if target_review_count:
             warnings.append(f"{target_review_count} 项目标人物/场景本土化需要人工确认")
         if dialogue_review_count:
