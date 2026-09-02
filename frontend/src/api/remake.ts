@@ -67,6 +67,11 @@ export const remakeApi = {
     headers: jsonHeaders,
     body: JSON.stringify({ status, resolution }),
   }),
+  resolveSpeakerReviewIssue: (issueId: string, personKey: string) => request<ReviewIssue>(`/api/review-issues/${issueId}/speaker`, {
+    method: 'PATCH',
+    headers: jsonHeaders,
+    body: JSON.stringify({ person_key: personKey }),
+  }),
   getTargetLocalization: (projectId: string) => request<TargetLocalizationBundle>(`/api/projects/${projectId}/target-localization`),
   generateTargetLocalization: (projectId: string) => request<TargetLocalizationBundle>(`/api/projects/${projectId}/target-localization/generate`, { method: 'POST' }),
   updateTargetCharacter: (id: string, payload: Pick<TargetCharacter, 'target_name' | 'appearance_profile' | 'generation_prompt'>) => request<TargetCharacter>(`/api/target-characters/${id}`, {
