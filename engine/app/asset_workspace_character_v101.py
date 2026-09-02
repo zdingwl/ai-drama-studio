@@ -1,6 +1,6 @@
 """Character V10.1 adapter for Asset Workspace shot evidence.
 
-`asset_workspace_v3` still contains historical Character evidence semantics.  Current
+`asset_workspace_v3` still contains historical Character evidence semantics. Current
 V10.1 separates three decisions:
 
 - CharacterTrack = immutable visual/identity evidence;
@@ -8,14 +8,21 @@ V10.1 separates three decisions:
 - explicit Shot Character Assignment = known Character presence in one Shot.
 
 The adapter therefore prefers explicit Shot assignments for RESOLVED Characters, while
-keeping UNRESOLVED Track evidence in a separate diagnostics lane.  Historical Runs that
+keeping UNRESOLVED Track evidence in a separate diagnostics lane. Historical Runs that
 predate explicit assignment continue to use Track-derived presence as a fallback.
 
 Final Asset / Shot Binding consistency is also repaired here before the payload reaches
-the frontend.  The database `ShotCharacterBinding` rows are the canonical Final truth;
+the frontend. The database `ShotCharacterBinding` rows are the canonical Final truth;
 `characters[].shot_ids` and `bindings_by_shot[*].character_ids` must always be two views
-of those same rows.  This prevents the Asset Library from saying a Character is bound to
+of those same rows. This prevents the Asset Library from saying a Character is bound to
 a Shot while the Shot matrix renders the Character column as empty.
+
+Character coverage is a separate business invariant: if Breakdown understood N people
+in a Shot, or V10.1 currently sees N distinct person candidates, the Shot cannot be
+reported as automatically consistent until at least N distinct Final Characters are
+bound and no unresolved person evidence remains. This keeps anonymous Breakdown people
+separate from Character identity while still preventing missing people from disappearing
+silently from the review queue.
 """
 from __future__ import annotations
 
@@ -25,6 +32,7 @@ from typing import Any
 from sqlalchemy import select
 
 from engine.app.asset_workspace_v3 import ShotCharacterBinding
+from engine.app.breakdown_models_v1 import BreakdownRun, ShotLocalSubject, ShotSemanticDraft
 from engine.app.content_analysis_v2 import CharacterCandidate, CharacterTrack, ContentAnalysisRun
 from engine.app.studio_v2 import get_session
 
@@ -117,6 +125,81 @@ def _empty_bucket(*, scene: Any = None, props: list[Any] | None = None) -> dict[
     }
 
 
+def _current_breakdown_people_by_shot(session: Any, project_id: str) -> dict[str, set[str]]:
+    """Return anonymous people understood by the current READY Breakdown, per Shot.
+
+    LocalSubject is intentionally not treated as Character identity. We use only the
+    cardinality/presence signal here: if the semantic pass says two people are visible,
+    one Final Character binding is not enough to mark the Shot complete.
+    """
+
+    rows = session.execute(
+        select(
+            ShotSemanticDraft.source_shot_id_snapshot,
+            ShotLocalSubject.local_subject_id,
+        )
+        .join(ShotLocalSubject, ShotLocalSubject.shot_draft_id == ShotSemanticDraft.id)
+        .join(BreakdownRun, BreakdownRun.id == ShotSemanticDraft.run_id)
+        .where(
+            BreakdownRun.project_id == project_id,
+            BreakdownRun.is_current.is_(True),
+            BreakdownRun.status.in_(("READY", "READY_WITH_WARNINGS")),
+        )
+    ).all()
+    result: dict[str, set[str]] = {}
+    for shot_id, local_subject_id in rows:
+        normalized_shot_id = str(shot_id or "")
+        normalized_subject_id = str(local_subject_id or "")
+        if not normalized_shot_id or not normalized_subject_id:
+            continue
+        result.setdefault(normalized_shot_id, set()).add(normalized_subject_id)
+    return result
+
+
+def _build_character_coverage(
+    *,
+    breakdown_person_count: int,
+    visual_candidate_count: int,
+    bound_person_count: int,
+    unresolved_person_count: int,
+) -> dict[str, Any]:
+    """Build the Shot-level character completeness contract used by UI and ReviewIssue."""
+
+    breakdown_count = max(0, int(breakdown_person_count))
+    visual_count = max(0, int(visual_candidate_count))
+    bound_count = max(0, int(bound_person_count))
+    unresolved_count = max(0, int(unresolved_person_count))
+    detected_count = max(breakdown_count, visual_count)
+    missing_count = max(0, detected_count - bound_count, unresolved_count)
+
+    if detected_count == 0:
+        complete = unresolved_count == 0
+        reason = "NONE" if complete else "UNRESOLVED_PERSON"
+    elif unresolved_count > 0:
+        complete = False
+        reason = "UNRESOLVED_PERSON"
+    elif bound_count == 0:
+        complete = False
+        reason = "NO_BINDING"
+    elif bound_count < detected_count:
+        complete = False
+        reason = "PARTIAL_BINDING"
+    else:
+        complete = True
+        reason = "COMPLETE"
+
+    return {
+        "breakdown_person_count": breakdown_count,
+        "visual_candidate_count": visual_count,
+        "detected_person_count": detected_count,
+        "bound_person_count": bound_count,
+        "unresolved_person_count": unresolved_count,
+        "missing_person_count": missing_count,
+        "complete": complete,
+        "reason": reason,
+    }
+
+
 def _sync_final_character_bindings(
     workspace: dict[str, Any],
     bindings: list[ShotCharacterBinding],
@@ -125,7 +208,7 @@ def _sync_final_character_bindings(
 
     `asset_workspace_v3` normally serializes both views from the same snapshot, but the
     UI must never be allowed to render contradictory Final truth even if a stale payload
-    or a later adapter leaves them out of sync.  Scene/Prop binding fields are preserved;
+    or a later adapter leaves them out of sync. Scene/Prop binding fields are preserved;
     only Character Final bindings are rebuilt from the canonical DB table.
     """
 
@@ -168,7 +251,7 @@ def _sync_final_character_bindings(
 
 
 def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> dict[str, Any]:
-    """Return workspace payload with V10.1-correct Character presence per Shot."""
+    """Return workspace payload with V10.1-correct Character presence and coverage per Shot."""
 
     analysis = workspace.get("analysis") or {}
     run_id = str(analysis.get("id") or "")
@@ -189,6 +272,7 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
         final_bindings = list(session.scalars(
             select(ShotCharacterBinding).where(ShotCharacterBinding.project_id == project_id)
         ).all())
+        breakdown_people_by_shot = _current_breakdown_people_by_shot(session, project_id)
 
     result = _sync_final_character_bindings(workspace, final_bindings)
     candidate_to_asset = _candidate_to_asset(result)
@@ -204,6 +288,7 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
             props=list(bucket.get("props") or []),
         )
 
+    visual_candidates_by_shot: dict[str, set[str]] = {}
     for candidate in candidates:
         candidate_evidence = _json(candidate.evidence_json)
         identity_status = str(candidate_evidence.get("identity_status") or "UNRESOLVED").upper()
@@ -254,8 +339,41 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
                 # assignment map must not silently recreate a Shot presence decision.
                 if assignment_by_shot is None or assignment is not None:
                     bucket["characters"].append(item)
+                    visual_candidates_by_shot.setdefault(shot_id, set()).add(candidate.id)
             else:
                 bucket["character_diagnostics"].append(item)
+                visual_candidates_by_shot.setdefault(shot_id, set()).add(candidate.id)
+
+    valid_character_ids = {
+        str(item.get("id"))
+        for item in (result.get("characters") or [])
+        if str(item.get("id") or "")
+    }
+    all_shot_ids = (
+        set(evidence_by_shot)
+        | set(result.get("bindings_by_shot") or {})
+        | set(breakdown_people_by_shot)
+        | set(visual_candidates_by_shot)
+    )
+    for shot_id in all_shot_ids:
+        bucket = evidence_by_shot.setdefault(shot_id, _empty_bucket())
+        binding = (result.get("bindings_by_shot") or {}).get(shot_id) or {}
+        bound_ids = {
+            str(value)
+            for value in (binding.get("character_ids") or [])
+            if str(value or "") in valid_character_ids
+        }
+        unresolved_ids = {
+            str(item.get("candidate_id"))
+            for item in (bucket.get("character_diagnostics") or [])
+            if isinstance(item, dict) and str(item.get("candidate_id") or "")
+        }
+        bucket["character_coverage"] = _build_character_coverage(
+            breakdown_person_count=len(breakdown_people_by_shot.get(shot_id, set())),
+            visual_candidate_count=len(visual_candidates_by_shot.get(shot_id, set())),
+            bound_person_count=len(bound_ids),
+            unresolved_person_count=len(unresolved_ids),
+        )
 
     result["evidence_by_shot"] = evidence_by_shot
     return result
@@ -263,5 +381,6 @@ def decorate_asset_workspace_character_evidence(workspace: dict[str, Any]) -> di
 
 __all__ = [
     "decorate_asset_workspace_character_evidence",
+    "_build_character_coverage",
     "_sync_final_character_bindings",
 ]
