@@ -21,8 +21,7 @@ from engine.app.postproduction_contract_v1 import BackgroundAudioRuntimeStatusV1
 from engine.app.postproduction_review_v1 import retry_lip_sync_review_v1
 from engine.app.postproduction_v1 import (
     compile_postproduction_plan_v1,
-    get_postproduction_segment_v1,
-    postproduction_output_v1,
+    get_postproduction_plan_v1,
 )
 from engine.app.studio_v2 import get_project
 from engine.app.task_progress_v2 import (
@@ -152,7 +151,7 @@ def api_compile_postproduction(project_id: str):
 @router.get("/projects/{project_id}/postproduction", response_model=PostProductionPlanV1)
 def api_get_postproduction(project_id: str):
     try:
-        return compile_postproduction_plan_v1(project_id)
+        return get_postproduction_plan_v1(project_id)
     except Exception as exc:
         raise _error(exc) from exc
 
@@ -160,7 +159,7 @@ def api_get_postproduction(project_id: str):
 @router.get("/projects/{project_id}/outputs", response_model=EpisodeOutputPlanV1)
 def api_get_episode_outputs(project_id: str):
     try:
-        return compile_episode_outputs_v1(project_id)
+        return compile_episode_outputs_v1(project_id, persist=False)
     except Exception as exc:
         raise _error(exc) from exc
 
@@ -230,13 +229,29 @@ def api_start_postproduction(project_id: str, background: BackgroundTasks):
 
 @router.get("/postproduction-segments/{segment_id}/video")
 def api_postproduction_video(segment_id: str, project_id: str):
-    row = get_postproduction_segment_v1(segment_id)
-    if row is None or row.get("project_id") != project_id:
+    try:
+        plan = get_postproduction_plan_v1(project_id)
+    except Exception as exc:
+        raise _error(exc) from exc
+    row = next(
+        (
+            segment
+            for episode in plan.get("episodes") or []
+            for segment in episode.get("segments") or []
+            if segment.get("generation_segment_id") == segment_id
+        ),
+        None,
+    )
+    if row is None:
         raise HTTPException(status_code=404, detail="PostProductionSegment 不存在")
-    path = postproduction_output_v1(project_id, segment_id)
-    if path is None:
+    path = (
+        Path(str(row.get("output_path")))
+        if row.get("status") == "SUCCEEDED" and row.get("output_path")
+        else None
+    )
+    if path is None or not path.is_file() or path.stat().st_size <= 0:
         raise HTTPException(status_code=409, detail="当前 PostProductionSegment 尚无成功输出")
-    return FileResponse(path, media_type="video/mp4", filename=Path(path).name)
+    return FileResponse(path, media_type="video/mp4", filename=path.name)
 
 
 @router.get("/episodes/{episode_id}/final-video")
