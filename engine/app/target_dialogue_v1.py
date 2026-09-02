@@ -34,7 +34,10 @@ from engine.app.target_localization_v1 import TargetCharacter, get_target_locali
 
 
 LOCALIZATION_REVIEW_PREFIX = "auto:target-dialogue:"
-TRANSLATION_CONFIDENCE_MIN = 0.74
+# Qwen's self-reported confidence is not a calibrated probability.  Normal 0.6/0.7 scores
+# must not turn every usable localized line into human work.  Keep only a hard safety floor;
+# structural completeness, speaker identity and TargetCharacter mapping remain mandatory.
+TRANSLATION_CONFIDENCE_MIN = 0.35
 TRANSLATION_BATCH_SIZE = 4
 TRANSLATION_SINGLE_RETRIES = 2
 
