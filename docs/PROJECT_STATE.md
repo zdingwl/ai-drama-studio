@@ -1,11 +1,12 @@
 # AI Drama Studio — Project State
 
-> Last synchronized: 2026-09-01 +08:00  
+> Last synchronized: 2026-09-02 +08:00  
 > Repository: `zdingwl/ai-drama-studio`  
 > Branch: `main`  
 > Product architecture: **Localized Remake V1**  
 > Final video target: **local MiniMax H3**  
 > Target speech runtime: **local Qwen3-TTS**  
+> Lip-sync runtime: **local LatentSync 1.6**  
 > Formal Character runtime: **Character V10.1**
 
 ## 1. Product truth
@@ -24,7 +25,9 @@ source short drama
 → structural + semantic H3 QC
 → automatic retry
 → GenerationSelection / Selected Output
-→ lip sync / subtitles / audio / episode assembly
+→ target-speaker lip sync
+→ final target dialogue audio + subtitles
+→ EpisodeOutput assembly / export
 → localized short drama
 ```
 
@@ -38,20 +41,15 @@ voice = target-character voice
 target timeline may differ from source timeline
 Shot != GenerationSegment
 GenerationAttempt != selected usable output
+only GenerationSelection may enter R10
+multi-face lip sync must identify the target speaker first
 source ASR/OCR/Shot truth is immutable downstream
 ```
 
 ## 2. Rollback points
 
-R9 entry backup:
-
 ```text
-branch = backup/pre-r9-20260901
-```
-
-Earlier recovery points remain:
-
-```text
+backup/pre-r9-20260901
 backup/pre-r7-20260901
 backup/pre-h3-remake-restructure-2026-09-01
 ```
@@ -73,18 +71,17 @@ frontend/src/views/ProjectListV4.vue
 frontend/src/views/ProjectStudioV4.vue
 ```
 
-Automatic work stays in background tasks. Only uncertainty/conflict/high-risk decisions/repeated generation failure belong in Review Center.
+Automatic work stays in background tasks. Only uncertainty/conflict/high-risk decisions/repeated failure belong in Review Center.
 
-## 4. Automatic preparation chain
+`Output` now prioritizes final Episode video. H3/PostProduction segment details are advanced diagnostics rather than the normal user workflow.
+
+## 4. Automatic preparation and heavy-task boundaries
+
+Preparation:
 
 ```text
-AUTO_REMAKE_PREP_V1
 POST /api/projects/{project_id}/tasks/auto-remake-prepare
-```
 
-Current preparation chain:
-
-```text
 Preprocess
 → Shot detection / Reference Clips
 → ASR + OCR + Qwen3-VL Breakdown / Fusion
@@ -98,13 +95,33 @@ Preprocess
 → GenerationSegment compile
 ```
 
-H3 is intentionally separate:
+H3 generation/QC:
 
 ```text
 POST /api/projects/{project_id}/tasks/h3-generate-ready
+
+prepare target references
+→ GenerationAttempt
+→ structural QC
+→ Qwen3-VL semantic QC
+→ automatic retry
+→ GenerationSelection / Selected Output
 ```
 
-That task now performs generation **and R9 QC/automatic retry**, and only produces downstream-current output after `GenerationSelection` is written.
+R10 postproduction:
+
+```text
+POST /api/projects/{project_id}/tasks/postproduction
+
+Selected Output
+→ final target-dialogue audio
+→ LatentSync
+→ PostProductionSegment
+→ SRT
+→ media normalization
+→ EpisodeOutput assembly
+→ MP4 + SRT
+```
 
 ## 5. Current stage table
 
@@ -120,7 +137,9 @@ That task now performs generation **and R9 QC/automatic retry**, and only produc
 | R8 GenerationAttempt | Implemented | `v2_generation_attempts` |
 | R9 H3 QC | Implemented | `v2_generation_quality_checks` |
 | R9 Selected Output | Implemented | `v2_generation_selections` |
-| R10 Lip sync/assembly/export | Next | — |
+| R10 PostProductionSegment | Implemented | `v2_postproduction_segments` |
+| R10 EpisodeOutput | Implemented | `v2_episode_outputs` |
+| R10.1 ambience/BGM/SFX mix | Next | not yet authoritative |
 
 Repository implementation does **not** mean the user's local GPU/model environment has passed real-project acceptance.
 
@@ -156,7 +175,7 @@ render = 4..15 seconds
 Ref2VA visual reference = 2..15 seconds
 ```
 
-Any authoritative upstream fingerprint change makes old segment/attempt/QC/selection stale or invalid.
+Any authoritative upstream fingerprint change makes old segment/attempt/QC/selection/postproduction/output stale or invalid.
 
 ## 7. R8 H3 execution
 
@@ -170,42 +189,9 @@ engine/app/generation_attempt_v1.py
 engine/app/h3_generation_routes_v1.py
 ```
 
-Ref2VA input:
-
-```text
-TargetCharacter reference image(s)
-+ optional LOCALIZE Scene reference
-+ visual-only source Reference Video (`-an`)
-+ exact target-dialogue TTS audio condition when dialogue exists
-+ compact deterministic prompt
-```
-
-Source-language soundtrack is never passed into Ref2VA. Target TTS is mixed separately as aligned 32 kHz stereo audio.
-
-GenerationAttempt lifecycle:
-
-```text
-PLANNED → SUBMITTED → RUNNING → SUCCEEDED | FAILED
-upstream changed → STALE
-```
-
-For target segments shorter than H3's 4-second minimum, the raw H3 file is precisely trimmed to target duration before the Attempt output is published.
+Ref2VA receives current TargetCharacter references, optional LOCALIZE Scene reference, a visual-only source Reference Video and exact target-dialogue audio condition. Source-language soundtrack is not sent as H3 reference audio.
 
 ## 8. R9 H3 QC / automatic retry / selection
-
-Implementation:
-
-```text
-engine/app/h3_qc_contract_v1.py
-engine/app/h3_qc_core_v1.py
-engine/app/h3_qc_orchestrator_v1.py
-engine/app/h3_qc_v1.py
-engine/app/h3_retry_execution_v1.py
-engine/app/generation_selection_v1.py
-engine/app/h3_qc_routes_v1.py
-frontend/src/components/H3QcReviewV1.vue
-frontend/src/components/H3OutputV1.vue
-```
 
 Persistent tables:
 
@@ -214,9 +200,7 @@ v2_generation_quality_checks
 v2_generation_selections
 ```
 
-### Structural hard gate
-
-Each SUCCEEDED Attempt is checked with:
+Structural hard gate:
 
 ```text
 ffprobe video stream / duration / dimensions / fps
@@ -224,20 +208,7 @@ ffprobe video stream / duration / dimensions / fps
 + exact target-duration tolerance
 ```
 
-A corrupt or wrong-duration output cannot become Selected Output, even by manual override.
-
-### Semantic QC
-
-The existing local Qwen3-VL service receives sampled frames from the generated video plus current comparison references:
-
-```text
-TargetCharacter references
-TargetScene reference/description
-source Reference Video samples for action/blocking/camera only
-previous Selected Output continuity frame when needed
-```
-
-It evaluates:
+Semantic Qwen3-VL QC evaluates:
 
 ```text
 visual integrity
@@ -248,58 +219,69 @@ Ref2VA action/camera consistency
 FL2VA continuity consistency
 ```
 
-Final lip sync is intentionally **not** scored here; it belongs to R10.
-
-### Retry policy
+Rules:
 
 ```text
 QC PASS -> auto GenerationSelection
-QC RETRY -> different seed + concrete QC correction added to H3 prompt
-Qwen unavailable -> WAITING_MODEL, no human content ReviewIssue
-low-confidence/ambiguous semantic result -> H3_QC ReviewIssue
-repeated retry failure -> H3_QC ReviewIssue
+QC RETRY -> different seed + QC correction prompt
+Qwen unavailable -> WAITING_MODEL, not human issue
+ambiguous/repeated failure -> H3_QC ReviewIssue
+H3_QC cannot be generic ignored/resolved
 ```
 
-Automatic attempt cap defaults to 3 and can be configured with:
+## 9. R10 lip sync / subtitles / assembly / export
+
+Core implementation:
 
 ```text
-AI_DRAMA_H3_QC_MAX_ATTEMPTS
+engine/app/postproduction_contract_v1.py
+engine/app/postproduction_lipsync_v1.py
+engine/app/postproduction_v1.py
+engine/app/postproduction_review_v1.py
+engine/app/postproduction_routes_v1.py
+engine/app/speaker_face_locator_v1.py
+engine/app/latentsync_provider_v1.py
+engine/app/episode_output_contract_v1.py
+engine/app/episode_output_v1.py
+scripts/latentsync_worker_v1.py
+frontend/src/components/LipSyncReviewV1.vue
+frontend/src/components/FinalOutputV1.vue
 ```
 
-clamped to 1..5.
-
-FL2VA retry continuity uses the **previous Selected Output**, never merely the latest technically SUCCEEDED Attempt.
-
-### Human fallback
-
-`H3_QC` is a domain-edited ReviewIssue. Generic ignore/resolve is blocked.
-
-The Review Center allows only meaningful actions:
+Persistent tables:
 
 ```text
-采用这个版本 -> writes GenerationSelection
-再生成一次 -> background H3 retry + QC
+v2_postproduction_segments
+v2_episode_outputs
 ```
 
-Manual selection may override semantic uncertainty only when the output has passed structural hard checks.
+R10 consumes **GenerationSelection only**.
 
-## 9. R9 APIs
+Lip-sync policy:
 
 ```text
-GET  /api/projects/{project_id}/h3-quality
-POST /api/generation-attempts/{attempt_id}/quality-check
-POST /api/generation-attempts/{attempt_id}/select
-GET  /api/generation-segments/{segment_id}/selected-video?project_id=...
-POST /api/projects/{project_id}/generation-segments/{segment_id}/tasks/h3-qc-retry
+off-screen dialogue -> keep target audio, skip lip sync
+single visible target speaker -> LatentSync full segment
+multi-face visible speaker -> SFace target-speaker localization -> ROI LatentSync
+locator/model unavailable -> waiting/model state
+identity ambiguity -> LIP_SYNC_QC
 ```
 
-Existing H3 entry remains:
+`LIP_SYNC_QC` is domain-edited. Generic Ignore/Resolve is blocked; retry re-enters real target-face localization/postproduction.
+
+Audio/timeline rules:
 
 ```text
-POST /api/projects/{project_id}/tasks/h3-generate-ready
+cross-segment dialogue trims already-played audio instead of replaying sentence start
+subtitles use the target RemakeTimeline
+one dialogue spanning multiple GenerationSegments appears once in SRT
+EpisodeOutput only uses SUCCEEDED PostProductionSegments
+segment media is normalized before concat
 ```
 
-but its product semantics are now **generate + QC + auto retry + select**, not raw generation only.
+Final output endpoints provide MP4 and SRT.
+
+Current limitation: R10 has final target dialogue audio but does not yet own a dedicated ambience/BGM/SFX mix layer.
 
 ## 10. ReviewIssue families
 
@@ -313,78 +295,86 @@ SCENE_LOCALIZATION
 LOCALIZATION
 DIALOGUE_TIMING
 H3_QC
+LIP_SYNC_QC
 ```
 
 `ReviewIssue` is attention state, not authoritative business truth.
 
 ## 11. Repository acceptance
 
-Dedicated isolated jobs:
+Dedicated jobs:
 
 ```text
 r7-generation-segments
 r8-h3-generation
 r9-h3-qc
+r10-postproduction
 frontend-v2
 ```
 
-R9 acceptance covers:
-
-```text
-QC pass thresholds
-source actor leakage -> RETRY
-low QC confidence -> REVIEW
-structural exact-duration + full-decode gate
-retry seed changes + QC correction prompt
-H3_QC domain-edit protection
-FastAPI R9 route registration
-R8/R7 regression checks
-```
-
-On 2026-09-01:
+Latest verified R10 line:
 
 ```text
 r7-generation-segments = PASS
 r8-h3-generation       = PASS
 r9-h3-qc                = PASS
-frontend-v2             = PASS (npm ci + vue-tsc + vite build)
+r10-postproduction      = PASS
+frontend-v2             = PASS
 ```
 
-Frontend toolchain was stabilized by regenerating `package-lock.json` with TypeScript 6.0.3 compatibility for `vue-tsc` and keeping `.node-version` at 22.18.0 for the current Babel/Vite engine requirements.
+R10 acceptance includes:
 
-Historical full-suite backend/older Breakdown debt remains separate from the R7/R8/R9 isolated acceptance boundary.
+```text
+single-speaker lip-sync planning
+multi-face compile without sync model work
+unique target-face ROI localization
+ambiguity -> REVIEW fail-closed
+cross-segment audio trimming
+off-screen dialogue behavior
+LIP_SYNC_QC domain-edit protection
+R10 route registration
+UTF-8 target-timeline SRT
+subtitle deduplication
+FFmpeg media normalization + concat
+EpisodeOutput route/table registration
+```
+
+The general lightweight `backend-v2` and older Breakdown jobs still contain historical dependency/contract debt. R10 media tests skip explicitly when FFmpeg is absent there; the dedicated `r10-postproduction` job installs FFmpeg and performs the real media acceptance.
 
 ## 12. Local acceptance still required
 
-Real end-to-end H3/R9 acceptance requires the user's actual machine:
+Real end-to-end acceptance requires the user's actual machine:
 
 ```text
-1. start FL2VA and required Ref2VA runtime
+1. start FL2VA / Ref2VA H3 runtime
 2. start local Qwen3-VL QC service
-3. run a real prepared Project
-4. generate target references and H3 attempts
-5. verify automatic QC/retries
-6. inspect Selected Output identity, scene, action/camera and duration
-7. force at least one bad/ambiguous case and verify H3_QC Review Center flow
+3. start local Qwen3-TTS runtime
+4. start LatentSync 1.6 runtime
+5. run a real prepared Project through H3 -> QC -> Selected Output -> R10
+6. inspect target identity, scene, action/camera, duration and lip sync
+7. verify multi-person dialogue targets the correct face
+8. verify final Episode MP4/SRT playback and timing
+9. force H3_QC and LIP_SYNC_QC ambiguous cases and verify Review Center recovery
 ```
 
 Current factual state:
 
 ```text
-R7/R8/R9 CODE + REPOSITORY ACCEPTANCE = PASS
+R7/R8/R9/R10 CODE + ISOLATED REPOSITORY ACCEPTANCE = PASS
 FRONTEND BUILD ACCEPTANCE = PASS
-LOCAL H3 GPU / QWEN QC / REAL PROJECT ACCEPTANCE = PENDING
+LOCAL H3 / QWEN / LATENTSYNC / REAL PROJECT ACCEPTANCE = PENDING
 ```
 
 ## 13. Next frontier
 
 ```text
-R10 Lip Sync
-→ enforce final target TTS mouth sync on Selected Output
-→ subtitle policy
-→ ambience / BGM / SFX / target voice mix
-→ episode assembly
-→ preview / export
+R10.1 ambience / BGM / SFX mix layer
+→ preserve or reconstruct non-dialogue sound without leaking source dialogue
+→ deterministic mix policy around target dialogue
+→ loudness/peak control
+→ keep postproduction/episode assembly idempotent
 
-R11 legacy cleanup
+then
+→ real local GPU end-to-end acceptance
+→ R11 legacy cleanup
 ```
