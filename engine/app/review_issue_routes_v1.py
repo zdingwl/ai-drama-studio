@@ -53,6 +53,17 @@ def api_list_review_issues(
         # as human work. Close it before returning the formal Review Center queue so an
         # already-processed project is repaired simply by refreshing the page.
         resolve_legacy_character_evidence_issues(project_id)
+
+        # Existing projects can contain old SPEAKER rows that predate the actionable review
+        # payload. Refresh them from current source truth on normal OPEN-list reads so a page
+        # refresh is enough to gain episode/scene/shot/dialogue/candidate context.
+        if status is None or status.strip().upper() == "OPEN":
+            try:
+                snapshot = load_project_source_drama_snapshot_v1(project_id)
+                sync_source_drama_speaker_issues(project_id, snapshot)
+            except SourceDramaSnapshotError:
+                pass
+
         return list_review_issues(project_id, status=status)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
