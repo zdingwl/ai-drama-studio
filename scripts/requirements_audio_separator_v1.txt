@@ -1,0 +1,6 @@
+# Dedicated R10.1 background-audio worker environment.
+# Keep this separate from engine/requirements.txt so H3/Studio dependency resolution is unaffected.
+fastapi==0.128.2
+uvicorn==0.48.0
+pydantic==2.13.4
+audio-separator[gpu]==0.47.0
