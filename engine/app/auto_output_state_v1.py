@@ -156,12 +156,14 @@ def get_auto_output_state_v1(project_id: str) -> dict[str, Any]:
         )
     dialogue_review_count = int(dialogue.get("review_count") or 0)
     if dialogue_review_count:
+        # There are no OPEN ReviewIssues here (checked above), so these rows are internal
+        # TargetDialogue state, not user-actionable work.  Expose them as an automatic repair
+        # point and let auto_output_v1 regenerate with the current policy/runtime.
         return _payload(
             project_id,
             stage="target_dialogue",
-            message=f"目标对白还有 {dialogue_review_count} 条真实语义问题需要确认",
+            message=f"目标对白有 {dialogue_review_count} 条旧的自动判断结果需要系统重新计算；不需要人工填写，自动成片会从这里继续",
             episode_count=episode_count,
-            review_issue_count=dialogue_review_count,
         )
 
     audio_ready, audio_total = _ready_audio_count(dialogue)
