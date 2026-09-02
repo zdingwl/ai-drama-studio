@@ -18,6 +18,7 @@ from typing import Any
 from sqlalchemy import select
 
 from engine.app import asset_workspace_v3 as legacy
+from engine.app.asset_workspace_shape_v1 import complete_asset_workspace_shot_bindings_v1
 from engine.app.content_analysis_v2 import (
     CharacterCandidate,
     CharacterTrack,
@@ -204,13 +205,20 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
                     shot_id=link.shot_id,
                     prop_id=asset_id,
                     source="AUTO",
-                    confidence=link.confidence,
+                    confidence=candidate.confidence,
                     source_run_id=run_id,
                     source_candidate_id=candidate.id,
                 )
             )
 
     session.flush()
+
+
+def _read_workspace(project_id: str, session: Any) -> dict[str, Any]:
+    return complete_asset_workspace_shot_bindings_v1(
+        project_id,
+        legacy._serialize_workspace(session, project_id),
+    )
 
 
 def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = False) -> dict[str, Any]:
@@ -231,7 +239,7 @@ def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = Fals
             and current.source_run_id != run_id
             and not force
         ):
-            return legacy._serialize_workspace(session, project_id)
+            return _read_workspace(project_id, session)
 
         source_revision_id = current.id if current else None
         _rebuild_from_analysis(session, project_id, run_id)
@@ -244,4 +252,4 @@ def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = Fals
             note="基于最新 AI Evidence 自动形成资产；Character V6 仅发布 RESOLVED Identity",
         )
         session.commit()
-        return legacy._serialize_workspace(session, project_id)
+        return _read_workspace(project_id, session)
