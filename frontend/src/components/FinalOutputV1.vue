@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { remakeApi } from '../api/remake'
+import { remakeApi, type AutoOutputState } from '../api/remake'
 import type {
   EpisodeOutputPlan,
   GenerationQualitySummary,
@@ -13,6 +13,7 @@ import type {
 const props = defineProps<{ projectId: string; busy?: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 
+const autoState = ref<AutoOutputState | null>(null)
 const outputs = ref<EpisodeOutputPlan | null>(null)
 const postproduction = ref<PostProductionPlan | null>(null)
 const lipSyncRuntime = ref<LipSyncRuntimeStatus | null>(null)
@@ -22,14 +23,14 @@ const h3Quality = ref<GenerationQualitySummary | null>(null)
 const loading = ref(false)
 const startingAuto = ref(false)
 const autoAttempted = ref(false)
-const reviewCount = ref(0)
 const error = ref('')
 const readIncomplete = ref(false)
 
+const reviewCount = computed(() => autoState.value?.review_issue_count ?? 0)
 const episodes = computed(() => outputs.value?.episodes ?? [])
 const completed = computed(() => episodes.value.filter((item) => item.status === 'SUCCEEDED'))
-const knownEpisodeCount = computed(() => outputs.value?.episode_count ?? h3Segments.value?.episode_count ?? episodes.value.length)
-const allCompleted = computed(() => knownEpisodeCount.value > 0 && completed.value.length === knownEpisodeCount.value)
+const knownEpisodeCount = computed(() => autoState.value?.episode_count ?? outputs.value?.episode_count ?? h3Segments.value?.episode_count ?? episodes.value.length)
+const allCompleted = computed(() => autoState.value?.stage === 'complete' || (knownEpisodeCount.value > 0 && completed.value.length === knownEpisodeCount.value))
 const postReadyCount = computed(() => postproduction.value?.episodes.flatMap((episode) => episode.segments).filter((segment) => segment.status === 'READY').length ?? 0)
 const postReviewCount = computed(() => postproduction.value?.review_count ?? 0)
 const postWaitingCount = computed(() => postproduction.value?.waiting_count ?? 0)
@@ -45,16 +46,33 @@ const pendingH3Segments = computed(() => (
 ))
 
 const needsContinuation = computed(() => !allCompleted.value)
+const hasActiveOutputWork = computed(() => Boolean(autoState.value?.active_task || startingAuto.value))
 const localModelLabel = computed(() => {
   if (loading.value) return '检查中'
-  if (pendingH3Segments.value.length) return h3Runtime.value?.ready ? 'H3 就绪' : 'H3 未就绪'
-  if (needsLipSync.value) return lipSyncRuntime.value?.ready ? '口型就绪' : '口型未就绪'
+  if (autoState.value?.stage === 'h3_generation') return h3Runtime.value?.ready ? 'H3 就绪' : 'H3 未就绪'
+  if (autoState.value?.stage === 'postproduction' && needsLipSync.value) return lipSyncRuntime.value?.ready ? '口型就绪' : '口型未就绪'
   return '按需自动启动'
 })
 const localModelWarning = computed(() => Boolean(
-  (pendingH3Segments.value.length && !h3Runtime.value?.ready)
-  || (needsLipSync.value && !lipSyncRuntime.value?.ready),
+  (autoState.value?.stage === 'h3_generation' && h3Runtime.value && !h3Runtime.value.ready)
+  || (autoState.value?.stage === 'postproduction' && needsLipSync.value && lipSyncRuntime.value && !lipSyncRuntime.value.ready),
 ))
+
+function stageTitle(state: AutoOutputState | null): string {
+  const labels: Record<string, string> = {
+    review_gate: '等待必要确认',
+    target_localization: '准备目标人物与场景',
+    target_dialogue: '生成目标对白',
+    tts: '生成目标语音',
+    generation_segments: '准备目标时间轴与镜头',
+    h3_generation: 'MiniMax H3 生成与质检',
+    postproduction: '口型、音轨与字幕后期',
+    episode_output: '拼接最终剧集',
+    complete: '成片已经完成',
+  }
+  return labels[state?.stage ?? ''] || '检查自动成片进度'
+}
+
 const continuationState = computed(() => {
   if (allCompleted.value) return {
     tone: 'ready',
@@ -64,46 +82,48 @@ const continuationState = computed(() => {
   if (reviewCount.value > 0) return {
     tone: 'review',
     title: `还有 ${reviewCount.value} 项真正需要确认`,
-    detail: '先到“待确认”完成真实业务修改，完成后系统会从当前进度继续，不会重新拉片。',
+    detail: autoState.value?.message || '完成真实业务修改后，系统会从当前进度继续，不会重新拉片。',
   }
-  if (props.busy || startingAuto.value) return {
+  if (hasActiveOutputWork.value) return {
     tone: 'running',
-    title: '系统正在继续自动生成成片',
-    detail: '目标对白 → TTS → Timing → MiniMax H3 → 自动质检 → 口型 / 字幕 / 整集成片，缺哪一步就从哪一步继续。',
+    title: autoState.value?.active_task?.stage_label || stageTitle(autoState.value),
+    detail: autoState.value?.active_task?.message || autoState.value?.message || '系统正在从当前有效结果继续。',
   }
-  if (pendingH3Segments.value.length && !h3Runtime.value?.ready) return {
+  if (autoState.value?.stage === 'h3_generation' && h3Runtime.value && !h3Runtime.value.ready) return {
     tone: 'warning',
     title: '等待本地 MiniMax H3',
     detail: 'H3 Runtime 恢复后点击“重新继续自动生成”即可；上游对白、Timing 和镜头计划不会重做。',
   }
-  if (needsLipSync.value && !lipSyncRuntime.value?.ready) return {
+  if (autoState.value?.stage === 'postproduction' && needsLipSync.value && lipSyncRuntime.value && !lipSyncRuntime.value.ready) return {
     tone: 'warning',
     title: '等待本地 LatentSync',
     detail: '口型 Runtime 恢复后点击“重新继续自动生成”即可；已经通过质检的 H3 镜头不会重做。',
   }
   if (autoAttempted.value) return {
     tone: 'warning',
-    title: '本次自动生成还没有完成',
-    detail: '请查看底部“后台任务”的具体运行结果。恢复对应本地模型或运行环境后，可从当前进度直接重试。',
+    title: stageTitle(autoState.value),
+    detail: autoState.value?.message || '本次自动任务没有走到最终成片，请查看底部后台任务；恢复对应运行环境后可从当前进度重试。',
   }
   return {
     tone: 'running',
-    title: '正在检查还缺哪些成片步骤',
-    detail: '无需手动逐阶段操作，系统会自动从当前有效结果继续。',
+    title: stageTitle(autoState.value),
+    detail: autoState.value?.message || '无需手动逐阶段操作，系统会自动从当前有效结果继续。',
   }
 })
 
-function assignSettled<T>(result: PromiseSettledResult<T>, setter: (value: T | null) => void): void {
-  if (result.status === 'fulfilled') {
-    setter(result.value)
-  } else {
-    setter(null)
-    readIncomplete.value = true
+function clearUnavailableResources(state: AutoOutputState): void {
+  if (!state.can_read_generation_segments) h3Segments.value = null
+  if (!state.can_read_h3_quality) h3Quality.value = null
+  if (!state.can_read_postproduction) {
+    postproduction.value = null
+    lipSyncRuntime.value = null
   }
+  if (!state.can_read_outputs) outputs.value = null
+  if (state.stage !== 'h3_generation' && !state.can_read_h3_quality) h3Runtime.value = null
 }
 
 async function startAutomaticOutput(): Promise<void> {
-  if (!props.projectId || props.busy || startingAuto.value || reviewCount.value > 0 || allCompleted.value) return
+  if (!props.projectId || startingAuto.value || reviewCount.value > 0 || allCompleted.value || autoState.value?.active_task) return
   autoAttempted.value = true
   startingAuto.value = true
   try {
@@ -112,8 +132,6 @@ async function startAutomaticOutput(): Promise<void> {
     emit('changed')
   } catch (err) {
     const message = err instanceof Error ? err.message : ''
-    // Parent busy state can lag behind the task-created browser event for a moment.
-    // An already-running heavy task is not a user-facing failure.
     if (!message.includes('已有本地重任务')) {
       error.value = message || '自动成片任务启动失败，请查看后台任务状态后重试'
     }
@@ -122,35 +140,49 @@ async function startAutomaticOutput(): Promise<void> {
   }
 }
 
+async function loadAvailableResources(state: AutoOutputState): Promise<void> {
+  const requests: Array<Promise<void>> = []
+
+  if (state.can_read_outputs) {
+    requests.push(remakeApi.getEpisodeOutputs(props.projectId).then((value) => { outputs.value = value }))
+  }
+  if (state.can_read_postproduction) {
+    requests.push(remakeApi.getPostProduction(props.projectId).then((value) => { postproduction.value = value }))
+    requests.push(remakeApi.getLipSyncRuntimeStatus().then((value) => { lipSyncRuntime.value = value }))
+  }
+  if (state.can_read_generation_segments) {
+    requests.push(remakeApi.getGenerationSegments(props.projectId).then((value) => { h3Segments.value = value }))
+  }
+  if (state.can_read_h3_quality) {
+    requests.push(remakeApi.getH3Quality(props.projectId).then((value) => { h3Quality.value = value }))
+  }
+  if (state.stage === 'h3_generation') {
+    requests.push(remakeApi.getH3RuntimeStatus().then((value) => { h3Runtime.value = value }))
+  }
+
+  const results = await Promise.allSettled(requests)
+  if (results.some((result) => result.status === 'rejected')) readIncomplete.value = true
+}
+
 async function load(): Promise<void> {
   if (!props.projectId) return
   loading.value = true
   readIncomplete.value = false
   error.value = ''
   try {
-    const [issuesResult, outputResult, postResult, lipRuntimeResult, segmentResult, h3RuntimeResult, qualityResult] = await Promise.allSettled([
-      remakeApi.listReviewIssues(props.projectId, 'OPEN'),
-      remakeApi.getEpisodeOutputs(props.projectId),
-      remakeApi.getPostProduction(props.projectId),
-      remakeApi.getLipSyncRuntimeStatus(),
-      remakeApi.getGenerationSegments(props.projectId),
-      remakeApi.getH3RuntimeStatus(),
-      remakeApi.getH3Quality(props.projectId),
-    ])
-
-    reviewCount.value = issuesResult.status === 'fulfilled' ? issuesResult.value.length : 0
-    if (issuesResult.status === 'rejected') readIncomplete.value = true
-    assignSettled(outputResult, (value) => { outputs.value = value })
-    assignSettled(postResult, (value) => { postproduction.value = value })
-    assignSettled(lipRuntimeResult, (value) => { lipSyncRuntime.value = value })
-    assignSettled(segmentResult, (value) => { h3Segments.value = value })
-    assignSettled(h3RuntimeResult, (value) => { h3Runtime.value = value })
-    assignSettled(qualityResult, (value) => { h3Quality.value = value })
+    const state = await remakeApi.getAutoOutputState(props.projectId)
+    autoState.value = state
+    clearUnavailableResources(state)
+    await loadAvailableResources(state)
+  } catch (err) {
+    autoState.value = null
+    readIncomplete.value = true
+    error.value = err instanceof Error ? err.message : '自动成片状态读取失败'
   } finally {
     loading.value = false
   }
 
-  if (!props.busy && !autoAttempted.value && reviewCount.value === 0 && !allCompleted.value) {
+  if (autoState.value && !autoState.value.active_task && !autoAttempted.value && reviewCount.value === 0 && !allCompleted.value) {
     await startAutomaticOutput()
   }
 }
@@ -217,7 +249,7 @@ onMounted(() => void load())
         <span>{{ continuationState.detail }}</span>
       </div>
       <button
-        v-if="needsContinuation && !props.busy && !startingAuto && reviewCount === 0 && autoAttempted"
+        v-if="needsContinuation && !autoState?.active_task && !startingAuto && reviewCount === 0 && autoAttempted"
         class="primary"
         @click="retryAutomaticOutput"
       >
@@ -226,8 +258,8 @@ onMounted(() => void load())
     </section>
 
     <div class="summary">
-      <article class="success"><small>已成片</small><strong>{{ completed.length }}</strong><span>可直接播放和下载</span></article>
-      <article><small>待成片</small><strong>{{ Math.max(0, knownEpisodeCount - completed.length) }}</strong><span>系统自动生成、质检或后期中</span></article>
+      <article class="success"><small>已成片</small><strong>{{ Math.max(completed.length, autoState?.completed_episode_count ?? 0) }}</strong><span>可直接播放和下载</span></article>
+      <article><small>待成片</small><strong>{{ Math.max(0, knownEpisodeCount - Math.max(completed.length, autoState?.completed_episode_count ?? 0)) }}</strong><span>系统自动生成、质检或后期中</span></article>
       <article :class="{ warn: reviewCount || postReviewCount }"><small>需要确认</small><strong>{{ Math.max(reviewCount, postReviewCount) }}</strong><span>只统计真正需要人工决定的问题</span></article>
       <article :class="{ warn: localModelWarning }"><small>本地模型</small><strong>{{ localModelLabel }}</strong><span>MiniMax H3 / LatentSync 按需使用</span></article>
     </div>
@@ -261,8 +293,8 @@ onMounted(() => void load())
           <div>
             <strong>{{ episode.reason }}</strong>
             <span v-if="reviewCount || postReviewCount">存在真正需要人工确认的问题，请到“待确认”处理。</span>
-            <span v-else-if="pendingH3Segments.length && !h3Runtime?.ready">等待本地 MiniMax H3 Runtime；恢复后可从当前镜头继续。</span>
-            <span v-else-if="needsLipSync && !lipSyncRuntime?.ready">等待本地 LatentSync Runtime；已生成镜头不会重做。</span>
+            <span v-else-if="autoState?.stage === 'h3_generation' && h3Runtime && !h3Runtime.ready">等待本地 MiniMax H3 Runtime；恢复后可从当前镜头继续。</span>
+            <span v-else-if="needsLipSync && lipSyncRuntime && !lipSyncRuntime.ready">等待本地 LatentSync Runtime；已生成镜头不会重做。</span>
             <span v-else>系统会自动继续镜头生成、质检、口型、字幕和整集拼接。</span>
           </div>
           <span class="auto-badge">自动处理</span>
@@ -271,10 +303,10 @@ onMounted(() => void load())
     </section>
 
     <section v-else class="empty">
-      <strong>{{ props.busy || startingAuto ? '正在自动生成第一版成片' : '还没有可展示的剧集成片' }}</strong>
+      <strong>{{ hasActiveOutputWork ? '正在自动生成第一版成片' : stageTitle(autoState) }}</strong>
       <span v-if="reviewCount">还有 {{ reviewCount }} 项真实问题需要先确认。</span>
-      <span v-else-if="readIncomplete">当前下游结果还没有全部生成，系统会自动补齐缺失步骤，不需要你手动逐阶段操作。</span>
-      <span v-else>系统正在检查目标对白、H3、口型和整集输出状态。</span>
+      <span v-else-if="readIncomplete">已就绪的结果读取失败，请查看后台任务；未生成阶段不会再被当作 409 冲突读取。</span>
+      <span v-else>{{ autoState?.message || '系统正在检查目标对白、H3、口型和整集输出状态。' }}</span>
     </section>
 
     <details v-if="postproduction" class="diagnostics">
