@@ -19,6 +19,9 @@ GenerationEngine = Literal["MINIMAX_H3_LOCAL"]
 
 SCENE_POLICIES = {"AUTO", "KEEP", "LOCALIZE"}
 GENERATION_ENGINES = {"MINIMAX_H3_LOCAL"}
+DEFAULT_SCENE_POLICY = "AUTO"
+DEFAULT_CHARACTER_POLICY = "LOCALIZE"
+DEFAULT_GENERATION_ENGINE = "MINIMAX_H3_LOCAL"
 
 
 class ProjectRemakePolicy(Base):
@@ -27,10 +30,10 @@ class ProjectRemakePolicy(Base):
     project_id: Mapped[str] = mapped_column(
         ForeignKey("v2_projects.id", ondelete="CASCADE"), primary_key=True
     )
-    scene_policy: Mapped[str] = mapped_column(String(24), nullable=False, default="AUTO")
-    character_policy: Mapped[str] = mapped_column(String(24), nullable=False, default="LOCALIZE")
+    scene_policy: Mapped[str] = mapped_column(String(24), nullable=False, default=DEFAULT_SCENE_POLICY)
+    character_policy: Mapped[str] = mapped_column(String(24), nullable=False, default=DEFAULT_CHARACTER_POLICY)
     generation_engine: Mapped[str] = mapped_column(
-        String(48), nullable=False, default="MINIMAX_H3_LOCAL"
+        String(48), nullable=False, default=DEFAULT_GENERATION_ENGINE
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
@@ -51,7 +54,27 @@ def _serialize(row: ProjectRemakePolicy) -> dict[str, Any]:
     }
 
 
-def get_project_remake_policy(project_id: str, *, create_default: bool = True) -> dict[str, Any] | None:
+def _default_policy(project: Project) -> dict[str, Any]:
+    """Return effective defaults without creating a database row."""
+
+    return {
+        "project_id": project.id,
+        "scene_policy": DEFAULT_SCENE_POLICY,
+        "character_policy": DEFAULT_CHARACTER_POLICY,
+        "generation_engine": DEFAULT_GENERATION_ENGINE,
+        "created_at": project.created_at.isoformat(),
+        "updated_at": project.updated_at.isoformat(),
+    }
+
+
+def get_project_remake_policy(project_id: str, *, create_default: bool = False) -> dict[str, Any]:
+    """Read the effective remake policy.
+
+    Reads are side-effect free by default. Projects without a persisted policy receive the same
+    effective defaults in memory. ``create_default=True`` remains available only for explicit
+    write/maintenance flows that intentionally want to materialize the defaults.
+    """
+
     with get_session() as session:
         project = session.get(Project, project_id)
         if project is None:
@@ -62,7 +85,7 @@ def get_project_remake_policy(project_id: str, *, create_default: bool = True) -
             session.add(row)
             session.commit()
             session.refresh(row)
-        return _serialize(row) if row is not None else None
+        return _serialize(row) if row is not None else _default_policy(project)
 
 
 def update_project_remake_policy(
@@ -93,7 +116,7 @@ def update_project_remake_policy(
         if generation_engine is not None:
             row.generation_engine = generation_engine
         # Character replacement is a product invariant for the current remake mode.
-        row.character_policy = "LOCALIZE"
+        row.character_policy = DEFAULT_CHARACTER_POLICY
         row.updated_at = utcnow()
         session.commit()
         session.refresh(row)
@@ -101,6 +124,9 @@ def update_project_remake_policy(
 
 
 __all__ = [
+    "DEFAULT_CHARACTER_POLICY",
+    "DEFAULT_GENERATION_ENGINE",
+    "DEFAULT_SCENE_POLICY",
     "GENERATION_ENGINES",
     "SCENE_POLICIES",
     "ProjectRemakePolicy",
