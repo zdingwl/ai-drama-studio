@@ -30,7 +30,7 @@ source story / shots / actions / camera / Reference Video
 → automatic retry
 → GenerationSelection / Selected Output
 → target-speaker lip sync
-→ final target audio + subtitles
+→ final target dialogue + safe non-dialogue background audio + subtitles
 → EpisodeOutput assembly / export
 ```
 
@@ -45,6 +45,8 @@ Shot != GenerationSegment
 GenerationAttempt != usable output
 only Selected Output may flow into downstream final-video work
 multi-face lip sync must identify the target speaker before modifying a face
+raw source audio must never be mixed into target output
+source-derived background audio must pass separation + source-dialogue suppression before mixing
 source ASR/OCR/Shot facts remain immutable downstream
 ```
 
@@ -65,7 +67,7 @@ ProjectListV4
 ProjectStudioV4
 ```
 
-Do not create top-level pages for GenerationSegment, H3 Context, target references, retries, QC, lip-sync internals or raw evidence.
+Do not create top-level pages for GenerationSegment, H3 Context, target references, retries, QC, lip-sync internals, audio-separation internals or raw evidence.
 
 `Output` is product-first: final Episode video is primary; H3/PostProduction segment details are advanced diagnostics only.
 
@@ -106,7 +108,7 @@ prepare target references
 → repeated/ambiguous failure -> Review Center
 ```
 
-R10 postproduction is also a separate heavy background task:
+R10/R10.1 postproduction is also a separate heavy background task:
 
 ```text
 POST /api/projects/{project_id}/tasks/postproduction
@@ -119,11 +121,15 @@ Selected Output
 → target-dialogue final audio
 → single-face LatentSync or multi-face target-speaker localization + ROI LatentSync
 → PostProductionSegment
+→ optional safe source background enhancement
+   source Shot audio -> Instrumental separation -> source-dialogue hard suppression -> target-time conform -> duck/limit mix
 → target-timeline UTF-8 SRT
 → normalized segment media
 → EpisodeOutput assembly
 → final MP4 + SRT
 ```
+
+If the background-audio worker is unavailable or separation fails, keep the already-valid target-dialogue-only R10 output. Do not block the Episode and do not create a ReviewIssue.
 
 ## 4. Authority boundaries
 
@@ -172,6 +178,16 @@ postproduction business code
 ```
 
 Multi-face target identity resolution is a separate safety gate before ROI lip sync. Do not let LatentSync choose an arbitrary detected face.
+
+### Background-audio boundary
+
+```text
+postproduction business code
+→ BackgroundAudioProvider
+→ audio-separator local worker
+```
+
+The heavy separator stack stays outside the main backend environment. The provider may return only a separated background/Instrumental stem; Studio must still apply SourceDramaSnapshot dialogue-window suppression before mixing.
 
 ## 5. H3 execution rules
 
@@ -233,17 +249,18 @@ hard decode/duration failure cannot be manually bypassed
 FL2VA retry continuity must use previous Selected Output, never merely latest SUCCEEDED attempt
 ```
 
-## 7. R10 postproduction rules
+## 7. R10 / R10.1 postproduction rules
 
-R10 core is implemented on `main` and has isolated CI acceptance.
+R10 core and R10.1 safe background-audio enhancement are implemented on `main` and have isolated CI acceptance.
 
 ```text
 GenerationSelection only
 → PostProductionSegment
+→ optional safe background enhancement
 → EpisodeOutput
 ```
 
-Rules:
+Lip-sync rules:
 
 ```text
 off-screen dialogue keeps target audio but skips lip sync
@@ -258,7 +275,20 @@ EpisodeOutput only assembles SUCCEEDED PostProductionSegments
 subtitles use target RemakeTimeline and deduplicate one dialogue spanning multiple GenerationSegments
 ```
 
-Current R10 does **not** yet provide a dedicated ambience/BGM/SFX mix layer. That is the R10.1 frontier.
+Background-audio rules:
+
+```text
+never mix raw source audio
+source Shot audio -> Instrumental separation in dedicated worker
+known source-dialogue windows -> hard mute again with padding
+split target segments -> take the corresponding source-Shot audio window, not source time 0
+conform safe background to target duration
+mix under target dialogue with conservative gain + dialogue duck + limiter
+separator unavailable/fails -> TARGET_DIALOGUE_ONLY_FALLBACK, still valid output
+background infrastructure failure -> no human ReviewIssue
+```
+
+Current R10.1 reuses safely separated source ambience/music/SFX. Dedicated reconstruction/generation of missing BGM/SFX is not yet a product requirement and should not be added unless real-project acceptance shows separation quality is insufficient.
 
 ## 8. Current ReviewIssue families
 
@@ -275,7 +305,7 @@ H3_QC
 LIP_SYNC_QC
 ```
 
-Do not create human ReviewIssues for infrastructure-only states such as H3/TTS/Qwen/LatentSync service offline.
+Do not create human ReviewIssues for infrastructure-only states such as H3/TTS/Qwen/LatentSync/audio-separator service offline.
 
 ## 9. Existing internals to preserve
 
@@ -300,6 +330,7 @@ GenerationAttempt
 GenerationQualityCheck
 GenerationSelection
 PostProductionSegment
+safe background-audio provider/worker/cache
 EpisodeOutput
 ```
 
@@ -316,9 +347,11 @@ R7 GenerationSegment + H3 Runtime/Provider     = IMPLEMENTED
 R8 H3 Context + GenerationAttempt              = IMPLEMENTED / ISOLATED CI PASS / LOCAL GPU PENDING
 R9 H3 QC / automatic retry / selected output  = IMPLEMENTED / ISOLATED CI PASS / LOCAL REAL-PROJECT PENDING
 R10 Lip Sync + subtitle/audio/assembly/export  = IMPLEMENTED / ISOLATED CI PASS / LOCAL REAL-PROJECT PENDING
-R10.1 ambience / BGM / SFX mix layer          = NEXT
+R10.1 safe ambience/BGM/SFX reuse mix          = IMPLEMENTED / ISOLATED CI PASS / LOCAL MODEL/REAL-PROJECT PENDING
 R11 legacy cleanup                            = LATER
 ```
+
+The next meaningful product milestone is **real local end-to-end acceptance**, not another speculative pipeline stage.
 
 Do not return to old Stage 05/R6/R8 planning unless debugging a regression.
 
@@ -336,9 +369,11 @@ r10-postproduction
 frontend-v2
 ```
 
-On the latest R10 UI/postproduction commit line, R7/R8/R9/R10/frontend isolated jobs pass. Historical `backend-v2` and older Breakdown failures remain separate legacy/dependency debt unless a new change directly causes them.
+The R10 job also covers R10.1 safety logic with real FFmpeg media tests, including source-dialogue hard suppression and split-Shot source-time mapping. It deliberately does not install/load the heavy audio-separator model stack; worker import must remain lazy.
 
-Do not claim local H3/Qwen QC/LatentSync PASS until a real Project is generated and inspected on the user's actual GPU/runtime machine.
+On the latest R10.1 commit line, R7/R8/R9/R10/frontend isolated jobs pass. Historical `backend-v2` and older Breakdown failures remain separate legacy/dependency debt unless a new change directly causes them.
+
+Do not claim local H3/Qwen QC/LatentSync/audio-separator PASS until a real Project is generated and inspected on the user's actual GPU/runtime machine.
 
 Frontend build acceptance uses the real repository lockfile and current Node version; do not dismiss a frontend failure as unrelated without reading its concrete CI cause.
 
@@ -350,7 +385,7 @@ Frontend build acceptance uses the real repository lockfile and current Node ver
 3. docs/PRODUCT_REMAKE_ARCHITECTURE_V1.md
 4. docs/PROJECT_STATE.md
 5. docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-6. current R2/R4/R5/R6/R7/R8/R9/R10 code/tests
+6. current R2/R4/R5/R6/R7/R8/R9/R10/R10.1 code/tests
 7. old P/G docs only for compatibility maintenance
 ```
 
