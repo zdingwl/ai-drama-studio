@@ -21,6 +21,7 @@ from engine.app.target_localization_runtime_guard_v1 import (
     validate_target_localization_generation_v1,
 )
 from engine.app.target_localization_v1 import (
+    TargetLocalizationError,
     delete_scene_localization_v1,
     delete_target_character_v1,
     generate_target_localization_v1,
@@ -53,7 +54,9 @@ class SceneLocalizationEditRequest(BaseModel):
 def _error(exc: Exception) -> HTTPException:
     if isinstance(exc, LookupError):
         return HTTPException(status_code=404, detail=str(exc))
-    if isinstance(exc, TargetLocalizationRuntimeUnavailable):
+    if isinstance(exc, (TargetLocalizationRuntimeUnavailable, TargetLocalizationError)):
+        # Model/runtime execution failures are infrastructure state, not a business conflict and
+        # must not be hidden behind the generic "localization unavailable" message.
         return HTTPException(status_code=503, detail=str(exc))
     if isinstance(exc, SourceDramaSnapshotError):
         return HTTPException(status_code=409, detail="SourceDramaSnapshot 当前不可用")
