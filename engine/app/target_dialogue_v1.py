@@ -3,6 +3,13 @@
 Source text remains owned by SourceDramaSnapshot. This module persists target-only text,
 voice profiles and generated audio. Translation uses the existing local Qwen service;
 voice audio uses the isolated official Qwen3-TTS worker when available.
+
+V2 dialogue semantics are intentionally implemented without a database-table rewrite:
+- ``TargetDialogue.source_dialogue_key`` stores the canonical SourceDrama ``dialogue_group_id``;
+- ``TargetDialogue.shot_key`` is only the first source projection Shot kept for compatibility;
+- one complete source utterance produces exactly one current TargetDialogue;
+- old projection-level TargetDialogue rows are retained as history and are excluded from
+  current reads/materialization by the current Source fingerprint + canonical key set.
 """
 from __future__ import annotations
 
@@ -28,14 +35,14 @@ from engine.app.qwen3_tts_runtime_v1 import (
 )
 from engine.app.review_issue_v1 import ReviewIssue, upsert_review_issue
 from engine.app.source_drama_snapshot_v1 import load_project_source_drama_snapshot_v1
-from engine.app.studio_v2 import Base, Episode, Project, get_session, new_id, project_dir, utcnow
+from engine.app.studio_v2 import Base, Project, get_session, new_id, project_dir, utcnow
 from engine.app.target_dialogue_contract_v1 import TargetDialogueBundleV1
-from engine.app.target_localization_v1 import TargetCharacter, get_target_localization_v1
+from engine.app.target_localization_v1 import get_target_localization_v1
 
 
 LOCALIZATION_REVIEW_PREFIX = "auto:target-dialogue:"
-# Qwen's self-reported confidence is not a calibrated probability.  Normal 0.6/0.7 scores
-# must not turn every usable localized line into human work.  Keep only a hard safety floor;
+# Qwen's self-reported confidence is not a calibrated probability. Normal 0.6/0.7 scores
+# must not turn every usable localized line into human work. Keep only a hard safety floor;
 # structural completeness, speaker identity and TargetCharacter mapping remain mandatory.
 TRANSLATION_CONFIDENCE_MIN = 0.35
 TRANSLATION_BATCH_SIZE = 4
@@ -79,7 +86,9 @@ class TargetDialogue(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("v2_projects.id", ondelete="CASCADE"), index=True)
     episode_id: Mapped[str] = mapped_column(ForeignKey("v2_episodes.id", ondelete="CASCADE"), index=True)
+    # Compatibility anchor only. The canonical source identity is source_dialogue_key.
     shot_key: Mapped[str] = mapped_column(String(220), nullable=False, index=True)
+    # V2 semantics: canonical SourceDrama dialogue_group_id, not a Shot projection key.
     source_dialogue_key: Mapped[str] = mapped_column(String(255), nullable=False)
     source_dialogue_signature: Mapped[str] = mapped_column(String(64), nullable=False)
     source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -250,62 +259,209 @@ def _target_characters(project_id: str) -> dict[str, dict[str, Any]]:
     }
 
 
-def _dialogue_contexts(snapshot: Mapping[str, Any], target_characters: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _episode_indexes(episode: Mapping[str, Any]) -> tuple[
+    dict[str, Mapping[str, Any]],
+    dict[str, tuple[Mapping[str, Any], Mapping[str, Any]]],
+]:
+    people: dict[str, Mapping[str, Any]] = {}
+    shots: dict[str, tuple[Mapping[str, Any], Mapping[str, Any]]] = {}
+    for scene in episode.get("scenes") or []:
+        if not isinstance(scene, Mapping):
+            continue
+        for person in scene.get("people") or []:
+            if isinstance(person, Mapping) and person.get("person_key"):
+                people[str(person["person_key"])] = person
+        for shot in scene.get("shots") or []:
+            if isinstance(shot, Mapping) and shot.get("shot_key"):
+                shots[str(shot["shot_key"])] = (scene, shot)
+    return people, shots
+
+
+def _source_character_ids_for_speakers(
+    speaker_keys: list[str],
+    people: Mapping[str, Mapping[str, Any]],
+) -> list[str]:
+    source_character_ids: list[str] = []
+    for person_key in speaker_keys:
+        person = people.get(person_key)
+        character = person.get("character") if isinstance(person, Mapping) else None
+        character_id = str(character.get("id") or "") if isinstance(character, Mapping) else ""
+        if character_id and character_id not in source_character_ids:
+            source_character_ids.append(character_id)
+    return source_character_ids
+
+
+def _canonical_contexts_for_episode(
+    episode: Mapping[str, Any],
+    target_characters: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    episode_id = str(episode.get("episode_id") or "")
+    people, shots = _episode_indexes(episode)
+    rows: list[dict[str, Any]] = []
+    utterances = episode.get("source_dialogue_utterances")
+    if not isinstance(utterances, list):
+        return rows
+
+    for utterance in utterances:
+        if not isinstance(utterance, Mapping):
+            continue
+        group_id = str(utterance.get("dialogue_group_id") or "").strip()
+        source_text = str(utterance.get("source_text") or "")
+        projections = [
+            dict(item)
+            for item in utterance.get("projections") or []
+            if isinstance(item, Mapping) and item.get("shot_key")
+        ]
+        projections.sort(key=lambda item: (
+            int(item.get("projection_index") or 0),
+            int(item.get("start_us") or 0),
+            str(item.get("dialogue_key") or ""),
+        ))
+        if not group_id or not source_text.strip() or not projections:
+            continue
+
+        primary = projections[0]
+        shot_key = str(primary.get("shot_key") or "")
+        scene, shot = shots.get(shot_key, ({}, {}))
+        speaker_keys = list(dict.fromkeys(str(item) for item in utterance.get("speakers") or [] if str(item)))
+        source_character_ids = _source_character_ids_for_speakers(speaker_keys, people)
+        source_character_id = source_character_ids[0] if len(source_character_ids) == 1 else None
+        target_character = target_characters.get(source_character_id or "")
+        context = {
+            "episode_id": episode_id,
+            "shot_key": shot_key,
+            "source_dialogue_key": group_id,
+            "dialogue_group_id": group_id,
+            "source_start_us": int(utterance.get("start_us") or 0),
+            "source_end_us": int(utterance.get("end_us") or 0),
+            "source_text": source_text,
+            "source_language": str(utterance.get("source_language") or "").strip() or None,
+            "speaker_person_keys": speaker_keys,
+            "source_character_ids": source_character_ids,
+            "source_character_id": source_character_id,
+            "target_character_id": target_character.get("id") if target_character else None,
+            "target_speaker_name": target_character.get("target_name") if target_character else None,
+            "scene_title": scene.get("title") if isinstance(scene, Mapping) else None,
+            "story_summary": scene.get("story_summary") if isinstance(scene, Mapping) else None,
+            "visual_description": shot.get("visual_description") if isinstance(shot, Mapping) else None,
+            "projections": projections,
+        }
+        context["signature"] = _digest({
+            "dialogue_group_id": group_id,
+            "source_start_us": context["source_start_us"],
+            "source_end_us": context["source_end_us"],
+            "source_text": context["source_text"],
+            "source_language": context["source_language"],
+            "speaker_person_keys": speaker_keys,
+            "source_character_ids": source_character_ids,
+            "projections": [
+                {
+                    "dialogue_key": item.get("dialogue_key"),
+                    "shot_key": item.get("shot_key"),
+                    "scene_key": item.get("scene_key"),
+                    "projection_index": item.get("projection_index"),
+                    "start_us": item.get("start_us"),
+                    "end_us": item.get("end_us"),
+                    "source_text": item.get("source_text"),
+                }
+                for item in projections
+            ],
+        })
+        rows.append(context)
+    return rows
+
+
+def _legacy_projection_contexts_for_episode(
+    episode: Mapping[str, Any],
+    target_characters: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Compatibility for test fixtures / pre-V2 callers that do not expose utterance list.
+
+    Real current SourceDramaSnapshot always exposes ``source_dialogue_utterances``. This
+    fallback deliberately keeps the old one-projection/one-dialogue behavior instead of
+    guessing grouping when the canonical list is absent.
+    """
+
+    rows: list[dict[str, Any]] = []
+    episode_id = str(episode.get("episode_id") or "")
+    for scene in episode.get("scenes") or []:
+        if not isinstance(scene, Mapping):
+            continue
+        people = {
+            str(person.get("person_key")): person
+            for person in scene.get("people") or []
+            if isinstance(person, Mapping) and person.get("person_key")
+        }
+        for shot in scene.get("shots") or []:
+            if not isinstance(shot, Mapping):
+                continue
+            shot_key = str(shot.get("shot_key") or "")
+            for dialogue in shot.get("source_dialogue") or []:
+                if not isinstance(dialogue, Mapping) or not dialogue.get("dialogue_key") or not dialogue.get("source_text"):
+                    continue
+                speaker_keys = [str(item) for item in dialogue.get("speakers") or []]
+                source_character_ids = _source_character_ids_for_speakers(speaker_keys, people)
+                source_character_id = source_character_ids[0] if len(source_character_ids) == 1 else None
+                target_character = target_characters.get(source_character_id or "")
+                source_key = str(dialogue["dialogue_key"])
+                context = {
+                    "episode_id": episode_id,
+                    "shot_key": shot_key,
+                    "source_dialogue_key": source_key,
+                    "dialogue_group_id": source_key,
+                    "source_start_us": int(dialogue.get("start_us") or 0),
+                    "source_end_us": int(dialogue.get("end_us") or 0),
+                    "source_text": str(dialogue["source_text"]),
+                    "source_language": None,
+                    "speaker_person_keys": speaker_keys,
+                    "source_character_ids": source_character_ids,
+                    "source_character_id": source_character_id,
+                    "target_character_id": target_character.get("id") if target_character else None,
+                    "target_speaker_name": target_character.get("target_name") if target_character else None,
+                    "scene_title": scene.get("title"),
+                    "story_summary": scene.get("story_summary"),
+                    "visual_description": shot.get("visual_description"),
+                    "projections": [{
+                        "dialogue_key": source_key,
+                        "shot_key": shot_key,
+                        "scene_key": scene.get("scene_key"),
+                        "projection_index": 1,
+                        "start_us": int(dialogue.get("start_us") or 0),
+                        "end_us": int(dialogue.get("end_us") or 0),
+                        "source_text": str(dialogue["source_text"]),
+                    }],
+                }
+                context["signature"] = _digest({
+                    "dialogue_group_id": source_key,
+                    "shot_key": shot_key,
+                    "source_start_us": context["source_start_us"],
+                    "source_end_us": context["source_end_us"],
+                    "source_text": context["source_text"],
+                    "source_character_ids": source_character_ids,
+                })
+                rows.append(context)
+    return rows
+
+
+def _dialogue_contexts(
+    snapshot: Mapping[str, Any],
+    target_characters: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for episode in snapshot.get("episodes") or []:
         if not isinstance(episode, Mapping):
             continue
-        episode_id = str(episode.get("episode_id") or "")
-        for scene in episode.get("scenes") or []:
-            if not isinstance(scene, Mapping):
-                continue
-            people = {
-                str(person.get("person_key")): person
-                for person in scene.get("people") or []
-                if isinstance(person, Mapping) and person.get("person_key")
-            }
-            for shot in scene.get("shots") or []:
-                if not isinstance(shot, Mapping):
-                    continue
-                shot_key = str(shot.get("shot_key") or "")
-                for dialogue in shot.get("source_dialogue") or []:
-                    if not isinstance(dialogue, Mapping) or not dialogue.get("dialogue_key") or not dialogue.get("source_text"):
-                        continue
-                    speaker_keys = [str(item) for item in dialogue.get("speakers") or []]
-                    source_character_ids: list[str] = []
-                    for person_key in speaker_keys:
-                        person = people.get(person_key)
-                        character = person.get("character") if isinstance(person, Mapping) else None
-                        character_id = str(character.get("id") or "") if isinstance(character, Mapping) else ""
-                        if character_id and character_id not in source_character_ids:
-                            source_character_ids.append(character_id)
-                    source_character_id = source_character_ids[0] if len(source_character_ids) == 1 else None
-                    target_character = target_characters.get(source_character_id or "")
-                    context = {
-                        "episode_id": episode_id,
-                        "shot_key": shot_key,
-                        "source_dialogue_key": str(dialogue["dialogue_key"]),
-                        "source_start_us": int(dialogue.get("start_us") or 0),
-                        "source_end_us": int(dialogue.get("end_us") or 0),
-                        "source_text": str(dialogue["source_text"]),
-                        "speaker_person_keys": speaker_keys,
-                        "source_character_ids": source_character_ids,
-                        "source_character_id": source_character_id,
-                        "target_character_id": target_character.get("id") if target_character else None,
-                        "target_speaker_name": target_character.get("target_name") if target_character else None,
-                        "scene_title": scene.get("title"),
-                        "story_summary": scene.get("story_summary"),
-                        "visual_description": shot.get("visual_description"),
-                    }
-                    context["signature"] = _digest({
-                        "shot_key": shot_key,
-                        "source_dialogue_key": context["source_dialogue_key"],
-                        "source_start_us": context["source_start_us"],
-                        "source_end_us": context["source_end_us"],
-                        "source_text": context["source_text"],
-                        "source_character_ids": source_character_ids,
-                    })
-                    rows.append(context)
+        # Presence of the key means caller is on V2 semantics, including a legitimate empty list.
+        if "source_dialogue_utterances" in episode:
+            rows.extend(_canonical_contexts_for_episode(episode, target_characters))
+        else:
+            rows.extend(_legacy_projection_contexts_for_episode(episode, target_characters))
+    rows.sort(key=lambda item: (
+        str(item.get("episode_id") or ""),
+        int(item.get("source_start_us") or 0),
+        int(item.get("source_end_us") or 0),
+        str(item.get("source_dialogue_key") or ""),
+    ))
     return rows
 
 
@@ -463,6 +619,8 @@ def _generate_translation_proposals(
 def _upsert_voice_profiles(project: Project, fingerprint: str, target_characters: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
     active_target_ids = {str(item["id"]) for item in target_characters.values()}
     with get_session() as session:
+        # VoiceProfile is a current mutable target-character asset. Unlike TargetDialogue
+        # history, stale/removed target-character voices must not remain addressable as current.
         for row in session.scalars(select(TargetVoiceProfile).where(TargetVoiceProfile.project_id == project.id)).all():
             if row.target_character_id not in active_target_ids:
                 session.delete(row)
@@ -509,7 +667,8 @@ def _upsert_voice_profiles(project: Project, fingerprint: str, target_characters
                 row.status = "PLANNED"
                 row.error_message = None
             row.updated_at = utcnow()
-            session.commit(); session.refresh(row)
+            session.commit()
+            session.refresh(row)
             serialized = _serialize_voice(row)
         if changed and old_reference is not None:
             try:
@@ -520,6 +679,37 @@ def _upsert_voice_profiles(project: Project, fingerprint: str, target_characters
     return output
 
 
+def _rows_for_source_keys(session: Any, project_id: str, source_keys: set[str]) -> list[TargetDialogue]:
+    if not source_keys:
+        return []
+    return list(session.scalars(
+        select(TargetDialogue)
+        .where(
+            TargetDialogue.project_id == project_id,
+            TargetDialogue.source_dialogue_key.in_(source_keys),
+        )
+        .order_by(TargetDialogue.episode_id, TargetDialogue.source_start_us, TargetDialogue.source_dialogue_key)
+    ).all())
+
+
+def _validate_current_rows(
+    rows: list[TargetDialogue],
+    contexts: list[dict[str, Any]],
+    *,
+    fingerprint: str,
+) -> None:
+    expected = {str(item["source_dialogue_key"]): str(item["signature"]) for item in contexts}
+    actual = {row.source_dialogue_key: row for row in rows}
+    if len(actual) != len(rows):
+        raise TargetDialogueError("TargetDialogue current source keys are duplicated")
+    if set(actual) != set(expected):
+        raise TargetDialogueError("TargetDialogue has not been generated for current SourceDramaSnapshot")
+    if any(row.source_fingerprint != fingerprint for row in rows):
+        raise TargetDialogueError("TargetDialogue source fingerprint is stale; regenerate current target dialogue")
+    if any(expected.get(row.source_dialogue_key) != row.source_dialogue_signature for row in rows):
+        raise TargetDialogueError("TargetDialogue source anchors are stale")
+
+
 def generate_target_dialogue_text_v1(project_id: str) -> dict[str, Any]:
     snapshot = load_project_source_drama_snapshot_v1(project_id)
     with get_session() as session:
@@ -527,16 +717,14 @@ def generate_target_dialogue_text_v1(project_id: str) -> dict[str, Any]:
         if project is None:
             raise LookupError("项目不存在")
         session.expunge(project)
-    target_characters = _target_characters(project_id)
-    voice_profiles = _upsert_voice_profiles(project, str(snapshot["source_fingerprint"]), target_characters)
-    contexts = _dialogue_contexts(snapshot, target_characters)
-    active_dialogue_keys = {str(item["source_dialogue_key"]) for item in contexts}
-    with get_session() as session:
-        for row in session.scalars(select(TargetDialogue).where(TargetDialogue.project_id == project_id)).all():
-            if row.source_dialogue_key not in active_dialogue_keys:
-                session.delete(row)
-        session.commit()
 
+    fingerprint = str(snapshot["source_fingerprint"])
+    target_characters = _target_characters(project_id)
+    voice_profiles = _upsert_voice_profiles(project, fingerprint, target_characters)
+    contexts = _dialogue_contexts(snapshot, target_characters)
+
+    # Do not delete old TargetDialogue rows. Canonical group IDs are version-scoped by the
+    # BreakdownRun, and current readers filter by the current key set + source fingerprint.
     name_map = {
         str(item.get("source_character_name") or source_id): str(item["target_name"])
         for source_id, item in target_characters.items()
@@ -552,7 +740,6 @@ def generate_target_dialogue_text_v1(project_id: str) -> dict[str, Any]:
 
     active_localization_issues: set[str] = set()
     dialogue_rows: list[dict[str, Any]] = []
-    fingerprint = str(snapshot["source_fingerprint"])
     for context in contexts:
         source_key = str(context["source_dialogue_key"])
         proposal = proposals.get(source_key) or {}
@@ -563,25 +750,47 @@ def generate_target_dialogue_text_v1(project_id: str) -> dict[str, Any]:
         target_character_id = str(context.get("target_character_id") or "") or None
         source_character_id = str(context.get("source_character_id") or "") or None
         unique_source_speaker = len(context.get("source_character_ids") or []) == 1
-        valid_text = bool(target_character_id and unique_source_speaker and translated and localized and final_text and confidence is not None and confidence >= TRANSLATION_CONFIDENCE_MIN)
+        valid_text = bool(
+            target_character_id
+            and unique_source_speaker
+            and translated
+            and localized
+            and final_text
+            and confidence is not None
+            and confidence >= TRANSLATION_CONFIDENCE_MIN
+        )
         with get_session() as session:
             row = session.scalar(select(TargetDialogue).where(
                 TargetDialogue.project_id == project_id,
                 TargetDialogue.source_dialogue_key == source_key,
             ))
             source_changed = row is not None and row.source_dialogue_signature != context["signature"]
-            preserve_manual = row is not None and row.decision_source == "MANUAL" and not source_changed and row.target_character_id == target_character_id
+            preserve_manual = (
+                row is not None
+                and row.decision_source == "MANUAL"
+                and not source_changed
+                and row.target_character_id == target_character_id
+            )
             if row is None:
                 row = TargetDialogue(
-                    id=new_id("TARGETDIALOGUE"), project_id=project_id,
-                    episode_id=str(context["episode_id"]), shot_key=str(context["shot_key"]),
-                    source_dialogue_key=source_key, source_dialogue_signature=str(context["signature"]),
-                    source_fingerprint=fingerprint, source_start_us=int(context["source_start_us"]),
-                    source_end_us=int(context["source_end_us"]), source_text=str(context["source_text"]),
-                    target_language=project.target_language, target_region=project.target_region,
-                    decision_source="AI", status="REVIEW", audio_status="PENDING",
+                    id=new_id("TARGETDIALOGUE"),
+                    project_id=project_id,
+                    episode_id=str(context["episode_id"]),
+                    shot_key=str(context["shot_key"]),
+                    source_dialogue_key=source_key,
+                    source_dialogue_signature=str(context["signature"]),
+                    source_fingerprint=fingerprint,
+                    source_start_us=int(context["source_start_us"]),
+                    source_end_us=int(context["source_end_us"]),
+                    source_text=str(context["source_text"]),
+                    target_language=project.target_language,
+                    target_region=project.target_region,
+                    decision_source="AI",
+                    status="REVIEW",
+                    audio_status="PENDING",
                 )
                 session.add(row)
+
             row.episode_id = str(context["episode_id"])
             row.shot_key = str(context["shot_key"])
             row.source_dialogue_signature = str(context["signature"])
@@ -593,12 +802,19 @@ def generate_target_dialogue_text_v1(project_id: str) -> dict[str, Any]:
             row.target_character_id = target_character_id
             row.target_language = project.target_language
             row.target_region = project.target_region
+
             if preserve_manual:
+                # Manual target text remains valid only because source signature + target
+                # character are unchanged. Audio may be safely reused when its own signature matches.
                 pass
             elif source_changed and row.decision_source == "MANUAL":
                 row.status = "REVIEW"
                 row.audio_status = "PENDING"
                 row.audio_input_signature = None
+                row.audio_path = None
+                row.speech_duration_us = None
+                row.tts_runtime_profile = None
+                row.error_message = "Source utterance changed; confirm this manual target line again"
             else:
                 row.translated_text = translated
                 row.localized_text = localized
@@ -610,12 +826,16 @@ def generate_target_dialogue_text_v1(project_id: str) -> dict[str, Any]:
                 row.audio_input_signature = None
                 row.audio_path = None
                 row.speech_duration_us = None
+                row.tts_runtime_profile = None
                 row.error_message = None
+
             voice = voice_profiles.get(target_character_id or "")
             row.target_voice_profile_id = str(voice["id"]) if voice else None
             row.updated_at = utcnow()
-            session.commit(); session.refresh(row)
+            session.commit()
+            session.refresh(row)
             serialized = _serialize_dialogue(row)
+
         issue_key = _dialogue_issue_key(source_key)
         if serialized["status"] == "REVIEW":
             # Source speaker/TargetCharacter ambiguity already has a more authoritative ReviewIssue.
@@ -685,41 +905,80 @@ def _ensure_voice_reference(project_id: str, voice: TargetVoiceProfile, language
         raise
 
 
-def materialize_target_dialogue_audio_v1(project_id: str) -> dict[str, Any]:
-    snapshot = load_project_source_drama_snapshot_v1(project_id)
+def _load_current_dialogue_state(
+    project_id: str,
+    snapshot: Mapping[str, Any],
+) -> tuple[Project, list[dict[str, Any]], list[TargetDialogue], list[TargetVoiceProfile]]:
+    fingerprint = str(snapshot["source_fingerprint"])
+    target_characters = _target_characters(project_id)
+    contexts = _dialogue_contexts(snapshot, target_characters)
+    source_keys = {str(item["source_dialogue_key"]) for item in contexts}
     with get_session() as session:
         project = session.get(Project, project_id)
         if project is None:
             raise LookupError("项目不存在")
-        language = tts_language(project.target_language)
-        voices = list(session.scalars(select(TargetVoiceProfile).where(TargetVoiceProfile.project_id == project_id)).all())
-        dialogues = list(session.scalars(select(TargetDialogue).where(TargetDialogue.project_id == project_id).order_by(TargetDialogue.episode_id, TargetDialogue.source_start_us)).all())
-        if not language:
-            for row in dialogues:
+        session.expunge(project)
+        dialogues = _rows_for_source_keys(session, project_id, source_keys)
+        _validate_current_rows(dialogues, contexts, fingerprint=fingerprint)
+        voices = list(session.scalars(
+            select(TargetVoiceProfile).where(
+                TargetVoiceProfile.project_id == project_id,
+                TargetVoiceProfile.source_fingerprint == fingerprint,
+            )
+        ).all())
+        voice_ids = {item.id for item in voices}
+        if any(
+            row.target_voice_profile_id and row.target_voice_profile_id not in voice_ids
+            for row in dialogues
+        ):
+            raise TargetDialogueError("TargetDialogue voice dependency is stale; regenerate current target dialogue")
+        for row in dialogues:
+            session.expunge(row)
+        for voice in voices:
+            session.expunge(voice)
+    return project, contexts, dialogues, voices
+
+
+def materialize_target_dialogue_audio_v1(project_id: str) -> dict[str, Any]:
+    snapshot = load_project_source_drama_snapshot_v1(project_id)
+    fingerprint = str(snapshot["source_fingerprint"])
+    project, contexts, current_rows, current_voices = _load_current_dialogue_state(project_id, snapshot)
+    source_keys = {str(item["source_dialogue_key"]) for item in contexts}
+    language = tts_language(project.target_language)
+
+    if not language:
+        with get_session() as session:
+            rows = _rows_for_source_keys(session, project_id, source_keys)
+            _validate_current_rows(rows, contexts, fingerprint=fingerprint)
+            for row in rows:
                 if row.status == "READY":
                     row.audio_status = "UNSUPPORTED_LANGUAGE"
                     row.error_message = f"Qwen3-TTS V1 does not support target language {project.target_language}"
                     row.updated_at = utcnow()
             session.commit()
-            return _bundle(project, str(snapshot["source_fingerprint"]), [_serialize_voice(v) for v in voices], [_serialize_dialogue(d) for d in dialogues])
+            dialogues_out = [_serialize_dialogue(item) for item in rows]
+        return _bundle(project, fingerprint, [_serialize_voice(v) for v in current_voices], dialogues_out)
 
     status = runtime_status()
     if not status.get("ready"):
         with get_session() as session:
-            project = session.get(Project, project_id)
-            voices = list(session.scalars(select(TargetVoiceProfile).where(TargetVoiceProfile.project_id == project_id)).all())
-            dialogues = list(session.scalars(select(TargetDialogue).where(TargetDialogue.project_id == project_id).order_by(TargetDialogue.episode_id, TargetDialogue.source_start_us)).all())
-            for row in dialogues:
+            rows = _rows_for_source_keys(session, project_id, source_keys)
+            _validate_current_rows(rows, contexts, fingerprint=fingerprint)
+            for row in rows:
                 if row.status == "READY" and row.audio_status != "READY":
                     row.audio_status = "NOT_CONFIGURED"
                     row.error_message = "local Qwen3-TTS worker is not ready"
                     row.updated_at = utcnow()
             session.commit()
-            return _bundle(project, str(snapshot["source_fingerprint"]), [_serialize_voice(v) for v in voices], [_serialize_dialogue(d) for d in dialogues])
+            dialogues_out = [_serialize_dialogue(item) for item in rows]
+        return _bundle(project, fingerprint, [_serialize_voice(v) for v in current_voices], dialogues_out)
 
-    # Generate stable reference voices first, one per TargetCharacter.
+    # Generate stable reference voices first, one per current TargetCharacter profile.
     with get_session() as session:
-        voices = list(session.scalars(select(TargetVoiceProfile).where(TargetVoiceProfile.project_id == project_id)).all())
+        voices = list(session.scalars(select(TargetVoiceProfile).where(
+            TargetVoiceProfile.project_id == project_id,
+            TargetVoiceProfile.source_fingerprint == fingerprint,
+        )).all())
         for voice in voices:
             try:
                 _ensure_voice_reference(project_id, voice, language)
@@ -728,11 +987,21 @@ def materialize_target_dialogue_audio_v1(project_id: str) -> dict[str, Any]:
             voice.updated_at = utcnow()
         session.commit()
 
-    # Then synthesize each READY line from the reusable target-character reference.
+    # Then synthesize only current canonical READY utterances. Historical projection-level
+    # rows remain untouched and cannot accidentally consume runtime/GPU time.
     with get_session() as session:
-        project = session.get(Project, project_id)
-        voice_by_id = {v.id: v for v in session.scalars(select(TargetVoiceProfile).where(TargetVoiceProfile.project_id == project_id)).all()}
-        dialogues = list(session.scalars(select(TargetDialogue).where(TargetDialogue.project_id == project_id).order_by(TargetDialogue.episode_id, TargetDialogue.source_start_us)).all())
+        project_row = session.get(Project, project_id)
+        if project_row is None:
+            raise LookupError("项目不存在")
+        voice_by_id = {
+            v.id: v
+            for v in session.scalars(select(TargetVoiceProfile).where(
+                TargetVoiceProfile.project_id == project_id,
+                TargetVoiceProfile.source_fingerprint == fingerprint,
+            )).all()
+        }
+        dialogues = _rows_for_source_keys(session, project_id, source_keys)
+        _validate_current_rows(dialogues, contexts, fingerprint=fingerprint)
         for row in dialogues:
             if row.status != "READY" or not row.final_text or not row.target_voice_profile_id:
                 continue
@@ -740,6 +1009,7 @@ def materialize_target_dialogue_audio_v1(project_id: str) -> dict[str, Any]:
             if voice is None or voice.status != "REFERENCE_READY" or not voice.reference_audio_path:
                 row.audio_status = "FAILED"
                 row.error_message = "target voice reference is unavailable"
+                row.updated_at = utcnow()
                 continue
             audio_signature = _digest({
                 "final_text": row.final_text,
@@ -776,7 +1046,7 @@ def materialize_target_dialogue_audio_v1(project_id: str) -> dict[str, Any]:
         session.commit()
         voices_out = [_serialize_voice(item) for item in voice_by_id.values()]
         dialogues_out = [_serialize_dialogue(item) for item in dialogues]
-        return _bundle(project, str(snapshot["source_fingerprint"]), voices_out, dialogues_out)
+        return _bundle(project_row, fingerprint, voices_out, dialogues_out)
 
 
 def generate_target_dialogue_v1(project_id: str, *, synthesize_audio: bool = True) -> dict[str, Any]:
@@ -788,30 +1058,44 @@ def generate_target_dialogue_v1(project_id: str, *, synthesize_audio: bool = Tru
 
 def get_target_dialogue_v1(project_id: str) -> dict[str, Any]:
     snapshot = load_project_source_drama_snapshot_v1(project_id)
-    with get_session() as session:
-        project = session.get(Project, project_id)
-        if project is None:
-            raise LookupError("项目不存在")
-        voices = list(session.scalars(select(TargetVoiceProfile).where(TargetVoiceProfile.project_id == project_id)).all())
-        dialogues = list(session.scalars(select(TargetDialogue).where(TargetDialogue.project_id == project_id).order_by(TargetDialogue.episode_id, TargetDialogue.source_start_us)).all())
-    contexts = _dialogue_contexts(snapshot, _target_characters(project_id))
-    expected = {str(item["source_dialogue_key"]): str(item["signature"]) for item in contexts}
-    if len(dialogues) != len(contexts):
-        raise TargetDialogueError("TargetDialogue has not been generated for current SourceDramaSnapshot")
-    serialized_dialogues = [_serialize_dialogue(item) for item in dialogues]
-    if any(expected.get(item["source_dialogue_key"]) != item["source_dialogue_signature"] for item in serialized_dialogues):
-        raise TargetDialogueError("TargetDialogue source anchors are stale")
-    return _bundle(project, str(snapshot["source_fingerprint"]), [_serialize_voice(item) for item in voices], serialized_dialogues)
+    project, _contexts, dialogues, voices = _load_current_dialogue_state(project_id, snapshot)
+    return _bundle(
+        project,
+        str(snapshot["source_fingerprint"]),
+        [_serialize_voice(item) for item in voices],
+        [_serialize_dialogue(item) for item in dialogues],
+    )
 
 
-def update_target_dialogue_v1(target_dialogue_id: str, *, translated_text: str | None = None, localized_text: str | None = None, final_text: str) -> dict[str, Any]:
+def update_target_dialogue_v1(
+    target_dialogue_id: str,
+    *,
+    translated_text: str | None = None,
+    localized_text: str | None = None,
+    final_text: str,
+) -> dict[str, Any]:
     final = _clean(final_text)
     if not final:
         raise ValueError("最终目标对白不能为空")
+
+    snapshot = load_project_source_drama_snapshot_v1(
+        # Resolve project below first, then verify row against current source truth.
+        _target_dialogue_project_id(target_dialogue_id)
+    )
+    project_id = str(snapshot["project_id"])
+    contexts = _dialogue_contexts(snapshot, _target_characters(project_id))
+    expected = {str(item["source_dialogue_key"]): str(item["signature"]) for item in contexts}
+    fingerprint = str(snapshot["source_fingerprint"])
+
     with get_session() as session:
         row = session.get(TargetDialogue, target_dialogue_id)
         if row is None:
             raise LookupError("目标对白不存在")
+        if (
+            row.source_fingerprint != fingerprint
+            or expected.get(row.source_dialogue_key) != row.source_dialogue_signature
+        ):
+            raise ValueError("这是旧版本 TargetDialogue，不能写回当前业务数据；请重新生成当前目标对白")
         if not row.target_character_id:
             raise ValueError("目标对白还没有可靠目标说话人，请先修正源说话人/人物绑定")
         row.translated_text = _clean(translated_text) or row.translated_text or final
@@ -824,13 +1108,25 @@ def update_target_dialogue_v1(target_dialogue_id: str, *, translated_text: str |
         row.audio_input_signature = None
         row.audio_path = None
         row.speech_duration_us = None
+        row.tts_runtime_profile = None
         row.error_message = None
         row.updated_at = utcnow()
-        project_id, source_key = row.project_id, row.source_dialogue_key
-        session.commit(); session.refresh(row)
+        source_key = row.source_dialogue_key
+        session.commit()
+        session.refresh(row)
         result = _serialize_dialogue(row)
     _resolve_issue(project_id, _dialogue_issue_key(source_key), "用户已确认目标对白")
     return result
+
+
+def _target_dialogue_project_id(target_dialogue_id: str) -> str:
+    """Resolve project before loading current SourceDramaSnapshot for stale-edit protection."""
+
+    with get_session() as session:
+        row = session.get(TargetDialogue, target_dialogue_id)
+        if row is None:
+            raise LookupError("目标对白不存在")
+        return row.project_id
 
 
 __all__ = [
