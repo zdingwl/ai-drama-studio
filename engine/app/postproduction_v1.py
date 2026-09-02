@@ -345,7 +345,23 @@ def _aggregate_status(segments: list[dict[str, Any]]) -> tuple[str, int, int, in
     return status, succeeded, review, waiting
 
 
-def compile_postproduction_plan_v1(project_id: str) -> dict[str, Any]:
+def _serialize_plan(project_id: str, episode_payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    flat = [segment for episode in episode_payloads for segment in episode["segments"]]
+    status, succeeded, review, waiting = _aggregate_status(flat)
+    return PostProductionPlanV1.model_validate({
+        "schema_version": "postproduction-plan-v1",
+        "project_id": project_id,
+        "status": status,
+        "episode_count": len(episode_payloads),
+        "segment_count": len(flat),
+        "succeeded_count": succeeded,
+        "review_count": review,
+        "waiting_count": waiting,
+        "episodes": episode_payloads,
+    }).model_dump(mode="json")
+
+
+def compile_postproduction_plan_v1(project_id: str, *, persist: bool = True) -> dict[str, Any]:
     generation_plan, _segments = _segment_map(project_id)
     selections = _selection_map(project_id)
     with get_session() as session:
@@ -377,6 +393,9 @@ def compile_postproduction_plan_v1(project_id: str) -> dict[str, Any]:
             "waiting_count": waiting,
             "segments": episode_segments,
         })
+
+    if not persist:
+        return _serialize_plan(project_id, episode_payloads)
 
     now = utcnow()
     with get_session() as session:
@@ -420,23 +439,11 @@ def compile_postproduction_plan_v1(project_id: str) -> dict[str, Any]:
                 row.updated_at = now
         session.commit()
 
-    flat = [segment for episode in episode_payloads for segment in episode["segments"]]
-    status, succeeded, review, waiting = _aggregate_status(flat)
-    return PostProductionPlanV1.model_validate({
-        "schema_version": "postproduction-plan-v1",
-        "project_id": project_id,
-        "status": status,
-        "episode_count": len(episode_payloads),
-        "segment_count": len(flat),
-        "succeeded_count": succeeded,
-        "review_count": review,
-        "waiting_count": waiting,
-        "episodes": episode_payloads,
-    }).model_dump(mode="json")
+    return _serialize_plan(project_id, episode_payloads)
 
 
 def get_postproduction_plan_v1(project_id: str) -> dict[str, Any]:
-    return compile_postproduction_plan_v1(project_id)
+    return compile_postproduction_plan_v1(project_id, persist=False)
 
 
 def get_postproduction_segment_v1(segment_id: str) -> dict[str, Any] | None:
