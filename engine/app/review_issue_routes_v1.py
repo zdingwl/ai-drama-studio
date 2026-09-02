@@ -19,6 +19,7 @@ from engine.app.source_dialogue_speaker_override_v1 import upsert_source_dialogu
 from engine.app.source_drama_review_issue_sync_v1 import SPEAKER_PREFIX, sync_source_drama_speaker_issues
 from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError, load_project_source_drama_snapshot_v1
 from engine.app.studio_v2 import get_session
+from engine.app.target_dialogue_auto_review_guard_v1 import cleanup_incomplete_auto_dialogue_reviews_v1
 
 router = APIRouter(prefix="/api", tags=["review-issues"])
 
@@ -98,9 +99,15 @@ def api_list_review_issues(
         # already-processed project is repaired simply by refreshing the page.
         resolve_legacy_character_evidence_issues(project_id)
 
-        # Existing projects can contain old SPEAKER rows that predate the actionable review
-        # payload. Upgrade only those old rows; current rows do not trigger a project rebuild.
         if status is None or status.strip().upper() == "OPEN":
+            # Old TargetDialogue code converted a Qwen runtime/malformed-output failure into
+            # empty LOCALIZATION forms. Those are not human decisions. Remove only strict
+            # AI/REVIEW rows with a known target character but incomplete generated text;
+            # complete low-confidence proposals remain actionable review work.
+            cleanup_incomplete_auto_dialogue_reviews_v1(project_id)
+
+            # Existing projects can contain old SPEAKER rows that predate the actionable review
+            # payload. Upgrade only those old rows; current rows do not trigger a project rebuild.
             _refresh_legacy_speaker_context(project_id)
 
         return list_review_issues(project_id, status=status)
