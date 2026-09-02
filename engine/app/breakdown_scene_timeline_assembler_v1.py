@@ -5,6 +5,7 @@
 - 不修改 SceneSegmentDraft / ShotSemanticDraft / LocalSubject / DraftPropHint；
 - Exact-Shot ``visual_description`` 优先作为当前 Shot 可见事实；
 - 只接受 ``origin=ASR`` 的 DIALOGUE 作为对白文本，且原文逐字保留；
+- 同一个 ASR segment 跨 Shot 时生成同一个 run-scoped ``dialogue_group_id``，不再把 TimelineEvent.id 当完整对白身份；
 - 只接受 ``origin=OCR`` 的 OCR event 作为画面文字，且原文逐字保留；
 - LocalSubject 仅映射为当前 Scene 内的 P1/P2/... + 人物1/人物2/...；
 - 不创建 Character / Final Scene / Final Prop，也不读取 Final Asset 绑定；
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping
+import hashlib
 from typing import Any
 
 from engine.app.breakdown_scene_timeline_contract_v1 import (
@@ -225,6 +227,28 @@ def _event_sort_key(event: Mapping[str, Any]) -> tuple[int, int, str]:
     return start_us, ordinal, str(event.get("id") or "")
 
 
+def _dialogue_group_id(run_id: str, event: Mapping[str, Any]) -> str:
+    """给完整 ASR utterance 生成当前 BreakdownRun 内稳定的业务身份。
+
+    TimelineEvent.id 每次 Fusion 都会重建，而且跨镜对白会有多个 Event，所以不能作为完整对白 ID。
+    ``asr_segment_id`` 在一次 ASR 结果里可确定地标识原始 segment，但其 raw index 在 ASR 重跑后可能变化，
+    因此再绑定 ``run_id``：新 BreakdownRun 会形成新 group identity，并由 Source fingerprint 使旧下游结果失效。
+    """
+
+    metadata = event.get("metadata")
+    metadata_map = metadata if isinstance(metadata, Mapping) else {}
+    explicit = str(metadata_map.get("dialogue_group_id") or "").strip()
+    if explicit:
+        return explicit
+    asr_segment_id = str(metadata_map.get("asr_segment_id") or "").strip()
+    event_id = str(event.get("id") or "").strip()
+    anchor = asr_segment_id or event_id
+    if not anchor:
+        raise SceneTimelineAssemblyError("ASR DIALOGUE 缺少可构造 dialogue_group_id 的来源锚点")
+    digest = hashlib.sha256(f"{run_id}\0{anchor}".encode("utf-8")).hexdigest()[:24]
+    return f"{run_id}:DG:{digest}"
+
+
 def _shot_people_and_performance(
     shot: Mapping[str, Any],
     ref_by_subject_id: Mapping[str, str],
@@ -271,6 +295,8 @@ def _shot_people_and_performance(
 def _shot_dialogue(
     shot: Mapping[str, Any],
     ref_by_subject_id: Mapping[str, str],
+    *,
+    run_id: str,
 ) -> tuple[list[dict[str, Any]], int]:
     """只把 ASR-origin DIALOGUE 带入用户结果；其它来源的“对白”一律不冒充 ASR 真相。"""
 
@@ -287,10 +313,13 @@ def _shot_dialogue(
         if not text:
             continue
         start_us, end_us = _range(event, "DIALOGUE event")
+        source_language = str(event.get("language") or "").strip() or None
         dialogue.append({
+            "dialogue_group_id": _dialogue_group_id(run_id, event),
             "start_us": start_us,
             "end_us": end_us,
             "text": text,
+            "source_language": source_language,
             "speakers": _event_refs(event, ref_by_subject_id, roles={"SPEAKER"}),
         })
     return dialogue, ignored_non_asr
@@ -443,7 +472,7 @@ def assemble_scene_timeline_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
                 ref_by_subject_id,
                 label_replacements,
             )
-            dialogue, ignored_dialogue = _shot_dialogue(shot, ref_by_subject_id)
+            dialogue, ignored_dialogue = _shot_dialogue(shot, ref_by_subject_id, run_id=run_id)
             on_screen_text, ignored_ocr = _shot_ocr(shot)
             ignored_non_asr_dialogue_count += ignored_dialogue
             ignored_non_ocr_count += ignored_ocr
