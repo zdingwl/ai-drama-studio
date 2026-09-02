@@ -7,13 +7,19 @@ on:
     paths:
       - 'scripts/run_real_project_acceptance_v1.py'
       - 'scripts/run_real_project_acceptance_v1.ps1'
+      - 'scripts/check_local_remake_runtime_stack.py'
+      - 'scripts/check_local_remake_runtime_stack.ps1'
       - 'engine/tests/v2/test_real_project_acceptance_v1.py'
+      - 'engine/tests/v2/test_local_remake_runtime_stack_v1.py'
       - '.github/workflows/real-project-acceptance.yml'
   pull_request:
     paths:
       - 'scripts/run_real_project_acceptance_v1.py'
       - 'scripts/run_real_project_acceptance_v1.ps1'
+      - 'scripts/check_local_remake_runtime_stack.py'
+      - 'scripts/check_local_remake_runtime_stack.ps1'
       - 'engine/tests/v2/test_real_project_acceptance_v1.py'
+      - 'engine/tests/v2/test_local_remake_runtime_stack_v1.py'
       - '.github/workflows/real-project-acceptance.yml'
 
 jobs:
@@ -31,13 +37,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest==9.0.2
-      - name: Compile acceptance runner
-        run: python -m compileall -q scripts/run_real_project_acceptance_v1.py engine/tests/v2/test_real_project_acceptance_v1.py
-      - name: Check PowerShell wrapper parses
+      - name: Compile acceptance tools
+        run: python -m compileall -q scripts/run_real_project_acceptance_v1.py scripts/check_local_remake_runtime_stack.py engine/tests/v2/test_real_project_acceptance_v1.py engine/tests/v2/test_local_remake_runtime_stack_v1.py
+      - name: Check PowerShell wrappers parse
         shell: pwsh
         run: |
-          $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'scripts/run_real_project_acceptance_v1.ps1'), [ref]$null, [ref]$errors)
-          if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error }
-      - name: Run orchestrator contract tests
-        run: python -m pytest -q engine/tests/v2/test_real_project_acceptance_v1.py
+          foreach ($path in @('scripts/run_real_project_acceptance_v1.ps1', 'scripts/check_local_remake_runtime_stack.ps1')) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$null, [ref]$errors)
+            if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error }
+          }
+      - name: Run acceptance tool contract tests
+        run: python -m pytest -q engine/tests/v2/test_real_project_acceptance_v1.py engine/tests/v2/test_local_remake_runtime_stack_v1.py
