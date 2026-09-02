@@ -43,6 +43,11 @@ interface SpeakerSuggestion {
   automatic_resolution_reason?: string | null
 }
 
+interface SpeakerCard {
+  issue: ReviewIssue
+  info: SpeakerSuggestion
+}
+
 const props = defineProps<{
   issues: ReviewIssue[]
 }>()
@@ -70,13 +75,19 @@ function suggestion(issue: ReviewIssue): SpeakerSuggestion | null {
   return value as unknown as SpeakerSuggestion
 }
 
-function candidates(issue: ReviewIssue): SpeakerCandidate[] {
-  return suggestion(issue)?.candidate_people?.filter((item) => item?.person_key) ?? []
+const cards = computed<SpeakerCard[]>(() => speakerIssues.value.flatMap((issue) => {
+  const info = suggestion(issue)
+  return info ? [{ issue, info }] : []
+}))
+const legacyIssues = computed(() => speakerIssues.value.filter((issue) => suggestion(issue) === null))
+
+function candidates(info: SpeakerSuggestion): SpeakerCandidate[] {
+  return info.candidate_people?.filter((item) => item?.person_key) ?? []
 }
 
-function selectedPersonKey(issue: ReviewIssue): string {
+function selectedPersonKey(issue: ReviewIssue, info: SpeakerSuggestion): string {
   if (selectedByIssue.value[issue.id]) return selectedByIssue.value[issue.id]
-  const current = suggestion(issue)?.current_speakers ?? []
+  const current = info.current_speakers ?? []
   return current.length === 1 ? current[0].person_key : ''
 }
 
@@ -108,8 +119,8 @@ function personTitle(person: SpeakerCandidate): string {
   return person.character_name || person.display_name || '未命名人物'
 }
 
-async function save(issue: ReviewIssue): Promise<void> {
-  const personKey = selectedPersonKey(issue)
+async function save(issue: ReviewIssue, info: SpeakerSuggestion): Promise<void> {
+  const personKey = selectedPersonKey(issue, info)
   if (!personKey || savingIssueId.value) {
     errors.value = { ...errors.value, [issue.id]: '请先选择这句对白真正的说话人' }
     return
@@ -147,81 +158,79 @@ async function save(issue: ReviewIssue): Promise<void> {
     </header>
 
     <div class="cards">
-      <article v-for="issue in speakerIssues" :key="issue.id" class="speaker-card">
-        <template v-if="suggestion(issue) as info">
-          <div class="where">
-            <div>
-              <small>位置</small>
-              <strong>{{ locationLabel(info) }}</strong>
-              <span>{{ formatTime(info.dialogue_start_us) }} – {{ formatTime(info.dialogue_end_us) }}</span>
-            </div>
-            <button v-if="info.reference_url" class="ghost" @click="toggleVideo(issue.id)">
-              {{ expandedVideo[issue.id] ? '收起镜头' : '查看对应镜头' }}
+      <article v-for="card in cards" :key="card.issue.id" class="speaker-card">
+        <div class="where">
+          <div>
+            <small>位置</small>
+            <strong>{{ locationLabel(card.info) }}</strong>
+            <span>{{ formatTime(card.info.dialogue_start_us) }} – {{ formatTime(card.info.dialogue_end_us) }}</span>
+          </div>
+          <button v-if="card.info.reference_url" class="ghost" @click="toggleVideo(card.issue.id)">
+            {{ expandedVideo[card.issue.id] ? '收起镜头' : '查看对应镜头' }}
+          </button>
+        </div>
+
+        <div v-if="expandedVideo[card.issue.id] && card.info.reference_url" class="video-wrap">
+          <video :src="card.info.reference_url" controls preload="metadata" />
+        </div>
+        <img v-else-if="card.info.thumbnail_url" class="thumbnail" :src="card.info.thumbnail_url" alt="对应镜头缩略图" />
+
+        <div class="dialogue">
+          <small>原对白</small>
+          <strong>{{ card.info.source_text || '（无文本）' }}</strong>
+          <span>{{ card.issue.reason }}</span>
+        </div>
+
+        <div class="choice">
+          <div class="choice-title">
+            <div><small>直接修改</small><strong>选择真正的说话人</strong></div>
+            <span v-if="card.info.automatic_resolution_reason">自动判断未通过：{{ card.info.automatic_resolution_reason }}</span>
+          </div>
+
+          <div v-if="candidates(card.info).length" class="people">
+            <button
+              v-for="person in candidates(card.info)"
+              :key="person.person_key"
+              :class="{ selected: selectedPersonKey(card.issue, card.info) === person.person_key }"
+              @click="choose(card.issue, person.person_key)"
+            >
+              <img v-if="person.cover_url" :src="person.cover_url" alt="" />
+              <span v-else class="avatar">{{ personTitle(person).slice(0, 1) }}</span>
+              <div>
+                <strong>{{ personTitle(person) }}</strong>
+                <small v-if="person.display_name && person.display_name !== person.character_name">识别名：{{ person.display_name }}</small>
+                <small v-if="person.appearance">{{ person.appearance }}</small>
+                <p>
+                  <i v-if="person.in_performance">表演指向</i>
+                  <i v-if="person.visible_in_shot">镜头内</i>
+                  <i v-if="!person.character_id" class="warn">尚未归属最终人物</i>
+                </p>
+              </div>
             </button>
           </div>
 
-          <div v-if="expandedVideo[issue.id] && info.reference_url" class="video-wrap">
-            <video :src="info.reference_url" controls preload="metadata" />
-          </div>
-          <img v-else-if="info.thumbnail_url" class="thumbnail" :src="info.thumbnail_url" alt="对应镜头缩略图" />
-
-          <div class="dialogue">
-            <small>原对白</small>
-            <strong>{{ info.source_text || '（无文本）' }}</strong>
-            <span>{{ issue.reason }}</span>
+          <div v-else class="no-people">
+            <span>当前场景没有可直接选择的人物，需要先修正原片人物绑定。</span>
+            <button class="ghost" @click="emit('openAssetEditor')">打开人物绑定</button>
           </div>
 
-          <div class="choice">
-            <div class="choice-title">
-              <div><small>直接修改</small><strong>选择真正的说话人</strong></div>
-              <span v-if="info.automatic_resolution_reason">自动判断未通过：{{ info.automatic_resolution_reason }}</span>
-            </div>
-
-            <div v-if="candidates(issue).length" class="people">
-              <button
-                v-for="person in candidates(issue)"
-                :key="person.person_key"
-                :class="{ selected: selectedPersonKey(issue) === person.person_key }"
-                @click="choose(issue, person.person_key)"
-              >
-                <img v-if="person.cover_url" :src="person.cover_url" alt="" />
-                <span v-else class="avatar">{{ personTitle(person).slice(0, 1) }}</span>
-                <div>
-                  <strong>{{ personTitle(person) }}</strong>
-                  <small v-if="person.display_name && person.display_name !== person.character_name">识别名：{{ person.display_name }}</small>
-                  <small v-if="person.appearance">{{ person.appearance }}</small>
-                  <p>
-                    <i v-if="person.in_performance">表演指向</i>
-                    <i v-if="person.visible_in_shot">镜头内</i>
-                    <i v-if="!person.character_id" class="warn">尚未归属最终人物</i>
-                  </p>
-                </div>
-              </button>
-            </div>
-
-            <div v-else class="no-people">
-              <span>当前场景没有可直接选择的人物，需要先修正原片人物绑定。</span>
-              <button class="ghost" @click="emit('openAssetEditor')">打开人物绑定</button>
-            </div>
-
-            <p v-if="errors[issue.id]" class="error">{{ errors[issue.id] }}</p>
-            <div class="save-row">
-              <span>选中后会写入 SourceDramaSnapshot，并自动重新判断这条待确认。</span>
-              <button
-                class="save"
-                :disabled="!selectedPersonKey(issue) || savingIssueId === issue.id"
-                @click="save(issue)"
-              >
-                {{ savingIssueId === issue.id ? '保存中…' : '确认说话人' }}
-              </button>
-            </div>
+          <p v-if="errors[card.issue.id]" class="error">{{ errors[card.issue.id] }}</p>
+          <div class="save-row">
+            <span>选中后会写入 SourceDramaSnapshot，并自动重新判断这条待确认。</span>
+            <button
+              class="save"
+              :disabled="!selectedPersonKey(card.issue, card.info) || savingIssueId === card.issue.id"
+              @click="save(card.issue, card.info)"
+            >
+              {{ savingIssueId === card.issue.id ? '保存中…' : '确认说话人' }}
+            </button>
           </div>
-        </template>
-
-        <div v-else class="legacy">
-          <strong>这条旧记录缺少镜头定位信息</strong>
-          <span>刷新页面后系统会用当前 SourceDramaSnapshot 自动重建，不需要重新拉片。</span>
         </div>
+      </article>
+
+      <article v-for="issue in legacyIssues" :key="issue.id" class="speaker-card legacy">
+        <strong>这条旧记录缺少镜头定位信息</strong>
+        <span>刷新页面后系统会用当前 SourceDramaSnapshot 自动重建，不需要重新拉片。</span>
       </article>
     </div>
   </section>
