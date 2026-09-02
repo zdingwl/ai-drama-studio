@@ -29,7 +29,9 @@ source story / shots / actions / camera / Reference Video
 → H3 structural + semantic QC
 → automatic retry
 → GenerationSelection / Selected Output
-→ lip sync / assembly / export
+→ target-speaker lip sync
+→ final target audio + subtitles
+→ EpisodeOutput assembly / export
 ```
 
 Hard product rules:
@@ -42,6 +44,7 @@ target speech must not be unnaturally forced into source timing
 Shot != GenerationSegment
 GenerationAttempt != usable output
 only Selected Output may flow into downstream final-video work
+multi-face lip sync must identify the target speaker before modifying a face
 source ASR/OCR/Shot facts remain immutable downstream
 ```
 
@@ -62,7 +65,9 @@ ProjectListV4
 ProjectStudioV4
 ```
 
-Do not create top-level pages for GenerationSegment, H3 Context, target references, retries, QC or internal evidence.
+Do not create top-level pages for GenerationSegment, H3 Context, target references, retries, QC, lip-sync internals or raw evidence.
+
+`Output` is product-first: final Episode video is primary; H3/PostProduction segment details are advanced diagnostics only.
 
 ## 3. Automatic preparation workflow
 
@@ -89,7 +94,7 @@ H3 generation/QC is a separate heavy background task so preparation can finish w
 POST /api/projects/{project_id}/tasks/h3-generate-ready
 ```
 
-That task now means:
+That task means:
 
 ```text
 prepare target references
@@ -99,6 +104,25 @@ prepare target references
 → PASS -> Selected Output
 → RETRY -> new seed + QC correction prompt
 → repeated/ambiguous failure -> Review Center
+```
+
+R10 postproduction is also a separate heavy background task:
+
+```text
+POST /api/projects/{project_id}/tasks/postproduction
+```
+
+It means:
+
+```text
+Selected Output
+→ target-dialogue final audio
+→ single-face LatentSync or multi-face target-speaker localization + ROI LatentSync
+→ PostProductionSegment
+→ target-timeline UTF-8 SRT
+→ normalized segment media
+→ EpisodeOutput assembly
+→ final MP4 + SRT
 ```
 
 ## 4. Authority boundaries
@@ -121,6 +145,8 @@ GenerationSegment
 GenerationAttempt
 GenerationQualityCheck
 GenerationSelection
+PostProductionSegment
+EpisodeOutput
 ```
 
 `ReviewIssue` is attention state, not domain truth.
@@ -136,6 +162,16 @@ business code
 ```
 
 Never call SGLang directly from remake business services.
+
+### Lip-sync boundary
+
+```text
+postproduction business code
+→ LipSyncProvider
+→ LatentSync local worker
+```
+
+Multi-face target identity resolution is a separate safety gate before ROI lip sync. Do not let LatentSync choose an arbitrary detected face.
 
 ## 5. H3 execution rules
 
@@ -184,17 +220,6 @@ source Reference Video for action/blocking/camera only
 previous Selected Output for FL2VA continuity
 ```
 
-It checks at minimum:
-
-```text
-visual integrity
-source actor leakage
-target character consistency
-scene consistency
-Ref2VA action/camera consistency
-FL2VA continuity consistency
-```
-
 Rules:
 
 ```text
@@ -208,7 +233,34 @@ hard decode/duration failure cannot be manually bypassed
 FL2VA retry continuity must use previous Selected Output, never merely latest SUCCEEDED attempt
 ```
 
-## 7. Current ReviewIssue families
+## 7. R10 postproduction rules
+
+R10 core is implemented on `main` and has isolated CI acceptance.
+
+```text
+GenerationSelection only
+→ PostProductionSegment
+→ EpisodeOutput
+```
+
+Rules:
+
+```text
+off-screen dialogue keeps target audio but skips lip sync
+single visible target speaker -> full-segment LatentSync
+multi-face visible speaker -> target identity localization first, then ROI LatentSync
+identity/model infrastructure unavailable -> WAITING_MODEL / waiting state, not fake human issue
+identity ambiguity -> LIP_SYNC_QC
+LIP_SYNC_QC cannot be generic ignored/resolved
+retrying LIP_SYNC_QC reopens real postproduction work; it does not merely close the warning
+cross-GenerationSegment dialogue audio must be trimmed, not replayed from sentence start
+EpisodeOutput only assembles SUCCEEDED PostProductionSegments
+subtitles use target RemakeTimeline and deduplicate one dialogue spanning multiple GenerationSegments
+```
+
+Current R10 does **not** yet provide a dedicated ambience/BGM/SFX mix layer. That is the R10.1 frontier.
+
+## 8. Current ReviewIssue families
 
 ```text
 SHOT_BOUNDARY
@@ -220,17 +272,12 @@ SCENE_LOCALIZATION
 LOCALIZATION
 DIALOGUE_TIMING
 H3_QC
-```
-
-Future product-level producer:
-
-```text
 LIP_SYNC_QC
 ```
 
-Do not create human ReviewIssues for infrastructure-only states such as H3/TTS/Qwen service offline.
+Do not create human ReviewIssues for infrastructure-only states such as H3/TTS/Qwen/LatentSync service offline.
 
-## 8. Existing internals to preserve
+## 9. Existing internals to preserve
 
 ```text
 FFmpeg / FFprobe
@@ -252,11 +299,13 @@ GenerationSegment
 GenerationAttempt
 GenerationQualityCheck
 GenerationSelection
+PostProductionSegment
+EpisodeOutput
 ```
 
 Do not weaken accepted Character identity gates merely to reduce ReviewIssues.
 
-## 9. Development frontier
+## 10. Development frontier
 
 ```text
 R2 SourceDramaSnapshot                        = IMPLEMENTED
@@ -266,13 +315,14 @@ R6 Dialogue Timing + RemakeTimeline            = IMPLEMENTED
 R7 GenerationSegment + H3 Runtime/Provider     = IMPLEMENTED
 R8 H3 Context + GenerationAttempt              = IMPLEMENTED / ISOLATED CI PASS / LOCAL GPU PENDING
 R9 H3 QC / automatic retry / selected output  = IMPLEMENTED / ISOLATED CI PASS / LOCAL REAL-PROJECT PENDING
-R10 Lip Sync + subtitle/audio/assembly/export  = NEXT
-R11 legacy cleanup
+R10 Lip Sync + subtitle/audio/assembly/export  = IMPLEMENTED / ISOLATED CI PASS / LOCAL REAL-PROJECT PENDING
+R10.1 ambience / BGM / SFX mix layer          = NEXT
+R11 legacy cleanup                            = LATER
 ```
 
 Do not return to old Stage 05/R6/R8 planning unless debugging a regression.
 
-## 10. Acceptance discipline
+## 11. Acceptance discipline
 
 Repository CI acceptance and local model acceptance are different facts.
 
@@ -282,13 +332,17 @@ Current isolated jobs:
 r7-generation-segments
 r8-h3-generation
 r9-h3-qc
+r10-postproduction
+frontend-v2
 ```
 
-Do not claim local H3/Qwen QC PASS until a real Project is generated and inspected on the user's actual GPU/runtime machine.
+On the latest R10 UI/postproduction commit line, R7/R8/R9/R10/frontend isolated jobs pass. Historical `backend-v2` and older Breakdown failures remain separate legacy/dependency debt unless a new change directly causes them.
+
+Do not claim local H3/Qwen QC/LatentSync PASS until a real Project is generated and inspected on the user's actual GPU/runtime machine.
 
 Frontend build acceptance uses the real repository lockfile and current Node version; do not dismiss a frontend failure as unrelated without reading its concrete CI cause.
 
-## 11. Recovery order
+## 12. Recovery order
 
 ```text
 1. AGENTS.md
@@ -296,11 +350,11 @@ Frontend build acceptance uses the real repository lockfile and current Node ver
 3. docs/PRODUCT_REMAKE_ARCHITECTURE_V1.md
 4. docs/PROJECT_STATE.md
 5. docs/CURRENT_IMPLEMENTATION_MANIFEST.md
-6. current R2/R4/R5/R6/R7/R8/R9 code/tests
+6. current R2/R4/R5/R6/R7/R8/R9/R10 code/tests
 7. old P/G docs only for compatibility maintenance
 ```
 
-## 12. Git discipline
+## 13. Git discipline
 
 ```text
 main = active development
