@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from engine.app.source_dialogue_speaker_override_v1 import source_dialogue_signature_v1
 from engine.app.source_drama_snapshot_contract_v1 import SourceDramaEpisodeSnapshotV1
 from engine.app.source_drama_snapshot_v1 import (
     compose_episode_source_drama_snapshot_v1,
@@ -151,7 +152,7 @@ def _read_model() -> dict:
     }
 
 
-def _episode_snapshot(read_model: dict | None = None) -> dict:
+def _episode_snapshot(read_model: dict | None = None, *, speaker_overrides: dict | None = None) -> dict:
     return compose_episode_source_drama_snapshot_v1(
         read_model or _read_model(),
         project_id="PROJECT_1",
@@ -162,6 +163,7 @@ def _episode_snapshot(read_model: dict | None = None) -> dict:
         revision_items_by_ordinal={
             1: SimpleNamespace(id="ITEM_1", original_shot_id="SHOT_1", ordinal=1),
         },
+        speaker_overrides=speaker_overrides,
     )
 
 
@@ -204,6 +206,49 @@ def test_episode_fingerprint_is_stable_and_changes_with_source_fact() -> None:
     changed["timeline"]["scenes"][0]["shots"][0]["dialogue"][0]["text"] = "你为什么在这里？"
     third = _episode_snapshot(changed)
     assert first["source_fingerprint"] != third["source_fingerprint"]
+
+
+def test_manual_speaker_override_updates_source_truth_and_fingerprint() -> None:
+    read_model = _read_model()
+    read_model["timeline"]["scenes"][0]["shots"][0]["dialogue"][0]["speakers"] = []
+    baseline = _episode_snapshot(read_model)
+    assert baseline["scenes"][0]["shots"][0]["source_dialogue"][0]["speakers"] == []
+
+    dialogue_key = "EP_1:SHOTREV_1:H1:D1"
+    person_key = "EP_1:BREAKDOWN_1:S1:P2"
+    dialogue = {
+        "dialogue_key": dialogue_key,
+        "start_us": 1_000_000,
+        "end_us": 2_200_000,
+        "source_text": "你怎么会在这里？",
+        "speakers": [],
+    }
+    override = {
+        dialogue_key: {
+            "person_key": person_key,
+            "dialogue_signature": source_dialogue_signature_v1(dialogue),
+        }
+    }
+
+    corrected = _episode_snapshot(read_model, speaker_overrides=override)
+
+    assert corrected["scenes"][0]["shots"][0]["source_dialogue"][0]["speakers"] == [person_key]
+    assert corrected["source_fingerprint"] != baseline["source_fingerprint"]
+
+
+def test_stale_speaker_override_is_ignored_fail_closed() -> None:
+    read_model = _read_model()
+    read_model["timeline"]["scenes"][0]["shots"][0]["dialogue"][0]["speakers"] = []
+    dialogue_key = "EP_1:SHOTREV_1:H1:D1"
+
+    snapshot = _episode_snapshot(read_model, speaker_overrides={
+        dialogue_key: {
+            "person_key": "EP_1:BREAKDOWN_1:S1:P2",
+            "dialogue_signature": "0" * 64,
+        }
+    })
+
+    assert snapshot["scenes"][0]["shots"][0]["source_dialogue"][0]["speakers"] == []
 
 
 def test_target_side_fields_are_forbidden_from_source_snapshot() -> None:
