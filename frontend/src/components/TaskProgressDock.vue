@@ -36,6 +36,7 @@ const IDLE_POLL_MS = 10_000
 const HIDDEN_POLL_MS = 30_000
 const DISMISSED_STORAGE_PREFIX = 'ai-drama-studio:task-dock-dismissed:v1:'
 const MAX_DISMISSED_TASK_IDS = 100
+const OUTPUT_TASK_TYPES = new Set(['AUTO_OUTPUT_V1', 'H3_GENERATE_READY_V1', 'H3_QC_RETRY_V1', 'POSTPRODUCTION_V1'])
 
 function dismissedStorageKey(targetProjectId: string): string {
   return `${DISMISSED_STORAGE_PREFIX}${encodeURIComponent(targetProjectId)}`
@@ -120,8 +121,8 @@ function itemProgressLabel(task: BackgroundTask): string {
 
 function summaryText(task: BackgroundTask): string {
   if (isStalled(task)) return `${stallLabel(task)}，建议检查本地处理是否仍在运行`
-  if (task.status === 'FAILED') return '任务没有完成，展开后可查看处理建议'
-  if (task.status === 'READY_WITH_WARNINGS') return '任务已经完成，但有部分内容需要检查'
+  if (task.status === 'FAILED') return '任务没有完成，展开后查看处理建议'
+  if (task.status === 'READY_WITH_WARNINGS') return '任务已结束，但当前流程还有需要处理的状态'
   if (task.status === 'CANCELLED') return '任务已取消'
 
   const parts = [task.stage_label || statusLabel(task)]
@@ -131,38 +132,34 @@ function summaryText(task: BackgroundTask): string {
 }
 
 function userTaskMessage(task: BackgroundTask): string {
-  if (isStalled(task)) return '这个任务长时间没有更新。如果本地处理已经停止，可以回到对应阶段重新执行。'
-  if (task.status === 'FAILED') return '这次任务没有完成。先回到对应阶段重新执行；如果重复失败，再展开“技术详情”查看原始错误。'
-  if (task.status === 'READY_WITH_WARNINGS') return '主要结果已经生成，但有部分内容需要人工检查。进入对应阶段查看待处理项即可。'
-  if (task.status === 'READY') return '任务已完成，正式结果已经可以在对应阶段查看。'
+  if (isStalled(task)) return '这个任务长时间没有更新。如果本地处理已经停止，请查看项目当前状态并从现有进度重试。'
+  if (task.status === 'FAILED') return '这次任务没有完成。进入项目当前状态查看可操作提示；重复失败时再展开“技术详情”定位原始错误。'
+  if (task.status === 'READY_WITH_WARNINGS') return '主要处理已经结束，但当前流程仍有待确认内容或本地运行环境需要恢复。点击下方按钮查看当前状态。'
+  if (task.status === 'READY') return '任务已完成，结果会自动体现在“待确认”或“成片”中。'
   if (task.status === 'CANCELLED') return '任务已取消，没有继续处理。'
   return task.message || summaryText(task)
 }
 
+function taskTargetView(task: BackgroundTask): 'project' | 'review' | 'output' | null {
+  if (!['FAILED', 'READY_WITH_WARNINGS'].includes(task.status)) return null
+  if (OUTPUT_TASK_TYPES.has(task.task_type)) return 'output'
+  if (task.status === 'READY_WITH_WARNINGS') return 'review'
+  return 'project'
+}
+
 function taskWorkspaceLabel(task: BackgroundTask): string {
-  if (task.task_type === 'EPISODE_SHOTS' || task.task_type === 'BATCH_SHOTS') return '进入镜头管理'
-  if (task.task_type === 'EPISODE_BREAKDOWN_P2' || task.task_type === 'BATCH_BREAKDOWN_P2') return '查看拉片结果'
-  if (task.task_type === 'ASSET_EXTRACTION_V3') return '查看资产待处理'
+  const target = taskTargetView(task)
+  if (target === 'output') return '查看成片状态'
+  if (target === 'review') return '查看待确认'
+  if (target === 'project') return '返回项目'
   return ''
 }
 
 function openTaskWorkspace(task: BackgroundTask): void {
-  const query: Record<string, string> = {}
-  if (task.task_type === 'EPISODE_SHOTS' || task.task_type === 'BATCH_SHOTS') {
-    query.stage = '2'
-    query.breakdown_view = 'shots'
-  } else if (task.task_type === 'EPISODE_BREAKDOWN_P2' || task.task_type === 'BATCH_BREAKDOWN_P2') {
-    query.stage = '2'
-    query.breakdown_view = 'result'
-    if (task.episode_id) query.episode = task.episode_id
-  } else if (task.task_type === 'ASSET_EXTRACTION_V3') {
-    query.stage = '3'
-    query.asset_tab = 'inbox'
-  } else {
-    return
-  }
+  const view = taskTargetView(task)
+  if (!view) return
   expanded.value = false
-  void router.replace({ query })
+  void router.replace({ query: { ...route.query, view } })
 }
 
 function dismissAttentionTasks(): void {
