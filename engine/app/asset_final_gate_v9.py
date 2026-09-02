@@ -19,6 +19,7 @@ from typing import Any
 from sqlalchemy import select
 
 from engine.app import asset_workspace_v3 as legacy
+from engine.app.asset_workspace_shape_v1 import complete_asset_workspace_shot_bindings_v1
 from engine.app.content_analysis_v2 import (
     CharacterCandidate,
     CharacterTrack,
@@ -197,7 +198,6 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
             "shot_presence_count": evidence.get("shot_presence_count"),
             "shot_presence_recovered_count": evidence.get("shot_presence_recovered_count"),
             "shot_presence_shot_ids": evidence.get("shot_presence_shot_ids"),
-            # Historical provenance remains readable for old Runs.
             "track_recovery_count": evidence.get("track_recovery_count"),
             "track_recovery_shot_ids": evidence.get("track_recovery_shot_ids"),
             "track_recovery_scores": evidence.get("track_recovery_scores"),
@@ -215,8 +215,6 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
         )
 
         if explicit_assignments is not None:
-            # Current V10.1 contract: Final Binding consumes the explicit Shot assignment
-            # engine output.  Candidate Track ownership is identity evidence only.
             for assignment in explicit_assignments:
                 session.add(
                     legacy.ShotCharacterBinding(
@@ -231,7 +229,6 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
                     )
                 )
         else:
-            # Historical fallback for old persisted V9/V10/V10.1 Runs.
             tracks_by_shot: dict[str, list[CharacterTrack]] = {}
             for track in members:
                 tracks_by_shot.setdefault(track.shot_id, []).append(track)
@@ -327,6 +324,13 @@ def _rebuild_from_analysis(session: Any, project_id: str, run_id: str) -> None:
     session.flush()
 
 
+def _read_workspace(project_id: str, session: Any) -> dict[str, Any]:
+    return complete_asset_workspace_shot_bindings_v1(
+        project_id,
+        legacy._serialize_workspace(session, project_id),
+    )
+
+
 def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = False) -> dict[str, Any]:
     with legacy.get_session() as session:
         run = session.get(ContentAnalysisRun, run_id)
@@ -340,7 +344,7 @@ def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = Fals
             and current.source_run_id != run_id
             and not force
         ):
-            return legacy._serialize_workspace(session, project_id)
+            return _read_workspace(project_id, session)
 
         source_revision_id = current.id if current else None
         _rebuild_from_analysis(session, project_id, run_id)
@@ -353,4 +357,4 @@ def apply_analysis_to_assets(project_id: str, run_id: str, *, force: bool = Fals
             note="基于最新 AI Evidence 自动形成资产；Character V10.1 使用确认身份 + 独立 Shot Character Assignment，Face 为可选证据",
         )
         session.commit()
-        return legacy._serialize_workspace(session, project_id)
+        return _read_workspace(project_id, session)
