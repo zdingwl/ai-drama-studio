@@ -23,6 +23,17 @@ def _review_dialogue(*, complete: bool, confidence: float | None = 0.45) -> dict
     }
 
 
+def _install_current_source(monkeypatch) -> None:
+    monkeypatch.setattr(
+        target_dialogue_pipeline_v1,
+        "load_project_source_drama_snapshot_v1",
+        lambda project_id: {
+            "project_id": project_id,
+            "source_fingerprint": "a" * 64,
+        },
+    )
+
+
 def test_complete_low_confidence_proposal_is_real_human_review() -> None:
     row = _review_dialogue(complete=True, confidence=0.45)
 
@@ -49,20 +60,23 @@ def test_pipeline_fails_system_run_instead_of_returning_blank_human_forms(monkey
         "dialogues": [_review_dialogue(complete=False)],
         "review_count": 1,
     }
-    cleaned: list[tuple[str, set[str]]] = []
+    cleaned: list[tuple[str, set[str], str]] = []
+    _install_current_source(monkeypatch)
 
     monkeypatch.setattr(target_dialogue_pipeline_v1, "invalidate_manual_dialogue_for_target_changes_v1", lambda _project_id: 0)
     monkeypatch.setattr(target_dialogue_pipeline_v1, "generate_target_dialogue_text_v1", lambda _project_id: bundle)
     monkeypatch.setattr(
         target_dialogue_pipeline_v1,
         "cleanup_incomplete_auto_dialogue_reviews_v1",
-        lambda project_id, *, dialogue_ids: cleaned.append((project_id, dialogue_ids)) or len(dialogue_ids),
+        lambda project_id, *, dialogue_ids, source_fingerprint: cleaned.append(
+            (project_id, dialogue_ids, source_fingerprint)
+        ) or len(dialogue_ids),
     )
 
     with pytest.raises(TargetDialogueError, match="不需要人工填写"):
         target_dialogue_pipeline_v1.run_target_dialogue_pipeline_v1("PROJECT_1", synthesize_audio=False)
 
-    assert cleaned == [("PROJECT_1", {"TARGETDIALOGUE_1"})]
+    assert cleaned == [("PROJECT_1", {"TARGETDIALOGUE_1"}, "a" * 64)]
 
 
 def test_pipeline_keeps_complete_low_confidence_proposal_for_review(monkeypatch) -> None:
@@ -70,6 +84,7 @@ def test_pipeline_keeps_complete_low_confidence_proposal_for_review(monkeypatch)
         "dialogues": [_review_dialogue(complete=True, confidence=0.45)],
         "review_count": 1,
     }
+    _install_current_source(monkeypatch)
 
     monkeypatch.setattr(target_dialogue_pipeline_v1, "invalidate_manual_dialogue_for_target_changes_v1", lambda _project_id: 0)
     monkeypatch.setattr(target_dialogue_pipeline_v1, "generate_target_dialogue_text_v1", lambda _project_id: bundle)
