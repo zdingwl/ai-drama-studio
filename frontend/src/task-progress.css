@@ -29,5 +29,51 @@
 .task-mini-track { height: 2px; margin-top: 6px; border-radius: 999px; overflow: hidden; background: #e9edf4; }
 .task-mini-track > span { display: block; height: 100%; background: #647fe1; }
 .task-panel-error, .task-error-detail { color: #c44747 !important; }
-@media (max-width: 1400px) { .task-dock { left: 276px; } }
-@media (max-width: 900px) { .task-dock { left: 12px; right: 12px; bottom: 8px; } .task-dock-count { display: none; } .task-dock-copy small { display: none; } }
+
+/* ProjectStudio passes `embedded`; in that case this is header status, not a bottom overlay. */
+.task-dock.embedded {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  z-index: 20;
+  width: 100%;
+  min-width: 0;
+  border-color: #e2e7ee;
+  border-radius: 10px;
+  background: #f8fafc;
+  box-shadow: none;
+  overflow: visible;
+  backdrop-filter: none;
+}
+.task-dock.embedded .task-dock-summary { min-height: 42px; grid-template-columns: 10px minmax(0,1fr) auto; padding: 6px 9px; }
+.task-dock.embedded .task-dock-copy { display: grid; gap: 1px; }
+.task-dock.embedded .task-dock-copy strong { font-size: 11px; }
+.task-dock.embedded .task-dock-copy small { font-size: 10px; }
+.task-dock.embedded .task-dock-count { display: none; }
+.task-dock.embedded .task-dock-percent { min-width: 44px; font-size: 10px; }
+.task-dock.embedded .task-progress-track { border-radius: 0 0 10px 10px; }
+.task-dock.embedded .task-dock-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(540px, 70vw);
+  max-height: 430px;
+  border: 1px solid #d8e0ea;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 16px 36px rgba(31,45,68,.16);
+}
+.task-dock.embedded.expanded { border-color: #cbd7e8; background: #fff; }
+
+@media (max-width: 1400px) { .task-dock:not(.embedded) { left: 276px; } }
+@media (max-width: 1050px) {
+  .task-dock.embedded .task-dock-copy small { display: none; }
+  .task-dock.embedded .task-dock-panel { width: min(520px, 88vw); }
+}
+@media (max-width: 900px) {
+  .task-dock:not(.embedded) { left: 12px; right: 12px; bottom: 8px; }
+  .task-dock-count { display: none; }
+  .task-dock:not(.embedded) .task-dock-copy small { display: none; }
+  .task-dock.embedded .task-dock-panel { position: fixed; top: 76px; left: 12px; right: 12px; width: auto; }
+}
