@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import wave
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from engine.app import (
@@ -28,6 +28,7 @@ def _use_temp_db(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(studio_v2, "workspace_root", lambda: tmp_path / "workspace")
     monkeypatch.setattr(target_dialogue_v1, "get_session", lambda: factory())
     monkeypatch.setattr(target_dialogue_v1, "project_dir", lambda _project_id: tmp_path / "workspace" / _project_id)
+    monkeypatch.setattr(target_dialogue_pipeline_v1, "get_session", lambda: factory())
     monkeypatch.setattr(review_issue_v1, "get_session", lambda: factory())
     return factory
 
@@ -76,6 +77,101 @@ def _snapshot(project_id: str, episode_id: str, *, speakers: list[str] | None = 
     }
 
 
+def _canonical_cross_shot_snapshot(project_id: str, episode_id: str) -> tuple[dict, str]:
+    scene_key = f"{episode_id}:RUN_2:S1"
+    person_key = f"{scene_key}:P1"
+    shot1 = f"{episode_id}:REV_2:H1"
+    shot2 = f"{episode_id}:REV_2:H2"
+    group_id = f"{episode_id}:RUN_2:DG:UTTERANCE_1"
+    return ({
+        "schema_version": "source-drama-project-snapshot-v1",
+        "status": "READY",
+        "project_id": project_id,
+        "project_name": "测试短剧",
+        "source_language": "zh-CN",
+        "source_fingerprint": "a" * 64,
+        "episode_count": 1,
+        "scene_count": 1,
+        "shot_count": 2,
+        "resolved_character_count": 1,
+        "source_dialogue_count": 1,
+        "source_dialogue_projection_count": 2,
+        "warnings": [],
+        "characters": [{"id": "CHAR_1", "name": "林晚", "cover_url": None}],
+        "episodes": [{
+            "episode_id": episode_id,
+            "episode_order": 1,
+            "source_dialogue_utterances": [{
+                "dialogue_group_id": group_id,
+                "start_us": 1_600_000,
+                "end_us": 2_500_000,
+                "source_text": "你怎么会在这里？",
+                "source_language": "zh-CN",
+                "speakers": [person_key],
+                "projection_count": 2,
+                "projections": [
+                    {
+                        "dialogue_key": f"{shot1}:D1",
+                        "shot_key": shot1,
+                        "scene_key": scene_key,
+                        "projection_index": 1,
+                        "start_us": 1_600_000,
+                        "end_us": 2_000_000,
+                        "source_text": "你怎么",
+                    },
+                    {
+                        "dialogue_key": f"{shot2}:D1",
+                        "shot_key": shot2,
+                        "scene_key": scene_key,
+                        "projection_index": 2,
+                        "start_us": 2_000_000,
+                        "end_us": 2_500_000,
+                        "source_text": "会在这里？",
+                    },
+                ],
+            }],
+            "scenes": [{
+                "scene_key": scene_key,
+                "title": "客厅质问",
+                "story_summary": "林晚在客厅质问来访者。",
+                "people": [{
+                    "person_key": person_key,
+                    "appearance": "二十多岁女性，干练",
+                    "character": {"id": "CHAR_1", "name": "林晚", "cover_url": None},
+                }],
+                "shots": [
+                    {
+                        "shot_key": shot1,
+                        "visual_description": "林晚开口质问。",
+                        "source_dialogue": [{
+                            "dialogue_key": f"{shot1}:D1",
+                            "dialogue_group_id": group_id,
+                            "projection_index": 1,
+                            "start_us": 1_600_000,
+                            "end_us": 2_000_000,
+                            "source_text": "你怎么",
+                            "speakers": [person_key],
+                        }],
+                    },
+                    {
+                        "shot_key": shot2,
+                        "visual_description": "切到对方反应，林晚的话继续。",
+                        "source_dialogue": [{
+                            "dialogue_key": f"{shot2}:D1",
+                            "dialogue_group_id": group_id,
+                            "projection_index": 2,
+                            "start_us": 2_000_000,
+                            "end_us": 2_500_000,
+                            "source_text": "会在这里？",
+                            "speakers": [person_key],
+                        }],
+                    },
+                ],
+            }],
+        }],
+    }, group_id)
+
+
 def _target_localization(project_id: str) -> dict:
     return {
         "schema_version": "target-localization-v1",
@@ -111,6 +207,13 @@ def _target_localization(project_id: str) -> dict:
     }
 
 
+def _install_source_and_localization(monkeypatch, snapshot: dict, localization: dict) -> None:
+    monkeypatch.setattr(target_dialogue_v1, "load_project_source_drama_snapshot_v1", lambda _project_id: snapshot)
+    monkeypatch.setattr(target_dialogue_v1, "get_target_localization_v1", lambda _project_id: localization)
+    monkeypatch.setattr(target_dialogue_pipeline_v1, "load_project_source_drama_snapshot_v1", lambda _project_id: snapshot)
+    monkeypatch.setattr(target_dialogue_pipeline_v1, "get_target_localization_v1", lambda _project_id: localization)
+
+
 def _seed(monkeypatch, tmp_path: Path, *, speakers: list[str] | None = None):
     factory = _use_temp_db(monkeypatch, tmp_path)
     project = studio_v2.create_project(
@@ -134,17 +237,23 @@ def _seed(monkeypatch, tmp_path: Path, *, speakers: list[str] | None = None):
         session.commit()
     snapshot = _snapshot(project["id"], episode_id, speakers=speakers)
     localization = _target_localization(project["id"])
-    monkeypatch.setattr(target_dialogue_v1, "load_project_source_drama_snapshot_v1", lambda _project_id: snapshot)
-    monkeypatch.setattr(target_dialogue_v1, "get_target_localization_v1", lambda _project_id: localization)
-    # The coordinator imports this getter directly. Seed the same current TargetLocalization
-    # contract there so the test exercises invalidation + TTS without falling back to old source data.
-    monkeypatch.setattr(target_dialogue_pipeline_v1, "get_target_localization_v1", lambda _project_id: localization)
+    _install_source_and_localization(monkeypatch, snapshot, localization)
     return project["id"], episode_id
 
 
 def _translation(confidence: float = 0.95) -> dict:
     return {"dialogues": [{
         "source_dialogue_key": "EP_1:REV_1:H1:D1",
+        "translated_text": "Why are you here?",
+        "localized_text": "Why are you here?",
+        "final_text": "Why are you here?",
+        "confidence": confidence,
+    }]}
+
+
+def _translation_for_key(source_key: str, confidence: float = 0.95) -> dict:
+    return {"dialogues": [{
+        "source_dialogue_key": source_key,
         "translated_text": "Why are you here?",
         "localized_text": "Why are you here?",
         "final_text": "Why are you here?",
@@ -224,6 +333,61 @@ def test_unknown_speaker_does_not_duplicate_localization_review(monkeypatch, tmp
     assert bundle["dialogues"][0]["status"] == "REVIEW"
     assert bundle["dialogues"][0]["target_character_id"] is None
     assert review_issue_v1.list_review_issues(project_id) == []
+
+
+def test_cross_shot_utterance_generates_one_current_dialogue_and_preserves_legacy_history(monkeypatch, tmp_path: Path) -> None:
+    project_id, episode_id = _seed(monkeypatch, tmp_path)
+    snapshot, group_id = _canonical_cross_shot_snapshot(project_id, episode_id)
+    localization = _target_localization(project_id)
+    _install_source_and_localization(monkeypatch, snapshot, localization)
+
+    # Simulate one old projection-level row from the previous model. It must survive migration
+    # but must not be exposed as a current TargetDialogue.
+    with target_dialogue_v1.get_session() as session:
+        session.add(target_dialogue_v1.TargetDialogue(
+            id="TARGETDIALOGUE_LEGACY_1",
+            project_id=project_id,
+            episode_id=episode_id,
+            shot_key=f"{episode_id}:REV_1:H1",
+            source_dialogue_key=f"{episode_id}:REV_1:H1:D1",
+            source_dialogue_signature="1" * 64,
+            source_fingerprint="0" * 64,
+            source_start_us=1_000_000,
+            source_end_us=1_500_000,
+            source_text="旧投影对白",
+            target_language="en-US",
+            target_region="US",
+            decision_source="AI",
+            status="REVIEW",
+            audio_status="PENDING",
+        ))
+        session.commit()
+
+    monkeypatch.setattr(
+        target_dialogue_v1,
+        "request_local_qwen_json",
+        lambda _prompt: _translation_for_key(group_id),
+    )
+
+    generated = target_dialogue_v1.generate_target_dialogue_text_v1(project_id)
+    current = target_dialogue_v1.get_target_dialogue_v1(project_id)
+
+    assert generated["dialogue_count"] == 1
+    assert current["dialogue_count"] == 1
+    row = current["dialogues"][0]
+    assert row["source_dialogue_key"] == group_id
+    assert row["shot_key"] == f"{episode_id}:REV_2:H1"
+    assert row["source_start_us"] == 1_600_000
+    assert row["source_end_us"] == 2_500_000
+    assert row["source_text"] == "你怎么会在这里？"
+
+    with target_dialogue_v1.get_session() as session:
+        all_rows = list(session.scalars(
+            select(target_dialogue_v1.TargetDialogue).where(
+                target_dialogue_v1.TargetDialogue.project_id == project_id
+            )
+        ).all())
+    assert {item.id for item in all_rows} == {"TARGETDIALOGUE_LEGACY_1", row["id"]}
 
 
 def test_tts_not_configured_keeps_text_and_marks_audio_pending(monkeypatch, tmp_path: Path) -> None:
