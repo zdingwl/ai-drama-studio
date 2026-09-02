@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
 import type { Episode, Project } from '../types/studio'
 
@@ -12,8 +11,6 @@ const emit = defineEmits<{
   refresh: []
 }>()
 
-const route = useRoute()
-const router = useRouter()
 const busy = ref('')
 const error = ref('')
 const draggedId = ref<string | null>(null)
@@ -36,7 +33,7 @@ function episodeState(episode: Episode): { label: string; tone: string } {
   if (status === 'READY_WITH_WARNINGS') return { label: '素材需要检查', tone: 'review' }
   if (episode.shot_count > 0) return { label: `已有 ${episode.shot_count} 个镜头`, tone: 'ready' }
   if (status === 'READY') return { label: '素材已准备', tone: 'ready' }
-  return { label: '等待拉片', tone: 'idle' }
+  return { label: '等待自动处理', tone: 'idle' }
 }
 
 /**
@@ -86,19 +83,6 @@ async function removeEpisode(episode: Episode): Promise<void> {
   if (!window.confirm(`删除「${episode.title}」及其当前分析结果？`)) return
   await run('正在删除剧集', () => api.deleteEpisode(episode.id))
 }
-
-function goToBreakdown(): void {
-  const firstReadyEpisode = props.project.episodes.find((episode) => episode.shot_count > 0) ?? props.project.episodes[0] ?? null
-  const query = { ...route.query } as Record<string, string | string[] | null | undefined>
-  query.stage = '2'
-  query.breakdown_view = totalShots.value > 0 ? 'result' : 'shots'
-  if (firstReadyEpisode) query.episode = firstReadyEpisode.id
-  delete query.asset_tab
-  delete query.asset_episode
-  delete query.asset_filter
-  delete query.asset_shot
-  void router.replace({ query })
-}
 </script>
 
 <template>
@@ -106,8 +90,8 @@ function goToBreakdown(): void {
     <header class="source-stage-header">
       <div>
         <small>01 · 源片与剧集</small>
-        <h1>先确认剧集顺序</h1>
-        <p>导入原始视频并按真实剧集顺序排列。后续批量拉片会严格按照这里的顺序逐集处理。</p>
+        <h1>导入并确认剧集顺序</h1>
+        <p>导入原始视频并按真实剧集顺序排列。确认顺序后，项目会按这里的顺序逐集自动完成拉片、人物、场景、对白和后续生成准备。</p>
       </div>
       <label class="primary-button file-button">+ 导入视频<input type="file" multiple accept="video/*" @change="uploadFiles" /></label>
     </header>
@@ -124,13 +108,13 @@ function goToBreakdown(): void {
 
     <div v-if="project.episodes.length === 0" class="source-empty">
       <strong>先导入原始剧集</strong>
-      <p>可以一次选择多个视频。导入后拖动调整顺序，再进入“剧情与镜头”开始拉片。</p>
+      <p>可以一次选择多个视频。导入后只需要拖动调整真实剧集顺序，后续分析由“开始自动处理”统一完成。</p>
       <label class="primary-button file-button">选择视频文件<input type="file" multiple accept="video/*" @change="uploadFiles" /></label>
     </div>
 
     <section v-else class="source-episode-section">
       <header class="source-list-head">
-        <div><strong>剧集顺序</strong><span>拖动左侧手柄即可调整</span></div>
+        <div><strong>剧集顺序</strong><span>拖动左侧手柄即可调整；这里的顺序就是自动处理顺序</span></div>
         <span>{{ project.episodes.length }} 集</span>
       </header>
 
@@ -158,12 +142,9 @@ function goToBreakdown(): void {
         </article>
       </div>
 
-      <footer class="source-next-step">
-        <div>
-          <small>下一步</small>
-          <strong>{{ totalShots > 0 ? '直接进入「02 剧情与镜头」查看拉片结果' : '进入「02 剧情与镜头」开始镜头切分与拉片' }}</strong>
-        </div>
-        <button class="primary-button" @click="goToBreakdown">进入剧情与镜头 →</button>
+      <footer class="source-order-confirmed">
+        <span>顺序确认后无需再进入“剧情与镜头”等内部阶段。</span>
+        <strong>下一步由项目页的自动处理统一完成。</strong>
       </footer>
     </section>
   </section>
@@ -189,7 +170,7 @@ function goToBreakdown(): void {
 .source-stage-header > div { min-width: 0; display: grid; gap: 4px; }
 .source-stage-header small { color: #7288ad; font-size: 11px; font-weight: 850; letter-spacing: .04em; }
 .source-stage-header h1 { margin: 0; color: #26384f; font-size: 25px; line-height: 1.2; }
-.source-stage-header p { margin: 0; max-width: 820px; color: #748196; font-size: 13px; }
+.source-stage-header p { margin: 0; max-width: 900px; color: #748196; font-size: 13px; }
 .source-summary-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -206,7 +187,7 @@ function goToBreakdown(): void {
 .source-summary-strip small { color: #8793a4; font-size: 10px; }
 .source-summary-strip strong { color: #35465d; font-size: 14px; }
 .source-empty {
-  min-height: 310px;
+  min-height: 260px;
   display: grid;
   place-items: center;
   align-content: center;
@@ -217,7 +198,7 @@ function goToBreakdown(): void {
   text-align: center;
 }
 .source-empty strong { color: #34465f; font-size: 18px; }
-.source-empty p { max-width: 560px; margin: 0 0 5px; color: #7d899b; font-size: 13px; }
+.source-empty p { max-width: 620px; margin: 0 0 5px; color: #7d899b; font-size: 13px; }
 .source-episode-section {
   display: grid;
   gap: 10px;
@@ -265,19 +246,18 @@ function goToBreakdown(): void {
 .source-state.tone-blocked > span { background: #d55b5b; }
 .source-state.tone-blocked strong { color: #b54747; }
 .source-delete { border: 0; background: transparent; color: #b95858; font-size: 10px; font-weight: 750; cursor: pointer; }
-.source-next-step {
+.source-order-confirmed {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  margin-top: 4px;
-  padding: 14px 15px;
-  border-radius: 11px;
-  background: #f3f6ff;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f7f9fc;
+  color: #7b8798;
+  font-size: 10px;
 }
-.source-next-step > div { display: grid; gap: 2px; }
-.source-next-step small { color: #7185aa; font-size: 9px; font-weight: 850; }
-.source-next-step strong { color: #40577e; font-size: 12px; }
+.source-order-confirmed strong { color: #50627a; font-size: 10px; }
 @media (max-width: 1200px) {
   .source-episode-row { grid-template-columns: 30px 54px minmax(220px, 1fr) 80px 120px 48px; gap: 8px; }
 }
