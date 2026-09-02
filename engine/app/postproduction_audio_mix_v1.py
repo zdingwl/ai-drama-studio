@@ -14,7 +14,7 @@ from typing import Any, Callable, Mapping
 from sqlalchemy import select
 
 from engine.app.background_audio_provider_v1 import BackgroundAudioProvider
-from engine.app.background_audio_v1 import BackgroundAudioError, mix_postproduction_audio_v1, prepare_safe_background_v1
+from engine.app.background_audio_v1 import mix_postproduction_audio_v1, prepare_safe_background_v1
 from engine.app.generation_segment_v1 import get_generation_segments_v1
 from engine.app.postproduction_v1 import (
     PostProductionSegment,
@@ -226,7 +226,7 @@ def run_ready_postproduction_with_audio_mix_v1(
                 enhanced += 1
             elif mixed.get("status") == "FALLBACK":
                 fallbacks.append({"generation_segment_id": segment_id, "reason": str(mixed.get("reason") or "fallback")})
-        except (BackgroundAudioError, PostProductionAudioMixError, Exception) as exc:
+        except Exception as exc:
             # Same fail-open-to-target-dialogue rule as above; this should never block Episode assembly.
             fallbacks.append({"generation_segment_id": segment_id, "reason": str(exc)})
     result["background_audio"] = {
