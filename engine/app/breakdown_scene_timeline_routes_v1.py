@@ -11,10 +11,12 @@ from pydantic import BaseModel, Field
 
 from engine.app.breakdown_manual_override_v1 import (
     BreakdownManualOverrideError,
-    apply_manual_overrides_v1,
     persist_shot_manual_edit_v1,
 )
-from engine.app.breakdown_scene_timeline_assembler_v1 import SceneTimelineAssemblyError
+from engine.app.breakdown_scene_timeline_assembler_v1 import (
+    SceneTimelineAssemblyError,
+    assemble_scene_timeline_v1,
+)
 from engine.app.breakdown_scene_timeline_contract_v1 import SceneTimelinePayloadV1
 from engine.app.breakdown_scene_timeline_result_v1 import (
     SceneTimelineResultError,
@@ -58,19 +60,20 @@ def _result_unavailable() -> HTTPException:
     return HTTPException(status_code=409, detail="Scene Timeline 结果当前不可用，请先完成本集拉片。")
 
 
-def _build_base_result(draft: dict[str, object]) -> dict[str, object]:
+def _build_result(draft: dict[str, object]) -> dict[str, object]:
     try:
         return build_scene_timeline_result_v1(draft)
     except (SceneTimelineResultError, SceneTimelineAssemblyError, ValueError) as exc:
         raise _result_unavailable() from exc
 
 
-def _build_current_result(draft: dict[str, object]) -> dict[str, object]:
-    base = _build_base_result(draft)
+def _build_immutable_anchor(draft: dict[str, object]) -> dict[str, object]:
+    """Build frozen G2.2 facts only; PATCH anchors must never use already-overridden user text."""
+
     try:
-        return apply_manual_overrides_v1(draft, base)
-    except (BreakdownManualOverrideError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return assemble_scene_timeline_v1(draft)
+    except (SceneTimelineAssemblyError, ValueError) as exc:
+        raise _result_unavailable() from exc
 
 
 @router.get(
@@ -86,7 +89,7 @@ def api_get_episode_scene_timeline(episode_id: str) -> dict[str, object] | None:
         raise _not_found("剧集不存在") from exc
     if draft is None:
         return None
-    return _build_current_result(draft)
+    return _build_result(draft)
 
 
 @router.patch(
@@ -111,15 +114,15 @@ def api_edit_episode_scene_timeline_shot(
     if not edits:
         raise HTTPException(status_code=400, detail="没有需要保存的修改")
 
-    base = _build_base_result(draft)
+    anchor = _build_immutable_anchor(draft)
     try:
         persist_shot_manual_edit_v1(
             draft,
-            base,
+            anchor,
             shot_ordinal=shot_ordinal,
             edits=edits,
         )
-        return apply_manual_overrides_v1(draft, base)
+        return _build_result(draft)
     except LookupError as exc:
         raise _not_found("分镜不存在或当前没有拉片结果") from exc
     except (BreakdownManualOverrideError, ValueError) as exc:
@@ -131,12 +134,12 @@ def api_edit_episode_scene_timeline_shot(
     response_model=SceneTimelinePayloadV1,
 )
 def api_get_run_scene_timeline(run_id: str) -> dict[str, object]:
-    """Historical Run remains immutable and never receives current manual corrections."""
+    """Return one explicit historical completed Run through the ordinary-user contract."""
 
     draft = get_breakdown_run(run_id)
     if draft is None:
         raise _not_found("Breakdown Run 不存在")
-    return _build_base_result(draft)
+    return _build_result(draft)
 
 
 __all__ = [
