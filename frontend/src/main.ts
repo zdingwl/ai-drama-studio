@@ -22,5 +22,7 @@ import './scene-timeline-g2-6-overrides.css'
 import './product-readability.css'
 import './source-video-page-fixes.css'
 import './source-video-error-dialog'
+import './source-video-help-drawer.css'
+import './source-video-help-drawer'
 
 createApp(App).use(router).mount('#app')
