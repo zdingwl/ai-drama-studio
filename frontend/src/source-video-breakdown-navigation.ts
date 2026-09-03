@@ -6,6 +6,14 @@ const NEXT_STAGE_SELECTOR = `${SOURCE_PAGE_SELECTOR} .next-stage-card`
 const LINK_CLASS = 'source-video-breakdown-link'
 const LOCKED_CLASS = 'source-video-breakdown-locked'
 
+const STAGE_ROUTE_BY_LABEL: Record<string, string> = {
+  '原短剧视频': 'studio',
+  'AI 拉片': 'breakdown',
+  '原片确认': 'source-confirm',
+  '视频重做': 'remake',
+  '成片输出': 'output',
+}
+
 let observer: MutationObserver | null = null
 let enhancementQueued = false
 
@@ -13,10 +21,10 @@ function isElement(value: EventTarget | null): value is Element {
   return value instanceof Element
 }
 
-function isBreakdownStage(element: Element): element is HTMLElement {
-  if (!(element instanceof HTMLElement)) return false
-  const label = element.querySelector('strong')?.textContent?.trim()
-  return label === 'AI 拉片'
+function stageRoute(element: Element): string | null {
+  if (!(element instanceof HTMLElement)) return null
+  const label = element.querySelector('strong')?.textContent?.trim() || ''
+  return STAGE_ROUTE_BY_LABEL[label] || null
 }
 
 function stageIsUnlocked(element: HTMLElement): boolean {
@@ -41,8 +49,11 @@ function enhanceNavigationTargets(): void {
   enhancementQueued = false
 
   document.querySelectorAll<HTMLElement>(STAGE_ITEM_SELECTOR).forEach((element) => {
-    if (!isBreakdownStage(element)) return
-    setNavigationSemantics(element, stageIsUnlocked(element), '进入 AI 拉片')
+    const routeName = stageRoute(element)
+    if (!routeName) return
+    const label = element.querySelector('strong')?.textContent?.trim() || '工作阶段'
+    const isCurrentSourceStage = routeName === 'studio'
+    setNavigationSemantics(element, isCurrentSourceStage || stageIsUnlocked(element), `进入${label}`)
   })
 
   document.querySelectorAll<HTMLElement>(NEXT_STAGE_SELECTOR).forEach((element) => {
@@ -61,20 +72,23 @@ function currentProjectId(): string {
   return typeof routeProjectId === 'string' ? routeProjectId.trim() : ''
 }
 
-async function enterBreakdown(): Promise<void> {
+async function enterRoute(routeName: string): Promise<void> {
   const projectId = currentProjectId()
   if (!projectId) return
-  await router.push({ name: 'breakdown', params: { projectId } })
+  await router.push({ name: routeName, params: { projectId } })
 }
 
-function navigationTarget(target: EventTarget | null): HTMLElement | null {
+function navigationTarget(target: EventTarget | null): { element: HTMLElement; routeName: string } | null {
   if (!isElement(target)) return null
 
   const stage = target.closest<HTMLElement>(STAGE_ITEM_SELECTOR)
-  if (stage && isBreakdownStage(stage) && stageIsUnlocked(stage)) return stage
+  if (stage) {
+    const routeName = stageRoute(stage)
+    if (routeName && (routeName === 'studio' || stageIsUnlocked(stage))) return { element: stage, routeName }
+  }
 
   const nextStage = target.closest<HTMLElement>(NEXT_STAGE_SELECTOR)
-  if (nextStage && nextStageIsUnlocked(nextStage)) return nextStage
+  if (nextStage && nextStageIsUnlocked(nextStage)) return { element: nextStage, routeName: 'breakdown' }
 
   return null
 }
@@ -83,16 +97,16 @@ function activateFromEvent(event: Event): void {
   const target = navigationTarget(event.target)
   if (!target) return
   event.preventDefault()
-  void enterBreakdown()
+  void enterRoute(target.routeName)
 }
 
 document.addEventListener('click', activateFromEvent)
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Enter' && event.key !== ' ') return
   const target = navigationTarget(event.target)
-  if (!target || event.target !== target) return
+  if (!target || event.target !== target.element) return
   event.preventDefault()
-  void enterBreakdown()
+  void enterRoute(target.routeName)
 })
 
 if (typeof MutationObserver !== 'undefined') {
