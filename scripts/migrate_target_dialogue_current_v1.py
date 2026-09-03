@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Safely migrate one real V2 project to canonical current TargetDialogue semantics.
 
-This tool does not delete historical projection-level TargetDialogue rows.  It treats a row as
+This tool does not delete historical projection-level TargetDialogue rows. It treats a row as
 current only when BOTH its source fingerprint and canonical dialogue_group_id belong to the
-current SourceDramaSnapshot.  ``--apply`` creates a SQLite backup first, rebuilds only current
-TargetDialogue text through the existing production service, and verifies the resulting current
-bundle.  Without ``--apply`` it is read-only and only reports current/history counts.
+current SourceDramaSnapshot. ``--apply`` creates a SQLite backup of the active V2 database
+first, rebuilds only current TargetDialogue text through the existing production service, and
+verifies the resulting current bundle. Without ``--apply`` it is read-only and only reports
+current/history counts.
+
+The active database is always ``engine.app.studio_v2.DB_PATH``. To migrate another V2 home,
+set ``AI_DRAMA_STUDIO_HOME`` before starting Python so the application engine and the backup
+point at exactly the same ``studio_v2.sqlite3``.
 """
 from __future__ import annotations
 
@@ -108,12 +113,12 @@ def backup_database(database_path: Path = DB_PATH) -> Path:
     return backup_path
 
 
-def migrate_project(project_id: str, *, database_path: Path = DB_PATH) -> dict[str, Any]:
+def migrate_project(project_id: str) -> dict[str, Any]:
     before = inspect_project(project_id)
-    backup_path = backup_database(database_path)
+    backup_path = backup_database(DB_PATH)
 
-    # Reuse the production service.  This creates/updates canonical current rows and intentionally
-    # leaves old projection-level rows untouched as history.  Audio is not regenerated here.
+    # Reuse the production service. This creates/updates canonical current rows and intentionally
+    # leaves old projection-level rows untouched as history. Audio is not regenerated here.
     generated = generate_target_dialogue_text_v1(project_id)
     current = get_target_dialogue_v1(project_id)
     after = inspect_project(project_id)
@@ -137,6 +142,7 @@ def migrate_project(project_id: str, *, database_path: Path = DB_PATH) -> dict[s
 
     return {
         "status": "MIGRATED",
+        "database_path": str(Path(DB_PATH).expanduser().resolve(strict=False)),
         "backup_path": str(backup_path),
         "before": before,
         "after": after,
@@ -150,12 +156,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-id", required=True, help="真实 V2 项目 ID")
     parser.add_argument(
-        "--database",
-        type=Path,
-        default=DB_PATH,
-        help="studio_v2.sqlite3 路径；默认使用当前 AI_DRAMA_STUDIO_HOME",
-    )
-    parser.add_argument(
         "--apply",
         action="store_true",
         help="实际执行迁移；不传时只做只读检查",
@@ -163,7 +163,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        result = migrate_project(args.project_id, database_path=args.database) if args.apply else inspect_project(args.project_id)
+        result = migrate_project(args.project_id) if args.apply else inspect_project(args.project_id)
     except Exception as exc:
         print(json.dumps({"status": "FAILED", "error": str(exc)}, ensure_ascii=False, indent=2))
         return 1
