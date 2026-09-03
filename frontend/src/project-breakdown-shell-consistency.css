@@ -1,0 +1,71 @@
+/* Final shell alignment between ProjectSourceVideosV5 and ProjectBreakdownV1.
+ * The breakdown workbench keeps its own inner layout, while the persistent project chrome stays identical.
+ */
+
+.breakdown-page-v1[data-shell-synchronized='true'] .stage-list .stage-item[hidden] {
+  display: none !important;
+}
+
+.breakdown-page-v1[data-shell-synchronized='true'] .stage-list::before {
+  bottom: 58px !important;
+}
+
+.breakdown-page-v1[data-shell-synchronized='true'] .stage-item,
+.breakdown-page-v1[data-shell-synchronized='true'] .stage-item.active {
+  min-height: 82px !important;
+}
+
+.breakdown-page-v1[data-shell-synchronized='true'] .stage-copy > small[hidden] {
+  display: none !important;
+}
+
+.breakdown-page-v1[data-shell-synchronized='true'] .brand-mark {
+  width: 20px !important;
+  height: 20px !important;
+  display: inline-grid !important;
+  place-items: center !important;
+  color: #1463ff !important;
+  font-size: 20px !important;
+  line-height: 1 !important;
+  transform: rotate(45deg) !important;
+}
+
+.breakdown-page-v1[data-shell-synchronized='true'] .brand-mark::before {
+  content: '◆';
+}
+
+.breakdown-page-v1[data-shell-synchronized='true'] .brand-mark > i {
+  display: none !important;
+}
+
+.breakdown-page-v1[data-shell-synchronized='true'] .stage-copy strong,
+.breakdown-page-v1[data-shell-synchronized='true'] .stage-copy small,
+.breakdown-page-v1[data-shell-synchronized='true'] .stage-copy em {
+  white-space: normal !important;
+  overflow-wrap: break-word !important;
+}
+
+.breakdown-page-v1[data-shell-synchronized='true'] .breakdown-main {
+  gap: 16px !important;
+}
+
+.breakdown-page-v1[data-shell-synchronized='true'] .page-heading-card {
+  border-radius: 12px !important;
+}
+
+@media (max-width: 1080px) {
+  .breakdown-page-v1[data-shell-synchronized='true'] .stage-list {
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(140px, 1fr)) !important;
+    overflow-x: auto !important;
+  }
+
+  .breakdown-page-v1[data-shell-synchronized='true'] .stage-list::before {
+    display: none !important;
+  }
+
+  .breakdown-page-v1[data-shell-synchronized='true'] .stage-item,
+  .breakdown-page-v1[data-shell-synchronized='true'] .stage-item.active {
+    min-height: 88px !important;
+  }
+}
