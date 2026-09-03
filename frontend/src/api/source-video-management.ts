@@ -1,9 +1,22 @@
 import type { Episode } from '../types/studio'
 
+export interface SourceVideoEpisode extends Episode {
+  file_size_bytes: number | null
+}
+
 export interface EpisodeUploadProgress {
   loaded: number
   total: number
   percent: number
+}
+
+function detailMessage(detail: unknown): string | null {
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (detail && typeof detail === 'object') {
+    const payload = detail as { message?: unknown }
+    if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
+  }
+  return null
 }
 
 function parseUploadError(xhr: XMLHttpRequest): string {
@@ -11,11 +24,13 @@ function parseUploadError(xhr: XMLHttpRequest): string {
     const response = xhr.response as unknown
     if (response && typeof response === 'object') {
       const payload = response as { detail?: unknown }
-      if (typeof payload.detail === 'string' && payload.detail.trim()) return payload.detail
+      const message = detailMessage(payload.detail)
+      if (message) return message
     }
     if (typeof response === 'string' && response.trim()) {
       const payload = JSON.parse(response) as { detail?: unknown }
-      if (typeof payload.detail === 'string' && payload.detail.trim()) return payload.detail
+      const message = detailMessage(payload.detail)
+      if (message) return message
     }
   } catch {
     // 保留通用错误信息。
@@ -23,21 +38,35 @@ function parseUploadError(xhr: XMLHttpRequest): string {
   return `上传失败（${xhr.status || '网络错误'}）`
 }
 
-/**
- * 使用 XHR 是为了获得浏览器真实的上传字节进度。
- * 后端仍复用现有 /episodes/batch 接口；每次只提交一个文件，便于逐文件重试且避免成功文件重复上传。
- */
-export function uploadEpisodeWithProgress(
-  projectId: string,
+async function parseFetchError(response: Response): Promise<string> {
+  try {
+    const payload = await response.json() as { detail?: unknown }
+    const message = detailMessage(payload.detail)
+    if (message) return message
+  } catch {
+    // 保留通用错误信息。
+  }
+  return `请求失败（${response.status}）`
+}
+
+export async function listProjectSourceVideos(projectId: string): Promise<SourceVideoEpisode[]> {
+  const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/source-videos`)
+  if (!response.ok) throw new Error(await parseFetchError(response))
+  return response.json() as Promise<SourceVideoEpisode[]>
+}
+
+function uploadWithProgress(
+  method: 'POST' | 'PUT',
+  url: string,
   file: File,
   onProgress: (progress: EpisodeUploadProgress) => void,
-): Promise<Episode> {
+): Promise<SourceVideoEpisode> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     const body = new FormData()
-    body.append('files', file)
+    body.append('file', file)
 
-    xhr.open('POST', `/api/projects/${encodeURIComponent(projectId)}/episodes/batch`)
+    xhr.open(method, url)
     xhr.responseType = 'json'
 
     xhr.upload.addEventListener('progress', (event) => {
@@ -51,9 +80,8 @@ export function uploadEpisodeWithProgress(
         reject(new Error(parseUploadError(xhr)))
         return
       }
-      const payload = xhr.response as Episode[] | null
-      const episode = Array.isArray(payload) ? payload[0] : null
-      if (!episode) {
+      const episode = xhr.response as SourceVideoEpisode | null
+      if (!episode?.id) {
         reject(new Error('上传成功但服务端未返回剧集数据'))
         return
       }
@@ -65,4 +93,38 @@ export function uploadEpisodeWithProgress(
     xhr.addEventListener('abort', () => reject(new Error('视频上传已取消')))
     xhr.send(body)
   })
+}
+
+/**
+ * 正式项目页逐文件上传入口。
+ * 批量选择后仍按用户选择顺序逐文件调用，失败项可单独重试且不会重复上传成功项。
+ */
+export function uploadEpisodeWithProgress(
+  projectId: string,
+  file: File,
+  onProgress: (progress: EpisodeUploadProgress) => void,
+): Promise<SourceVideoEpisode> {
+  return uploadWithProgress(
+    'POST',
+    `/api/projects/${encodeURIComponent(projectId)}/source-videos`,
+    file,
+    onProgress,
+  )
+}
+
+/**
+ * 原地替换某一 Episode 的 Source Video。Episode ID 与排序保持不变；
+ * 后端会使依赖旧原片的镜头检测、AI 拉片和资产结果失效。
+ */
+export function replaceEpisodeWithProgress(
+  episodeId: string,
+  file: File,
+  onProgress: (progress: EpisodeUploadProgress) => void,
+): Promise<SourceVideoEpisode> {
+  return uploadWithProgress(
+    'PUT',
+    `/api/episodes/${encodeURIComponent(episodeId)}/source`,
+    file,
+    onProgress,
+  )
 }
