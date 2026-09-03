@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { projectManagementApi } from '../api/project-management'
 import {
   PROJECT_LANGUAGE_OPTIONS,
-  PROJECT_REGION_OPTIONS,
+  getProjectRegionOptionsForLanguage,
   normalizeProjectLanguage,
-  normalizeProjectRegion,
+  normalizeProjectRegionForLanguage,
   normalizeProjectTargetLanguage,
   projectLanguageLabel,
   projectRegionLabel,
@@ -56,6 +56,14 @@ function createDefaultForm(): ProjectManagementPayload {
 const form = ref<ProjectManagementPayload>(createDefaultForm())
 const pageTitle = computed(() => editorMode.value === 'create' ? '新建项目' : '编辑项目')
 const saveLabel = computed(() => editorMode.value === 'create' ? '创建项目' : '保存修改')
+const targetRegionOptions = computed(() => getProjectRegionOptionsForLanguage(form.value.target_language))
+
+watch(
+  () => form.value.target_language,
+  (language) => {
+    form.value.target_region = normalizeProjectRegionForLanguage(language, form.value.target_region)
+  },
+)
 
 async function loadProjects(): Promise<void> {
   loading.value = true
@@ -80,11 +88,12 @@ function openCreateEditor(): void {
 function openEditEditor(project: ManagedProject): void {
   editorMode.value = 'edit'
   editingProjectId.value = project.id
+  const targetLanguage = normalizeProjectTargetLanguage(project.target_language)
   form.value = {
     name: project.name,
     source_language: normalizeProjectLanguage(project.source_language),
-    target_language: normalizeProjectTargetLanguage(project.target_language),
-    target_region: normalizeProjectRegion(project.target_region),
+    target_language: targetLanguage,
+    target_region: normalizeProjectRegionForLanguage(targetLanguage, project.target_region),
     redraw_rules: project.redraw_rules.length
       ? [...project.redraw_rules]
       : ['CHARACTER', 'SCENE', 'LANGUAGE'],
@@ -110,6 +119,9 @@ function toggleRedrawRule(rule: ProjectRedrawRule): void {
 
 function validateForm(): string {
   if (!form.value.name.trim()) return '请输入项目标题'
+  if (!targetRegionOptions.value.some((option) => option.value === form.value.target_region)) {
+    return '目标地区与目标语言不匹配，请重新选择目标地区'
+  }
   if (!form.value.redraw_rules.length) return '视频重绘规则至少选择一项'
   return ''
 }
@@ -331,7 +343,7 @@ onMounted(() => {
           <label class="field full-field">
             <span>目标地区</span>
             <select v-model="form.target_region">
-              <option v-for="option in PROJECT_REGION_OPTIONS" :key="option.value" :value="option.value">
+              <option v-for="option in targetRegionOptions" :key="option.value" :value="option.value">
                 {{ option.label }}
               </option>
             </select>
