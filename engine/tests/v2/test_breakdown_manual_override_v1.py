@@ -8,15 +8,15 @@ from engine.app.breakdown_manual_override_v1 import (
 )
 
 
-def _draft(revision_id: str = "REV_1") -> dict[str, object]:
+def _draft(revision_id: str = "REV_1", *, is_current: bool = True) -> dict[str, object]:
     return {
         "run": {
-            "id": "RUN_1",
+            "id": "RUN_1" if is_current else "RUN_HISTORY",
             "project_id": "PROJECT_1",
             "episode_id": "EPISODE_1",
             "source_shot_revision_id": revision_id,
             "status": "READY",
-            "is_current": True,
+            "is_current": is_current,
         }
     }
 
@@ -150,3 +150,19 @@ def test_new_shot_revision_does_not_receive_old_manual_override(tmp_path, monkey
     new_timeline = _timeline("REV_2")
     projected = apply_manual_overrides_v1(new_draft, new_timeline)
     assert projected["scenes"][0]["shots"][0]["summary"] == "人物说话。"
+
+
+def test_historical_run_with_same_revision_never_receives_current_manual_override(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AI_DRAMA_STUDIO_HOME", str(tmp_path))
+    current_draft = _draft("REV_1", is_current=True)
+    raw = _timeline("REV_1")
+    persist_shot_manual_edit_v1(
+        current_draft,
+        raw,
+        shot_ordinal=1,
+        edits={"summary": "当前人工修正"},
+    )
+
+    historical_draft = _draft("REV_1", is_current=False)
+    historical = apply_manual_overrides_v1(historical_draft, raw)
+    assert historical["scenes"][0]["shots"][0]["summary"] == "人物说话。"
