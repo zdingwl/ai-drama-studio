@@ -14,8 +14,10 @@ by itself.
 P1 dialogue acceptance is explicit: the current SourceDramaSnapshot must expose canonical
 complete utterances plus Shot projections, and the current TargetDialogue bundle must contain
 exactly one row per canonical utterance. Projection count may be greater than utterance count;
-it must never inflate TargetDialogue count. All current target dialogue audio must be READY
-before the generation/postproduction chain can be accepted.
+it must never inflate TargetDialogue count. FlowState must report that same canonical current
+TargetDialogue count, so retained historical rows can never masquerade as current progress.
+All current target dialogue audio must be READY before the generation/postproduction chain
+can be accepted.
 
 Default mode is read-only. Pass ``--run`` to start missing production tasks sequentially.
 The final successful state is only ``READY_FOR_MANUAL_ACCEPTANCE``: a human still has to
@@ -191,6 +193,7 @@ def collect_project_state(client: HttpClient, project_id: str) -> dict[str, Any]
     issues = client.get(f"/api/projects/{project_id}/review-issues?status=OPEN")
     source_snapshot, source_snapshot_error = _optional_get(client, f"/api/projects/{project_id}/source-drama-snapshot")
     target_dialogue, target_dialogue_error = _optional_get(client, f"/api/projects/{project_id}/target-dialogue")
+    flow_state, flow_state_error = _optional_get(client, f"/api/projects/{project_id}/flow-state")
     segments, segments_error = _optional_get(client, f"/api/projects/{project_id}/generation-segments")
     quality, quality_error = _optional_get(client, f"/api/projects/{project_id}/h3-quality")
     post, post_error = _optional_get(client, f"/api/projects/{project_id}/postproduction")
@@ -202,6 +205,8 @@ def collect_project_state(client: HttpClient, project_id: str) -> dict[str, Any]
         "source_drama_snapshot_error": source_snapshot_error,
         "target_dialogue": target_dialogue,
         "target_dialogue_error": target_dialogue_error,
+        "flow_state": flow_state,
+        "flow_state_error": flow_state_error,
         "generation_segments": segments,
         "generation_segments_error": segments_error,
         "h3_quality": quality,
@@ -226,6 +231,7 @@ def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
     project = state.get("project") or {}
     source = state.get("source_drama_snapshot") or {}
     target_dialogue = state.get("target_dialogue") or {}
+    flow_state = state.get("flow_state") or {}
     segments = state.get("generation_segments") or {}
     quality = state.get("h3_quality") or {}
     post = state.get("postproduction") or {}
@@ -234,10 +240,18 @@ def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
 
     source_present = isinstance(state.get("source_drama_snapshot"), dict)
     target_dialogue_present = isinstance(state.get("target_dialogue"), dict)
+    flow_state_present = isinstance(state.get("flow_state"), dict)
     source_dialogue_count = int(source.get("source_dialogue_count") or 0)
     source_projection_count = int(source.get("source_dialogue_projection_count") or 0)
     target_dialogue_count = int(target_dialogue.get("dialogue_count") or 0)
     target_audio_ready_count = int(target_dialogue.get("audio_ready_count") or 0)
+    flow_target_dialogue_stage = next((
+        item
+        for item in flow_state.get("stages") or []
+        if isinstance(item, dict) and str(item.get("key") or "") == "target_dialogue"
+    ), None)
+    flow_target_dialogue_metrics = (flow_target_dialogue_stage or {}).get("metrics") or {}
+    flow_target_dialogue_count = int(flow_target_dialogue_metrics.get("dialogue_count") or 0)
     dialogue_contract_current = bool(
         source_present
         and target_dialogue_present
@@ -246,6 +260,13 @@ def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
     )
     target_dialogue_audio_current = bool(
         target_dialogue_present and target_audio_ready_count == target_dialogue_count
+    )
+    flow_target_dialogue_count_current = bool(
+        flow_state_present
+        and isinstance(flow_target_dialogue_stage, dict)
+        and str(flow_target_dialogue_stage.get("validity") or "") == "CURRENT"
+        and flow_target_dialogue_count == target_dialogue_count
+        and flow_target_dialogue_count == source_dialogue_count
     )
 
     return {
@@ -258,7 +279,9 @@ def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
         "source_dialogue_projection_count": source_projection_count,
         "target_dialogue_count": target_dialogue_count,
         "target_dialogue_audio_ready_count": target_audio_ready_count,
+        "flow_target_dialogue_count": flow_target_dialogue_count,
         "dialogue_contract_current": dialogue_contract_current,
+        "flow_target_dialogue_count_current": flow_target_dialogue_count_current,
         "target_dialogue_audio_current": target_dialogue_audio_current,
         "generation_segment_count": int(segments.get("segment_count") or 0),
         "generation_segment_review_count": int(segments.get("review_count") or 0),
@@ -281,6 +304,8 @@ def acceptance_result(summary: dict[str, Any]) -> str:
     if int(summary.get("open_review_count") or 0) > 0:
         return "NEEDS_REVIEW"
     if not bool(summary.get("dialogue_contract_current")):
+        return "NOT_READY"
+    if not bool(summary.get("flow_target_dialogue_count_current")):
         return "NOT_READY"
     if not bool(summary.get("target_dialogue_audio_current")):
         return "NOT_READY"
@@ -376,6 +401,11 @@ def run_pipeline(client: HttpClient, project_id: str, *, poll_seconds: float, ti
         if _needs_prepare(state, summary):
             return "NOT_READY", state
 
+    # FlowState is a read-only projection of current business truth. If its current TargetDialogue
+    # count disagrees after TargetDialogue itself is current, stop before expensive H3 generation.
+    if not bool(summary.get("flow_target_dialogue_count_current")):
+        return "NOT_READY", state
+
     segment_count = int(summary["generation_segment_count"])
     if int(summary["selected_count"]) < segment_count:
         _run_task(
@@ -446,6 +476,11 @@ def print_report(*, runtimes: dict[str, dict[str, Any]], summary: dict[str, Any]
         f"audio {summary.get('target_dialogue_audio_ready_count', 0)} READY"
     )
     print(f"  Dialogue Contract  {'CURRENT' if summary.get('dialogue_contract_current') else 'NOT CURRENT'}")
+    print(
+        "  FlowState Dialogue "
+        f"{summary.get('flow_target_dialogue_count', 0)} / "
+        f"{'CURRENT' if summary.get('flow_target_dialogue_count_current') else 'NOT CURRENT'}"
+    )
     print(f"  H3 Selected       {summary.get('selected_count', 0)}/{summary.get('generation_segment_count', 0)}")
     print(f"  PostProduction    {summary.get('postproduction_succeeded_count', 0)}/{summary.get('postproduction_segment_count', 0)}")
     print(f"  EpisodeOutput     {summary.get('episode_output_succeeded_count', 0)}/{summary.get('episode_count', 0)}")

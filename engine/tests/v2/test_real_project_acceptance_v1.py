@@ -21,6 +21,13 @@ def _state(*, issues=None, segments=2, selected=2, post_succeeded=2, outputs_suc
             "dialogue_count": 2,
             "audio_ready_count": 2,
         },
+        "flow_state": {
+            "stages": [{
+                "key": "target_dialogue",
+                "validity": "CURRENT",
+                "metrics": {"dialogue_count": 2},
+            }],
+        },
         "generation_segments": {
             "segment_count": segments,
             "review_count": 0,
@@ -64,12 +71,25 @@ def test_acceptance_requires_one_current_target_dialogue_per_complete_source_utt
     assert summary["source_dialogue_count"] == 2
     assert summary["source_dialogue_projection_count"] == 3
     assert summary["target_dialogue_count"] == 2
+    assert summary["flow_target_dialogue_count"] == 2
     assert summary["dialogue_contract_current"] is True
+    assert summary["flow_target_dialogue_count_current"] is True
 
     state["target_dialogue"]["dialogue_count"] = 3
     state["target_dialogue"]["audio_ready_count"] = 3
     summary = summarize_state(state)
     assert summary["dialogue_contract_current"] is False
+    assert acceptance_result(summary) == "NOT_READY"
+
+
+def test_acceptance_rejects_flowstate_target_dialogue_history_leak() -> None:
+    state = _state()
+    state["flow_state"]["stages"][0]["metrics"]["dialogue_count"] = 3
+    summary = summarize_state(state)
+    assert summary["target_dialogue_count"] == 2
+    assert summary["flow_target_dialogue_count"] == 3
+    assert summary["dialogue_contract_current"] is True
+    assert summary["flow_target_dialogue_count_current"] is False
     assert acceptance_result(summary) == "NOT_READY"
 
 
@@ -141,6 +161,15 @@ class _StageClient:
             if self.stage == "unprepared":
                 raise AcceptanceError("TargetDialogue unavailable")
             return {"dialogue_count": 2, "audio_ready_count": 2}
+        if path == "/api/projects/PROJECT_1/flow-state":
+            count = 0 if self.stage == "unprepared" else 2
+            return {
+                "stages": [{
+                    "key": "target_dialogue",
+                    "validity": "CURRENT",
+                    "metrics": {"dialogue_count": count},
+                }],
+            }
         if path == "/api/projects/PROJECT_1/generation-segments":
             if self.stage == "unprepared":
                 raise AcceptanceError("GenerationSegment unavailable")
