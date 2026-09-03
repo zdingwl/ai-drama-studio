@@ -18,6 +18,7 @@ from engine.app.remake_policy_v1 import (
     update_project_remake_policy,
 )
 from engine.app.source_video_management_routes_v1 import router as source_video_management_router
+from engine.app.task_summary_routes_v1 import router as task_summary_router
 
 router = APIRouter(prefix="/api", tags=["remake-policy"])
 
@@ -103,3 +104,6 @@ def api_update_project_remake_policy(project_id: str, payload: ProjectRemakePoli
 # 项目页 V5 的 Source Video API 作为独立子 Router 组合进现有 /api Router，
 # 避免把上传/替换业务继续塞进 main.py 的兼容接口区。
 router.include_router(source_video_management_router)
+
+# 项目工作区轮询只消费轻量任务摘要；完整 Task result 仍由历史任务详情接口保留。
+router.include_router(task_summary_router)
