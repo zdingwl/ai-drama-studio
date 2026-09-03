@@ -3,6 +3,9 @@
 This module is a validator/read-model only.  It must never create Tasks, materialize missing
 business rows, sync/close ReviewIssue, run generation, or mutate stale data.  It composes the
 current persisted truth into one snapshot consumed by Project / Review Center / Output.
+
+Persisted row counts are history/existence signals only. They may distinguish STALE from
+NOT_BUILT, but must never be presented as the count of the current consumable version.
 """
 from __future__ import annotations
 
@@ -97,6 +100,21 @@ _OUTPUT_STAGES = {"target_design", "target_dialogue", "remake_timing", "h3_gener
 def _digest(value: Any) -> str:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
+
+
+def _current_count(bundle: Mapping[str, Any] | None, key: str) -> int:
+    """Return a count only from a validated current read-model bundle.
+
+    Raw persisted table rows can include superseded revisions. A missing current bundle is
+    therefore always zero current items, even when historical rows still exist.
+    """
+
+    if bundle is None:
+        return 0
+    try:
+        return max(0, int(bundle.get(key) or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _execution(status: str | None, error_message: str | None = None) -> str:
@@ -660,8 +678,8 @@ def get_project_flow_state_v1(project_id: str) -> dict[str, Any]:
         current_input_fingerprint=source_fp,
         built_input_fingerprint=target_fp,
         metrics={
-            "target_character_count": int(target_bundle.get("target_character_count") or persisted["target_characters"]) if target_bundle else persisted["target_characters"],
-            "scene_mapping_count": int(target_bundle.get("scene_mapping_count") or persisted["scene_mappings"]) if target_bundle else persisted["scene_mappings"],
+            "target_character_count": _current_count(target_bundle, "target_character_count"),
+            "scene_mapping_count": _current_count(target_bundle, "scene_mapping_count"),
         },
         open_review_cases=max(target_review_count, int(target_bundle.get("review_count") or 0) if target_bundle else 0),
     ))
@@ -693,8 +711,8 @@ def get_project_flow_state_v1(project_id: str) -> dict[str, Any]:
         count = max(dialogue_review_count, int(dialogue_bundle.get("review_count") or 0))
         dialogue_code, dialogue_reason = "TARGET_DIALOGUE_REVIEW_REQUIRED", f"目标对白有 {count} 项需要确认"
     else:
-        dialogue_count = int(dialogue_bundle.get("dialogue_count") or 0)
-        audio_ready_count = int(dialogue_bundle.get("audio_ready_count") or 0)
+        dialogue_count = _current_count(dialogue_bundle, "dialogue_count")
+        audio_ready_count = _current_count(dialogue_bundle, "audio_ready_count")
         if audio_ready_count < dialogue_count:
             runtime = _tts_runtime(); runtime_items.append(runtime)
             dialogue_validity = "CURRENT"
@@ -722,9 +740,9 @@ def get_project_flow_state_v1(project_id: str) -> dict[str, Any]:
         current_input_fingerprint=target_fp,
         built_input_fingerprint=dialogue_fp,
         metrics={
-            "dialogue_count": int(dialogue_bundle.get("dialogue_count") or persisted["target_dialogues"]) if dialogue_bundle else persisted["target_dialogues"],
-            "audio_ready_count": int(dialogue_bundle.get("audio_ready_count") or 0) if dialogue_bundle else 0,
-            "voice_profile_count": int(dialogue_bundle.get("voice_profile_count") or 0) if dialogue_bundle else 0,
+            "dialogue_count": _current_count(dialogue_bundle, "dialogue_count"),
+            "audio_ready_count": _current_count(dialogue_bundle, "audio_ready_count"),
+            "voice_profile_count": _current_count(dialogue_bundle, "voice_profile_count"),
         },
         open_review_cases=max(dialogue_review_count, int(dialogue_bundle.get("review_count") or 0) if dialogue_bundle else 0),
     ))
@@ -789,7 +807,7 @@ def get_project_flow_state_v1(project_id: str) -> dict[str, Any]:
             if isinstance(segment, Mapping)
         ],
     }) if timeline or generation_plan else None
-    segment_count = int((generation_plan or {}).get("segment_count") or persisted["generation_segments"])
+    segment_count = _current_count(generation_plan, "segment_count")
     stages.append(_stage(
         stage_key="remake_timing",
         validity=timing_validity,
@@ -800,9 +818,9 @@ def get_project_flow_state_v1(project_id: str) -> dict[str, Any]:
         current_input_fingerprint=dialogue_fp,
         built_input_fingerprint=timing_fp,
         metrics={
-            "timeline_episode_count": int(timeline.get("episode_count") or 0) if timeline else 0,
+            "timeline_episode_count": _current_count(timeline, "episode_count"),
             "generation_segment_count": segment_count,
-            "waiting_audio_count": int((generation_plan or timeline or {}).get("waiting_audio_count") or 0),
+            "waiting_audio_count": _current_count(generation_plan or timeline, "waiting_audio_count"),
         },
         open_review_cases=max(timing_review_count, int((generation_plan or timeline or {}).get("review_count") or 0)),
     ))
@@ -929,7 +947,7 @@ def get_project_flow_state_v1(project_id: str) -> dict[str, Any]:
         current_input_fingerprint=h3_fp,
         built_input_fingerprint=output_fp,
         metrics={
-            "postproduction_segment_count": int((post_plan or {}).get("segment_count") or 0),
+            "postproduction_segment_count": _current_count(post_plan, "segment_count"),
             "completed_episode_count": len(completed_episodes),
             "episode_count": episode_count,
             "persisted_episode_output_count": persisted["episode_outputs"],
