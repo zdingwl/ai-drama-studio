@@ -17,7 +17,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import UploadFile
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 
 from engine.app import studio_v2
 from engine.app.task_progress_v2 import ACTIVE_TASK_STATUSES, list_project_tasks
@@ -87,20 +87,8 @@ def list_project_source_videos(project_id: str) -> list[dict[str, Any]]:
         return result
 
 
-def import_project_source_video(project_id: str, upload: UploadFile) -> dict[str, Any]:
-    """通过页面正式入口导入一集，复用现有 Episode 导入服务但补上格式校验。"""
-
-    filename = _safe_filename(upload.filename)
-    _validated_extension(filename)
-    payload = studio_v2.import_episode(project_id=project_id, upload=upload)
-    episode = studio_v2.get_episode_record(str(payload["id"]))
-    if episode is None:
-        raise SourceVideoManagementError("VIDEO_IMPORT_INCONSISTENT", "视频已导入但剧集记录读取失败")
-    return _serialize_episode(episode)
-
-
 def _assert_project_idle(project_id: str) -> None:
-    """替换原片时禁止与任何正在执行的项目任务并发，避免旧任务回写新 Source。"""
+    """修改 Source 时禁止与项目后台任务并发，避免旧任务回写新的 Source。"""
 
     active = [
         task
@@ -113,8 +101,21 @@ def _assert_project_idle(project_id: str) -> None:
     title = str(first.get("title") or first.get("task_type") or "后台任务")
     raise SourceVideoManagementError(
         "PROJECT_TASK_ACTIVE",
-        f"当前项目仍有任务正在执行：{title}。请等待任务结束后再替换原视频",
+        f"当前项目仍有任务正在执行：{title}。请等待任务结束后再修改原视频",
     )
+
+
+def import_project_source_video(project_id: str, upload: UploadFile) -> dict[str, Any]:
+    """通过页面正式入口导入一集，复用现有 Episode 导入服务并补上生产校验。"""
+
+    filename = _safe_filename(upload.filename)
+    _validated_extension(filename)
+    _assert_project_idle(project_id)
+    payload = studio_v2.import_episode(project_id=project_id, upload=upload)
+    episode = studio_v2.get_episode_record(str(payload["id"]))
+    if episode is None:
+        raise SourceVideoManagementError("VIDEO_IMPORT_INCONSISTENT", "视频已导入但剧集记录读取失败")
+    return _serialize_episode(episode)
 
 
 def _copy_upload_to_staging(upload: UploadFile, staging_path: Path) -> tuple[int, str]:
@@ -164,37 +165,42 @@ def _invalidate_episode_derivatives_in_session(session: Any, episode: studio_v2.
     for shot in list(episode.shots):
         session.delete(shot)
 
-    current_revisions = session.scalars(
-        select(ShotRevision).where(
-            ShotRevision.episode_id == episode.id,
-            ShotRevision.is_current.is_(True),
-        )
-    ).all()
-    for revision in current_revisions:
-        revision.is_current = False
+    table_names = set(inspect(session.get_bind()).get_table_names())
 
-    active_breakdowns = session.scalars(
-        select(BreakdownRun).where(
-            BreakdownRun.episode_id == episode.id,
-            BreakdownRun.status.in_(("PROCESSING", "READY", "READY_WITH_WARNINGS")),
-        )
-    ).all()
+    if ShotRevision.__table__.name in table_names:
+        current_revisions = session.scalars(
+            select(ShotRevision).where(
+                ShotRevision.episode_id == episode.id,
+                ShotRevision.is_current.is_(True),
+            )
+        ).all()
+        for revision in current_revisions:
+            revision.is_current = False
+
     now = studio_v2.utcnow()
-    for run in active_breakdowns:
-        run.status = "STALE"
-        run.is_current = False
-        if run.completed_at is None:
-            run.completed_at = now
-
-    current_asset_runs = session.scalars(
-        select(ContentAnalysisRun).where(
-            ContentAnalysisRun.project_id == episode.project_id,
-            ContentAnalysisRun.is_current.is_(True),
-        )
-    ).all()
-    for run in current_asset_runs:
-        if run.status not in {"FAILED", "STALE"}:
+    if BreakdownRun.__table__.name in table_names:
+        active_breakdowns = session.scalars(
+            select(BreakdownRun).where(
+                BreakdownRun.episode_id == episode.id,
+                BreakdownRun.status.in_(("PROCESSING", "READY", "READY_WITH_WARNINGS")),
+            )
+        ).all()
+        for run in active_breakdowns:
             run.status = "STALE"
+            run.is_current = False
+            if run.completed_at is None:
+                run.completed_at = now
+
+    if ContentAnalysisRun.__table__.name in table_names:
+        current_asset_runs = session.scalars(
+            select(ContentAnalysisRun).where(
+                ContentAnalysisRun.project_id == episode.project_id,
+                ContentAnalysisRun.is_current.is_(True),
+            )
+        ).all()
+        for run in current_asset_runs:
+            if run.status not in {"FAILED", "STALE"}:
+                run.status = "STALE"
 
     episode.status = "IMPORTED"
     episode.duration_us = None
@@ -238,7 +244,7 @@ def replace_episode_source_video(episode_id: str, upload: UploadFile) -> dict[st
     backup_path = source_dir / f".source-backup-{token}{old_path.suffix.lower() or '.video'}"
     new_path = source_dir / f"original{extension}"
 
-    _copy_upload_to_staging(upload, staging_path)
+    _, staged_sha256 = _copy_upload_to_staging(upload, staging_path)
 
     backup_moved = False
     new_published = False
@@ -266,25 +272,22 @@ def replace_episode_source_video(episode_id: str, upload: UploadFile) -> dict[st
             new_published = True
 
             try:
-                new_sha256 = hashlib.sha256()
-                with new_path.open("rb") as handle:
-                    for chunk in iter(lambda: handle.read(COPY_CHUNK_SIZE), b""):
-                        new_sha256.update(chunk)
-
                 episode.original_filename = filename
                 episode.source_path = str(new_path)
-                episode.source_sha256 = new_sha256.hexdigest()
+                episode.source_sha256 = staged_sha256
                 _invalidate_episode_derivatives_in_session(session, episode)
                 session.commit()
                 committed = True
-                session.refresh(episode)
-                _ = episode.preprocess
-                _ = episode.shots
-                payload = _serialize_episode(episode)
             except Exception:
                 session.rollback()
                 raise
 
+        # 用全新 Session 读取，避免 expire_on_commit=False 下 relationship collection
+        # 仍保留已删除 Shot/Preprocess 导致响应误报旧 shot_count/status。
+        refreshed = studio_v2.get_episode_record(episode_id)
+        if refreshed is None:
+            raise SourceVideoManagementError("VIDEO_REPLACE_INCONSISTENT", "替换完成后剧集记录读取失败")
+        payload = _serialize_episode(refreshed)
         backup_path.unlink(missing_ok=True)
         return payload
     except Exception:
