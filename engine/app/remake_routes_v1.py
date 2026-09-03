@@ -1,4 +1,4 @@
-"""HTTP routes for project-level remake policy and rebuilt project management."""
+"""HTTP routes for project management, source videos and remake policy."""
 from __future__ import annotations
 
 from typing import Literal
@@ -17,6 +17,7 @@ from engine.app.remake_policy_v1 import (
     get_project_remake_policy,
     update_project_remake_policy,
 )
+from engine.app.source_video_management_routes_v1 import router as source_video_management_router
 
 router = APIRouter(prefix="/api", tags=["remake-policy"])
 
@@ -97,3 +98,8 @@ def api_update_project_remake_policy(project_id: str, payload: ProjectRemakePoli
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# 项目页 V5 的 Source Video API 作为独立子 Router 组合进现有 /api Router，
+# 避免把上传/替换业务继续塞进 main.py 的兼容接口区。
+router.include_router(source_video_management_router)
