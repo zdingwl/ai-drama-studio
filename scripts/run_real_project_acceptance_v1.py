@@ -248,7 +248,8 @@ def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
     flow_target_dialogue_stage = next((
         item
         for item in flow_state.get("stages") or []
-        if isinstance(item, dict) and str(item.get("key") or "") == "target_dialogue"
+        if isinstance(item, dict)
+        and str(item.get("stage_key") or item.get("key") or "") == "target_dialogue"
     ), None)
     flow_target_dialogue_metrics = (flow_target_dialogue_stage or {}).get("metrics") or {}
     flow_target_dialogue_count = int(flow_target_dialogue_metrics.get("dialogue_count") or 0)
