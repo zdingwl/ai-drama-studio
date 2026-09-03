@@ -31,6 +31,34 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isBackgroundTask(value: unknown): value is BackgroundTask {
+  if (!isRecord(value)) return false
+  return typeof value.id === 'string'
+    && value.id.length > 0
+    && typeof value.project_id === 'string'
+    && typeof value.task_type === 'string'
+    && typeof value.title === 'string'
+    && typeof value.status === 'string'
+}
+
+async function requestProjectTaskSummaries(projectId: string, limit: number): Promise<BackgroundTask[]> {
+  const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit || 30)))
+  const payload = await request<unknown>(`/api/projects/${encodeURIComponent(projectId)}/task-summaries?limit=${safeLimit}`)
+  if (!Array.isArray(payload)) {
+    throw new Error('后台任务接口返回格式异常：预期为任务数组')
+  }
+  for (const [index, task] of payload.entries()) {
+    if (!isBackgroundTask(task)) {
+      throw new Error(`后台任务接口返回格式异常：第 ${index + 1} 项缺少任务基础字段`)
+    }
+  }
+  return payload
+}
+
 /**
  * 创建后台任务后立即通知全局任务中心，避免低频轮询造成“点击没反应”的错觉。
  */
@@ -128,13 +156,13 @@ export const api = {
   }),
   restoreAssetRevision: (revisionId: string) => requestAssetWorkspaceWrite(`/api/asset-revisions/${revisionId}/restore`, { method: 'POST' }),
 
-  // 显式 Task API，给各工作区复用。所有创建动作都会触发 studio-task-created。
+  // 显式 Task API，给各工作区复用。列表使用轻量摘要，单 Task 详情仍返回完整 result。
   startEpisodePreprocessTask: (episodeId: string) => requestTask(`/api/episodes/${episodeId}/tasks/preprocess`, { method: 'POST' }),
   startBatchPreprocessTask: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/preprocess-batch`, { method: 'POST' }),
   startEpisodeShotsTask: (episodeId: string) => requestTask(`/api/episodes/${episodeId}/tasks/shots`, { method: 'POST' }),
   startBatchShotsTask: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/shots-batch`, { method: 'POST' }),
   startAssetExtractionTask: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/assets`, { method: 'POST' }),
-  listProjectTasks: (projectId: string, limit = 30) => request<BackgroundTask[]>(`/api/projects/${projectId}/tasks?limit=${limit}`),
+  listProjectTasks: (projectId: string, limit = 30) => requestProjectTaskSummaries(projectId, limit),
   getTask: (taskId: string) => request<BackgroundTask>(`/api/tasks/${taskId}`),
 
   // 同步兼容接口仅供测试/调试，不给正式页面使用。
