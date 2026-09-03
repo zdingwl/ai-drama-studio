@@ -8,8 +8,15 @@ export interface EpisodeUploadProgress {
 
 function parseUploadError(xhr: XMLHttpRequest): string {
   try {
-    const payload = JSON.parse(xhr.responseText || '{}') as { detail?: string }
-    if (payload.detail) return payload.detail
+    const response = xhr.response as unknown
+    if (response && typeof response === 'object') {
+      const payload = response as { detail?: unknown }
+      if (typeof payload.detail === 'string' && payload.detail.trim()) return payload.detail
+    }
+    if (typeof response === 'string' && response.trim()) {
+      const payload = JSON.parse(response) as { detail?: unknown }
+      if (typeof payload.detail === 'string' && payload.detail.trim()) return payload.detail
+    }
   } catch {
     // 保留通用错误信息。
   }
