@@ -67,13 +67,7 @@ class SceneTimelineDialogueV1(_StrictTimelineModel):
 
     @model_serializer(mode="wrap")
     def _serialize_legacy_compatible(self, handler):
-        """Do not make newly optional V2 fields appear in frozen historical G2 payloads.
-
-        Current assembler output always has a non-empty ``dialogue_group_id`` and therefore
-        keeps it. ``source_language`` is emitted only when ASR actually supplied one. This
-        lets old SceneTimeline JSON round-trip byte-shape-equivalently through P6/narrative
-        overlays instead of looking as if historical source facts had been rewritten.
-        """
+        """Do not make newly optional V2 fields appear in frozen historical G2 payloads."""
 
         payload = handler(self)
         if self.dialogue_group_id is None:
@@ -115,6 +109,8 @@ class SceneTimelineShotV1(_StrictTimelineModel):
     duration_us: int = Field(ge=0, description="Shot 时长微秒，固定为 end_us - start_us。")
     thumbnail_url: str | None = Field(default=None, description="历史 ShotRevisionItem 缩略图读取地址；用于结果卡片。")
     reference_url: str | None = Field(default=None, description="历史 ShotRevisionItem 参考片段读取地址；用于用户回看。")
+    summary: str | None = Field(default=None, description="G1 ShotSemanticDraft 自身摘要；仅描述当前 Shot，不得用 Scene summary 代替。")
+    narrative_function: str | None = Field(default=None, description="G1 Exact-Shot narrative_function_hint；用于当前 Shot 剧情作用展示。")
     visual_description: str | None = Field(default=None, description="Exact-Shot 优先的当前镜头可见事实；缺失时不让 G2 猜。")
     people: list[str] = Field(default_factory=list, description="当前 Shot 已确认出现的 Scene-local P* 引用。")
     performance: list[SceneTimelinePerformanceV1] = Field(default_factory=list, description="当前 Shot 已有动作/表演事实。")
@@ -122,6 +118,17 @@ class SceneTimelineShotV1(_StrictTimelineModel):
     props: list[SceneTimelinePropV1] = Field(default_factory=list, description="当前 Shot 已有可见道具/交互。")
     cinematography: SceneTimelineCinematographyV1 = Field(description="当前 Shot 已有景别、构图、运镜事实。")
     on_screen_text: list[SceneTimelineOnScreenTextV1] = Field(default_factory=list, description="当前 Shot OCR 可见文字。")
+
+    @model_serializer(mode="wrap")
+    def _serialize_legacy_compatible(self, handler):
+        """旧 SceneTimeline 没有 Shot narrative 字段时保持原 JSON 形状不变。"""
+
+        payload = handler(self)
+        if self.summary is None:
+            payload.pop("summary", None)
+        if self.narrative_function is None:
+            payload.pop("narrative_function", None)
+        return payload
 
 
 class SceneTimelineSceneV1(_StrictTimelineModel):
