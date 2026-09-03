@@ -13,6 +13,14 @@ def _state(*, issues=None, segments=2, selected=2, post_succeeded=2, outputs_suc
     return {
         "project": {"id": "PROJECT_1", "name": "Acceptance", "episodes": [{"id": "EP_1"}]},
         "review_issues": list(issues or []),
+        "source_drama_snapshot": {
+            "source_dialogue_count": 2,
+            "source_dialogue_projection_count": 3,
+        },
+        "target_dialogue": {
+            "dialogue_count": 2,
+            "audio_ready_count": 2,
+        },
         "generation_segments": {
             "segment_count": segments,
             "review_count": 0,
@@ -48,6 +56,29 @@ def test_acceptance_requires_full_selected_postproduction_and_episode_output_cov
     assert acceptance_result(summarize_state(_state(selected=1))) == "NOT_READY"
     assert acceptance_result(summarize_state(_state(post_succeeded=1))) == "NOT_READY"
     assert acceptance_result(summarize_state(_state(outputs_succeeded=0))) == "NOT_READY"
+
+
+def test_acceptance_requires_one_current_target_dialogue_per_complete_source_utterance() -> None:
+    state = _state()
+    summary = summarize_state(state)
+    assert summary["source_dialogue_count"] == 2
+    assert summary["source_dialogue_projection_count"] == 3
+    assert summary["target_dialogue_count"] == 2
+    assert summary["dialogue_contract_current"] is True
+
+    state["target_dialogue"]["dialogue_count"] = 3
+    state["target_dialogue"]["audio_ready_count"] = 3
+    summary = summarize_state(state)
+    assert summary["dialogue_contract_current"] is False
+    assert acceptance_result(summary) == "NOT_READY"
+
+
+def test_acceptance_rejects_target_dialogue_audio_that_is_not_fully_current() -> None:
+    state = _state()
+    state["target_dialogue"]["audio_ready_count"] = 1
+    summary = summarize_state(state)
+    assert summary["target_dialogue_audio_current"] is False
+    assert acceptance_result(summary) == "NOT_READY"
 
 
 def test_real_review_issue_has_priority_over_other_ready_counts() -> None:
@@ -102,6 +133,14 @@ class _StageClient:
             return [{"issue_type": "DIALOGUE_TIMING", "severity": "BLOCKING"}] if self.review else []
         if path == "/api/projects/PROJECT_1":
             return {"id": "PROJECT_1", "name": "Acceptance", "episodes": [{"id": "EP_1"}]}
+        if path == "/api/projects/PROJECT_1/source-drama-snapshot":
+            if self.stage == "unprepared":
+                raise AcceptanceError("SourceDramaSnapshot unavailable")
+            return {"source_dialogue_count": 2, "source_dialogue_projection_count": 3}
+        if path == "/api/projects/PROJECT_1/target-dialogue":
+            if self.stage == "unprepared":
+                raise AcceptanceError("TargetDialogue unavailable")
+            return {"dialogue_count": 2, "audio_ready_count": 2}
         if path == "/api/projects/PROJECT_1/generation-segments":
             if self.stage == "unprepared":
                 raise AcceptanceError("GenerationSegment unavailable")
