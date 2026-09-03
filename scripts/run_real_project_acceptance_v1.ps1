@@ -69,4 +69,38 @@ Write-Host "  Mode:    $(if ($Run) { 'RUN existing production workflow' } else {
 Write-Host ''
 
 & $Python @Arguments
-exit $LASTEXITCODE
+$RunnerExitCode = $LASTEXITCODE
+
+# Exit code 2 is a deliberate business gate, not an execution failure. Print enough source
+# truth to continue E2E debugging without asking the user to manually query several APIs.
+if ($RunnerExitCode -eq 2) {
+    Write-Host ''
+    Write-Host '[AI Drama Studio] 当前真实业务阻塞（OPEN ReviewIssue）'
+    try {
+        $Issues = @(Invoke-RestMethod -Method Get -Uri "$($BaseUrl.TrimEnd('/'))/api/projects/$ProjectId/review-issues?status=OPEN" -TimeoutSec 15)
+        if ($Issues.Count -eq 0) {
+            Write-Host '  Runner 检测到待确认，但刷新后队列已为空；可直接重新运行本命令。'
+        }
+        else {
+            $Index = 0
+            foreach ($Issue in $Issues) {
+                $Index += 1
+                $LocationParts = @()
+                if ($Issue.episode_id) { $LocationParts += "episode=$($Issue.episode_id)" }
+                if ($Issue.shot_id) { $LocationParts += "shot=$($Issue.shot_id)" }
+                $Location = if ($LocationParts.Count) { $LocationParts -join ' · ' } else { 'project-level' }
+                Write-Host "  [$Index] $($Issue.issue_type) / $($Issue.severity)"
+                Write-Host "      $($Issue.reason)"
+                Write-Host "      $Location"
+            }
+        }
+        Write-Host ''
+        Write-Host "  原片确认：$($BaseUrl.TrimEnd('/').Replace(':8000', ':5173'))/projects/$ProjectId/source-confirm"
+        Write-Host "  视频重做：$($BaseUrl.TrimEnd('/').Replace(':8000', ':5173'))/projects/$ProjectId/remake"
+    }
+    catch {
+        Write-Host "  读取 ReviewIssue 详情失败：$($_.Exception.Message)"
+    }
+}
+
+exit $RunnerExitCode
