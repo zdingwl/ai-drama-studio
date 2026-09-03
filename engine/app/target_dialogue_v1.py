@@ -679,13 +679,27 @@ def _upsert_voice_profiles(project: Project, fingerprint: str, target_characters
     return output
 
 
-def _rows_for_source_keys(session: Any, project_id: str, source_keys: set[str]) -> list[TargetDialogue]:
+def _rows_for_source_keys(
+    session: Any,
+    project_id: str,
+    source_keys: set[str],
+    *,
+    fingerprint: str,
+) -> list[TargetDialogue]:
+    """Load only rows that belong to the current SourceDramaSnapshot version.
+
+    ``source_dialogue_key`` alone is not a version boundary: historical projection rows and
+    future source revisions can coexist in the same project. Filtering by fingerprint at the
+    SQL boundary guarantees they cannot enter current counts or audio materialization.
+    """
+
     if not source_keys:
         return []
     return list(session.scalars(
         select(TargetDialogue)
         .where(
             TargetDialogue.project_id == project_id,
+            TargetDialogue.source_fingerprint == fingerprint,
             TargetDialogue.source_dialogue_key.in_(source_keys),
         )
         .order_by(TargetDialogue.episode_id, TargetDialogue.source_start_us, TargetDialogue.source_dialogue_key)
@@ -918,7 +932,7 @@ def _load_current_dialogue_state(
         if project is None:
             raise LookupError("项目不存在")
         session.expunge(project)
-        dialogues = _rows_for_source_keys(session, project_id, source_keys)
+        dialogues = _rows_for_source_keys(session, project_id, source_keys, fingerprint=fingerprint)
         _validate_current_rows(dialogues, contexts, fingerprint=fingerprint)
         voices = list(session.scalars(
             select(TargetVoiceProfile).where(
@@ -948,7 +962,7 @@ def materialize_target_dialogue_audio_v1(project_id: str) -> dict[str, Any]:
 
     if not language:
         with get_session() as session:
-            rows = _rows_for_source_keys(session, project_id, source_keys)
+            rows = _rows_for_source_keys(session, project_id, source_keys, fingerprint=fingerprint)
             _validate_current_rows(rows, contexts, fingerprint=fingerprint)
             for row in rows:
                 if row.status == "READY":
@@ -962,7 +976,7 @@ def materialize_target_dialogue_audio_v1(project_id: str) -> dict[str, Any]:
     status = runtime_status()
     if not status.get("ready"):
         with get_session() as session:
-            rows = _rows_for_source_keys(session, project_id, source_keys)
+            rows = _rows_for_source_keys(session, project_id, source_keys, fingerprint=fingerprint)
             _validate_current_rows(rows, contexts, fingerprint=fingerprint)
             for row in rows:
                 if row.status == "READY" and row.audio_status != "READY":
@@ -1000,7 +1014,7 @@ def materialize_target_dialogue_audio_v1(project_id: str) -> dict[str, Any]:
                 TargetVoiceProfile.source_fingerprint == fingerprint,
             )).all()
         }
-        dialogues = _rows_for_source_keys(session, project_id, source_keys)
+        dialogues = _rows_for_source_keys(session, project_id, source_keys, fingerprint=fingerprint)
         _validate_current_rows(dialogues, contexts, fingerprint=fingerprint)
         for row in dialogues:
             if row.status != "READY" or not row.final_text or not row.target_voice_profile_id:
