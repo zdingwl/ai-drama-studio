@@ -11,6 +11,12 @@ missing production stage. Any genuine ReviewIssue stops the run. It never edits 
 truth, never marks review items resolved/ignored, and never upgrades real-project acceptance
 by itself.
 
+P1 dialogue acceptance is explicit: the current SourceDramaSnapshot must expose canonical
+complete utterances plus Shot projections, and the current TargetDialogue bundle must contain
+exactly one row per canonical utterance. Projection count may be greater than utterance count;
+it must never inflate TargetDialogue count. All current target dialogue audio must be READY
+before the generation/postproduction chain can be accepted.
+
 Default mode is read-only. Pass ``--run`` to start missing production tasks sequentially.
 The final successful state is only ``READY_FOR_MANUAL_ACCEPTANCE``: a human still has to
 watch/listen to the exported episode and accept identity, scene, action/camera, dialogue,
@@ -183,6 +189,8 @@ def _optional_get(client: HttpClient, path: str) -> tuple[Any | None, str | None
 def collect_project_state(client: HttpClient, project_id: str) -> dict[str, Any]:
     project = client.get(f"/api/projects/{project_id}")
     issues = client.get(f"/api/projects/{project_id}/review-issues?status=OPEN")
+    source_snapshot, source_snapshot_error = _optional_get(client, f"/api/projects/{project_id}/source-drama-snapshot")
+    target_dialogue, target_dialogue_error = _optional_get(client, f"/api/projects/{project_id}/target-dialogue")
     segments, segments_error = _optional_get(client, f"/api/projects/{project_id}/generation-segments")
     quality, quality_error = _optional_get(client, f"/api/projects/{project_id}/h3-quality")
     post, post_error = _optional_get(client, f"/api/projects/{project_id}/postproduction")
@@ -190,6 +198,10 @@ def collect_project_state(client: HttpClient, project_id: str) -> dict[str, Any]
     return {
         "project": project,
         "review_issues": issues if isinstance(issues, list) else [],
+        "source_drama_snapshot": source_snapshot,
+        "source_drama_snapshot_error": source_snapshot_error,
+        "target_dialogue": target_dialogue,
+        "target_dialogue_error": target_dialogue_error,
         "generation_segments": segments,
         "generation_segments_error": segments_error,
         "h3_quality": quality,
@@ -212,17 +224,42 @@ def _post_audio_modes(post: dict[str, Any] | None) -> dict[str, int]:
 
 def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
     project = state.get("project") or {}
+    source = state.get("source_drama_snapshot") or {}
+    target_dialogue = state.get("target_dialogue") or {}
     segments = state.get("generation_segments") or {}
     quality = state.get("h3_quality") or {}
     post = state.get("postproduction") or {}
     outputs = state.get("outputs") or {}
     issues = state.get("review_issues") or []
+
+    source_present = isinstance(state.get("source_drama_snapshot"), dict)
+    target_dialogue_present = isinstance(state.get("target_dialogue"), dict)
+    source_dialogue_count = int(source.get("source_dialogue_count") or 0)
+    source_projection_count = int(source.get("source_dialogue_projection_count") or 0)
+    target_dialogue_count = int(target_dialogue.get("dialogue_count") or 0)
+    target_audio_ready_count = int(target_dialogue.get("audio_ready_count") or 0)
+    dialogue_contract_current = bool(
+        source_present
+        and target_dialogue_present
+        and target_dialogue_count == source_dialogue_count
+        and source_projection_count >= source_dialogue_count
+    )
+    target_dialogue_audio_current = bool(
+        target_dialogue_present and target_audio_ready_count == target_dialogue_count
+    )
+
     return {
         "project_id": project.get("id"),
         "project_name": project.get("name"),
         "episode_count": len(project.get("episodes") or []),
         "open_review_count": len(issues),
         "review_types": sorted({str(item.get("issue_type") or "UNKNOWN") for item in issues if isinstance(item, dict)}),
+        "source_dialogue_count": source_dialogue_count,
+        "source_dialogue_projection_count": source_projection_count,
+        "target_dialogue_count": target_dialogue_count,
+        "target_dialogue_audio_ready_count": target_audio_ready_count,
+        "dialogue_contract_current": dialogue_contract_current,
+        "target_dialogue_audio_current": target_dialogue_audio_current,
         "generation_segment_count": int(segments.get("segment_count") or 0),
         "generation_segment_review_count": int(segments.get("review_count") or 0),
         "generation_segment_waiting_audio_count": int(segments.get("waiting_audio_count") or 0),
@@ -243,6 +280,10 @@ def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
 def acceptance_result(summary: dict[str, Any]) -> str:
     if int(summary.get("open_review_count") or 0) > 0:
         return "NEEDS_REVIEW"
+    if not bool(summary.get("dialogue_contract_current")):
+        return "NOT_READY"
+    if not bool(summary.get("target_dialogue_audio_current")):
+        return "NOT_READY"
     segment_count = int(summary.get("generation_segment_count") or 0)
     episode_count = int(summary.get("episode_count") or 0)
     if segment_count <= 0 or episode_count <= 0:
@@ -296,6 +337,12 @@ def _run_task(client: HttpClient, path: str, *, label: str, poll_seconds: float,
 
 
 def _needs_prepare(state: dict[str, Any], summary: dict[str, Any]) -> bool:
+    if state.get("source_drama_snapshot") is None or state.get("target_dialogue") is None:
+        return True
+    if not bool(summary.get("dialogue_contract_current")):
+        return True
+    if not bool(summary.get("target_dialogue_audio_current")):
+        return True
     if state.get("generation_segments") is None:
         return True
     if int(summary.get("generation_segment_count") or 0) <= 0:
@@ -388,6 +435,17 @@ def print_report(*, runtimes: dict[str, dict[str, Any]], summary: dict[str, Any]
     print(f"  待确认            {summary.get('open_review_count', 0)}")
     if summary.get("review_types"):
         print(f"  待确认类型        {', '.join(summary['review_types'])}")
+    print(
+        "  SourceDialogue     "
+        f"{summary.get('source_dialogue_count', 0)} utterances / "
+        f"{summary.get('source_dialogue_projection_count', 0)} projections"
+    )
+    print(
+        "  TargetDialogue     "
+        f"{summary.get('target_dialogue_count', 0)} / "
+        f"audio {summary.get('target_dialogue_audio_ready_count', 0)} READY"
+    )
+    print(f"  Dialogue Contract  {'CURRENT' if summary.get('dialogue_contract_current') else 'NOT CURRENT'}")
     print(f"  H3 Selected       {summary.get('selected_count', 0)}/{summary.get('generation_segment_count', 0)}")
     print(f"  PostProduction    {summary.get('postproduction_succeeded_count', 0)}/{summary.get('postproduction_segment_count', 0)}")
     print(f"  EpisodeOutput     {summary.get('episode_output_succeeded_count', 0)}/{summary.get('episode_count', 0)}")
