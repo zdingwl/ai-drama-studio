@@ -14,6 +14,7 @@ function installSourceVideoErrorDialog(): void {
   window.__aiDramaSourceVideoErrorDialogInstalled = true
 
   let overlay: HTMLDivElement | null = null
+  let syncFrame: number | null = null
 
   const close = (): void => {
     overlay?.remove()
@@ -149,6 +150,10 @@ function installSourceVideoErrorDialog(): void {
     return filename
   }
 
+  const setDatasetValue = (element: HTMLElement, key: string, value: string): void => {
+    if (element.dataset[key] !== value) element.dataset[key] = value
+  }
+
   const syncFailureTriggers = (): void => {
     document.querySelectorAll<HTMLElement>(`${PAGE_SELECTOR} ${STATUS_SELECTOR}`).forEach((status) => {
       const failed = status.querySelector<HTMLElement>(FAILED_PILL_SELECTOR)
@@ -178,27 +183,33 @@ function installSourceVideoErrorDialog(): void {
         status.appendChild(trigger)
       }
 
-      trigger.dataset.error = errorText
-      trigger.dataset.taskLabel = taskLabelForStatus(status)
-      trigger.dataset.episodeLabel = episodeLabelForStatus(status)
-      trigger.title = '查看完整错误信息'
+      setDatasetValue(trigger, 'error', errorText)
+      setDatasetValue(trigger, 'taskLabel', taskLabelForStatus(status))
+      setDatasetValue(trigger, 'episodeLabel', episodeLabelForStatus(status))
+      if (trigger.title !== '查看完整错误信息') trigger.title = '查看完整错误信息'
     })
   }
 
-  const observer = new MutationObserver(() => syncFailureTriggers())
+  const scheduleSync = (): void => {
+    if (syncFrame !== null) return
+    syncFrame = window.requestAnimationFrame(() => {
+      syncFrame = null
+      syncFailureTriggers()
+    })
+  }
+
+  const observer = new MutationObserver(() => scheduleSync())
   observer.observe(document.body, {
     subtree: true,
     childList: true,
     characterData: true,
-    attributes: true,
-    attributeFilter: ['class', 'title'],
   })
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && overlay) close()
   })
 
-  syncFailureTriggers()
+  scheduleSync()
 }
 
 installSourceVideoErrorDialog()
