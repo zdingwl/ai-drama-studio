@@ -23,7 +23,7 @@ def _state(*, issues=None, segments=2, selected=2, post_succeeded=2, outputs_suc
         },
         "flow_state": {
             "stages": [{
-                "key": "target_dialogue",
+                "stage_key": "target_dialogue",
                 "validity": "CURRENT",
                 "metrics": {"dialogue_count": 2},
             }],
@@ -80,6 +80,17 @@ def test_acceptance_requires_one_current_target_dialogue_per_complete_source_utt
     summary = summarize_state(state)
     assert summary["dialogue_contract_current"] is False
     assert acceptance_result(summary) == "NOT_READY"
+
+
+def test_acceptance_reads_formal_flowstate_stage_key_and_keeps_legacy_key_compatibility() -> None:
+    state = _state()
+    assert summarize_state(state)["flow_target_dialogue_count_current"] is True
+
+    stage = state["flow_state"]["stages"][0]
+    stage["key"] = stage.pop("stage_key")
+    summary = summarize_state(state)
+    assert summary["flow_target_dialogue_count"] == 2
+    assert summary["flow_target_dialogue_count_current"] is True
 
 
 def test_acceptance_rejects_flowstate_target_dialogue_history_leak() -> None:
@@ -165,7 +176,7 @@ class _StageClient:
             count = 0 if self.stage == "unprepared" else 2
             return {
                 "stages": [{
-                    "key": "target_dialogue",
+                    "stage_key": "target_dialogue",
                     "validity": "CURRENT",
                     "metrics": {"dialogue_count": count},
                 }],
