@@ -3,8 +3,32 @@ import type { SceneTimelinePayload } from '../types/scene-timeline'
 import { projectBreakdownReadModelForOrdinaryUi } from '../utils/breakdownReadModelUi'
 import { sanitizeOrdinarySceneTimelinePayload } from '../utils/sceneTimelineUi'
 
-async function request<T>(url: string): Promise<T> {
-  const response = await fetch(url)
+export interface SceneTimelineManualSceneEdit {
+  location?: string | null
+  interior_exterior?: string | null
+  time_of_day?: string | null
+  environment?: string | null
+}
+
+export interface SceneTimelineManualDialogueEdit {
+  index: number
+  text: string
+}
+
+export interface SceneTimelineManualShotEdit {
+  summary?: string | null
+  visual_description?: string | null
+  narrative_function?: string | null
+  performance_text?: string | null
+  shot_type?: string | null
+  composition?: string | null
+  camera_motion?: string | null
+  scene?: SceneTimelineManualSceneEdit
+  dialogues?: SceneTimelineManualDialogueEdit[]
+}
+
+async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(url, options)
   if (!response.ok) {
     let message = `请求失败（${response.status}）`
     try {
@@ -29,11 +53,22 @@ async function requestOrdinaryReadModel(url: string): Promise<SceneTimelinePaylo
 }
 
 export const sceneTimelineApi = {
-  // Ordinary episode reading goes through P6: frozen G2 Timeline + independent Final Character/Scene/Prop overlays.
+  // Ordinary episode reading goes through P6: Scene Timeline + current manual facts + Final Asset overlays.
   getEpisode: (episodeId: string) => requestOrdinaryReadModel(`/api/episodes/${episodeId}/breakdown-read-model`),
-  // Historical/debug run reading remains frozen G2.5 and never projects current Final assets onto history.
+  // Historical/debug run reading remains an explicit Run surface.
   getRun: async (runId: string) => {
     const payload = await request<SceneTimelinePayload>(`/api/breakdown-runs/${runId}/scene-timeline`)
     return sanitizeOrdinarySceneTimelinePayload(payload)
+  },
+  editShot: async (episodeId: string, shotOrdinal: number, payload: SceneTimelineManualShotEdit) => {
+    const result = await request<SceneTimelinePayload>(
+      `/api/episodes/${encodeURIComponent(episodeId)}/scene-timeline/shots/${shotOrdinal}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+    )
+    return sanitizeOrdinarySceneTimelinePayload(result)
   },
 }
