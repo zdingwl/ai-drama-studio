@@ -138,7 +138,7 @@ def test_review_block_always_routes_to_review_center() -> None:
     assert result["next_action"]["command_key"] is None
 
 
-def test_same_business_facts_keep_same_revision(monkeypatch) -> None:
+def test_same_business_facts_keep_same_revision_and_stale_history_is_not_current(monkeypatch) -> None:
     project = SimpleNamespace(
         id="PROJECT_1",
         name="Demo",
@@ -158,15 +158,17 @@ def test_same_business_facts_keep_same_revision(monkeypatch) -> None:
     monkeypatch.setattr(flow, "get_session", fake_session)
     monkeypatch.setattr(flow, "list_project_tasks", lambda project_id, limit=100: [])
     monkeypatch.setattr(flow, "list_review_issues", lambda project_id, status="OPEN": [])
+    # These rows intentionally represent superseded history. They may make the stage STALE,
+    # but must never be surfaced as the current business-item count.
     monkeypatch.setattr(flow, "_persisted_counts", lambda project_id: {
         "asset_revisions": 0,
-        "target_characters": 0,
-        "scene_mappings": 0,
-        "target_dialogues": 0,
-        "remake_timelines": 0,
-        "generation_segments": 0,
-        "generation_selections": 0,
-        "episode_outputs": 0,
+        "target_characters": 2,
+        "scene_mappings": 1,
+        "target_dialogues": 76,
+        "remake_timelines": 1,
+        "generation_segments": 30,
+        "generation_selections": 12,
+        "episode_outputs": 1,
     })
     monkeypatch.setattr(flow, "list_episode_records", lambda project_id: [])
     monkeypatch.setattr(flow, "get_asset_workspace", lambda project_id, auto_bootstrap=False: {
@@ -193,3 +195,12 @@ def test_same_business_facts_keep_same_revision(monkeypatch) -> None:
     assert first["revision"] == second["revision"]
     assert first["overall_status"] == "READY_TO_CONTINUE"
     assert first["next_action"]["action_key"] == "IMPORT_EPISODES"
+
+    by_stage = {item["stage_key"]: item for item in first["stages"]}
+    assert by_stage["target_design"]["validity"] == "STALE"
+    assert by_stage["target_design"]["metrics"]["target_character_count"] == 0
+    assert by_stage["target_design"]["metrics"]["scene_mapping_count"] == 0
+    assert by_stage["target_dialogue"]["validity"] == "STALE"
+    assert by_stage["target_dialogue"]["metrics"]["dialogue_count"] == 0
+    assert by_stage["target_dialogue"]["metrics"]["audio_ready_count"] == 0
+    assert by_stage["remake_timing"]["metrics"]["generation_segment_count"] == 0
