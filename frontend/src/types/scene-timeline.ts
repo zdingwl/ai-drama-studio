@@ -67,6 +67,10 @@ export interface SceneTimelineShot {
   duration_us: number
   thumbnail_url: string | null
   reference_url: string | null
+  /** Current-shot summary from G1. Optional for historical scene-timeline-v1 payloads. */
+  summary?: string | null
+  /** Exact-shot narrative function from G1. Optional for historical payloads. */
+  narrative_function?: string | null
   visual_description: string | null
   people: string[]
   performance: SceneTimelinePerformance[]
