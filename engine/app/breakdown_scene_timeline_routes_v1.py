@@ -37,7 +37,7 @@ class SceneManualEditRequest(BaseModel):
 
 class DialogueManualEditRequest(BaseModel):
     index: int = Field(ge=0)
-    text: str = Field(max_length=8000)
+    text: str = Field(min_length=1, max_length=8000)
 
 
 class ShotManualEditRequest(BaseModel):
