@@ -167,8 +167,9 @@ def collect_runtime_status(client: HttpClient, *, vlm_base_url: str, vlm_model: 
 
 
 def runtime_blockers(runtimes: dict[str, dict[str, Any]]) -> list[str]:
-    # Production can safely fall back to target-dialogue-only audio when the separator is down,
-    # but this runner intentionally validates the complete desired local runtime stack.
+    # This is a complete-stack diagnostic for read-only acceptance reporting. In --run mode,
+    # production endpoints own stage-specific runtime gates so an unused downstream service
+    # cannot block earlier business work such as SourceDramaSnapshot review/target preparation.
     required = (
         "backend",
         "h3_fl2va",
@@ -512,16 +513,19 @@ def main() -> int:
         runtimes = collect_runtime_status(client, vlm_base_url=args.vlm_base_url, vlm_model=args.vlm_model)
         blockers = runtime_blockers(runtimes)
         initial_state = collect_project_state(client, args.project_id)
-        if blockers:
-            result = "RUNTIME_BLOCKED"
-            state = initial_state
-        elif args.run:
+        if args.run:
+            # Run mode must follow business truth first. H3/LatentSync/background-audio readiness is
+            # checked by the production endpoint exactly when that stage is reached. This prevents
+            # an unused downstream runtime from blocking SourceSnapshot review or target preparation.
             result, state = run_pipeline(
                 client,
                 args.project_id,
                 poll_seconds=args.poll_seconds,
                 timeout_seconds=args.timeout_seconds,
             )
+        elif blockers:
+            result = "RUNTIME_BLOCKED"
+            state = initial_state
         else:
             state = initial_state
             result = acceptance_result(summarize_state(state))
