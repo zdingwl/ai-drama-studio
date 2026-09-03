@@ -144,6 +144,8 @@ def persist_shot_manual_edit_v1(
 ) -> None:
     """Persist one explicit user edit without touching the immutable AI draft."""
 
+    if _draft_run(draft).get("is_current") is not True:
+        raise BreakdownManualOverrideError("只允许修改当前拉片结果")
     if shot_ordinal <= 0:
         raise BreakdownManualOverrideError("shot_ordinal 必须大于 0")
     scene, shot = _scene_and_shot(base_timeline, shot_ordinal)
@@ -239,13 +241,18 @@ def apply_manual_overrides_v1(
     draft: Mapping[str, Any],
     timeline_payload: Mapping[str, Any] | SceneTimelinePayloadV1,
 ) -> dict[str, Any]:
-    """Project only revision-compatible edits onto one current SceneTimeline payload."""
+    """Project only revision-compatible edits onto the current SceneTimeline payload."""
 
     timeline = (
         timeline_payload.model_dump(mode="json")
         if isinstance(timeline_payload, SceneTimelinePayloadV1)
         else SceneTimelinePayloadV1.model_validate(timeline_payload).model_dump(mode="json")
     )
+    # Historical Run endpoints must remain immutable evidence. A manual correction is a current
+    # source-fact overlay, not a rewrite of every Run that happens to share the same ShotRevision.
+    if _draft_run(draft).get("is_current") is not True:
+        return timeline
+
     artifact = _load_artifact(draft)
     if not artifact["shots"] and not artifact["scenes"] and not artifact["dialogues"]:
         return timeline
