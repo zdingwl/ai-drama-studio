@@ -11,13 +11,17 @@ function normalizedPerformanceText(value: string): string {
   return value.trim().replace(/[，。！？、；：,.!?;:\s]+/g, '')
 }
 
+function isWeakPerformanceText(value: string): boolean {
+  const normalized = normalizedPerformanceText(value)
+  const withoutAnonymousSubject = normalized.replace(/^(?:人物\d+|P\d+)/i, '')
+  return WEAK_PERFORMANCE_RE.test(withoutAnonymousSubject)
+}
+
 function hasUsefulPerformance(shot: SceneTimelineShot): boolean {
   if (!shot.people.length) return true
-  const rows = shot.performance
-    .map((item) => normalizedPerformanceText(item.text))
-    .filter(Boolean)
+  const rows = shot.performance.map((item) => item.text.trim()).filter(Boolean)
   if (!rows.length) return false
-  return rows.some((row) => !WEAK_PERFORMANCE_RE.test(row))
+  return rows.some((row) => !isWeakPerformanceText(row))
 }
 
 function hasDialogueTimingIssue(shot: SceneTimelineShot): boolean {
