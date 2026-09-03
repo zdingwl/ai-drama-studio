@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+
+import scripts.run_real_project_acceptance_v1 as acceptance_runner
 from scripts.run_real_project_acceptance_v1 import (
     AcceptanceError,
     acceptance_result,
@@ -134,6 +137,43 @@ def test_runtime_blockers_require_the_complete_local_acceptance_stack() -> None:
     assert runtime_blockers(ready) == []
     ready["audio_separator"] = {"ready": False}
     assert runtime_blockers(ready) == ["audio_separator"]
+
+
+def test_main_run_mode_defers_downstream_runtime_blockers_to_the_production_stage(monkeypatch) -> None:
+    client = object()
+    runtimes = {
+        "backend": {"ready": True},
+        "h3_fl2va": {"ready": False},
+        "h3_ref2va": {"ready": False},
+        "qwen3_vl": {"ready": True},
+        "qwen3_tts": {"ready": True},
+        "latentsync": {"ready": False},
+        "audio_separator": {"ready": False},
+    }
+    state = _state(issues=[{"issue_type": "CHARACTER_IDENTITY", "severity": "BLOCKING"}])
+    calls: list[str] = []
+
+    monkeypatch.setattr(acceptance_runner, "HttpClient", lambda _base_url: client)
+    monkeypatch.setattr(
+        acceptance_runner,
+        "collect_runtime_status",
+        lambda _client, *, vlm_base_url, vlm_model: runtimes,
+    )
+    monkeypatch.setattr(acceptance_runner, "collect_project_state", lambda _client, _project_id: state)
+
+    def fake_run_pipeline(_client, project_id, *, poll_seconds, timeout_seconds):
+        calls.append(project_id)
+        return "NEEDS_REVIEW", state
+
+    monkeypatch.setattr(acceptance_runner, "run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_real_project_acceptance_v1.py", "--project-id", "PROJECT_1", "--run", "--json"],
+    )
+
+    assert acceptance_runner.main() == 2
+    assert calls == ["PROJECT_1"]
 
 
 class _StageClient:
