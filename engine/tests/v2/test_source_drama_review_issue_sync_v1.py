@@ -7,7 +7,10 @@ from engine.app import source_drama_review_issue_sync_v1 as sync
 
 def _snapshot() -> dict:
     person_key = "EP_1:RUN_1:S1:P1"
+    scene_key = "EP_1:RUN_1:S1"
     shot_key = "EP_1:REV_1:H1"
+    dialogue_key = f"{shot_key}:D1"
+    dialogue_group_id = "RUN_1:DG:SOURCE_1"
     return {
         "schema_version": "source-drama-project-snapshot-v1",
         "status": "READY",
@@ -20,6 +23,7 @@ def _snapshot() -> dict:
         "shot_count": 1,
         "resolved_character_count": 1,
         "source_dialogue_count": 1,
+        "source_dialogue_projection_count": 1,
         "warnings": [],
         "characters": [
             {"id": "CHAR_1", "name": "林晚", "cover_url": None},
@@ -42,11 +46,34 @@ def _snapshot() -> dict:
                 "resolved_character_count": 1,
                 "unresolved_person_count": 0,
                 "source_dialogue_count": 1,
+                "source_dialogue_projection_count": 1,
                 "source_on_screen_text_count": 0,
                 "warnings": [],
+                "source_dialogue_utterances": [
+                    {
+                        "dialogue_group_id": dialogue_group_id,
+                        "start_us": 1_000_000,
+                        "end_us": 2_000_000,
+                        "source_text": "你怎么会在这里？",
+                        "source_language": "zh-CN",
+                        "speakers": [],
+                        "projection_count": 1,
+                        "projections": [
+                            {
+                                "dialogue_key": dialogue_key,
+                                "shot_key": shot_key,
+                                "scene_key": scene_key,
+                                "projection_index": 1,
+                                "start_us": 1_000_000,
+                                "end_us": 2_000_000,
+                                "source_text": "你怎么会在这里？",
+                            }
+                        ],
+                    }
+                ],
                 "scenes": [
                     {
-                        "scene_key": "EP_1:RUN_1:S1",
+                        "scene_key": scene_key,
                         "ordinal": 1,
                         "start_us": 0,
                         "end_us": 4_000_000,
@@ -85,7 +112,9 @@ def _snapshot() -> dict:
                                 "performance": [],
                                 "source_dialogue": [
                                     {
-                                        "dialogue_key": f"{shot_key}:D1",
+                                        "dialogue_key": dialogue_key,
+                                        "dialogue_group_id": dialogue_group_id,
+                                        "projection_index": 1,
                                         "start_us": 1_000_000,
                                         "end_us": 2_000_000,
                                         "source_text": "你怎么会在这里？",
