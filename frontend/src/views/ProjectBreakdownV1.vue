@@ -6,6 +6,7 @@ import { breakdownApi } from '../api/breakdown'
 import { api } from '../api/client'
 import { getProjectFlowState } from '../api/project-flow-state'
 import { sceneTimelineApi } from '../api/scene-timeline'
+import { evaluateBreakdownShotQuality } from '../breakdown-quality'
 import type { BreakdownRunSummary } from '../types/breakdown'
 import type { ProjectFlowStage, ProjectFlowState } from '../types/project-flow-state'
 import type {
@@ -179,11 +180,12 @@ function hasCharacterReviewForShot(context: TimelineShotContext): boolean {
 
 function statusForShot(shot: Shot): ShotStatusDisplay {
   const context = timelineShotMap.value.get(shot.ordinal)
-  if (context) {
-    if (hasCharacterReviewForShot(context)) return { state: 'review', label: '待确认', detail: '人物待归并' }
-    return { state: 'completed', label: '已完成' }
-  }
-  return { state: 'unprocessed', label: '未拉片' }
+  if (!context) return { state: 'unprocessed', label: '未拉片' }
+  if (hasCharacterReviewForShot(context)) return { state: 'review', label: '待确认', detail: '人物待归并' }
+
+  const quality = evaluateBreakdownShotQuality(context.shot)
+  if (!quality.ready) return { state: 'review', label: '待确认', detail: quality.reason }
+  return { state: 'completed', label: '已完成' }
 }
 
 const statusCounts = computed(() => {
@@ -198,6 +200,8 @@ function shotSearchText(shot: Shot): string {
     `shot ${shot.ordinal}`,
     shot.short_description || '',
     context?.scene.title || '',
+    context?.shot.summary || '',
+    context?.shot.narrative_function || '',
     context?.shot.visual_description || '',
     ...(context?.shot.performance || []).map((item) => item.text),
     ...(context?.shot.dialogue || []).map((item) => item.text),
@@ -268,13 +272,43 @@ const qualityLabel = computed(() => {
   if (!episode?.height) return '未知'
   return episode.height >= 1080 ? '清晰' : episode.height >= 720 ? '标准' : '较低'
 })
+const shotNarrativeSummary = computed(() => (
+  selectedTimelineShot.value?.narrative_function?.trim()
+  || selectedTimelineShot.value?.summary?.trim()
+  || selectedTimelineShot.value?.visual_description?.trim()
+  || '暂无当前镜头剧情作用'
+))
+const sceneContextSummary = computed(() => {
+  const scene = selectedScene.value
+  if (!scene) return '暂无场景环境信息'
+  const rows = [
+    sceneName.value,
+    scene.scene_info.interior_exterior,
+    scene.scene_info.time_of_day,
+    scene.scene_info.environment,
+  ].map((item) => String(item || '').trim()).filter(Boolean)
+  return Array.from(new Set(rows)).join('；') || '暂无场景环境信息'
+})
+const dialogueSummary = computed(() => {
+  if (!selectedDialogue.value.length) return '无对白'
+  return selectedDialogue.value
+    .map((dialogue) => `${dialogueSpeaker(dialogue)}：${dialogue.text}`)
+    .join('；')
+})
+const propSummary = computed(() => {
+  if (!selectedProps.value.length) return '无关键道具'
+  return selectedProps.value.map((item) => item.interaction ? `${item.name}（${item.interaction}）` : item.name).join('；')
+})
 
 const h3Sections = computed(() => [
   { label: '主体', value: peopleNames.value.length ? peopleNames.value.join('、') : '当前镜头未识别明确主体' },
-  { label: '动作', value: actionSummary.value },
-  { label: '场景', value: sceneName.value },
-  { label: '镜头', value: cameraItems.value.length ? cameraItems.value.join('、') : '暂无镜头参数' },
-  { label: '更多元素', value: selectedProps.value.length ? selectedProps.value.map((item) => item.name).join('、') : sceneEnvironment.value },
+  { label: '动作与表演', value: actionSummary.value },
+  { label: '场景环境', value: sceneContextSummary.value },
+  { label: '镜头语言', value: cameraItems.value.length ? cameraItems.value.join('、') : '当前镜头缺少可靠镜头参数' },
+  { label: '时长', value: selectedShot.value ? formatDurationUs(selectedShot.value.duration_us) : '—' },
+  { label: '对白', value: dialogueSummary.value },
+  { label: '道具', value: propSummary.value },
+  { label: '剧情作用', value: shotNarrativeSummary.value },
 ])
 const fullH3Description = computed(() => h3Sections.value.map((item) => `${item.label}：${item.value}`).join('\n'))
 
@@ -720,7 +754,7 @@ onBeforeUnmount(() => {
                 <div>
                   <div class="shot-title-row">
                     <h2>Shot {{ String(selectedShot.ordinal).padStart(2, '0') }}</h2>
-                    <span v-if="selectedStatus" :class="['shot-status-pill', `status-${selectedStatus.state}`]"><i></i>{{ selectedStatus.label }}</span>
+                    <span v-if="selectedStatus" :class="['shot-status-pill', `status-${selectedStatus.state}`]"><i></i>{{ selectedStatus.label }}<template v-if="selectedStatus.detail"> · {{ selectedStatus.detail }}</template></span>
                   </div>
                   <p>时间范围：{{ formatTimeUs(selectedShot.start_us) }} - {{ formatTimeUs(selectedShot.end_us) }} <span>时长：{{ formatDurationUs(selectedShot.duration_us) }}</span></p>
                 </div>
@@ -767,7 +801,7 @@ onBeforeUnmount(() => {
                 <div class="overview-grid">
                   <div><span>场景</span><b>{{ sceneName }}</b></div>
                   <div><span>景别</span><b>{{ selectedTimelineShot?.cinematography.shot_type || selectedShot.shot_type || '—' }}</b></div>
-                  <div><span>机位</span><b>{{ selectedTimelineShot?.cinematography.composition || '—' }}</b></div>
+                  <div><span>机位</span><b>未独立识别</b></div>
                   <div><span>运镜</span><b>{{ selectedTimelineShot?.cinematography.camera_motion || selectedShot.camera_motion || '—' }}</b></div>
                   <div><span>光线</span><b>{{ lightLabel }}</b></div>
                   <div><span>构图</span><b>{{ selectedTimelineShot?.cinematography.composition || '—' }}</b></div>
@@ -804,7 +838,7 @@ onBeforeUnmount(() => {
 
                   <section class="info-card">
                     <h3><span>⚑</span>剧情作用</h3>
-                    <div class="mini-grid one"><div><span>剧情摘要</span><b>{{ selectedScene.story_summary || selectedTimelineShot.visual_description || '暂无剧情摘要' }}</b></div></div>
+                    <div class="mini-grid one"><div><span>当前镜头</span><b>{{ shotNarrativeSummary }}</b></div></div>
                   </section>
 
                   <section class="info-card technical-card">
@@ -863,7 +897,7 @@ onBeforeUnmount(() => {
           </aside>
         </section>
 
-        <div class="bottom-tip"><span>ⓘ</span>提示：调整分镜范围或重新拉片后，相关分析结果可能需要按当前最新分镜重新生成，请确认后操作。</div>
+        <div class="bottom-tip"><span>ⓘ</span>提示：待确认表示当前镜头已有拉片结果，但关键语义信息仍不足；调整分镜范围或重新拉片后，请以最新结果重新验收。</div>
       </main>
     </div>
 
@@ -873,8 +907,8 @@ onBeforeUnmount(() => {
         <div class="help-grid">
           <article><b>1</b><div><strong>先看分镜</strong><p>左侧选择分镜，中间播放原片 Reference Clip，并确认开始 / 结束边界。</p></div></article>
           <article><b>2</b><div><strong>再看拉片事实</strong><p>右侧直接查看人物、场景、动作、对白和镜头信息，不展示 ASR / OCR / VLM 技术证据。</p></div></article>
-          <article><b>3</b><div><strong>有问题再重跑</strong><p>整集拉片会创建新的后台任务；刷新页面只读状态，不会自动重复执行模型。</p></div></article>
-          <article><b>4</b><div><strong>边界修改后主动重算</strong><p>修改分镜边界会形成新的 Shot Revision。系统不会在保存后偷偷启动 GPU 重任务。</p></div></article>
+          <article><b>3</b><div><strong>按质量门槛验收</strong><p>有 Timeline 不再自动算“已完成”；缺画面描述、动作表情、景别、构图或对白时间异常时会进入“待确认”。</p></div></article>
+          <article><b>4</b><div><strong>有问题再重跑</strong><p>整集拉片会创建新的后台任务；刷新页面只读状态，不会自动重复执行模型。</p></div></article>
         </div>
       </section>
     </div>
