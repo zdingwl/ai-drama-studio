@@ -20,5 +20,6 @@ import './breakdown-p3-v2-layout-fix.css'
 import './breakdown-p3-v2-polish.css'
 import './scene-timeline-g2-6-overrides.css'
 import './product-readability.css'
+import './source-video-page-fixes.css'
 
 createApp(App).use(router).mount('#app')
