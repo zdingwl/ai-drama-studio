@@ -1,0 +1,56 @@
+/* Source video -> AI breakdown navigation enhancement.
+ * The source workspace keeps its current Vue implementation; this only adds the missing stage-link affordance.
+ */
+
+.source-video-page .source-video-breakdown-link {
+  cursor: pointer;
+}
+
+.source-video-page .stage-item.source-video-breakdown-link {
+  transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+
+.source-video-page .stage-item.source-video-breakdown-link:hover,
+.source-video-page .stage-item.source-video-breakdown-link:focus-visible {
+  background: #f4f7ff;
+  box-shadow: inset 0 0 0 1px rgba(20, 99, 255, .14);
+  outline: none;
+}
+
+.source-video-page .stage-item.source-video-breakdown-link strong::after {
+  content: ' →';
+  color: #1463ff;
+  font-weight: 800;
+}
+
+.source-video-page .next-stage-card.source-video-breakdown-link {
+  transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+
+.source-video-page .next-stage-card.source-video-breakdown-link:hover,
+.source-video-page .next-stage-card.source-video-breakdown-link:focus-visible {
+  transform: translateY(-1px);
+  border-color: #b9cef8;
+  box-shadow: 0 9px 24px rgba(23, 88, 190, .09);
+  outline: none;
+}
+
+.source-video-page .next-stage-card.source-video-breakdown-link .next-state.ready::after {
+  content: ' →';
+}
+
+.source-video-page .source-video-breakdown-locked {
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .source-video-page .stage-item.source-video-breakdown-link,
+  .source-video-page .next-stage-card.source-video-breakdown-link {
+    transition: none;
+  }
+
+  .source-video-page .next-stage-card.source-video-breakdown-link:hover,
+  .source-video-page .next-stage-card.source-video-breakdown-link:focus-visible {
+    transform: none;
+  }
+}
