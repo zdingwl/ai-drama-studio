@@ -37,10 +37,11 @@ const redrawRuleOptions: Array<{
   value: ProjectRedrawRule
   label: string
   detail: string
+  icon: string
 }> = [
-  { value: 'CHARACTER', label: '人物', detail: '重新生成目标版本人物' },
-  { value: 'SCENE', label: '场景', detail: '重新生成或本土化场景' },
-  { value: 'LANGUAGE', label: '语言', detail: '翻译、本土化并使用目标语言' },
+  { value: 'CHARACTER', label: '人物', detail: '重绘人物形象、服装等视觉元素', icon: '●' },
+  { value: 'SCENE', label: '场景', detail: '重绘场景背景、道具及环境', icon: '▲' },
+  { value: 'LANGUAGE', label: '语言', detail: '翻译并本地化对白与字幕', icon: '•••' },
 ]
 
 function createDefaultForm(): ProjectManagementPayload {
@@ -215,22 +216,25 @@ onMounted(() => {
 <template>
   <div class="project-page" @keydown.esc="editorOpen ? closeEditor() : closeDelete()">
     <header class="page-header">
-      <div>
-        <p class="eyebrow">AI Drama Studio</p>
+      <div class="page-heading">
+        <div class="brand-line">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>AI Drama Studio</span>
+        </div>
         <h1>项目管理</h1>
-        <p class="description">管理短剧重绘项目，创建项目后再进入后续视频导入和处理流程。</p>
+        <p class="description">在此页面，您可以创建、编辑和管理短剧重绘项目，统一维护项目语言、地区与重绘规则。</p>
       </div>
-      <button class="primary-button" type="button" @click="openCreateEditor">
-        <span aria-hidden="true">＋</span>
+      <button class="primary-button create-button" type="button" @click="openCreateEditor">
+        <span class="plus-icon" aria-hidden="true">＋</span>
         新建项目
       </button>
     </header>
 
     <section class="project-panel">
       <div class="panel-head">
-        <div>
+        <div class="panel-title-row">
           <h2>项目列表</h2>
-          <span>{{ loading ? '正在读取…' : `共 ${projects.length} 个项目` }}</span>
+          <span class="count-badge">{{ loading ? '正在读取…' : `共 ${projects.length} 个项目` }}</span>
         </div>
         <button v-if="loadError" class="text-button" type="button" @click="loadProjects">重新加载</button>
       </div>
@@ -276,8 +280,11 @@ onMounted(() => {
             >
               <td>
                 <div class="project-name">
-                  <strong>{{ project.name }}</strong>
-                  <span>点击进入项目</span>
+                  <span class="project-cover" aria-hidden="true">AI</span>
+                  <div>
+                    <strong>{{ project.name }}</strong>
+                    <span>点击进入项目</span>
+                  </div>
                 </div>
               </td>
               <td>{{ projectLanguageLabel(project.source_language) }}</td>
@@ -303,14 +310,14 @@ onMounted(() => {
       <section class="modal-card editor-modal" role="dialog" aria-modal="true" :aria-label="pageTitle">
         <header class="modal-head">
           <div>
-            <p class="eyebrow">项目设置</p>
+            <p class="modal-eyebrow">项目设置</p>
             <h2>{{ pageTitle }}</h2>
           </div>
           <button class="close-button" type="button" :disabled="saving" aria-label="关闭" @click="closeEditor">×</button>
         </header>
 
         <form class="project-form" @submit.prevent="saveProject">
-          <label class="field full-field">
+          <label class="field full-field required-field">
             <span>标题</span>
             <input
               v-model="form.name"
@@ -322,7 +329,7 @@ onMounted(() => {
             />
           </label>
 
-          <label class="field">
+          <label class="field required-field">
             <span>原项目语言</span>
             <select v-model="form.source_language">
               <option v-for="option in PROJECT_LANGUAGE_OPTIONS" :key="option.value" :value="option.value">
@@ -331,7 +338,7 @@ onMounted(() => {
             </select>
           </label>
 
-          <label class="field">
+          <label class="field required-field">
             <span>目标语言</span>
             <select v-model="form.target_language">
               <option v-for="option in PROJECT_LANGUAGE_OPTIONS" :key="option.value" :value="option.value">
@@ -340,8 +347,11 @@ onMounted(() => {
             </select>
           </label>
 
-          <label class="field full-field">
-            <span>目标地区</span>
+          <label class="field full-field required-field region-field">
+            <span class="field-label-row">
+              <b>目标地区</b>
+              <small>ⓘ 根据目标语言仅展示对应国家/地区</small>
+            </span>
             <select v-model="form.target_region">
               <option v-for="option in targetRegionOptions" :key="option.value" :value="option.value">
                 {{ option.label }}
@@ -350,8 +360,7 @@ onMounted(() => {
           </label>
 
           <fieldset class="redraw-field full-field">
-            <legend>视频重绘规则</legend>
-            <p>选择这个项目需要重新处理的内容，可多选。</p>
+            <legend class="required-legend">视频重绘规则</legend>
             <div class="redraw-options">
               <label
                 v-for="option in redrawRuleOptions"
@@ -363,11 +372,12 @@ onMounted(() => {
                   :checked="form.redraw_rules.includes(option.value)"
                   @change="toggleRedrawRule(option.value)"
                 />
-                <span class="check-mark" aria-hidden="true">✓</span>
+                <span class="rule-icon" aria-hidden="true">{{ option.icon }}</span>
                 <span class="rule-copy">
                   <strong>{{ option.label }}</strong>
                   <small>{{ option.detail }}</small>
                 </span>
+                <span class="check-mark" aria-hidden="true">✓</span>
               </label>
             </div>
           </fieldset>
@@ -403,11 +413,16 @@ onMounted(() => {
 </template>
 
 <style scoped>
+:global(*) {
+  box-sizing: border-box;
+}
+
 :global(body) {
   margin: 0;
-  background: #f5f7fb;
-  color: #172033;
+  background: #f7f9fc;
+  color: #161c2d;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
@@ -427,118 +442,182 @@ button:disabled {
 
 .project-page {
   min-height: 100vh;
-  box-sizing: border-box;
-  padding: 42px clamp(24px, 5vw, 72px) 64px;
+  padding: 28px clamp(28px, 3.5vw, 64px) 56px;
+  background:
+    radial-gradient(circle at 88% 0%, rgba(222, 234, 255, .58), transparent 28%),
+    linear-gradient(180deg, #f9fbff 0%, #f7f9fc 240px, #f6f8fb 100%);
 }
 
 .page-header {
-  max-width: 1500px;
-  margin: 0 auto 24px;
+  width: min(1540px, 100%);
+  margin: 0 auto 26px;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 28px;
+  gap: 32px;
 }
 
-.eyebrow {
-  margin: 0 0 8px;
-  color: #68758b;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: .08em;
-  text-transform: uppercase;
+.page-heading {
+  min-width: 0;
 }
+
+.brand-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 18px;
+  color: #1769e8;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+
+.brand-mark {
+  position: relative;
+  width: 23px;
+  height: 23px;
+  display: inline-block;
+}
+
+.brand-mark i {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  background: #2677f2;
+  transform: rotate(32deg);
+}
+
+.brand-mark i:nth-child(1) { left: 1px; top: 1px; }
+.brand-mark i:nth-child(2) { right: 1px; top: 7px; opacity: .82; }
+.brand-mark i:nth-child(3) { left: 3px; bottom: 1px; opacity: .65; }
 
 .page-header h1 {
   margin: 0;
-  font-size: clamp(28px, 3vw, 38px);
+  color: #111827;
+  font-size: clamp(30px, 2.4vw, 38px);
   line-height: 1.15;
-  letter-spacing: -.03em;
+  font-weight: 800;
+  letter-spacing: -.035em;
 }
 
 .description {
-  margin: 10px 0 0;
-  color: #68758b;
-  font-size: 15px;
-  line-height: 1.7;
+  max-width: 760px;
+  margin: 13px 0 0;
+  color: #6b7280;
+  font-size: 14px;
+  line-height: 1.75;
 }
 
 .primary-button,
 .secondary-button,
 .danger-button {
-  min-height: 44px;
-  border-radius: 10px;
-  padding: 0 18px;
+  min-height: 42px;
+  border-radius: 8px;
+  padding: 0 20px;
   border: 1px solid transparent;
-  font-weight: 700;
   font-size: 14px;
+  font-weight: 700;
+  transition: background .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease;
 }
 
 .primary-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  background: #275fe8;
+  gap: 8px;
+  background: #1268e9;
   color: #fff;
-  box-shadow: 0 8px 18px rgba(39, 95, 232, .18);
+  box-shadow: 0 7px 18px rgba(18, 104, 233, .2);
 }
 
 .primary-button:hover:not(:disabled) {
-  background: #1f52ce;
+  background: #075cd5;
+  box-shadow: 0 9px 24px rgba(18, 104, 233, .24);
+}
+
+.create-button {
+  min-width: 142px;
+  min-height: 46px;
+  margin-bottom: 3px;
+  font-size: 15px;
+}
+
+.plus-icon {
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1;
 }
 
 .secondary-button {
+  min-width: 106px;
   background: #fff;
-  border-color: #d9e0eb;
-  color: #354158;
+  border-color: #d8dee8;
+  color: #4b5565;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .02);
 }
 
 .secondary-button:hover:not(:disabled) {
-  background: #f7f9fc;
+  background: #f8fafc;
+  border-color: #cbd3df;
 }
 
 .danger-button {
-  background: #d92d20;
+  background: #e5484d;
   color: #fff;
 }
 
 .project-panel {
-  max-width: 1500px;
+  width: min(1540px, 100%);
+  min-height: 540px;
   margin: 0 auto;
   overflow: hidden;
-  border: 1px solid #e0e5ed;
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 12px 38px rgba(25, 36, 56, .06);
+  border: 1px solid #e0e5ee;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 6px 24px rgba(17, 24, 39, .055);
 }
 
 .panel-head {
-  min-height: 74px;
-  box-sizing: border-box;
-  padding: 18px 22px;
+  min-height: 76px;
+  padding: 18px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #e8ecf2;
+  border-bottom: 1px solid #e9edf3;
+}
+
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
 .panel-head h2 {
   margin: 0;
+  color: #1f2937;
   font-size: 18px;
+  line-height: 1;
+  font-weight: 750;
 }
 
-.panel-head span {
-  display: block;
-  margin-top: 4px;
-  color: #7b8799;
-  font-size: 13px;
+.count-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #f0f2f6;
+  color: #697386;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .text-button {
   border: 0;
   background: transparent;
-  color: #275fe8;
+  color: #1769e8;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -550,9 +629,9 @@ button:disabled {
 }
 
 .error-banner {
-  margin: 18px 22px 0;
+  margin: 18px 24px 0;
   padding: 13px 15px;
-  border-radius: 10px;
+  border-radius: 8px;
   display: grid;
   gap: 3px;
   font-size: 13px;
@@ -560,11 +639,11 @@ button:disabled {
 
 .loading-state,
 .empty-state {
-  min-height: 330px;
+  min-height: 390px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #68758b;
+  color: #6b7280;
 }
 
 .loading-state {
@@ -576,7 +655,7 @@ button:disabled {
   width: 18px;
   height: 18px;
   border: 2px solid #dce3ef;
-  border-top-color: #275fe8;
+  border-top-color: #1769e8;
   border-radius: 50%;
   animation: spin .8s linear infinite;
 }
@@ -588,18 +667,18 @@ button:disabled {
 .empty-state {
   flex-direction: column;
   text-align: center;
-  padding: 32px;
+  padding: 42px;
 }
 
 .empty-icon {
-  width: 58px;
-  height: 58px;
+  width: 54px;
+  height: 54px;
   display: grid;
   place-items: center;
-  border-radius: 16px;
-  background: #eef3ff;
-  color: #275fe8;
-  font-size: 30px;
+  border-radius: 14px;
+  background: #edf4ff;
+  color: #1769e8;
+  font-size: 28px;
 }
 
 .empty-state h3 {
@@ -610,45 +689,55 @@ button:disabled {
 
 .empty-state p {
   margin: 0 0 20px;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .table-wrap {
+  padding: 0 20px 22px;
   overflow-x: auto;
 }
 
 table {
   width: 100%;
-  min-width: 1120px;
-  border-collapse: collapse;
+  min-width: 1160px;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid #e4e8ef;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 th,
 td {
-  padding: 17px 18px;
-  border-bottom: 1px solid #edf0f5;
+  padding: 15px 16px;
+  border-bottom: 1px solid #e9edf3;
   text-align: left;
   vertical-align: middle;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 th {
+  height: 48px;
+  padding-top: 0;
+  padding-bottom: 0;
   background: #fafbfc;
-  color: #67748a;
+  color: #667085;
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }
 
 .project-row {
+  height: 78px;
   outline: none;
+  background: #fff;
   transition: background .15s ease;
   cursor: pointer;
 }
 
 .project-row:hover,
 .project-row:focus-visible {
-  background: #f8faff;
+  background: #f8fbff;
 }
 
 .project-row:last-child td {
@@ -656,20 +745,47 @@ th {
 }
 
 .project-name {
-  min-width: 180px;
+  min-width: 215px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.project-cover {
+  width: 42px;
+  height: 52px;
+  flex: 0 0 42px;
   display: grid;
-  gap: 4px;
+  place-items: center;
+  border: 1px solid #d9e1ee;
+  border-radius: 6px;
+  background: linear-gradient(150deg, #22365a, #557ba8 52%, #d9e7f7);
+  color: rgba(255, 255, 255, .9);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  box-shadow: 0 2px 5px rgba(15, 23, 42, .12);
+}
+
+.project-name > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
 }
 
 .project-name strong {
-  color: #182238;
-  font-size: 15px;
+  overflow: hidden;
+  color: #222b3a;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.project-name span,
+.project-name > div > span,
 .date-cell {
-  color: #8490a2;
-  font-size: 12px;
+  color: #8a94a6;
+  font-size: 11px;
 }
 
 .rule-chips {
@@ -680,16 +796,17 @@ th {
 }
 
 .rule-chips span {
-  padding: 5px 8px;
-  border-radius: 7px;
-  background: #eef3ff;
-  color: #315fc4;
-  font-size: 12px;
-  font-weight: 700;
+  padding: 4px 8px;
+  border: 1px solid #d7e6ff;
+  border-radius: 999px;
+  background: #eef5ff;
+  color: #2670de;
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .action-column {
-  width: 120px;
+  width: 124px;
 }
 
 .actions {
@@ -697,11 +814,11 @@ th {
 }
 
 .row-action {
-  padding: 6px 8px;
+  padding: 6px 7px;
   border: 0;
   background: transparent;
-  color: #315fc4;
-  font-size: 13px;
+  color: #1769e8;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -710,7 +827,7 @@ th {
 }
 
 .row-action.danger {
-  color: #c43228;
+  color: #e5484d;
 }
 
 .modal-backdrop {
@@ -719,25 +836,23 @@ th {
   z-index: 1000;
   display: grid;
   place-items: center;
-  box-sizing: border-box;
-  padding: 24px;
-  background: rgba(18, 25, 38, .52);
-  backdrop-filter: blur(3px);
+  padding: 28px;
+  background: rgba(42, 52, 68, .34);
+  backdrop-filter: blur(2px);
 }
 
 .modal-card {
-  width: min(680px, 100%);
-  max-height: calc(100vh - 48px);
+  width: min(720px, 100%);
+  max-height: calc(100vh - 56px);
   overflow-y: auto;
-  box-sizing: border-box;
-  border: 1px solid rgba(255, 255, 255, .6);
-  border-radius: 18px;
+  border: 1px solid #e6eaf0;
+  border-radius: 12px;
   background: #fff;
-  box-shadow: 0 24px 70px rgba(17, 28, 48, .25);
+  box-shadow: 0 22px 55px rgba(28, 39, 57, .22), 0 4px 14px rgba(28, 39, 57, .1);
 }
 
 .editor-modal {
-  padding: 24px;
+  padding: 26px 28px 24px;
 }
 
 .modal-head {
@@ -745,31 +860,46 @@ th {
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
-  margin-bottom: 22px;
+  margin-bottom: 24px;
+}
+
+.modal-eyebrow {
+  margin: 0 0 8px;
+  color: #1769e8;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .modal-head h2,
 .delete-modal h2 {
   margin: 0;
-  font-size: 23px;
-  letter-spacing: -.02em;
+  color: #111827;
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 800;
+  letter-spacing: -.025em;
 }
 
 .close-button {
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   border: 0;
-  border-radius: 9px;
-  background: #f3f5f8;
-  color: #627087;
-  font-size: 24px;
+  border-radius: 7px;
+  background: transparent;
+  color: #344054;
+  font-size: 26px;
+  font-weight: 300;
   line-height: 1;
+}
+
+.close-button:hover:not(:disabled) {
+  background: #f4f6f8;
 }
 
 .project-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  gap: 19px 18px;
 }
 
 .full-field {
@@ -783,67 +913,100 @@ th {
 
 .field > span,
 .redraw-field legend {
-  color: #344158;
+  color: #344054;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
+}
+
+.required-field > span:not(.field-label-row)::before,
+.required-legend::before,
+.field-label-row b::before {
+  content: '*';
+  margin-right: 5px;
+  color: #e5484d;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.field-label-row b {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.field-label-row small {
+  color: #8a94a6;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .field input,
 .field select {
   width: 100%;
-  min-height: 44px;
-  box-sizing: border-box;
-  border: 1px solid #d7deea;
-  border-radius: 10px;
+  min-height: 42px;
+  border: 1px solid #d6dce6;
+  border-radius: 7px;
   background: #fff;
-  color: #1c273a;
-  padding: 0 12px;
+  color: #273142;
+  padding: 0 13px;
   outline: none;
-  font-size: 14px;
+  font-size: 13px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.field input::placeholder {
+  color: #a4adbb;
 }
 
 .field input:focus,
 .field select:focus {
-  border-color: #6f96ef;
-  box-shadow: 0 0 0 3px rgba(39, 95, 232, .1);
+  border-color: #6b9df2;
+  box-shadow: 0 0 0 3px rgba(23, 105, 232, .09);
+}
+
+.region-field {
+  margin-top: 1px;
 }
 
 .redraw-field {
-  margin: 0;
+  margin: 1px 0 0;
   padding: 0;
   border: 0;
-}
-
-.redraw-field > p {
-  margin: 7px 0 12px;
-  color: #7a8799;
-  font-size: 13px;
 }
 
 .redraw-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
+  margin-top: 10px;
 }
 
 .redraw-option {
   position: relative;
-  min-height: 82px;
-  box-sizing: border-box;
-  padding: 13px;
+  min-height: 92px;
+  padding: 15px 14px;
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  border: 1px solid #dfe4ec;
-  border-radius: 11px;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
   background: #fff;
   cursor: pointer;
-  transition: .15s ease;
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+
+.redraw-option:hover {
+  border-color: #adc7f6;
 }
 
 .redraw-option.selected {
-  border-color: #7ca0ef;
-  background: #f4f7ff;
+  border-color: #367cf0;
+  background: #f6f9ff;
+  box-shadow: inset 0 0 0 1px rgba(54, 124, 240, .08);
 }
 
 .redraw-option input {
@@ -852,45 +1015,72 @@ th {
   pointer-events: none;
 }
 
-.check-mark {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
+.rule-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
   display: grid;
   place-items: center;
-  border: 1px solid #cbd4e2;
-  border-radius: 6px;
-  color: transparent;
+  border-radius: 50%;
+  background: #eaf3ff;
+  color: #1769e8;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.redraw-option:nth-child(2) .rule-icon {
+  font-size: 17px;
+}
+
+.redraw-option:nth-child(3) .rule-icon {
+  font-size: 12px;
+  letter-spacing: -1px;
+}
+
+.check-mark {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 50%;
   background: #fff;
-  font-size: 13px;
+  color: transparent;
+  font-size: 10px;
   font-weight: 900;
 }
 
 .redraw-option.selected .check-mark {
-  border-color: #275fe8;
-  background: #275fe8;
+  border-color: #1769e8;
+  background: #1769e8;
   color: #fff;
 }
 
 .rule-copy {
+  min-width: 0;
   display: grid;
-  gap: 5px;
+  gap: 6px;
 }
 
 .rule-copy strong {
+  color: #263143;
   font-size: 14px;
+  font-weight: 750;
 }
 
 .rule-copy small {
-  color: #7d899b;
-  font-size: 12px;
-  line-height: 1.45;
+  color: #7e8999;
+  font-size: 10px;
+  line-height: 1.55;
 }
 
 .form-error {
   padding: 10px 12px;
-  border-radius: 9px;
-  font-size: 13px;
+  border-radius: 7px;
+  font-size: 12px;
 }
 
 .modal-actions {
@@ -898,38 +1088,42 @@ th {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 4px;
+  padding-top: 3px;
+}
+
+.modal-actions .primary-button {
+  min-width: 116px;
 }
 
 .delete-modal {
-  width: min(480px, 100%);
+  width: min(470px, 100%);
   padding: 28px;
   text-align: center;
 }
 
 .delete-icon {
-  width: 52px;
-  height: 52px;
+  width: 50px;
+  height: 50px;
   margin: 0 auto 15px;
   display: grid;
   place-items: center;
   border-radius: 50%;
   background: #fff0ee;
   color: #d92d20;
-  font-size: 24px;
+  font-size: 23px;
   font-weight: 900;
 }
 
 .delete-modal > p {
   margin: 12px 0 0;
   color: #566279;
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 .delete-modal .delete-note {
   color: #8490a2;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .delete-modal .form-error {
@@ -941,9 +1135,9 @@ th {
   margin-top: 22px;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .project-page {
-    padding: 24px 16px 40px;
+    padding: 24px 18px 42px;
   }
 
   .page-header {
@@ -951,8 +1145,18 @@ th {
     flex-direction: column;
   }
 
-  .page-header .primary-button {
+  .create-button {
     align-self: flex-start;
+  }
+}
+
+@media (max-width: 700px) {
+  .modal-backdrop {
+    padding: 14px;
+  }
+
+  .editor-modal {
+    padding: 22px 18px;
   }
 
   .project-form {
@@ -963,12 +1167,14 @@ th {
     grid-column: auto;
   }
 
-  .redraw-options {
-    grid-template-columns: 1fr;
+  .field-label-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 
-  .editor-modal {
-    padding: 20px;
+  .redraw-options {
+    grid-template-columns: 1fr;
   }
 }
 </style>
