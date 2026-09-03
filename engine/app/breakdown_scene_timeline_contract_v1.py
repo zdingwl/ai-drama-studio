@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 
 SCENE_TIMELINE_SCHEMA_VERSION = "scene-timeline-v1"
@@ -64,6 +64,23 @@ class SceneTimelineDialogueV1(_StrictTimelineModel):
     text: str = Field(min_length=1, description="当前 Shot 上的 ASR 对白投影原文；G2 禁止改写、纠错或总结。")
     source_language: str | None = Field(default=None, description="ASR 已有语言标签；只用于后续完整对白确定性拼接。")
     speakers: list[str] = Field(default_factory=list, description="仅已有 SPEAKER 关系可映射时填写 Scene-local P*；不允许 G2 猜说话人。")
+
+    @model_serializer(mode="wrap")
+    def _serialize_legacy_compatible(self, handler):
+        """Do not make newly optional V2 fields appear in frozen historical G2 payloads.
+
+        Current assembler output always has a non-empty ``dialogue_group_id`` and therefore
+        keeps it. ``source_language`` is emitted only when ASR actually supplied one. This
+        lets old SceneTimeline JSON round-trip byte-shape-equivalently through P6/narrative
+        overlays instead of looking as if historical source facts had been rewritten.
+        """
+
+        payload = handler(self)
+        if self.dialogue_group_id is None:
+            payload.pop("dialogue_group_id", None)
+        if self.source_language is None:
+            payload.pop("source_language", None)
+        return payload
 
 
 class SceneTimelineOnScreenTextV1(_StrictTimelineModel):
