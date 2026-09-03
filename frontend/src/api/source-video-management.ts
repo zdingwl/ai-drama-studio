@@ -49,10 +49,40 @@ async function parseFetchError(response: Response): Promise<string> {
   return `请求失败（${response.status}）`
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isSourceVideoEpisode(value: unknown): value is SourceVideoEpisode {
+  if (!isRecord(value)) return false
+  return typeof value.id === 'string'
+    && value.id.length > 0
+    && typeof value.project_id === 'string'
+    && typeof value.title === 'string'
+    && typeof value.original_filename === 'string'
+    && typeof value.sort_order === 'number'
+    && Number.isFinite(value.sort_order)
+}
+
+function parseSourceVideoEpisode(value: unknown, context: string): SourceVideoEpisode {
+  if (!isSourceVideoEpisode(value)) {
+    throw new Error(`${context}返回格式异常：缺少有效的剧集基础字段`)
+  }
+  return value
+}
+
+function parseSourceVideoList(value: unknown): SourceVideoEpisode[] {
+  if (!Array.isArray(value)) {
+    throw new Error('原短剧视频接口返回格式异常：预期为视频数组')
+  }
+  return value.map((episode, index) => parseSourceVideoEpisode(episode, `原短剧视频第 ${index + 1} 项`))
+}
+
 export async function listProjectSourceVideos(projectId: string): Promise<SourceVideoEpisode[]> {
   const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/source-videos`)
   if (!response.ok) throw new Error(await parseFetchError(response))
-  return response.json() as Promise<SourceVideoEpisode[]>
+  const payload: unknown = await response.json()
+  return parseSourceVideoList(payload)
 }
 
 function uploadWithProgress(
@@ -80,13 +110,13 @@ function uploadWithProgress(
         reject(new Error(parseUploadError(xhr)))
         return
       }
-      const episode = xhr.response as SourceVideoEpisode | null
-      if (!episode?.id) {
-        reject(new Error('上传成功但服务端未返回剧集数据'))
-        return
+      try {
+        const episode = parseSourceVideoEpisode(xhr.response as unknown, '视频上传接口')
+        onProgress({ loaded: file.size, total: file.size, percent: 100 })
+        resolve(episode)
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error('上传成功但服务端未返回有效剧集数据'))
       }
-      onProgress({ loaded: file.size, total: file.size, percent: 100 })
-      resolve(episode)
     })
 
     xhr.addEventListener('error', () => reject(new Error('网络异常，视频上传失败')))
