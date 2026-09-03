@@ -149,7 +149,6 @@ def _replace_local_labels(text: str | None, replacements: Mapping[str, str]) -> 
     if not text:
         return text
     result = text
-    # 长标签优先，避免一个标签是另一个标签前缀时发生部分替换。
     for source in sorted(replacements, key=len, reverse=True):
         result = result.replace(source, replacements[source])
     return result
@@ -190,7 +189,6 @@ def _person_context(
         })
 
         source_label = str(subject.get("display_label") or "").strip()
-        # 只有 Scene 内唯一标签才允许做可读替换；重复标签时宁可保留原文也不错误绑定。
         if source_label and label_counts[source_label] == 1:
             label_replacements[source_label] = display_name
 
@@ -228,12 +226,7 @@ def _event_sort_key(event: Mapping[str, Any]) -> tuple[int, int, str]:
 
 
 def _dialogue_group_id(run_id: str, event: Mapping[str, Any]) -> str:
-    """给完整 ASR utterance 生成当前 BreakdownRun 内稳定的业务身份。
-
-    TimelineEvent.id 每次 Fusion 都会重建，而且跨镜对白会有多个 Event，所以不能作为完整对白 ID。
-    ``asr_segment_id`` 在一次 ASR 结果里可确定地标识原始 segment，但其 raw index 在 ASR 重跑后可能变化，
-    因此再绑定 ``run_id``：新 BreakdownRun 会形成新 group identity，并由 Source fingerprint 使旧下游结果失效。
-    """
+    """给完整 ASR utterance 生成当前 BreakdownRun 内稳定的业务身份。"""
 
     metadata = event.get("metadata")
     metadata_map = metadata if isinstance(metadata, Mapping) else {}
@@ -261,7 +254,6 @@ def _shot_people_and_performance(
     for presence in _records(shot.get("subjects")):
         subject_id = _subject_id_from_relation(presence)
         ref = ref_by_subject_id.get(subject_id)
-        # 关系落到了别的 Scene 的 LocalSubject 时不向当前 Scene 泄漏 identity。
         if not ref:
             continue
         if ref not in people:
@@ -274,8 +266,6 @@ def _shot_people_and_performance(
                 seen_performance.add(key)
                 performance.append({"text": activity, "people": [ref]})
 
-    # ACTION event 是 G1 已有事实，可补充 ShotLocalSubject activity 没覆盖的动作；不消费 VISUAL event，
-    # 因为当前 Shot 的核心画面仍以 Exact-Shot visual_description 为最高真相。
     for event in sorted(_records(shot.get("events")), key=_event_sort_key):
         if str(event.get("event_type") or "").strip().upper() != "ACTION":
             continue
@@ -459,10 +449,14 @@ def assemble_scene_timeline_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
             if shot_start_us < scene_start_us or shot_end_us > scene_end_us:
                 raise SceneTimelineAssemblyError(f"Shot {shot_ordinal} 时间范围超出所属 Scene")
 
+            shot_summary = _clean_text(shot.get("summary"), limit=4000)
+            shot_summary = _replace_local_labels(shot_summary, label_replacements)
+            narrative_function = _clean_text(shot.get("narrative_function_hint"), limit=1000)
+            narrative_function = _replace_local_labels(narrative_function, label_replacements)
+
             visual = _clean_text(shot.get("visual_description"), limit=4000)
             if not visual:
-                # ShotSemanticDraft.summary 仍是同一个 G1 Shot semantic 的保守后备，不使用 Scene/邻镜补事实。
-                visual = _clean_text(shot.get("summary"), limit=4000)
+                visual = shot_summary
             visual = _replace_local_labels(visual, label_replacements)
             if not visual:
                 missing_visual_count += 1
@@ -485,6 +479,8 @@ def assemble_scene_timeline_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
                 "duration_us": shot_end_us - shot_start_us,
                 "thumbnail_url": thumbnail_url,
                 "reference_url": reference_url,
+                "summary": shot_summary,
+                "narrative_function": narrative_function,
                 "visual_description": visual,
                 "people": shot_people,
                 "performance": performance,
@@ -535,7 +531,6 @@ def assemble_scene_timeline_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
         "scenes": scenes,
     }
 
-    # Contract 自校验也是泄漏保护：任何未声明的技术字段都会被 extra="forbid" 拒绝。
     return SceneTimelinePayloadV1.model_validate(result).model_dump(mode="json")
 
 
