@@ -1,0 +1,293 @@
+/* Keep AI breakdown on the same product shell as ProjectSourceVideosV5.
+ * Only outer page chrome is normalized here; the breakdown workbench itself stays untouched.
+ */
+
+.breakdown-page-v1 {
+  min-height: 100vh !important;
+  padding: 0 28px 42px !important;
+  background: #f6f8fc !important;
+}
+
+.breakdown-page-v1 .global-topbar {
+  position: static !important;
+  width: 100% !important;
+  max-width: 1700px !important;
+  min-height: 78px !important;
+  height: auto !important;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  border-bottom: 0 !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+}
+
+.breakdown-page-v1 .brand {
+  gap: 10px !important;
+  color: #1463ff !important;
+  white-space: nowrap !important;
+}
+
+.breakdown-page-v1 .brand strong {
+  color: #1463ff !important;
+  font-size: 19px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0 !important;
+}
+
+.breakdown-page-v1 .top-divider {
+  width: 1px !important;
+  height: 25px !important;
+  margin: 0 20px !important;
+  background: #dfe4ec !important;
+}
+
+.breakdown-page-v1 .breadcrumbs {
+  gap: 12px !important;
+  color: #748095 !important;
+  font-size: 14px !important;
+}
+
+.breakdown-page-v1 .breadcrumbs button {
+  color: #526078 !important;
+}
+
+.breakdown-page-v1 .breadcrumbs strong {
+  color: #1f2b42 !important;
+  font-weight: 700 !important;
+}
+
+.breakdown-page-v1 .help-button {
+  margin-left: auto !important;
+  min-height: 40px !important;
+  padding: 0 15px !important;
+  border: 1px solid #dce2ec !important;
+  border-radius: 9px !important;
+  background: #fff !important;
+  color: #303d55 !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+}
+
+.breakdown-page-v1 .help-button span {
+  width: 18px !important;
+  height: 18px !important;
+  border-color: currentColor !important;
+  font-size: 11px !important;
+}
+
+.breakdown-page-v1 .page-shell {
+  width: 100% !important;
+  max-width: 1700px !important;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  grid-template-columns: 272px minmax(0, 1fr) !important;
+  gap: 18px !important;
+}
+
+.breakdown-page-v1 .project-progress-card {
+  min-width: 272px !important;
+  min-height: calc(100vh - 118px) !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border: 1px solid #e3e8f0 !important;
+  border-radius: 12px !important;
+  background: #fff !important;
+  box-shadow: 0 6px 20px rgba(23, 43, 77, .035) !important;
+}
+
+.breakdown-page-v1 .progress-heading {
+  padding: 22px 20px 18px !important;
+  border-bottom: 1px solid #edf0f4 !important;
+}
+
+.breakdown-page-v1 .progress-heading > strong {
+  margin-bottom: 18px !important;
+  color: #14213a !important;
+  font-size: 15px !important;
+  font-weight: 800 !important;
+}
+
+.breakdown-page-v1 .progress-copy {
+  margin-bottom: 10px !important;
+  color: #65728a !important;
+  font-size: 13px !important;
+}
+
+.breakdown-page-v1 .progress-copy b {
+  color: #1463ff !important;
+  font-size: 15px !important;
+}
+
+.breakdown-page-v1 .progress-track {
+  height: 7px !important;
+  margin-top: 0 !important;
+  background: #e8edf7 !important;
+}
+
+.breakdown-page-v1 .progress-track span {
+  background: #1463ff !important;
+}
+
+.breakdown-page-v1 .stage-list {
+  position: relative !important;
+  flex: 1 !important;
+  margin-top: 0 !important;
+  padding: 6px 0 10px !important;
+}
+
+.breakdown-page-v1 .stage-list::before {
+  left: 32px !important;
+  top: 28px !important;
+  bottom: 42px !important;
+  background: #e1e6ef !important;
+}
+
+.breakdown-page-v1 .stage-item {
+  width: 100% !important;
+  min-height: 82px !important;
+  margin: 0 !important;
+  padding: 16px 16px 13px 58px !important;
+  display: block !important;
+  border: 0 !important;
+  border-left: 3px solid transparent !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.breakdown-page-v1 .stage-item.active {
+  min-height: 116px !important;
+  border-left-color: #1463ff !important;
+  background: #f2f6ff !important;
+}
+
+.breakdown-page-v1 .stage-number {
+  position: absolute !important;
+  left: 19px !important;
+  top: 16px !important;
+  width: 27px !important;
+  height: 27px !important;
+  background: #e8ecf2 !important;
+  color: #65728a !important;
+  font-size: 12px !important;
+}
+
+.breakdown-page-v1 .stage-item.state-complete .stage-number {
+  background: #e1f4e9 !important;
+  color: #2f9760 !important;
+}
+
+.breakdown-page-v1 .stage-item.active .stage-number {
+  background: #1463ff !important;
+  color: #fff !important;
+}
+
+.breakdown-page-v1 .stage-copy {
+  width: 100% !important;
+  min-width: 0 !important;
+  display: grid !important;
+  gap: 4px !important;
+}
+
+.breakdown-page-v1 .stage-copy strong {
+  display: block !important;
+  color: #26334a !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  line-height: 1.35 !important;
+}
+
+.breakdown-page-v1 .stage-item.active .stage-copy strong {
+  color: #1760e7 !important;
+}
+
+.breakdown-page-v1 .stage-copy small {
+  display: block !important;
+  color: #7c8798 !important;
+  font-size: 11px !important;
+  line-height: 1.45 !important;
+}
+
+.breakdown-page-v1 .stage-copy em {
+  display: block !important;
+  margin-top: 1px !important;
+  color: #98a2b3 !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
+}
+
+.breakdown-page-v1 .stage-item.active .stage-copy em {
+  color: #1760e7 !important;
+}
+
+.breakdown-page-v1 .stage-item.state-complete .stage-copy em {
+  color: #079455 !important;
+}
+
+.breakdown-page-v1 .back-projects {
+  min-height: 43px !important;
+  height: auto !important;
+  margin: 18px !important;
+  border: 1px solid #d8e0eb !important;
+  border-radius: 8px !important;
+  background: #fff !important;
+  color: #35435b !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+}
+
+.breakdown-page-v1 .page-heading-card,
+.breakdown-page-v1 .panel-card {
+  border-color: #e3e8f0 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 20px rgba(23, 43, 77, .035) !important;
+}
+
+.breakdown-page-v1 .page-heading-card {
+  min-height: 108px !important;
+  padding: 18px 25px !important;
+}
+
+@media (max-width: 1180px) {
+  .breakdown-page-v1 .page-shell {
+    grid-template-columns: 250px minmax(0, 1fr) !important;
+  }
+
+  .breakdown-page-v1 .project-progress-card {
+    min-width: 250px !important;
+  }
+}
+
+@media (max-width: 1080px) {
+  .breakdown-page-v1 {
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+  }
+
+  .breakdown-page-v1 .page-shell {
+    grid-template-columns: 1fr !important;
+  }
+
+  .breakdown-page-v1 .project-progress-card {
+    min-width: 0 !important;
+    min-height: auto !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .breakdown-page-v1 {
+    padding: 0 14px 28px !important;
+  }
+
+  .breakdown-page-v1 .global-topbar {
+    min-height: 68px !important;
+  }
+
+  .breakdown-page-v1 .top-divider,
+  .breakdown-page-v1 .breadcrumbs span,
+  .breakdown-page-v1 .breadcrumbs strong,
+  .breakdown-page-v1 .help-button {
+    display: none !important;
+  }
+}
