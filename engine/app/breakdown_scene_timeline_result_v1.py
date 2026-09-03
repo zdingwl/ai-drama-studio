@@ -1,11 +1,12 @@
 """G2.5 ordinary-user Scene Timeline result resolver and Narrative artifact store.
 
 This layer is intentionally thin:
-- frozen G2.2 assembler remains the only source of Scene/Shot truth;
+- frozen G2.2 assembler remains the only source of Scene/Shot AI evidence;
 - frozen G2.3/G2.4 code remains the only authority allowed to validate/apply Narrative text;
 - GET/read paths never start Qwen or any other model;
 - accepted Narrative overlays are materialized explicitly into the Episode workspace and revalidated
   against Run / ShotRevision / Scene source fingerprints every time they are consumed;
+- explicit user corrections are projected last from a ShotRevision-scoped manual artifact;
 - primary user payloads remain exactly ``scene-timeline-v1`` and never expose support Fxxxx,
   Evidence IDs, LocalSubject IDs, provider/model diagnostics or raw validator output.
 """
@@ -20,6 +21,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from engine.app import studio_v2
+from engine.app.breakdown_manual_override_v1 import apply_manual_overrides_v1
 from engine.app.breakdown_scene_grounding_v1 import build_scene_grounding_packet_v1
 from engine.app.breakdown_scene_narrative_contract_v1 import SceneNarrativeOverlayPayloadV1
 from engine.app.breakdown_scene_narrative_v1 import apply_scene_narrative_overlay_v1
@@ -102,12 +104,7 @@ def _revalidate_overlay_v1(
     timeline: Mapping[str, Any],
     overlay: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Prove that persisted claims are still exactly what frozen G2.4 accepts for this Timeline.
-
-    ``SceneNarrativeOverlayPayloadV1`` proves shape, not provenance. Replaying each stored claim through
-    the frozen validator prevents a hand-written artifact with a correct fingerprint from bypassing
-    the G2.4 support/ASR-authority rules.
-    """
+    """Prove that persisted claims are still exactly what frozen G2.4 accepts for this Timeline."""
 
     normalized_timeline = SceneTimelinePayloadV1.model_validate(timeline).model_dump(mode="json")
     normalized_overlay = SceneNarrativeOverlayPayloadV1.model_validate(overlay)
@@ -117,7 +114,6 @@ def _revalidate_overlay_v1(
     if actual_ordinals != expected_ordinals:
         raise SceneNarrativeArtifactError("Scene Narrative artifact 未覆盖当前 Timeline 的全部 Scene")
 
-    # Frozen apply gate checks Run/ShotRevision/Episode anchors, scene ordinals and fingerprints.
     apply_scene_narrative_overlay_v1(normalized_timeline, normalized_overlay)
 
     for scene in normalized_overlay.scenes:
@@ -147,12 +143,7 @@ def persist_scene_narrative_overlay_v1(
     draft: Mapping[str, Any],
     overlay: Mapping[str, Any],
 ) -> Path:
-    """Atomically materialize one G2.4-accepted overlay for future read-only API use.
-
-    Before writing, this function assembles the frozen deterministic Timeline, replays every claim
-    through the frozen G2.4 validator, and calls the frozen overlay application gate. The raw artifact
-    may retain developer-only support references, but it is never returned by the primary API.
-    """
+    """Atomically materialize one G2.4-accepted overlay for future read-only API use."""
 
     assert_scene_timeline_ready_draft_v1(draft)
     timeline = assemble_scene_timeline_v1(draft)
@@ -189,8 +180,14 @@ def load_scene_narrative_overlay_v1(draft: Mapping[str, Any]) -> dict[str, Any] 
         raise SceneNarrativeArtifactError("Scene Narrative artifact 无法安全读取") from exc
 
 
+def _with_manual_overrides(draft: Mapping[str, Any], timeline: Mapping[str, Any]) -> dict[str, Any]:
+    """Manual user facts are projected after AI/narrative organization and before downstream use."""
+
+    return apply_manual_overrides_v1(draft, timeline)
+
+
 def build_scene_timeline_result_v1(draft: Mapping[str, Any]) -> dict[str, Any]:
-    """Build the ordinary-user G2.5 payload without any model execution or business writes."""
+    """Build the ordinary-user G2.5 payload without any model execution or AI-evidence writes."""
 
     assert_scene_timeline_ready_draft_v1(draft)
     timeline = assemble_scene_timeline_v1(draft)
@@ -198,23 +195,22 @@ def build_scene_timeline_result_v1(draft: Mapping[str, Any]) -> dict[str, Any]:
     try:
         overlay = load_scene_narrative_overlay_v1(draft)
     except SceneNarrativeArtifactError:
-        return _append_user_warning(timeline, NARRATIVE_FALLBACK_WARNING)
+        return _with_manual_overrides(draft, _append_user_warning(timeline, NARRATIVE_FALLBACK_WARNING))
 
     if overlay is None:
-        return _append_user_warning(timeline, NARRATIVE_MISSING_WARNING)
+        return _with_manual_overrides(draft, _append_user_warning(timeline, NARRATIVE_MISSING_WARNING))
 
     try:
         normalized_overlay = _revalidate_overlay_v1(timeline, overlay)
         applied = apply_scene_narrative_overlay_v1(timeline, normalized_overlay)
     except (ValidationError, SceneNarrativeValidationError, SceneNarrativeArtifactError, ValueError):
-        return _append_user_warning(timeline, NARRATIVE_FALLBACK_WARNING)
+        return _with_manual_overrides(draft, _append_user_warning(timeline, NARRATIVE_FALLBACK_WARNING))
 
-    # Never expose raw organizer/validator warnings; collapse them to one ordinary-user fallback note.
     if normalized_overlay["status"] == "READY_WITH_WARNINGS":
         applied = _append_user_warning(applied, NARRATIVE_PARTIAL_WARNING)
 
-    # The frozen strict contract is the final leak guard: raw support/provenance cannot survive here.
-    return SceneTimelinePayloadV1.model_validate(applied).model_dump(mode="json")
+    strict = SceneTimelinePayloadV1.model_validate(applied).model_dump(mode="json")
+    return _with_manual_overrides(draft, strict)
 
 
 __all__ = [
