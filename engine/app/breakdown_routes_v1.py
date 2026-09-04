@@ -75,12 +75,21 @@ def _not_found(message: str) -> HTTPException:
     return HTTPException(status_code=404, detail=message)
 
 
-def _active_task(project_id: str, task_type: str, episode_id: str | None) -> dict[str, Any] | None:
+def _active_task(
+    project_id: str,
+    task_type: str,
+    episode_id: str | None,
+    *,
+    title: str | None = None,
+) -> dict[str, Any] | None:
+    """Return only an exact command duplicate, not another Shot task in the same Episode."""
+
     for task in list_project_tasks(project_id, limit=100):
         if (
             task["task_type"] == task_type
             and task.get("episode_id") == episode_id
             and task["status"] in ACTIVE_TASK_STATUSES
+            and (title is None or task.get("title") == title)
         ):
             return task
     return None
@@ -117,8 +126,9 @@ def _enqueue(
     total_items: int | None,
 ) -> dict[str, Any]:
     with _P2_ENQUEUE_LOCK:
-        # Exact duplicate clicks remain idempotent: return the already-active task.
-        existing = _active_task(project_id, task_type, episode_id)
+        # Exact duplicate clicks remain idempotent. For Shot tasks the title contains the Shot ordinal,
+        # therefore Shot 03 cannot be mistaken for an active Shot 04 command.
+        existing = _active_task(project_id, task_type, episode_id, title=title)
         if existing is not None:
             return existing
         # Episode/batch/single-Shot P2 jobs must never run concurrently on the same local GPU/runtime.
