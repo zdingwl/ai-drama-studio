@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { breakdownApi } from '../api/breakdown'
 import { api } from '../api/client'
 import { getProjectFlowState } from '../api/project-flow-state'
-import { sceneTimelineApi } from '../api/scene-timeline'
+import { sceneTimelineApi, type SceneTimelineManualShotEdit } from '../api/scene-timeline'
 import { evaluateBreakdownShotQuality } from '../breakdown-quality'
 import type { BreakdownRunSummary } from '../types/breakdown'
 import type { ProjectFlowStage, ProjectFlowState } from '../types/project-flow-state'
@@ -22,6 +22,7 @@ type ShotFilter = 'all' | 'unprocessed' | 'review' | 'failed'
 type ShotUiStatus = 'completed' | 'unprocessed' | 'review' | 'failed'
 type DetailTab = 'shot' | 'people' | 'assets' | 'dialogue' | 'remake'
 type StageVisualState = 'complete' | 'active' | 'processing' | 'review' | 'waiting'
+type ManualEditMode = 'summary' | 'performance' | 'camera' | 'scene' | 'dialogue'
 
 interface TimelineShotContext {
   scene: SceneTimelineScene
@@ -47,6 +48,13 @@ interface PendingItem {
   key: string
   label: string
   tone: 'orange' | 'blue' | 'red'
+}
+
+interface ManualEditField {
+  key: string
+  label: string
+  value: string
+  multiline?: boolean
 }
 
 const PAGE_SIZE = 8
@@ -78,6 +86,13 @@ const currentPage = ref(1)
 const startInput = ref('')
 const endInput = ref('')
 const helpOpen = ref(false)
+const manualEditOpen = ref(false)
+const manualEditMode = ref<ManualEditMode>('summary')
+const manualEditTitle = ref('')
+const manualEditFields = ref<ManualEditField[]>([])
+const manualEditDialogueIndex = ref<number | null>(null)
+const manualEditSaving = ref(false)
+const manualEditError = ref('')
 
 let episodeRequestSerial = 0
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -102,10 +117,6 @@ function shotTaskOrdinal(task: BackgroundTask): number | null {
   const ordinal = Number(match[1])
   return Number.isInteger(ordinal) && ordinal > 0 ? ordinal : null
 }
-
-const latestEpisodeBreakdownTask = computed(() => tasks.value
-  .filter((task) => isBreakdownTask(task) && (task.episode_id === selectedEpisodeId.value || task.episode_id === null))
-  .sort((a, b) => taskTimestamp(b) - taskTimestamp(a))[0] || null)
 
 const activeBreakdownTask = computed(() => tasks.value
   .filter((task) => (
@@ -456,9 +467,120 @@ function selectStage(item: StageDisplay): void {
   if (item.number === 5) void router.push({ name: 'output', params: { projectId: projectId.value } })
 }
 
-function showEditUnavailable(label: string): void {
-  actionError.value = ''
-  actionMessage.value = `${label}编辑入口已按设计稿预留；当前后端还没有对应的安全写接口，本轮不做前端假保存。`
+function goSourceConfirm(): void {
+  const query: Record<string, string> = {}
+  if (selectedEpisodeId.value) query.episode = selectedEpisodeId.value
+  if (selectedShot.value) query.shot = String(selectedShot.value.ordinal)
+  void router.push({ name: 'source-confirm', params: { projectId: projectId.value }, query })
+}
+
+function manualFieldValue(key: string): string {
+  return manualEditFields.value.find((field) => field.key === key)?.value || ''
+}
+
+function openManualEditor(mode: ManualEditMode, dialogueIndex: number | null = null): void {
+  const shot = selectedTimelineShot.value
+  const scene = selectedScene.value
+  if (!shot || !scene || !selectedShot.value) return
+
+  manualEditMode.value = mode
+  manualEditDialogueIndex.value = dialogueIndex
+  manualEditError.value = ''
+
+  if (mode === 'summary') {
+    manualEditTitle.value = '内容概要'
+    manualEditFields.value = [{ key: 'summary', label: '内容概要', value: contentOverview.value === '暂无当前镜头内容概要' ? '' : contentOverview.value, multiline: true }]
+  } else if (mode === 'performance') {
+    manualEditTitle.value = '动作与表演'
+    manualEditFields.value = [{ key: 'performance_text', label: '动作与表演', value: performanceTexts.value.join('；'), multiline: true }]
+  } else if (mode === 'camera') {
+    manualEditTitle.value = '镜头语言'
+    manualEditFields.value = [
+      { key: 'shot_type', label: '景别', value: cameraShotType.value === '—' ? '' : cameraShotType.value },
+      { key: 'composition', label: '构图', value: cameraComposition.value === '—' ? '' : cameraComposition.value, multiline: true },
+      { key: 'camera_motion', label: '运镜', value: cameraMotion.value === '—' ? '' : cameraMotion.value },
+    ]
+  } else if (mode === 'scene') {
+    manualEditTitle.value = '画面信息'
+    manualEditFields.value = [
+      { key: 'time_of_day', label: '时间', value: timeOfDay.value === '—' ? '' : timeOfDay.value },
+      { key: 'interior_exterior', label: '空间', value: interiorExterior.value === '—' ? '' : interiorExterior.value },
+      { key: 'environment', label: '环境 / 氛围', value: sceneEnvironment.value === '暂无环境描述' ? '' : sceneEnvironment.value, multiline: true },
+    ]
+  } else {
+    const dialogue = dialogueIndex === null ? null : selectedDialogue.value[dialogueIndex]
+    if (!dialogue || dialogueIndex === null) return
+    manualEditTitle.value = `对白 ${String(dialogueIndex + 1).padStart(2, '0')}`
+    manualEditFields.value = [{ key: 'dialogue_text', label: '最终源对白', value: dialogue.text, multiline: true }]
+  }
+
+  manualEditOpen.value = true
+}
+
+function closeManualEditor(): void {
+  if (manualEditSaving.value) return
+  manualEditOpen.value = false
+  manualEditError.value = ''
+  manualEditFields.value = []
+  manualEditDialogueIndex.value = null
+}
+
+async function saveManualEdit(): Promise<void> {
+  const shot = selectedShot.value
+  if (!shot || !selectedEpisodeId.value || manualEditSaving.value) return
+
+  const payload: SceneTimelineManualShotEdit = {}
+  if (manualEditMode.value === 'summary') {
+    payload.summary = manualFieldValue('summary')
+  } else if (manualEditMode.value === 'performance') {
+    payload.performance_text = manualFieldValue('performance_text')
+  } else if (manualEditMode.value === 'camera') {
+    payload.shot_type = manualFieldValue('shot_type')
+    payload.composition = manualFieldValue('composition')
+    payload.camera_motion = manualFieldValue('camera_motion')
+  } else if (manualEditMode.value === 'scene') {
+    payload.scene = {
+      time_of_day: manualFieldValue('time_of_day'),
+      interior_exterior: manualFieldValue('interior_exterior'),
+      environment: manualFieldValue('environment'),
+    }
+  } else {
+    const dialogueIndex = manualEditDialogueIndex.value
+    const dialogueText = manualFieldValue('dialogue_text').trim()
+    if (dialogueIndex === null) return
+    if (!dialogueText) {
+      manualEditError.value = '对白不能为空。'
+      return
+    }
+    payload.dialogues = [{ index: dialogueIndex, text: dialogueText }]
+  }
+
+  manualEditSaving.value = true
+  manualEditError.value = ''
+  try {
+    timeline.value = await sceneTimelineApi.editShot(selectedEpisodeId.value, shot.ordinal, payload)
+    actionError.value = ''
+    actionMessage.value = `${manualEditTitle.value}已保存；人工修改只覆盖当前显示事实，不改写 AI 原始证据。`
+    manualEditOpen.value = false
+    manualEditFields.value = []
+    manualEditDialogueIndex.value = null
+  } catch (err) {
+    manualEditError.value = err instanceof Error ? err.message : '保存失败，请稍后重试。'
+  } finally {
+    manualEditSaving.value = false
+  }
+}
+
+function handlePendingItem(item: PendingItem): void {
+  if (item.key === 'person' || item.key === 'dialogue') {
+    goSourceConfirm()
+    return
+  }
+  if (item.key === 'failed') {
+    void startEpisodeBreakdown(true)
+    return
+  }
+  detailTab.value = 'shot'
 }
 
 async function loadProjectContext(): Promise<void> {
@@ -649,6 +771,10 @@ function onTaskFinished(event: Event): void {
   void refreshAll(false)
 }
 
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && manualEditOpen.value && !manualEditSaving.value) closeManualEditor()
+}
+
 watch(searchText, () => { currentPage.value = 1 })
 watch(selectedShotId, syncBoundaryInputs)
 watch(totalPages, (value) => { if (currentPage.value > value) currentPage.value = value })
@@ -656,6 +782,7 @@ watch(totalPages, (value) => { if (currentPage.value > value) currentPage.value 
 onMounted(async () => {
   window.addEventListener('studio-task-created', onTaskCreated)
   window.addEventListener('studio-task-finished', onTaskFinished)
+  window.addEventListener('keydown', onKeydown)
   await refreshAll(true)
   pollTimer = setInterval(() => {
     if (activeBreakdownTask.value) void refreshAll(false)
@@ -665,6 +792,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('studio-task-created', onTaskCreated)
   window.removeEventListener('studio-task-finished', onTaskFinished)
+  window.removeEventListener('keydown', onKeydown)
   if (pollTimer) clearInterval(pollTimer)
 })
 </script>
@@ -831,56 +959,58 @@ onBeforeUnmount(() => {
               <template v-if="selectedShot && selectedTimelineShot && selectedScene">
                 <template v-if="detailTab === 'shot'">
                   <section class="info-card editable-card">
-                    <div class="info-card-title"><h3>内容概要</h3><button type="button" @click="showEditUnavailable('内容概要')">✎ 编辑</button></div>
+                    <div class="info-card-title"><h3>内容概要</h3><button type="button" @click="openManualEditor('summary')">✎ 编辑</button></div>
                     <p class="summary-paragraph">{{ contentOverview }}</p>
                   </section>
 
                   <section class="info-card editable-card">
-                    <div class="info-card-title"><h3>动作与表演</h3><button type="button" @click="showEditUnavailable('动作与表演')">✎ 编辑</button></div>
+                    <div class="info-card-title"><h3>动作与表演</h3><button type="button" @click="openManualEditor('performance')">✎ 编辑</button></div>
                     <dl class="field-list"><div><dt>动作</dt><dd>{{ actionSummary }}</dd></div><div><dt>表情</dt><dd>{{ expressionSummary }}</dd></div><div><dt>姿态</dt><dd>{{ postureSummary }}</dd></div><div><dt>视线</dt><dd>{{ gazeSummary }}</dd></div><div><dt>人物交互</dt><dd>{{ interactionSummary }}</dd></div></dl>
                   </section>
 
                   <section class="info-card editable-card">
-                    <div class="info-card-title"><h3>镜头语言</h3><button type="button" @click="showEditUnavailable('镜头语言')">✎ 编辑</button></div>
+                    <div class="info-card-title"><h3>镜头语言</h3><button type="button" @click="openManualEditor('camera')">✎ 编辑</button></div>
                     <dl class="field-list"><div><dt>景别</dt><dd>{{ cameraShotType }}</dd></div><div><dt>机位</dt><dd>未独立识别</dd></div><div><dt>构图</dt><dd>{{ cameraComposition }}</dd></div><div><dt>运镜</dt><dd>{{ cameraMotion }}</dd></div></dl>
                   </section>
 
                   <section class="info-card editable-card">
-                    <div class="info-card-title"><h3>画面</h3><button type="button" @click="showEditUnavailable('画面信息')">✎ 编辑</button></div>
+                    <div class="info-card-title"><h3>画面</h3><button type="button" @click="openManualEditor('scene')">✎ 编辑</button></div>
                     <dl class="field-list"><div><dt>时间</dt><dd>{{ timeOfDay }}</dd></div><div><dt>空间</dt><dd>{{ interiorExterior }}</dd></div><div><dt>光线</dt><dd>暂无独立光线描述</dd></div><div><dt>氛围</dt><dd>{{ sceneEnvironment }}</dd></div></dl>
                   </section>
 
                   <section class="pending-card">
                     <div class="pending-title"><strong>待处理事项（本分镜）</strong><span>{{ selectedPendingItems.length ? `${selectedPendingItems.length} 项` : '已处理' }}</span></div>
-                    <div v-if="selectedPendingItems.length" class="pending-grid"><div v-for="item in selectedPendingItems" :key="item.key" :class="['pending-item', item.tone]"><i>!</i><span>{{ item.label }}</span><b>1</b></div></div>
+                    <div v-if="selectedPendingItems.length" class="pending-grid">
+                      <button v-for="item in selectedPendingItems" :key="item.key" type="button" :class="['pending-item', item.tone]" @click="handlePendingItem(item)"><i>!</i><span>{{ item.label }}</span><b>1</b></button>
+                    </div>
                     <div v-else class="pending-clear">✓ 当前分镜没有阻塞项</div>
-                    <p v-if="selectedPendingItems.length">可进入原片确认前还需处理 <b>{{ selectedPendingItems.length }}</b> 项</p>
+                    <p v-if="selectedPendingItems.length">可进入原片确认前还需处理 <b>{{ selectedPendingItems.length }}</b> 项；点击对应项可直接处理。</p>
                   </section>
                 </template>
 
                 <template v-else-if="detailTab === 'people'">
-                  <section class="tab-heading-row"><div><strong>当前分镜人物</strong><span>{{ selectedPeople.length }} 人</span></div><button type="button" @click="showEditUnavailable('本集人物管理')">管理本集人物</button></section>
+                  <section class="tab-heading-row"><div><strong>当前分镜人物</strong><span>{{ selectedPeople.length }} 人</span></div><button type="button" @click="goSourceConfirm">管理本集人物</button></section>
                   <section v-if="selectedPeople.length" class="person-list">
                     <article v-for="person in selectedPeople" :key="person.ref" class="person-card">
                       <span class="person-avatar"><img v-if="person.final_character?.cover_url" :src="person.final_character.cover_url" alt="" /><b v-else>{{ personDisplayName(person).slice(0, 1) }}</b></span>
-                      <div class="person-copy"><div><strong>{{ personDisplayName(person) }}</strong><em :class="{ pending: !person.final_character }">{{ person.final_character ? '✓ 已自动绑定' : '! 待确认人物' }}</em></div><p>{{ person.appearance || '暂无人物外观补充描述' }}</p><button type="button" @click="showEditUnavailable('人物绑定')">修改人物</button></div>
+                      <div class="person-copy"><div><strong>{{ personDisplayName(person) }}</strong><em :class="{ pending: !person.final_character }">{{ person.final_character ? '✓ 已自动绑定' : '! 待确认人物' }}</em></div><p>{{ person.appearance || '暂无人物外观补充描述' }}</p><button type="button" @click="goSourceConfirm">修改人物</button></div>
                     </article>
                   </section>
                   <div v-else class="tab-empty">当前分镜没有识别到人物</div>
                 </template>
 
                 <template v-else-if="detailTab === 'assets'">
-                  <section class="info-card editable-card"><div class="info-card-title"><h3>场景</h3><button type="button" @click="showEditUnavailable('场景')">✎ 编辑</button></div><dl class="field-list"><div><dt>名称</dt><dd>{{ sceneName }}</dd></div><div><dt>环境</dt><dd>{{ sceneEnvironment }}</dd></div><div><dt>时间</dt><dd>{{ timeOfDay }}</dd></div></dl></section>
-                  <section class="info-card editable-card"><div class="info-card-title"><h3>道具</h3><button type="button" @click="showEditUnavailable('道具')">＋ 添加道具</button></div><div v-if="selectedProps.length" class="prop-list"><div v-for="prop in selectedProps" :key="`${prop.name}-${prop.interaction}`"><span>{{ prop.name.slice(0, 1) }}</span><p><b>{{ prop.name }}</b><small>{{ prop.interaction }}</small></p></div></div><div v-else class="tab-empty compact">当前分镜没有关键道具</div></section>
+                  <section class="info-card editable-card"><div class="info-card-title"><h3>场景</h3><button type="button" @click="goSourceConfirm">去原片确认</button></div><dl class="field-list"><div><dt>名称</dt><dd>{{ sceneName }}</dd></div><div><dt>环境</dt><dd>{{ sceneEnvironment }}</dd></div><div><dt>时间</dt><dd>{{ timeOfDay }}</dd></div></dl></section>
+                  <section class="info-card editable-card"><div class="info-card-title"><h3>道具</h3><button type="button" @click="goSourceConfirm">管理道具</button></div><div v-if="selectedProps.length" class="prop-list"><div v-for="prop in selectedProps" :key="`${prop.name}-${prop.interaction}`"><span>{{ prop.name.slice(0, 1) }}</span><p><b>{{ prop.name }}</b><small>{{ prop.interaction }}</small></p></div></div><div v-else class="tab-empty compact">当前分镜没有关键道具</div></section>
                 </template>
 
                 <template v-else-if="detailTab === 'dialogue'">
                   <section v-if="selectedDialogue.length" class="dialogue-list">
                     <article v-for="(dialogue, index) in selectedDialogue" :key="`${dialogue.start_us}-${dialogue.end_us}-${index}`">
-                      <header><span>对白 {{ String(index + 1).padStart(2, '0') }}</span><button type="button" @click="showEditUnavailable('对白')">✎ 编辑</button></header>
+                      <header><span>对白 {{ String(index + 1).padStart(2, '0') }}</span><button type="button" @click="openManualEditor('dialogue', index)">✎ 编辑文本</button></header>
                       <div class="dialogue-speaker"><span>说话人</span><strong>{{ dialogueSpeaker(dialogue) }}</strong></div>
                       <p>{{ dialogue.text }}</p>
-                      <footer><span>{{ formatTimeUs(dialogue.start_us) }} → {{ formatTimeUs(dialogue.end_us) }}</span><em>{{ dialogue.speakers.length ? '已绑定说话人' : '需要确认说话人' }}</em></footer>
+                      <footer><span>{{ formatTimeUs(dialogue.start_us) }} → {{ formatTimeUs(dialogue.end_us) }}</span><em>{{ dialogue.speakers.length ? '已绑定说话人' : '需要确认说话人' }}</em><button v-if="!dialogue.speakers.length" type="button" @click="goSourceConfirm">确认说话人</button></footer>
                     </article>
                   </section>
                   <div v-else class="tab-empty">本镜头无对白</div>
@@ -900,7 +1030,30 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="helpOpen" class="modal-backdrop" @click.self="helpOpen = false">
-      <section class="help-dialog"><header><strong>AI 拉片操作说明</strong><button type="button" @click="helpOpen = false">×</button></header><div><p>1. 选择剧集后，可查看每个分镜的 Reference Clip、时间范围和拉片结果。</p><p>2. 当前页面按设计稿预留镜头、人物、场景道具、对白和重拍信息编辑入口；没有安全写接口的字段不会做前端假保存。</p><p>3. “当前分镜拉片 / 重新拉片”只重跑当前 Shot：ASR / OCR 只处理当前分镜，VLM 最多读取前后相邻镜头作为上下文；不会重跑整集。</p></div></section>
+      <section class="help-dialog"><header><strong>AI 拉片操作说明</strong><button type="button" @click="helpOpen = false">×</button></header><div><p>1. 选择剧集后，可查看每个分镜的 Reference Clip、时间范围和拉片结果。</p><p>2. 内容概要、动作与表演、镜头语言、画面信息和对白文本可在本页直接人工修正；人物、场景、道具和说话人进入“原片确认”统一修改。</p><p>3. “当前分镜拉片 / 重新拉片”只重跑当前 Shot：ASR / OCR 只处理当前分镜，VLM 最多读取前后相邻镜头作为上下文；不会重跑整集。</p></div></section>
+    </div>
+
+    <div v-if="manualEditOpen" class="breakdown-manual-editor-backdrop" @click.self="closeManualEditor">
+      <section class="breakdown-manual-editor-dialog" role="dialog" aria-modal="true" :aria-label="`编辑${manualEditTitle}`">
+        <header>
+          <div><strong>编辑{{ manualEditTitle }}</strong><span>Shot {{ selectedShot ? String(selectedShot.ordinal).padStart(2, '0') : '—' }} · 人工修改会覆盖当前显示事实，但不会改写 AI 原始证据</span></div>
+          <button type="button" :disabled="manualEditSaving" aria-label="关闭" @click="closeManualEditor">×</button>
+        </header>
+        <form @submit.prevent="saveManualEdit">
+          <div class="breakdown-manual-editor-fields">
+            <label v-for="field in manualEditFields" :key="field.key" class="breakdown-manual-editor-field">
+              <span>{{ field.label }}</span>
+              <textarea v-if="field.multiline" v-model="field.value" rows="5"></textarea>
+              <input v-else v-model="field.value" type="text" />
+            </label>
+          </div>
+          <p v-if="manualEditError" class="breakdown-manual-editor-error">{{ manualEditError }}</p>
+          <footer>
+            <button type="button" class="editor-cancel" :disabled="manualEditSaving" @click="closeManualEditor">取消</button>
+            <button type="submit" class="editor-save" :disabled="manualEditSaving">{{ manualEditSaving ? '保存中…' : '保存修改' }}</button>
+          </footer>
+        </form>
+      </section>
     </div>
   </div>
 </template>
