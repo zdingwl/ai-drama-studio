@@ -168,6 +168,27 @@
   cursor: not-allowed;
 }
 
+.breakdown-page-v2 .pending-item {
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .16s ease, background .16s ease;
+}
+
+.breakdown-page-v2 .pending-item:hover {
+  border-color: #bfd4ff;
+  background: #f6f9ff;
+}
+
+.breakdown-page-v2 .dialogue-list footer button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #1769e8;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 @media (max-width: 640px) {
   .breakdown-manual-editor-backdrop { padding: 12px; }
   .breakdown-manual-editor-dialog { width: 100%; }
