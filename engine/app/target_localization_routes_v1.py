@@ -8,6 +8,8 @@ from engine.app.generation_segment_routes_v1 import router as generation_segment
 from engine.app.h3_generation_routes_v1 import router as h3_generation_router
 from engine.app.remake_timeline_routes_v1 import router as remake_timeline_router
 from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError
+from engine.app.studio_v2 import get_session
+from engine.app.target_character_auto_design_v1 import generate_target_characters_only_v1
 from engine.app.target_dialogue_routes_v1 import router as target_dialogue_router
 from engine.app.target_localization_contract_v1 import (
     SceneLocalizationMappingV1,
@@ -20,7 +22,9 @@ from engine.app.target_localization_runtime_guard_v1 import (
     validate_target_localization_generation_v1,
 )
 from engine.app.target_localization_v1 import (
+    TargetCharacter,
     TargetLocalizationError,
+    _serialize_character,
     delete_scene_localization_v1,
     delete_target_character_v1,
     generate_target_localization_v1,
@@ -41,6 +45,11 @@ class TargetCharacterEditRequest(BaseModel):
     target_name: str = Field(min_length=1, max_length=200)
     appearance_profile: str = Field(min_length=1, max_length=8000)
     generation_prompt: str = Field(min_length=1, max_length=8000)
+    expected_updated_at: str | None = None
+
+
+class TargetCharacterAutoDesignRequest(BaseModel):
+    expected_revision: str = Field(min_length=1, max_length=128)
 
 
 class SceneLocalizationEditRequest(BaseModel):
@@ -74,6 +83,21 @@ def api_generate_target_localization(project_id: str):
         raise _error(exc) from exc
 
 
+@router.post("/projects/{project_id}/target-characters/auto-design")
+def api_auto_design_target_characters(project_id: str, payload: TargetCharacterAutoDesignRequest):
+    """Run only target-character localization; scene localization is intentionally untouched."""
+    try:
+        return generate_target_characters_only_v1(
+            project_id,
+            expected_revision=payload.expected_revision,
+        )
+    except ValueError as exc:
+        # A stale source-person revision is a write conflict, not bad input.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise _error(exc) from exc
+
+
 @router.get("/projects/{project_id}/target-localization", response_model=TargetLocalizationBundleV1)
 def api_get_target_localization(project_id: str):
     try:
@@ -85,7 +109,32 @@ def api_get_target_localization(project_id: str):
 @router.patch("/target-characters/{target_character_id}", response_model=TargetCharacterV1)
 def api_update_target_character(target_character_id: str, payload: TargetCharacterEditRequest):
     try:
-        return update_target_character_v1(target_character_id, **payload.model_dump())
+        if payload.expected_updated_at:
+            with get_session() as session:
+                row = session.get(TargetCharacter, target_character_id)
+                if row is None:
+                    raise LookupError("目标人物不存在")
+                if row.updated_at.isoformat() != payload.expected_updated_at:
+                    raise HTTPException(status_code=409, detail="目标人物设计已被其他操作修改，请刷新后重新编辑")
+
+        update_target_character_v1(
+            target_character_id,
+            target_name=payload.target_name,
+            appearance_profile=payload.appearance_profile,
+            generation_prompt=payload.generation_prompt,
+        )
+
+        # A text design change invalidates any previously accepted H3 reference set.
+        with get_session() as session:
+            row = session.get(TargetCharacter, target_character_id)
+            if row is None:
+                raise LookupError("目标人物不存在")
+            row.reference_assets_json = "[]"
+            session.commit()
+            session.refresh(row)
+            return _serialize_character(row)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise _error(exc) from exc
 
