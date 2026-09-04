@@ -118,6 +118,14 @@ function shotTaskOrdinal(task: BackgroundTask): number | null {
   return Number.isInteger(ordinal) && ordinal > 0 ? ordinal : null
 }
 
+function isShotTaskNewerThanCurrentRun(task: BackgroundTask): boolean {
+  const completedAt = currentRun.value?.completed_at
+  if (!completedAt) return true
+  const runTimestamp = new Date(completedAt).getTime()
+  if (!Number.isFinite(runTimestamp)) return true
+  return taskTimestamp(task) >= runTimestamp
+}
+
 const activeBreakdownTask = computed(() => tasks.value
   .filter((task) => (
     isBreakdownTask(task)
@@ -208,15 +216,16 @@ function hasCharacterReviewForShot(context: TimelineShotContext): boolean {
 
 function statusForShot(shot: Shot): ShotStatusDisplay {
   const latestTask = latestShotBreakdownTaskByOrdinal.value.get(shot.ordinal)
-  if (latestTask?.status === 'FAILED') {
+  const taskIsCurrent = latestTask ? isShotTaskNewerThanCurrentRun(latestTask) : false
+  if (taskIsCurrent && latestTask?.status === 'FAILED') {
     return {
       state: 'failed',
       label: '失败',
       detail: latestTask.error_message || latestTask.message || '单分镜拉片失败',
     }
   }
-  if (latestTask?.status === 'QUEUED') return { state: 'unprocessed', label: '排队中' }
-  if (latestTask?.status === 'PROCESSING') {
+  if (taskIsCurrent && latestTask?.status === 'QUEUED') return { state: 'unprocessed', label: '排队中' }
+  if (taskIsCurrent && latestTask?.status === 'PROCESSING') {
     return { state: 'unprocessed', label: '拉片中', detail: latestTask.stage_label || undefined }
   }
 
@@ -857,7 +866,7 @@ onBeforeUnmount(() => {
           <div class="heading-actions">
             <button class="button secondary" type="button" :disabled="loading || episodeLoading" @click="refreshAll(false)">↻ 刷新</button>
             <button class="button secondary current-shot-action" type="button" :disabled="!selectedShot || actionBusy || Boolean(activeBreakdownTask)" @click="startEpisodeBreakdown(true)">▷ 当前分镜拉片</button>
-            <button class="button primary" type="button" :disabled="!currentEpisode || actionBusy || Boolean(activeBreakdownTask)" @click="startEpisodeBreakdown(false)">▶ {{ activeBreakdownTask ? '拉片中' : '整集拉片' }} <b>⌄</b></button>
+            <button class="button primary" type="button" :disabled="!currentEpisode || actionBusy || Boolean(activeBreakdownTask)" @click="startEpisodeBreakdown(false)">▶ {{ activeBreakdownTask ? '拉片中' : '整集拉片' }}</button>
           </div>
         </section>
 
@@ -889,7 +898,6 @@ onBeforeUnmount(() => {
                 :class="['shot-row', { selected: selectedShot?.id === shot.id }]"
                 @click="selectShot(shot)"
               >
-                <span class="drag-dots">⋮</span>
                 <span class="shot-thumb"><img v-if="shotThumbnail(shot)" :src="shotThumbnail(shot) || ''" alt="" loading="lazy" /><i v-else>SHOT</i></span>
                 <span class="shot-row-copy">
                   <strong>Shot {{ String(shot.ordinal).padStart(2, '0') }}</strong>
