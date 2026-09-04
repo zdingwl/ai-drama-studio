@@ -6,7 +6,7 @@ import { breakdownApi } from '../api/breakdown'
 import { api } from '../api/client'
 import { getProjectFlowState } from '../api/project-flow-state'
 import { sceneTimelineApi, type SceneTimelineManualShotEdit } from '../api/scene-timeline'
-import { evaluateBreakdownShotQuality } from '../breakdown-quality'
+import { evaluateBreakdownShotQuality, hasUnconfirmedSourcePeople } from '../breakdown-quality'
 import type { BreakdownRunSummary } from '../types/breakdown'
 import type { ProjectFlowStage, ProjectFlowState } from '../types/project-flow-state'
 import type {
@@ -95,6 +95,8 @@ const manualEditSaving = ref(false)
 const manualEditError = ref('')
 
 let episodeRequestSerial = 0
+let loadedEpisodeId = ''
+let refreshing = false
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const episodes = computed(() => [...(project.value?.episodes || [])].sort((a, b) => a.sort_order - b.sort_order))
@@ -116,14 +118,6 @@ function shotTaskOrdinal(task: BackgroundTask): number | null {
   if (!match) return null
   const ordinal = Number(match[1])
   return Number.isInteger(ordinal) && ordinal > 0 ? ordinal : null
-}
-
-function isShotTaskNewerThanCurrentRun(task: BackgroundTask): boolean {
-  const completedAt = currentRun.value?.completed_at
-  if (!completedAt) return true
-  const runTimestamp = new Date(completedAt).getTime()
-  if (!Number.isFinite(runTimestamp)) return true
-  return taskTimestamp(task) >= runTimestamp
 }
 
 const activeBreakdownTask = computed(() => tasks.value
@@ -170,7 +164,6 @@ const selectedPeople = computed<SceneTimelinePerson[]>(() => {
 })
 
 const selectedDialogue = computed(() => selectedTimelineShot.value?.dialogue || [])
-const selectedScreenText = computed(() => selectedTimelineShot.value?.on_screen_text || [])
 const selectedProps = computed(() => {
   const shot = selectedTimelineShot.value
   if (!shot) return []
@@ -190,11 +183,15 @@ function stageStateFor(keys: string[], active: boolean): { state: StageVisualSta
   const values = keys
     .map((key) => flowState.value?.stages.find((stage) => stage.stage_key === key))
     .filter((stage): stage is ProjectFlowStage => Boolean(stage))
-  if (!values.length) return { state: active ? 'active' : 'waiting', statusLabel: active ? '进行中' : '未开始' }
+  if (!values.length) return { state: 'waiting', statusLabel: '状态未读取' }
   if (values.every((stage) => stage.consumable)) return { state: active ? 'active' : 'complete', statusLabel: '已完成' }
   if (values.some((stage) => stage.execution === 'QUEUED' || stage.execution === 'PROCESSING')) return { state: active ? 'active' : 'processing', statusLabel: '处理中' }
   if (values.some((stage) => stage.readiness === 'BLOCKED_REVIEW')) return { state: active ? 'active' : 'review', statusLabel: '待确认' }
-  return { state: active ? 'active' : 'waiting', statusLabel: active ? '进行中' : '未开始' }
+  if (values.some((stage) => stage.validity === 'STALE')) return { state: 'waiting', statusLabel: '结果已过期' }
+  if (values.some((stage) => stage.readiness === 'WAITING_RUNTIME')) return { state: 'waiting', statusLabel: '等待运行环境' }
+  if (values.some((stage) => stage.execution === 'FAILED')) return { state: 'waiting', statusLabel: '执行失败' }
+  if (values.some((stage) => stage.readiness === 'BLOCKED_DEPENDENCY')) return { state: 'waiting', statusLabel: '等待上游' }
+  return { state: 'waiting', statusLabel: '尚未就绪' }
 }
 
 const stageItems = computed<StageDisplay[]>(() => {
@@ -209,29 +206,26 @@ const stageItems = computed<StageDisplay[]>(() => {
 })
 
 function hasCharacterReviewForShot(context: TimelineShotContext): boolean {
-  return context.shot.people.some((ref) => {
-    const person = context.scene.people.find((item) => item.ref === ref)
-    return person?.final_character === null
-  })
+  return hasUnconfirmedSourcePeople(context.shot, context.scene.people)
 }
 
 function statusForShot(shot: Shot): ShotStatusDisplay {
   const latestTask = latestShotBreakdownTaskByOrdinal.value.get(shot.ordinal)
-  const taskIsCurrent = latestTask ? isShotTaskNewerThanCurrentRun(latestTask) : false
-  if (taskIsCurrent && latestTask?.status === 'FAILED') {
+  if (latestTask?.status === 'FAILED') {
     return {
       state: 'failed',
       label: '失败',
       detail: latestTask.error_message || latestTask.message || '单分镜拉片失败',
     }
   }
-  if (taskIsCurrent && latestTask?.status === 'QUEUED') return { state: 'unprocessed', label: '排队中' }
-  if (taskIsCurrent && latestTask?.status === 'PROCESSING') {
+  if (latestTask?.status === 'QUEUED') return { state: 'unprocessed', label: '排队中' }
+  if (latestTask?.status === 'PROCESSING') {
     return { state: 'unprocessed', label: '拉片中', detail: latestTask.stage_label || undefined }
   }
 
   const context = timelineShotMap.value.get(shot.ordinal)
   if (!context) return { state: 'unprocessed', label: '待拉片' }
+  if (!timeline.value?.is_current) return { state: 'unprocessed', label: '结果已过期', detail: '请重新整集拉片' }
   if (hasCharacterReviewForShot(context)) return { state: 'review', label: '待确认', detail: '人物身份待确认' }
   const quality = evaluateBreakdownShotQuality(context.shot)
   if (!quality.ready) return { state: 'review', label: '待确认', detail: quality.reason }
@@ -284,13 +278,6 @@ function shotSearchText(shot: Shot): string {
     context?.shot.summary || '',
     context?.shot.narrative_function || '',
     context?.shot.visual_description || '',
-    context?.shot.continuity || '',
-    context?.shot.performance_details?.expression || '',
-    context?.shot.performance_details?.posture || '',
-    context?.shot.performance_details?.gaze || '',
-    context?.shot.performance_details?.interaction || '',
-    context?.shot.cinematography.camera_angle || '',
-    context?.shot.cinematography.lighting || '',
     ...(context?.shot.performance || []).map((item) => item.text),
     ...(context?.shot.dialogue || []).map((item) => item.text),
     ...(context?.shot.props || []).map((item) => item.label),
@@ -341,106 +328,60 @@ const sceneEnvironment = computed(() => selectedScene.value?.scene_info.environm
 const peopleNames = computed(() => selectedPeople.value.map(personDisplayName))
 const performanceTexts = computed(() => selectedTimelineShot.value?.performance.map((item) => item.text.trim()).filter(Boolean) || [])
 const actionSummary = computed(() => performanceTexts.value.join('；') || selectedTimelineShot.value?.visual_description || '暂无动作描述')
+const interactionSummary = computed(() => {
+  const shot = selectedTimelineShot.value
+  if (!shot || !shot.people.length) return '未识别明确人物互动'
+  if (shot.people.length === 1) return '当前镜头以单人行为为主'
+  return `${peopleNames.value.join('、')} 同镜出现，具体互动以动作描述为准`
+})
 
 function performanceByKeywords(keywords: string[], fallback: string): string {
   const text = performanceTexts.value.find((item) => keywords.some((keyword) => item.includes(keyword)))
   return text || fallback
 }
 
-const expressionSummary = computed(() => selectedTimelineShot.value?.performance_details?.expression?.trim()
-  || performanceByKeywords(['表情', '笑', '惊', '哭', '怒', '愤', '紧张', '平静', '悲', '喜'], '待补充'))
-const postureSummary = computed(() => selectedTimelineShot.value?.performance_details?.posture?.trim()
-  || performanceByKeywords(['站', '坐', '躺', '蹲', '姿态', '身体', '头部', '转身'], '待补充'))
-const gazeSummary = computed(() => selectedTimelineShot.value?.performance_details?.gaze?.trim()
-  || performanceByKeywords(['视线', '看向', '注视', '望向', '眼神'], '待补充'))
-const interactionSummary = computed(() => selectedTimelineShot.value?.performance_details?.interaction?.trim() || '待补充')
-const contentOverview = computed(() => selectedTimelineShot.value?.summary?.trim() || '暂无当前镜头内容概要')
-const visualFactSummary = computed(() => selectedTimelineShot.value?.visual_description?.trim() || '暂无独立画面事实')
+const expressionSummary = computed(() => performanceByKeywords(['表情', '笑', '惊', '哭', '怒', '愤', '紧张', '平静', '悲', '喜'], '暂无独立表情描述'))
+const postureSummary = computed(() => performanceByKeywords(['站', '坐', '躺', '蹲', '姿态', '身体', '头部', '转身'], '暂无独立姿态描述'))
+const gazeSummary = computed(() => performanceByKeywords(['视线', '看向', '注视', '望向', '眼神'], '暂无独立视线描述'))
+const contentOverview = computed(() => selectedTimelineShot.value?.summary?.trim() || selectedTimelineShot.value?.visual_description?.trim() || selectedTimelineShot.value?.narrative_function?.trim() || '暂无当前镜头内容概要')
 const shotNarrativeSummary = computed(() => selectedTimelineShot.value?.narrative_function?.trim() || '暂无当前镜头剧情作用')
-const continuitySummary = computed(() => selectedTimelineShot.value?.continuity?.trim() || '待补充')
 const cameraShotType = computed(() => selectedTimelineShot.value?.cinematography.shot_type || selectedShot.value?.shot_type || '—')
-const cameraAngle = computed(() => selectedTimelineShot.value?.cinematography.camera_angle?.trim() || '待补充')
 const cameraComposition = computed(() => selectedTimelineShot.value?.cinematography.composition || '—')
-const cameraMotion = computed(() => selectedTimelineShot.value?.cinematography.camera_motion || selectedShot.value?.camera_motion || '待补充')
-const lightingSummary = computed(() => selectedTimelineShot.value?.cinematography.lighting?.trim() || '待补充')
+const cameraMotion = computed(() => selectedTimelineShot.value?.cinematography.camera_motion || selectedShot.value?.camera_motion || '—')
 const timeOfDay = computed(() => selectedScene.value?.scene_info.time_of_day || '—')
 const interiorExterior = computed(() => selectedScene.value?.scene_info.interior_exterior || '—')
 const dialogueSummary = computed(() => selectedDialogue.value.length
   ? selectedDialogue.value.map((item) => `${dialogueSpeaker(item)}：${item.text}`).join('；')
   : '无对白')
 const propSummary = computed(() => selectedProps.value.length ? selectedProps.value.map((item) => item.name).join('、') : '无关键道具')
-const screenTextSummary = computed(() => selectedScreenText.value.length
-  ? selectedScreenText.value.map((item) => item.text).join('；')
-  : '无画面文字')
-
-function hasText(value: string | null | undefined): boolean {
-  return Boolean(value && value.trim() && value.trim() !== 'UNKNOWN' && value.trim() !== '—')
-}
-
-const h3MissingGroups = computed(() => {
-  const shot = selectedTimelineShot.value
-  if (!shot) return [] as PendingItem[]
-  const items: PendingItem[] = []
-  if (!hasText(shot.summary) || !hasText(shot.visual_description) || !hasText(shot.narrative_function) || !hasText(shot.continuity)) {
-    items.push({ key: 'summary', label: '概要 / 画面事实 / 剧情作用 / 连续性待补充', tone: 'blue' })
-  }
-  if (shot.people.length && (
-    !performanceTexts.value.length
-    || !hasText(shot.performance_details?.expression)
-    || !hasText(shot.performance_details?.posture)
-    || !hasText(shot.performance_details?.gaze)
-    || !hasText(shot.performance_details?.interaction)
-  )) {
-    items.push({ key: 'performance', label: '人物动作 / 表情 / 姿态 / 视线 / 交互待补充', tone: 'blue' })
-  }
-  if (
-    !hasText(shot.cinematography.shot_type)
-    || !hasText(shot.cinematography.camera_angle)
-    || !hasText(shot.cinematography.composition)
-    || !hasText(shot.cinematography.camera_motion)
-  ) {
-    items.push({ key: 'camera', label: '景别 / 机位 / 构图 / 运镜待补充', tone: 'blue' })
-  }
-  if (!hasText(shot.cinematography.lighting)) {
-    items.push({ key: 'scene', label: '光线信息待补充', tone: 'blue' })
-  }
-  return items
-})
 
 const selectedPendingItems = computed<PendingItem[]>(() => {
   if (!selectedTimelineShot.value) return []
   const items: PendingItem[] = []
   if (selectedPeople.value.some((person) => !person.final_character)) items.push({ key: 'person', label: '人物身份待确认', tone: 'orange' })
-  if (selectedDialogue.value.some((dialogue) => !dialogue.speakers.length)) items.push({ key: 'dialogue', label: '对白说话人待确认', tone: 'orange' })
+  if (selectedDialogue.value.some((dialogue) => !dialogue.speakers.length)) items.push({ key: 'dialogue', label: '对白说话人待确认', tone: 'blue' })
   const status = selectedStatus.value
   if (status?.state === 'review' && status.detail && !items.some((item) => status.detail?.includes(item.key === 'person' ? '人物' : '对白'))) {
     items.push({ key: 'quality', label: status.detail, tone: 'red' })
   }
   if (status?.state === 'failed' && status.detail) items.push({ key: 'failed', label: status.detail, tone: 'red' })
-  for (const item of h3MissingGroups.value) {
-    if (!items.some((existing) => existing.key === item.key)) items.push(item)
-  }
   return items
 })
 
-const h3Ready = computed(() => Boolean(selectedTimelineShot.value) && selectedPendingItems.value.length === 0)
+const sourceResultCurrent = computed(() => Boolean(timeline.value?.is_current) && !timelineError.value)
+const editingBlocked = computed(() => !sourceResultCurrent.value || episodeLoading.value || actionBusy.value || adjustingBoundary.value || Boolean(activeBreakdownTask.value))
 const h3Sections = computed(() => [
   { label: '人物', value: peopleNames.value.length ? peopleNames.value.join('、') : '无明确人物' },
   { label: '场景', value: sceneName.value },
   { label: '关键道具', value: propSummary.value },
   { label: '动作', value: actionSummary.value },
   { label: '表情', value: expressionSummary.value },
-  { label: '姿态', value: postureSummary.value },
   { label: '视线', value: gazeSummary.value },
-  { label: '人物交互', value: interactionSummary.value },
   { label: '景别', value: cameraShotType.value },
-  { label: '机位', value: cameraAngle.value },
+  { label: '机位', value: '未独立识别' },
   { label: '构图', value: cameraComposition.value },
   { label: '运镜', value: cameraMotion.value },
-  { label: '光线', value: lightingSummary.value },
-  { label: '连续性', value: continuitySummary.value },
   { label: '对白', value: dialogueSummary.value },
-  { label: '画面文字', value: screenTextSummary.value },
   { label: '源镜头时长', value: selectedShot.value ? formatSecondsUs(selectedShot.value.duration_us) : '—' },
 ])
 
@@ -517,6 +458,8 @@ function shotReference(shot: Shot | null): string | null {
 
 function selectShot(shot: Shot): void {
   selectedShotId.value = shot.id
+  const index = filteredShots.value.findIndex((item) => item.id === shot.id)
+  if (index >= 0) currentPage.value = Math.floor(index / PAGE_SIZE) + 1
   detailTab.value = 'shot'
   actionError.value = ''
   actionMessage.value = ''
@@ -542,51 +485,38 @@ function manualFieldValue(key: string): string {
   return manualEditFields.value.find((field) => field.key === key)?.value || ''
 }
 
-function editableValue(value: string | null | undefined, placeholder: string): string {
-  return !value || value === placeholder || value === '待补充' || value === '—' ? '' : value
-}
-
 function openManualEditor(mode: ManualEditMode, dialogueIndex: number | null = null): void {
   const shot = selectedTimelineShot.value
   const scene = selectedScene.value
-  if (!shot || !scene || !selectedShot.value) return
+  if (!shot || !scene || !selectedShot.value || editingBlocked.value) return
 
   manualEditMode.value = mode
   manualEditDialogueIndex.value = dialogueIndex
   manualEditError.value = ''
 
   if (mode === 'summary') {
-    manualEditTitle.value = '镜头内容'
+    manualEditTitle.value = '内容概要'
     manualEditFields.value = [
-      { key: 'summary', label: '内容概要', value: editableValue(shot.summary, '暂无当前镜头内容概要'), multiline: true },
-      { key: 'visual_description', label: '画面事实', value: editableValue(shot.visual_description, '暂无独立画面事实'), multiline: true },
-      { key: 'narrative_function', label: '剧情作用', value: editableValue(shot.narrative_function, '暂无当前镜头剧情作用'), multiline: true },
-      { key: 'continuity', label: '连续性', value: editableValue(shot.continuity, '待补充'), multiline: true },
+      { key: 'summary', label: '内容概要', value: shot.summary || '', multiline: true },
+      { key: 'visual_description', label: '画面描述', value: shot.visual_description || '', multiline: true },
+      { key: 'narrative_function', label: '剧情作用', value: shot.narrative_function || '', multiline: true },
     ]
   } else if (mode === 'performance') {
     manualEditTitle.value = '动作与表演'
-    manualEditFields.value = [
-      { key: 'performance_text', label: '动作', value: performanceTexts.value.join('；'), multiline: true },
-      { key: 'expression', label: '表情', value: editableValue(shot.performance_details?.expression, '待补充'), multiline: true },
-      { key: 'posture', label: '姿态', value: editableValue(shot.performance_details?.posture, '待补充'), multiline: true },
-      { key: 'gaze', label: '视线', value: editableValue(shot.performance_details?.gaze, '待补充'), multiline: true },
-      { key: 'interaction', label: '人物 / 道具交互', value: editableValue(shot.performance_details?.interaction, '待补充'), multiline: true },
-    ]
+    manualEditFields.value = [{ key: 'performance_text', label: '动作与表演', value: performanceTexts.value.join('；'), multiline: true }]
   } else if (mode === 'camera') {
     manualEditTitle.value = '镜头语言'
     manualEditFields.value = [
-      { key: 'shot_type', label: '景别', value: editableValue(cameraShotType.value, '—') },
-      { key: 'camera_angle', label: '机位 / 视角', value: editableValue(cameraAngle.value, '待补充') },
-      { key: 'composition', label: '构图', value: editableValue(cameraComposition.value, '—'), multiline: true },
-      { key: 'camera_motion', label: '运镜', value: editableValue(cameraMotion.value, '待补充') },
+      { key: 'shot_type', label: '景别', value: cameraShotType.value === '—' ? '' : cameraShotType.value },
+      { key: 'composition', label: '构图', value: cameraComposition.value === '—' ? '' : cameraComposition.value, multiline: true },
+      { key: 'camera_motion', label: '运镜', value: cameraMotion.value === '—' ? '' : cameraMotion.value },
     ]
   } else if (mode === 'scene') {
     manualEditTitle.value = '画面信息'
     manualEditFields.value = [
-      { key: 'time_of_day', label: '时间', value: editableValue(timeOfDay.value, '—') },
-      { key: 'interior_exterior', label: '空间', value: editableValue(interiorExterior.value, '—') },
-      { key: 'lighting', label: '光线', value: editableValue(lightingSummary.value, '待补充'), multiline: true },
-      { key: 'environment', label: '环境 / 氛围', value: editableValue(scene.scene_info.environment, '暂无环境描述'), multiline: true },
+      { key: 'time_of_day', label: '时间', value: timeOfDay.value === '—' ? '' : timeOfDay.value },
+      { key: 'interior_exterior', label: '空间', value: interiorExterior.value === '—' ? '' : interiorExterior.value },
+      { key: 'environment', label: '环境 / 氛围', value: sceneEnvironment.value === '暂无环境描述' ? '' : sceneEnvironment.value, multiline: true },
     ]
   } else {
     const dialogue = dialogueIndex === null ? null : selectedDialogue.value[dialogueIndex]
@@ -615,20 +545,13 @@ async function saveManualEdit(): Promise<void> {
     payload.summary = manualFieldValue('summary')
     payload.visual_description = manualFieldValue('visual_description')
     payload.narrative_function = manualFieldValue('narrative_function')
-    payload.continuity = manualFieldValue('continuity')
   } else if (manualEditMode.value === 'performance') {
     payload.performance_text = manualFieldValue('performance_text')
-    payload.expression = manualFieldValue('expression')
-    payload.posture = manualFieldValue('posture')
-    payload.gaze = manualFieldValue('gaze')
-    payload.interaction = manualFieldValue('interaction')
   } else if (manualEditMode.value === 'camera') {
     payload.shot_type = manualFieldValue('shot_type')
-    payload.camera_angle = manualFieldValue('camera_angle')
     payload.composition = manualFieldValue('composition')
     payload.camera_motion = manualFieldValue('camera_motion')
   } else if (manualEditMode.value === 'scene') {
-    payload.lighting = manualFieldValue('lighting')
     payload.scene = {
       time_of_day: manualFieldValue('time_of_day'),
       interior_exterior: manualFieldValue('interior_exterior'),
@@ -648,7 +571,9 @@ async function saveManualEdit(): Promise<void> {
   manualEditSaving.value = true
   manualEditError.value = ''
   try {
-    timeline.value = await sceneTimelineApi.editShot(selectedEpisodeId.value, shot.ordinal, payload)
+    await sceneTimelineApi.editShot(selectedEpisodeId.value, shot.ordinal, payload)
+    await loadEpisodeData()
+    await loadProjectContext()
     actionError.value = ''
     actionMessage.value = `${manualEditTitle.value}已保存；人工修改只覆盖当前显示事实，不改写 AI 原始证据。`
     manualEditOpen.value = false
@@ -670,35 +595,26 @@ function handlePendingItem(item: PendingItem): void {
     void startEpisodeBreakdown(true)
     return
   }
-  if (item.key === 'summary') {
-    openManualEditor('summary')
-    return
-  }
-  if (item.key === 'performance') {
-    openManualEditor('performance')
-    return
-  }
-  if (item.key === 'camera') {
-    openManualEditor('camera')
-    return
-  }
-  if (item.key === 'scene') {
-    openManualEditor('scene')
-    return
-  }
-  detailTab.value = 'shot'
+  if (item.label.includes('动作')) openManualEditor('performance')
+  else if (item.label.includes('景别') || item.label.includes('构图')) openManualEditor('camera')
+  else if (item.label.includes('对白')) detailTab.value = 'dialogue'
+  else openManualEditor('summary')
 }
 
 async function loadProjectContext(): Promise<void> {
   if (!projectId.value) return
-  const [projectResult, flowResult, taskResult] = await Promise.all([
+  const [projectResponse, flowResponse, taskResponse] = await Promise.allSettled([
     api.getProject(projectId.value),
     getProjectFlowState(projectId.value),
     api.listProjectTasks(projectId.value, 60),
   ])
+  if (projectResponse.status === 'rejected') throw projectResponse.reason
+  const projectResult = projectResponse.value
   project.value = projectResult
-  flowState.value = flowResult
-  tasks.value = taskResult
+  if (flowResponse.status === 'fulfilled') flowState.value = flowResponse.value
+  else pageError.value = '工作流状态刷新失败，保留最近一次状态。'
+  if (taskResponse.status === 'fulfilled') tasks.value = taskResponse.value
+  else pageError.value = '任务状态读取失败，请刷新后再启动任务。'
 
   const requestedEpisode = String(route.query.episode || '')
   const exists = projectResult.episodes.some((item) => item.id === selectedEpisodeId.value)
@@ -716,6 +632,13 @@ async function loadEpisodeData(): Promise<void> {
     return
   }
 
+  const changedEpisode = loadedEpisodeId !== episodeId
+  if (changedEpisode) {
+    shots.value = []
+    timeline.value = null
+    runs.value = []
+    loadedEpisodeId = episodeId
+  }
   const serial = ++episodeRequestSerial
   episodeLoading.value = true
   timelineError.value = ''
@@ -730,23 +653,27 @@ async function loadEpisodeData(): Promise<void> {
     shots.value = [...shotsResult.value].sort((a, b) => a.ordinal - b.ordinal)
     if (timelineResult.status === 'fulfilled') timeline.value = timelineResult.value
     else {
-      timeline.value = null
       timelineError.value = timelineResult.reason instanceof Error ? timelineResult.reason.message : '拉片结果当前不可用'
     }
-    runs.value = runsResult.status === 'fulfilled' ? runsResult.value : []
+    if (runsResult.status === 'fulfilled') runs.value = runsResult.value
 
     const requestedOrdinal = Number(route.query.shot || 0)
     const requestedShot = shots.value.find((item) => item.ordinal === requestedOrdinal)
     const currentExists = shots.value.some((item) => item.id === selectedShotId.value)
     if (!currentExists) selectedShotId.value = requestedShot?.id || shots.value[0]?.id || ''
-    syncBoundaryInputs()
-    currentPage.value = 1
+    if (changedEpisode || !boundaryChanged.value) syncBoundaryInputs()
+    if (changedEpisode) {
+      const index = shots.value.findIndex((item) => item.id === selectedShotId.value)
+      currentPage.value = Math.max(1, Math.floor(index / PAGE_SIZE) + 1)
+    }
   } finally {
     if (serial === episodeRequestSerial) episodeLoading.value = false
   }
 }
 
 async function refreshAll(showLoading = false): Promise<void> {
+  if (refreshing || manualEditOpen.value || adjustingBoundary.value) return
+  refreshing = true
   if (showLoading) loading.value = true
   pageError.value = ''
   try {
@@ -756,6 +683,7 @@ async function refreshAll(showLoading = false): Promise<void> {
     pageError.value = err instanceof Error ? err.message : 'AI 拉片页面读取失败'
   } finally {
     loading.value = false
+    refreshing = false
   }
 }
 
@@ -767,12 +695,14 @@ async function changeEpisode(event: Event): Promise<void> {
   searchText.value = ''
   currentPage.value = 1
   await router.replace({ query: { ...route.query, episode: selectedEpisodeId.value, shot: undefined } })
-  await loadEpisodeData()
+  try { await loadEpisodeData() } catch (err) {
+    pageError.value = err instanceof Error ? err.message : '剧集读取失败'
+  }
 }
 
 async function startEpisodeBreakdown(fromShot = false): Promise<void> {
   const episode = currentEpisode.value
-  if (!episode || actionBusy.value || activeBreakdownTask.value) return
+  if (!episode || pageError.value || actionBusy.value || activeBreakdownTask.value || episodeLoading.value || adjustingBoundary.value) return
   if (episode.shot_count <= 0) {
     actionError.value = '本集还没有可用分镜，请先回到“原短剧视频”完成镜头检测。'
     return
@@ -781,7 +711,7 @@ async function startEpisodeBreakdown(fromShot = false): Promise<void> {
   const shot = selectedShot.value
   if (fromShot) {
     if (!shot) return
-    if (!timeline.value) {
+    if (!sourceResultCurrent.value) {
       actionError.value = '当前分镜拉片需要完整整集基线，请先完成本集整集拉片。'
       return
     }
@@ -811,7 +741,7 @@ async function startEpisodeBreakdown(fromShot = false): Promise<void> {
 
 async function adjustShotRange(): Promise<void> {
   const shot = selectedShot.value
-  if (!shot || adjustingBoundary.value || !boundaryChanged.value) return
+  if (!shot || adjustingBoundary.value || actionBusy.value || activeBreakdownTask.value || episodeLoading.value || !boundaryChanged.value) return
   const nextStart = parseTimeInput(startInput.value)
   const nextEnd = parseTimeInput(endInput.value)
   if (nextStart === null || nextEnd === null) {
@@ -950,7 +880,7 @@ onBeforeUnmount(() => {
           <div class="heading-main">
             <div class="title-line"><h1>AI 拉片</h1><span>分镜内容分析 · 人物归并 · 对白校正 · H3 重拍数据准备</span></div>
             <div class="heading-data-row">
-              <select :value="selectedEpisodeId" :disabled="loading || !episodes.length" @change="changeEpisode">
+              <select :value="selectedEpisodeId" :disabled="loading || episodeLoading || actionBusy || adjustingBoundary || !episodes.length" @change="changeEpisode">
                 <option v-for="episode in episodes" :key="episode.id" :value="episode.id">{{ episodeLabel(episode) }}</option>
               </select>
               <div class="stat-card"><span class="stat-icon blue">⌘</span><p><b>{{ shots.length }}</b><small>个分镜</small></p></div>
@@ -962,8 +892,8 @@ onBeforeUnmount(() => {
           </div>
           <div class="heading-actions">
             <button class="button secondary" type="button" :disabled="loading || episodeLoading" @click="refreshAll(false)">↻ 刷新</button>
-            <button class="button secondary current-shot-action" type="button" :disabled="!selectedShot || actionBusy || Boolean(activeBreakdownTask)" @click="startEpisodeBreakdown(true)">▷ 当前分镜拉片</button>
-            <button class="button primary" type="button" :disabled="!currentEpisode || actionBusy || Boolean(activeBreakdownTask)" @click="startEpisodeBreakdown(false)">▶ {{ activeBreakdownTask ? '拉片中' : '整集拉片' }}</button>
+            <button class="button secondary current-shot-action" type="button" :disabled="!selectedShot || editingBlocked || Boolean(pageError)" @click="startEpisodeBreakdown(true)">▷ 当前分镜拉片</button>
+            <button class="button primary" type="button" :disabled="!currentEpisode || Boolean(pageError) || episodeLoading || adjustingBoundary || actionBusy || Boolean(activeBreakdownTask)" @click="startEpisodeBreakdown(false)">▶ {{ activeBreakdownTask ? '拉片中' : '整集拉片' }} </button>
           </div>
         </section>
 
@@ -971,9 +901,15 @@ onBeforeUnmount(() => {
           <div v-if="pageError" class="message danger">{{ pageError }}</div>
           <div v-if="actionError" class="message danger">{{ actionError }}</div>
           <div v-if="actionMessage" class="message success">{{ actionMessage }}</div>
-          <div v-if="timelineError && shots.length" class="message warning">当前分镜仍可查看，但拉片结果读取失败：{{ timelineError }}</div>
+          <div v-if="timelineError && shots.length" class="message warning">状态刷新失败，保留最近一次结果并暂停编辑：{{ timelineError }}</div>
         </div>
 
+        <div class="message warning" v-if="timeline && !timeline.is_current">当前展示历史拉片结果，不计入完成数量。请明确点击整集拉片更新结果。</div>
+        <div class="message" v-if="flowState">
+          {{ flowState.next_action.reason }}
+          <button class="button secondary" type="button" @click="goSourceConfirm">进入原片确认</button>
+          <span>镜头待确认数量表示受影响镜头，不代表独立审核任务数。</span>
+        </div>
         <section class="workspace-grid">
           <aside class="shot-list-card panel-card">
             <header class="panel-header"><strong>分镜</strong></header>
@@ -995,6 +931,7 @@ onBeforeUnmount(() => {
                 :class="['shot-row', { selected: selectedShot?.id === shot.id }]"
                 @click="selectShot(shot)"
               >
+                <span class="drag-dots">⋮</span>
                 <span class="shot-thumb"><img v-if="shotThumbnail(shot)" :src="shotThumbnail(shot) || ''" alt="" loading="lazy" /><i v-else>SHOT</i></span>
                 <span class="shot-row-copy">
                   <strong>Shot {{ String(shot.ordinal).padStart(2, '0') }}</strong>
@@ -1016,7 +953,7 @@ onBeforeUnmount(() => {
             <template v-if="selectedShot">
               <header class="shot-workbench-header">
                 <div><h2>Shot {{ String(selectedShot.ordinal).padStart(2, '0') }}</h2><p>{{ formatTimeUs(selectedShot.start_us) }} → {{ formatTimeUs(selectedShot.end_us) }} <span>时长 {{ formatSecondsUs(selectedShot.duration_us) }}</span></p></div>
-                <button class="button outline-blue" type="button" :disabled="actionBusy || Boolean(activeBreakdownTask)" @click="startEpisodeBreakdown(true)">↻ 重新拉片</button>
+                <button class="button outline-blue" type="button" :disabled="editingBlocked" @click="startEpisodeBreakdown(true)">↻ 重新拉片</button>
               </header>
 
               <div class="video-stage">
@@ -1039,10 +976,10 @@ onBeforeUnmount(() => {
               <section class="boundary-editor">
                 <h3>分镜范围</h3>
                 <div class="boundary-fields">
-                  <label><span>开始时间</span><input v-model="startInput" :disabled="!canEditStart || adjustingBoundary" type="text" inputmode="decimal" /></label>
-                  <label><span>结束时间</span><input v-model="endInput" :disabled="!canEditEnd || adjustingBoundary" type="text" inputmode="decimal" /></label>
+                  <label><span>开始时间</span><input v-model="startInput" :disabled="!canEditStart || adjustingBoundary || episodeLoading || Boolean(activeBreakdownTask)" type="text" inputmode="decimal" /></label>
+                  <label><span>结束时间</span><input v-model="endInput" :disabled="!canEditEnd || adjustingBoundary || episodeLoading || Boolean(activeBreakdownTask)" type="text" inputmode="decimal" /></label>
                   <div class="duration-readout"><span>时长</span><b>{{ formatSecondsUs(selectedShot.duration_us) }}</b></div>
-                  <button class="button outline-blue" type="button" :disabled="!boundaryChanged || adjustingBoundary" @click="adjustShotRange">{{ adjustingBoundary ? '保存中…' : '保存分镜范围' }}</button>
+                  <button class="button outline-blue" type="button" :disabled="!boundaryChanged || adjustingBoundary || episodeLoading || Boolean(activeBreakdownTask)" @click="adjustShotRange">{{ adjustingBoundary ? '保存中…' : '保存分镜范围' }}</button>
                 </div>
                 <div class="range-labels"><span>{{ formatTimeUs(timelineWindow.start) }}</span><span>{{ formatTimeUs(timelineWindow.end) }}</span></div>
                 <div class="range-preview"><span class="range-selection" :style="{ left: `${timelineWindow.left}%`, width: `${timelineWindow.width}%` }"><i></i><i></i></span></div>
@@ -1064,37 +1001,36 @@ onBeforeUnmount(() => {
               <template v-if="selectedShot && selectedTimelineShot && selectedScene">
                 <template v-if="detailTab === 'shot'">
                   <section class="info-card editable-card">
-                    <div class="info-card-title"><h3>镜头内容</h3><button type="button" @click="openManualEditor('summary')">✎ 编辑</button></div>
-                    <dl class="field-list">
-                      <div><dt>概要</dt><dd>{{ contentOverview }}</dd></div>
-                      <div><dt>画面事实</dt><dd>{{ visualFactSummary }}</dd></div>
-                      <div><dt>剧情作用</dt><dd>{{ shotNarrativeSummary }}</dd></div>
-                      <div><dt>连续性</dt><dd>{{ continuitySummary }}</dd></div>
-                    </dl>
+                    <div class="info-card-title"><h3>内容概要</h3><button type="button" :disabled="editingBlocked" @click="openManualEditor('summary')">✎ 编辑</button></div>
+                    <p class="summary-paragraph">{{ contentOverview }}</p>
                   </section>
 
                   <section class="info-card editable-card">
-                    <div class="info-card-title"><h3>动作与表演</h3><button type="button" @click="openManualEditor('performance')">✎ 编辑</button></div>
+                    <div class="info-card-title"><h3>动作与表演</h3><button type="button" :disabled="editingBlocked" @click="openManualEditor('performance')">✎ 编辑</button></div>
                     <dl class="field-list"><div><dt>动作</dt><dd>{{ actionSummary }}</dd></div><div><dt>表情</dt><dd>{{ expressionSummary }}</dd></div><div><dt>姿态</dt><dd>{{ postureSummary }}</dd></div><div><dt>视线</dt><dd>{{ gazeSummary }}</dd></div><div><dt>人物交互</dt><dd>{{ interactionSummary }}</dd></div></dl>
                   </section>
 
                   <section class="info-card editable-card">
-                    <div class="info-card-title"><h3>镜头语言</h3><button type="button" @click="openManualEditor('camera')">✎ 编辑</button></div>
-                    <dl class="field-list"><div><dt>景别</dt><dd>{{ cameraShotType }}</dd></div><div><dt>机位</dt><dd>{{ cameraAngle }}</dd></div><div><dt>构图</dt><dd>{{ cameraComposition }}</dd></div><div><dt>运镜</dt><dd>{{ cameraMotion }}</dd></div></dl>
+                    <div class="info-card-title"><h3>镜头语言</h3><button type="button" :disabled="editingBlocked" @click="openManualEditor('camera')">✎ 编辑</button></div>
+                    <dl class="field-list"><div><dt>景别</dt><dd>{{ cameraShotType }}</dd></div><div><dt>机位</dt><dd>未独立识别</dd></div><div><dt>构图</dt><dd>{{ cameraComposition }}</dd></div><div><dt>运镜</dt><dd>{{ cameraMotion }}</dd></div></dl>
                   </section>
 
                   <section class="info-card editable-card">
-                    <div class="info-card-title"><h3>画面环境</h3><button type="button" @click="openManualEditor('scene')">✎ 编辑</button></div>
-                    <dl class="field-list"><div><dt>时间</dt><dd>{{ timeOfDay }}</dd></div><div><dt>空间</dt><dd>{{ interiorExterior }}</dd></div><div><dt>光线</dt><dd>{{ lightingSummary }}</dd></div><div><dt>环境 / 氛围</dt><dd>{{ sceneEnvironment }}</dd></div><div><dt>画面文字</dt><dd>{{ screenTextSummary }}</dd></div></dl>
+                    <div class="info-card-title"><h3>画面</h3><button type="button" :disabled="editingBlocked" @click="openManualEditor('scene')">✎ 编辑</button></div>
+                    <dl class="field-list"><div><dt>时间</dt><dd>{{ timeOfDay }}</dd></div><div><dt>空间</dt><dd>{{ interiorExterior }}</dd></div><div><dt>光线</dt><dd>暂无独立光线描述</dd></div><div><dt>氛围</dt><dd>{{ sceneEnvironment }}</dd></div></dl>
                   </section>
 
+                  <section v-if="selectedTimelineShot.on_screen_text.length" class="info-card">
+                    <h3>画面文字</h3>
+                    <p v-for="(text, index) in selectedTimelineShot.on_screen_text" :key="index">{{ formatTimeUs(text.start_us) }} → {{ formatTimeUs(text.end_us) }} · {{ text.text }}</p>
+                  </section>
                   <section class="pending-card">
-                    <div class="pending-title"><strong>待处理事项（本分镜）</strong><span>{{ selectedPendingItems.length ? `${selectedPendingItems.length} 项` : '已处理' }}</span></div>
+                    <div class="pending-title"><strong>待处理事项（本分镜）</strong><span>{{ selectedPendingItems.length ? `${selectedPendingItems.length} 项` : '未发现提示' }}</span></div>
                     <div v-if="selectedPendingItems.length" class="pending-grid">
                       <button v-for="item in selectedPendingItems" :key="item.key" type="button" :class="['pending-item', item.tone]" @click="handlePendingItem(item)"><i>!</i><span>{{ item.label }}</span><b>1</b></button>
                     </div>
-                    <div v-else class="pending-clear">✓ 当前分镜关键事实完整</div>
-                    <p v-if="selectedPendingItems.length">还有 <b>{{ selectedPendingItems.length }}</b> 组信息需要确认或补充；点击对应项可直接处理。</p>
+                    <div v-else class="pending-clear">当前分镜未发现局部提示；正式就绪状态以工作流校验为准</div>
+                    <p v-if="selectedPendingItems.length">本分镜涉及 <b>{{ selectedPendingItems.length }}</b> 类问题；人物与说话人请进入原片确认统一处理。</p>
                   </section>
                 </template>
 
@@ -1103,33 +1039,32 @@ onBeforeUnmount(() => {
                   <section v-if="selectedPeople.length" class="person-list">
                     <article v-for="person in selectedPeople" :key="person.ref" class="person-card">
                       <span class="person-avatar"><img v-if="person.final_character?.cover_url" :src="person.final_character.cover_url" alt="" /><b v-else>{{ personDisplayName(person).slice(0, 1) }}</b></span>
-                      <div class="person-copy"><div><strong>{{ personDisplayName(person) }}</strong><em :class="{ pending: !person.final_character }">{{ person.final_character ? '✓ 已自动绑定' : '! 待确认人物' }}</em></div><p>{{ person.appearance || '暂无人物外观补充描述' }}</p><button type="button" @click="goSourceConfirm">修改人物</button></div>
+                      <div class="person-copy"><div><strong>{{ personDisplayName(person) }}</strong><em :class="{ pending: !person.final_character }">{{ person.final_character ? '✓ 已绑定正式人物' : '! 待确认人物' }}</em></div><p>{{ person.appearance || '暂无人物外观补充描述' }}</p><button type="button" @click="goSourceConfirm">修改人物</button></div>
                     </article>
                   </section>
                   <div v-else class="tab-empty">当前分镜没有识别到人物</div>
                 </template>
 
                 <template v-else-if="detailTab === 'assets'">
-                  <section class="info-card editable-card"><div class="info-card-title"><h3>场景</h3><button type="button" @click="goSourceConfirm">去原片确认</button></div><dl class="field-list"><div><dt>名称</dt><dd>{{ sceneName }}</dd></div><div><dt>环境</dt><dd>{{ sceneEnvironment }}</dd></div><div><dt>时间</dt><dd>{{ timeOfDay }}</dd></div><div><dt>光线</dt><dd>{{ lightingSummary }}</dd></div></dl></section>
-                  <section class="info-card editable-card"><div class="info-card-title"><h3>道具</h3><button type="button" @click="goSourceConfirm">管理道具</button></div><div v-if="selectedProps.length" class="prop-list"><div v-for="prop in selectedProps" :key="`${prop.name}-${prop.interaction}`"><span><img v-if="prop.coverUrl" :src="prop.coverUrl" alt="" /><template v-else>{{ prop.name.slice(0, 1) }}</template></span><p><b>{{ prop.name }}</b><small>{{ prop.interaction }}</small></p></div></div><div v-else class="tab-empty compact">当前分镜没有关键道具</div></section>
+                  <section class="info-card editable-card"><div class="info-card-title"><h3>场景</h3><button type="button" @click="goSourceConfirm">去原片确认</button></div><dl class="field-list"><div><dt>名称</dt><dd>{{ sceneName }}</dd></div><div><dt>环境</dt><dd>{{ sceneEnvironment }}</dd></div><div><dt>时间</dt><dd>{{ timeOfDay }}</dd></div></dl></section>
+                  <section class="info-card editable-card"><div class="info-card-title"><h3>道具</h3><button type="button" @click="goSourceConfirm">管理道具</button></div><div v-if="selectedProps.length" class="prop-list"><div v-for="prop in selectedProps" :key="`${prop.name}-${prop.interaction}`"><span>{{ prop.name.slice(0, 1) }}</span><p><b>{{ prop.name }}</b><small>{{ prop.interaction }}</small></p></div></div><div v-else class="tab-empty compact">当前分镜没有关键道具</div></section>
                 </template>
 
                 <template v-else-if="detailTab === 'dialogue'">
                   <section v-if="selectedDialogue.length" class="dialogue-list">
                     <article v-for="(dialogue, index) in selectedDialogue" :key="`${dialogue.start_us}-${dialogue.end_us}-${index}`">
-                      <header><span>对白 {{ String(index + 1).padStart(2, '0') }}</span><button type="button" @click="openManualEditor('dialogue', index)">✎ 编辑文本</button></header>
+                      <header><span>对白 {{ String(index + 1).padStart(2, '0') }}</span><button type="button" :disabled="editingBlocked" @click="openManualEditor('dialogue', index)">✎ 编辑文本</button></header>
                       <div class="dialogue-speaker"><span>说话人</span><strong>{{ dialogueSpeaker(dialogue) }}</strong></div>
                       <p>{{ dialogue.text }}</p>
                       <footer><span>{{ formatTimeUs(dialogue.start_us) }} → {{ formatTimeUs(dialogue.end_us) }}</span><em>{{ dialogue.speakers.length ? '已绑定说话人' : '需要确认说话人' }}</em><button v-if="!dialogue.speakers.length" type="button" @click="goSourceConfirm">确认说话人</button></footer>
                     </article>
                   </section>
                   <div v-else class="tab-empty">本镜头无对白</div>
-                  <section v-if="selectedScreenText.length" class="info-card"><div class="info-card-title"><h3>画面文字（OCR）</h3></div><dl class="field-list"><div v-for="(item, index) in selectedScreenText" :key="`${item.start_us}-${index}`"><dt>{{ formatTimeUs(item.start_us) }}</dt><dd>{{ item.text }}</dd></div></dl></section>
                 </template>
 
                 <template v-else>
-                  <section class="remake-status" :class="{ ready: h3Ready }"><strong>{{ h3Ready ? '✓ H3 重拍信息完整' : `! H3 重拍信息还缺 ${selectedPendingItems.length} 组` }}</strong><span>只使用当前分镜已有事实与人工确认值；缺失项不会被静默编造。</span></section>
-                  <section class="info-card remake-card"><dl class="field-list"><div v-for="item in h3Sections" :key="item.label"><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd></div><div><dt>剧情作用</dt><dd>{{ shotNarrativeSummary }}</dd></div><div><dt>画面事实</dt><dd>{{ visualFactSummary }}</dd></div></dl></section>
+                  <section class="remake-status"><strong>原片重拍参考</strong><span>以下为原片观察信息；正式重拍还需当前原片快照、目标人物、目标配音及生成时间轴。</span></section>
+                  <section class="info-card remake-card"><dl class="field-list"><div v-for="item in h3Sections" :key="item.label"><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd></div><div><dt>剧情作用</dt><dd>{{ shotNarrativeSummary }}</dd></div></dl></section>
                 </template>
               </template>
               <div v-else class="tab-empty large">当前分镜还没有可展示的拉片结果。<br />可以先确认 Reference Clip 和分镜边界，再执行整集拉片。</div>
@@ -1141,7 +1076,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="helpOpen" class="modal-backdrop" @click.self="helpOpen = false">
-      <section class="help-dialog"><header><strong>AI 拉片操作说明</strong><button type="button" @click="helpOpen = false">×</button></header><div><p>1. 选择剧集后，可查看每个分镜的 Reference Clip、时间范围和拉片结果。</p><p>2. 镜头内容、动作与表演、镜头语言、画面信息和对白文本可在本页直接人工修正；人物、场景、道具和说话人进入“原片确认”统一修改。</p><p>3. “当前分镜拉片 / 重新拉片”只重跑当前 Shot：ASR / OCR 只处理当前分镜，VLM 最多读取前后相邻镜头作为上下文；不会重跑整集。</p><p>4. H3 重拍信息会检查画面事实、动作/表情/姿态/视线/交互、景别/机位/构图/运镜、光线和连续性；缺失项会明确显示“待补充”，不会用通用文案假装完整。</p></div></section>
+      <section class="help-dialog"><header><strong>AI 拉片操作说明</strong><button type="button" @click="helpOpen = false">×</button></header><div><p>1. 选择剧集后，可查看每个分镜的 Reference Clip、时间范围和拉片结果。</p><p>2. 内容概要、动作与表演、镜头语言、画面信息和对白文本可在本页直接人工修正；人物、场景、道具和说话人进入“原片确认”统一修改。</p><p>3. “当前分镜拉片 / 重新拉片”只重跑当前 Shot：ASR / OCR 只处理当前分镜，VLM 最多读取前后相邻镜头作为上下文；不会重跑整集。</p></div></section>
     </div>
 
     <div v-if="manualEditOpen" class="breakdown-manual-editor-backdrop" @click.self="closeManualEditor">
@@ -1154,7 +1089,7 @@ onBeforeUnmount(() => {
           <div class="breakdown-manual-editor-fields">
             <label v-for="field in manualEditFields" :key="field.key" class="breakdown-manual-editor-field">
               <span>{{ field.label }}</span>
-              <textarea v-if="field.multiline" v-model="field.value" rows="4"></textarea>
+              <textarea v-if="field.multiline" v-model="field.value" rows="5"></textarea>
               <input v-else v-model="field.value" type="text" />
             </label>
           </div>

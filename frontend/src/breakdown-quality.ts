@@ -1,4 +1,4 @@
-import type { SceneTimelineShot } from './types/scene-timeline'
+import type { SceneTimelineShot, SceneTimelinePerson } from './types/scene-timeline'
 
 export interface BreakdownQualityResult {
   ready: boolean
@@ -56,4 +56,10 @@ export function evaluateBreakdownShotQuality(shot: SceneTimelineShot): Breakdown
     return { ready: false, reason: '缺少构图信息' }
   }
   return { ready: true, reason: '' }
+}
+
+/** Anonymous observations and missing speaker references are never formal identities. */
+export function hasUnconfirmedSourcePeople(shot: SceneTimelineShot, people: SceneTimelinePerson[]): boolean {
+  const refs = new Set([...shot.people, ...shot.dialogue.flatMap((item) => item.speakers)])
+  return [...refs].some((ref) => !people.find((person) => person.ref === ref)?.final_character)
 }
