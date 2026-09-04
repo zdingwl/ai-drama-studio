@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
 import { getProjectFlowState } from '../api/project-flow-state'
 import { remakeApi } from '../api/remake'
+import CharacterAssetsWorkbenchV1 from '../components/CharacterAssetsWorkbenchV1.vue'
 import AssetStageV4 from '../components/AssetStageV4.vue'
 import SpeakerReviewEditorV1 from '../components/SpeakerReviewEditorV1.vue'
 import type { ProjectFlowState } from '../types/project-flow-state'
@@ -129,7 +130,7 @@ onUnmounted(() => {
         <section class="workflow-stage-hero">
           <div>
             <h1>原片确认</h1>
-            <p>这里不是重新分析视频，而是修改 AI 已经生成的人物、场景、道具和说话人结果。保存后直接作为后续视频重做的真实输入。</p>
+            <p>先将不同分镜里属于同一人的观察归并为原片人物资产，再设计替换人物并生成四视图。人物确认通过原片快照供后续重做使用。</p>
           </div>
           <div class="workflow-stage-hero-actions">
             <button class="workflow-stage-button" @click="goStage('/breakdown')">← 返回 AI 拉片</button>
@@ -144,6 +145,7 @@ onUnmounted(() => {
         <section v-if="loading && !project" class="workflow-stage-card"><div class="workflow-stage-empty">正在读取项目和原片确认数据…</div></section>
 
         <template v-else-if="project">
+          <CharacterAssetsWorkbenchV1 :project-id="project.id" @changed="refresh" />
           <section class="workflow-stage-card">
             <div class="workflow-stage-card-head">
               <div><strong>人物 / 场景 / 道具</strong><span>可新建、重命名、合并、拆分、删除、改封面，并逐镜头修改绑定</span></div>

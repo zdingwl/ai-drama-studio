@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from engine.app.character_assets_routes_v1 import router as character_assets_router
 from engine.app.asset_batch_routes_v4 import router as asset_batch_router
 from engine.app.asset_routes_v3 import router as asset_router
 from engine.app.auto_remake_routes_v1 import router as auto_remake_router
@@ -85,6 +86,7 @@ app.include_router(scene_timeline_router)
 app.include_router(breakdown_read_model_router)
 app.include_router(source_drama_snapshot_router)
 app.include_router(asset_router)
+app.include_router(character_assets_router)
 app.include_router(asset_batch_router)
 app.include_router(character_gallery_router)
 app.include_router(remake_router)

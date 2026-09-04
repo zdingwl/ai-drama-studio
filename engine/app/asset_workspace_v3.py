@@ -508,6 +508,7 @@ def delete_asset(project_id: str, entity_type: AssetType, entity_id: str) -> dic
 
 def _merge_metadata(target: Any, sources: list[Any]) -> None:
     metadata = _json(target.metadata_json)
+    person_mappings = list(metadata.get("source_person_mappings_v1") or [])
     candidate_ids = list(metadata.get("source_candidate_ids") or [])
     covers = list(metadata.get("evidence_cover_urls") or [])
     if metadata.get("cover_url"):
@@ -517,12 +518,14 @@ def _merge_metadata(target: Any, sources: list[Any]) -> None:
         confidences.append(float(metadata["confidence"]))
     for source in sources:
         other = _json(source.metadata_json)
+        person_mappings.extend(other.get("source_person_mappings_v1") or [])
         candidate_ids.extend(other.get("source_candidate_ids") or [])
         covers.extend(other.get("evidence_cover_urls") or [])
         if other.get("cover_url"):
             covers.append(str(other["cover_url"]))
         if other.get("confidence") is not None:
             confidences.append(float(other["confidence"]))
+    metadata["source_person_mappings_v1"] = list({(m.get("key"), m.get("anchor")): m for m in person_mappings}.values())
     metadata["source_candidate_ids"] = list(dict.fromkeys(candidate_ids))
     metadata["evidence_cover_urls"] = list(dict.fromkeys(covers))
     if covers:

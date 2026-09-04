@@ -324,7 +324,7 @@ def compose_breakdown_read_model_v1(
     return result
 
 
-def load_episode_breakdown_read_model_v1(episode_id: str) -> dict[str, Any] | None:
+def _load_episode_breakdown_read_model_v1(episode_id: str) -> dict[str, Any] | None:
     """Read current G2 result and independently add current Final Character/Scene/Prop overlays."""
 
     draft = get_current_breakdown(episode_id)
@@ -380,3 +380,8 @@ __all__ = [
     "compose_breakdown_read_model_v1",
     "load_episode_breakdown_read_model_v1",
 ]
+
+
+def load_episode_breakdown_read_model_v1(episode_id: str):
+    from engine.app.source_person_assets_v1 import apply_person_mapping
+    return apply_person_mapping(episode_id, _load_episode_breakdown_read_model_v1(episode_id))

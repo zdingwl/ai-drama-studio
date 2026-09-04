@@ -139,6 +139,9 @@ def _read_meta(path: Path) -> dict[str, Any] | None:
 
 
 def current_target_character_reference_assets_v1(character: Mapping[str, Any]) -> list[Path]:
+    selected = selected_four_view_references(character)
+    if selected is not None:
+        return selected
     normalized = _full_character_mapping(character)
     if normalized is None:
         return []
@@ -151,6 +154,33 @@ def current_target_character_reference_assets_v1(character: Mapping[str, Any]) -
         return []
     paths = [Path(str(item)) for item in meta.get("images") or []]
     return [path for path in paths if path.is_file() and path.stat().st_size > 0]
+
+
+def selected_four_view_references(character: Mapping[str, Any]) -> list[Path] | None:
+    """Once a user starts the four-view workflow, only an accepted current version is usable."""
+    from sqlalchemy import select
+    from engine.app.task_progress_v2 import BackgroundTaskRecord
+    target_id = str(character.get("id") or character.get("target_character_id") or "")
+    found = False
+    with get_session() as session:
+        for task in session.scalars(select(BackgroundTaskRecord).where(BackgroundTaskRecord.task_type == "CHARACTER_FOUR_VIEWS")).all():
+            receipt = json.loads(task.result_json or "{}")
+            if receipt.get("target_id") != target_id:
+                continue
+            found = True
+            if task.status != "READY" or not receipt.get("accepted"):
+                continue
+            from engine.app.character_assets_routes_v1 import require_current, signature, version_root, VIEWS
+            try:
+                current = require_current(target_id)
+            except Exception:
+                return []
+            if signature(current) != receipt.get("fingerprint"):
+                continue
+            paths = [version_root(task.project_id, task.id) / f"{view}.jpg" for view in VIEWS]
+            if all(p.is_file() and p.stat().st_size for p in paths):
+                return paths
+    return [] if found else None
 
 
 def current_target_scene_reference_asset_v1(scene: Mapping[str, Any], *, target_region: str) -> Path | None:
@@ -234,6 +264,9 @@ def ensure_target_character_references_v1(project_id: str) -> dict[str, Any]:
         current = current_target_character_reference_assets_v1(character)
         if current:
             reused += 1
+            continue
+        if selected_four_view_references(character) is not None:
+            failed.append({"target_character_id": str(character["id"]), "error": "请先审核并采用当前目标人物四视图"})
             continue
         signature = target_character_reference_signature_v1(character)
         target_id = str(character["id"])
