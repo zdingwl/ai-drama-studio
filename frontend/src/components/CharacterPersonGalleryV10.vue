@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import SourceCharacterAssetLibraryV1 from './SourceCharacterAssetLibraryV1.vue'
 import TargetCharacterAssetPanelV1 from './TargetCharacterAssetPanelV1.vue'
 
@@ -8,12 +9,14 @@ const props = defineProps<{
 }>()
 
 type CharacterAssetMode = 'source' | 'target'
+const route = useRoute()
 const mode = ref<CharacterAssetMode>('source')
+const sourceConfirmMode = computed(() => String(route.query.mode || '') === 'confirm')
 </script>
 
 <template>
-  <section class="character-asset-entry">
-    <div class="character-asset-entry__intro">
+  <section :class="['character-asset-entry', { compact: sourceConfirmMode }]">
+    <div v-if="!sourceConfirmMode" class="character-asset-entry__intro">
       <div>
         <small>人物资产</small>
         <h2>分镜人物 → 正式人物资产 → 替换人物</h2>
@@ -27,7 +30,7 @@ const mode = ref<CharacterAssetMode>('source')
       </div>
     </div>
 
-    <nav class="character-asset-tabs" aria-label="人物资产类型">
+    <nav v-if="!sourceConfirmMode" class="character-asset-tabs" aria-label="人物资产类型">
       <button type="button" :class="{ active: mode === 'source' }" @click="mode = 'source'">
         <strong>原片人物</strong>
         <span>跨分镜归并、人物资产库、Shot Binding</span>
@@ -38,13 +41,14 @@ const mode = ref<CharacterAssetMode>('source')
       </button>
     </nav>
 
-    <SourceCharacterAssetLibraryV1 v-if="mode === 'source'" :project-id="props.projectId" />
+    <SourceCharacterAssetLibraryV1 v-if="sourceConfirmMode || mode === 'source'" :project-id="props.projectId" />
     <TargetCharacterAssetPanelV1 v-else :project-id="props.projectId" />
   </section>
 </template>
 
 <style scoped>
 .character-asset-entry { min-height: 100%; padding: 14px 22px 24px; background: #f6f8fb; }
+.character-asset-entry.compact { padding: 0; background: transparent; }
 .character-asset-entry__intro {
   display: grid;
   grid-template-columns: minmax(320px, 1fr) auto;
