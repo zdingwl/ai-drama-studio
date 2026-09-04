@@ -456,7 +456,7 @@ function shotReference(shot: Shot | null): string | null {
   return shot.reference_url || contextForShot(shot)?.shot.reference_url || null
 }
 
-function selectShot(shot: Shot): void {
+function selectShot(shot: Shot, openPendingConfirm = false): void {
   selectedShotId.value = shot.id
   const index = filteredShots.value.findIndex((item) => item.id === shot.id)
   if (index >= 0) currentPage.value = Math.floor(index / PAGE_SIZE) + 1
@@ -464,6 +464,10 @@ function selectShot(shot: Shot): void {
   actionError.value = ''
   actionMessage.value = ''
   syncBoundaryInputs()
+  if (openPendingConfirm && selectedPendingItems.value.some((item) => item.key === 'person' || item.key === 'dialogue')) {
+    goSourceConfirm()
+    return
+  }
   void router.replace({ query: { ...route.query, episode: selectedEpisodeId.value, shot: String(shot.ordinal) } })
 }
 
@@ -976,7 +980,7 @@ onBeforeUnmount(() => {
                 :key="shot.id"
                 type="button"
                 :class="['shot-row', { selected: selectedShot?.id === shot.id }]"
-                @click="selectShot(shot)"
+                @click="selectShot(shot, true)"
               >
                 <span class="shot-thumb"><img v-if="shotThumbnail(shot)" :src="shotThumbnail(shot) || ''" alt="" loading="lazy" /><i v-else>SHOT</i></span>
                 <span class="shot-row-copy">
