@@ -1,49 +1,64 @@
 /* 原片人物确认 - 多人框选画布显示修复
- * 关键约束：locator-canvas 的 DOM 边界必须与实际图片边界一致，
+ * 关键约束：locator-canvas 的 DOM 边界必须与实际显示图片边界一致，
  * 因为 CharacterAssetsWorkbenchV1 会直接用 canvas.getBoundingClientRect()
  * 计算 0~1 的人物框坐标。
- * 因此这里不能使用 cover、固定画布高度或 contain 留黑边。
+ *
+ * 本版不再“按宽度铺满后靠滚动看全”。
+ * 竖图优先受视口高度约束，横图优先受可用宽度约束；
+ * 图片与画布一起缩放，保证整张图一次性完整可见，同时不破坏框选坐标。
  */
 
 .source-confirm-dialog .identity-review .locator-modal {
   width: min(920px, calc(100vw - 48px)) !important;
-  max-height: calc(100vh - 40px) !important;
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
+  max-height: calc(100vh - 32px) !important;
+  overflow: hidden !important;
+  display: grid !important;
+  grid-template-rows: auto minmax(0, 1fr) auto auto !important;
 }
 
 /*
- * 画布宽度主动收窄，让 4:3 / 16:9 分镜在普通屏幕里能够一次完整看到。
- * 图片高度继续由原始宽高比决定，因此 canvas 边界始终等于实际图片边界，
- * 不影响现有 0~1 框选坐标。
+ * 画布改为 shrink-wrap：尺寸由图片“实际显示尺寸”决定。
+ * 这样 portrait 图不会再先铺到 600~760px 宽后变成超高大图。
  */
 .source-confirm-dialog .identity-review .locator-canvas {
-  width: min(760px, calc(100% - 32px)) !important;
-  height: auto !important;
+  width: fit-content !important;
+  height: fit-content !important;
+  min-width: 0 !important;
   min-height: 0 !important;
-  max-height: none !important;
+  max-width: min(760px, calc(100vw - 96px)) !important;
+  max-height: calc(100vh - 220px) !important;
   margin: 12px auto 0 !important;
-  display: block !important;
+  display: inline-grid !important;
+  place-items: center !important;
   overflow: hidden !important;
   background: #101925 !important;
   line-height: 0 !important;
+  border-radius: 10px !important;
+  cursor: crosshair !important;
+  justify-self: center !important;
+  align-self: center !important;
 }
 
-/* 图片本身决定 canvas 高度：完整显示，不裁切、不拉伸、不留 contain 黑边。 */
+/*
+ * 同时限制宽度和高度：
+ * - 横图通常由 max-width 决定；
+ * - 竖图通常由 max-height 决定；
+ * 浏览器会保持 intrinsic ratio 自动缩小另一边。
+ */
 .source-confirm-dialog .identity-review .locator-canvas > img {
   display: block !important;
-  width: 100% !important;
+  width: auto !important;
   height: auto !important;
-  max-width: 100% !important;
-  max-height: none !important;
-  object-fit: fill !important;
+  max-width: min(760px, calc(100vw - 96px)) !important;
+  max-height: calc(100vh - 220px) !important;
+  object-fit: contain !important;
   object-position: center center !important;
   transform: none !important;
   scale: 1 !important;
   user-select: none !important;
 }
 
-/* 框选层仍然使用相对于真实图片区域的百分比坐标。 */
+/* 框选层继续使用相对于真实图片区域的百分比坐标。 */
 .source-confirm-dialog .identity-review .locator-canvas .person-box {
   box-sizing: border-box !important;
 }
@@ -58,46 +73,59 @@
 }
 
 .source-confirm-dialog .identity-review .locator-shots button {
-  min-height: 34px !important;
-  padding: 0 12px !important;
+  min-height: 32px !important;
+  padding: 0 11px !important;
   font-size: 11px !important;
 }
 
 .source-confirm-dialog .identity-review .locator-modal > footer {
-  position: sticky !important;
-  bottom: 0;
+  position: relative !important;
   z-index: 3;
-  min-height: 58px !important;
+  min-height: 56px !important;
+  padding-top: 9px !important;
+  padding-bottom: 9px !important;
   background: #fff !important;
   border-top: 1px solid #e5ebf2 !important;
 }
 
-/* 900px 以下高度进一步收窄画布，优先保证整张图片和操作按钮同屏。 */
+/* 常见 768~900px 高度屏幕：给图片再留出更多顶部/底部操作空间。 */
 @media (max-height: 900px) {
-  .source-confirm-dialog .identity-review .locator-canvas {
-    width: min(680px, calc(100% - 32px)) !important;
+  .source-confirm-dialog .identity-review .locator-canvas,
+  .source-confirm-dialog .identity-review .locator-canvas > img {
+    max-width: min(680px, calc(100vw - 96px)) !important;
+    max-height: calc(100vh - 210px) !important;
   }
 }
 
-/* 760px 以下高度继续收窄，避免出现必须滚动才能看到人物全貌。 */
+/* 矮屏幕优先保证“整图 + 镜头切换 + 底部按钮”同屏。 */
 @media (max-height: 760px) {
   .source-confirm-dialog .identity-review .locator-modal {
-    max-height: calc(100vh - 24px) !important;
+    max-height: calc(100vh - 20px) !important;
+  }
+
+  .source-confirm-dialog .identity-review .locator-canvas,
+  .source-confirm-dialog .identity-review .locator-canvas > img {
+    max-width: min(600px, calc(100vw - 80px)) !important;
+    max-height: calc(100vh - 190px) !important;
   }
 
   .source-confirm-dialog .identity-review .locator-canvas {
-    width: min(600px, calc(100% - 28px)) !important;
-    margin-top: 10px !important;
+    margin-top: 8px !important;
+  }
+
+  .source-confirm-dialog .identity-review .locator-shots {
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
   }
 }
 
 @media (max-width: 820px) {
   .source-confirm-dialog .identity-review .locator-modal {
-    width: calc(100vw - 24px) !important;
+    width: calc(100vw - 20px) !important;
   }
 
-  .source-confirm-dialog .identity-review .locator-canvas {
-    width: calc(100% - 24px) !important;
-    margin-top: 10px !important;
+  .source-confirm-dialog .identity-review .locator-canvas,
+  .source-confirm-dialog .identity-review .locator-canvas > img {
+    max-width: calc(100vw - 52px) !important;
   }
 }
