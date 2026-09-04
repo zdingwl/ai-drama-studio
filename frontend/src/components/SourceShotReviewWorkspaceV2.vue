@@ -15,7 +15,15 @@ import type {
 } from '../types/studio'
 import type { ReviewIssue } from '../types/remake'
 
-const props = defineProps<{ projectId: string; episodes: Episode[] }>()
+const props = withDefaults(defineProps<{
+  projectId: string
+  episodes: Episode[]
+  focusEpisodeId?: string
+  focusShotOrdinal?: number | null
+}>(), {
+  focusEpisodeId: '',
+  focusShotOrdinal: null,
+})
 const emit = defineEmits<{ changed: []; completed: [] }>()
 
 type Mark = {
@@ -152,6 +160,14 @@ function shotNeedsReview(entry: ReviewEntry): boolean {
   return assetNeedsReview(entry.shot) || observationsForShot(entry.shot.id).length > 0 || speakerIssuesForShot(entry.shot.id).length > 0
 }
 const pendingEntries = computed(() => entries.value.filter(shotNeedsReview))
+function focusedPendingEntry(): ReviewEntry | null {
+  const ordinal = Number(props.focusShotOrdinal || 0)
+  if (!Number.isInteger(ordinal) || ordinal <= 0) return null
+  return pendingEntries.value.find((entry) => (
+    (!props.focusEpisodeId || entry.episode.id === props.focusEpisodeId)
+    && entry.shot.ordinal === ordinal
+  )) || null
+}
 const visibleEntries = computed(() => {
   const keyword = search.value.trim().toLowerCase()
   if (!keyword) return pendingEntries.value
@@ -165,6 +181,7 @@ const selectedEntry = computed(() => pendingEntries.value.find((entry) => entry.
 const selectedObservations = computed(() => selectedEntry.value ? observationsForShot(selectedEntry.value.shot.id) : [])
 const selectedSpeakerIssues = computed(() => selectedEntry.value ? speakerIssuesForShot(selectedEntry.value.shot.id) : [])
 const selectedHasAssetIssue = computed(() => Boolean(selectedEntry.value && assetNeedsReview(selectedEntry.value.shot)))
+const selectedHasPendingPeople = computed(() => selectedObservations.value.length > 0)
 const finalCharacters = computed<SourceCharacter[]>(() => characterWorkspace.value?.characters.length
   ? characterWorkspace.value.characters
   : (assetWorkspace.value?.characters || []).map((item) => ({ id: item.id, name: item.name, cover_url: item.cover_url, confidence: item.confidence, shot_ids: item.shot_ids, shot_count: item.shot_count })))
@@ -254,7 +271,12 @@ async function load(runAuto = false): Promise<void> {
     entries.value = props.episodes.flatMap((episode, index) => (shotGroups[index] || []).map((shot) => ({ episode, shot })))
     issues.value = nextIssues
     await loadCharacterWorkspace(runAuto)
-    initSelectedShot(pendingEntries.value.find((entry) => entry.shot.id === selectedShotId.value) || pendingEntries.value[0] || null)
+    initSelectedShot(
+      pendingEntries.value.find((entry) => entry.shot.id === selectedShotId.value)
+      || focusedPendingEntry()
+      || pendingEntries.value[0]
+      || null,
+    )
     if (!pendingEntries.value.length) emit('completed')
   } catch (err) { error.value = err instanceof Error ? err.message : '原片待确认分镜读取失败' } finally { loading.value = false }
 }
@@ -285,10 +307,20 @@ async function assignObservation(observation: CharacterObservation): Promise<voi
   } catch (err) { error.value = err instanceof Error ? err.message : '人物身份保存失败' } finally { saving.value = false }
 }
 function candidatePeople(issue: ReviewIssue): SpeakerCandidate[] { return speakerSuggestion(issue)?.candidate_people?.filter((item) => item?.person_key) || [] }
+function confirmedCandidatePeople(issue: ReviewIssue): SpeakerCandidate[] { return candidatePeople(issue).filter((person) => Boolean(person.character_id)) }
+function speakerDependsOnPendingPeople(issue: ReviewIssue): boolean {
+  if (selectedHasPendingPeople.value) return true
+  return candidatePeople(issue).some((person) => !person.character_id && Boolean(person.visible_in_shot || person.in_performance))
+}
 function speakerPersonTitle(person: SpeakerCandidate): string { return person.character_name || person.display_name || '未命名人物' }
 async function saveSpeaker(issue: ReviewIssue): Promise<void> {
+  if (speakerDependsOnPendingPeople(issue)) {
+    error.value = '请先确认当前镜头人物身份，再确认对白说话人。'
+    return
+  }
   const personKey = speakerChoice.value[issue.id] || ''
-  if (!personKey || saving.value) { error.value = '请选择这句对白真正的说话人。'; return }
+  const selectedPerson = confirmedCandidatePeople(issue).find((person) => person.person_key === personKey)
+  if (!personKey || !selectedPerson || saving.value) { error.value = '请选择已经绑定正式人物的说话人。'; return }
   saving.value = true; error.value = ''
   try { await remakeApi.resolveSpeakerReviewIssue(issue.id, personKey); await afterChange(selectedEntry.value?.shot.id || '') }
   catch (err) { error.value = err instanceof Error ? err.message : '对白说话人保存失败' } finally { saving.value = false }
@@ -337,7 +369,7 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
       </aside>
 
       <main v-if="selectedEntry" class="shot-editor">
-        <header class="editor-head"><div><small>当前分镜</small><strong>第{{ String(selectedEntry.episode.sort_order).padStart(2, '0') }}集 · 镜头 {{ String(selectedEntry.shot.ordinal).padStart(2, '0') }}</strong><span>{{ formatTime(selectedEntry.shot.start_us) }} – {{ formatTime(selectedEntry.shot.end_us) }}</span></div><div class="editor-progress">处理后自动进入下一条</div></header>
+        <header class="editor-head"><div><small>当前分镜</small><strong>第{{ String(selectedEntry.episode.sort_order).padStart(2, '0') }}集 · 镜头 {{ String(selectedEntry.shot.ordinal).padStart(2, '0') }}</strong><span>{{ formatTime(selectedEntry.shot.start_us) }} – {{ formatTime(selectedEntry.shot.end_us) }}</span></div><div class="editor-progress">按顺序处理：人物 → 场景 / 道具 → 对白</div></header>
         <div class="editor-body">
           <section class="preview-panel">
             <video v-if="selectedEntry.shot.reference_url" :src="selectedEntry.shot.reference_url" :poster="selectedEntry.shot.thumbnail_url || undefined" controls preload="metadata" />
@@ -347,7 +379,7 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
 
           <section class="facts-panel">
             <section v-if="selectedObservations.length" class="fact-card person-card">
-              <header><div><small>人物身份</small><strong>这个镜头里的人是谁？</strong></div><span>{{ selectedObservations.length }} 项</span></header>
+              <header><div><small>1 · 人物身份</small><strong>先确认这个镜头里的人是谁</strong></div><span>{{ selectedObservations.length }} 项</span></header>
               <article v-for="observation in selectedObservations" :key="observation.key" class="person-row">
                 <div class="person-info"><strong>{{ observation.name }}</strong><span>{{ observation.appearance || '暂无稳定外观描述' }}</span><small v-if="reviewProposals[observation.key]?.localization">AI 已定位人物位置</small></div>
 
@@ -375,7 +407,7 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
             </section>
 
             <section v-if="selectedHasAssetIssue" class="fact-card asset-card">
-              <header><div><small>场景 / 道具</small><strong>确认这个镜头真正出现的资产</strong></div><button type="button" class="ghost" @click="fillAiSuggestion">采用 AI 建议到表单</button></header>
+              <header><div><small>2 · 场景 / 道具</small><strong>确认这个镜头真正出现的资产</strong></div><button type="button" class="ghost" @click="fillAiSuggestion">采用 AI 建议到表单</button></header>
               <div class="field-block"><label>人物 Final Binding</label><div class="option-grid visual-binding"><button v-for="item in assetWorkspace?.characters || []" :key="item.id" type="button" :class="{ selected: draftCharacterIds.includes(item.id) }" @click="toggleDraftCharacter(item.id)"><img v-if="item.cover_url" :src="item.cover_url" alt="" /><span>{{ item.name }}</span></button></div></div>
               <div class="field-block two-col"><div><label>场景</label><select v-model="draftSceneId"><option :value="null">未绑定场景</option><option v-for="item in assetWorkspace?.scenes || []" :key="item.id" :value="item.id">{{ item.name }}</option></select></div><div><label>关键道具</label><div class="option-grid compact"><button v-for="item in assetWorkspace?.props || []" :key="item.id" type="button" :class="{ selected: draftPropIds.includes(item.id) }" @click="toggleDraftProp(item.id)">{{ item.name }}</button></div></div></div>
               <details class="ai-details"><summary>查看 AI 识别依据</summary><p>人物：{{ evidenceLabel(evidenceFor(selectedEntry.shot.id).characters) }}</p><p>场景：{{ evidenceFor(selectedEntry.shot.id).scene?.label || '无建议' }}</p><p>道具：{{ evidenceLabel(evidenceFor(selectedEntry.shot.id).props) }}</p></details>
@@ -383,8 +415,20 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
             </section>
 
             <section v-if="selectedSpeakerIssues.length" class="fact-card speaker-card">
-              <header><div><small>对白说话人</small><strong>这句台词是谁说的？</strong></div><span>{{ selectedSpeakerIssues.length }} 条</span></header>
-              <article v-for="issue in selectedSpeakerIssues" :key="issue.id" class="speaker-row"><div v-if="speakerSuggestion(issue)" class="speaker-content"><div class="dialogue-copy"><strong>“{{ speakerSuggestion(issue)?.source_text || '（无文本）' }}”</strong><span>{{ formatTime(speakerSuggestion(issue)?.dialogue_start_us) }} – {{ formatTime(speakerSuggestion(issue)?.dialogue_end_us) }}</span></div><div class="speaker-options"><button v-for="person in candidatePeople(issue)" :key="person.person_key" type="button" :class="{ selected: speakerChoice[issue.id] === person.person_key }" @click="chooseSpeaker(issue.id, person.person_key)"><img v-if="person.cover_url" :src="person.cover_url" alt="" /><span>{{ speakerPersonTitle(person) }}</span></button></div><div class="save-line"><span v-if="!candidatePeople(issue).length">当前没有可选人物，先处理上方人物身份。</span><span v-else>选择真正的说话人后直接保存。</span><button type="button" class="primary" :disabled="saving || !speakerChoice[issue.id]" @click="saveSpeaker(issue)">确认说话人</button></div></div></article>
+              <header><div><small>3 · 对白说话人</small><strong>人物确认完成后，再确认这句台词是谁说的</strong></div><span>{{ selectedSpeakerIssues.length }} 条</span></header>
+              <article v-for="issue in selectedSpeakerIssues" :key="issue.id" class="speaker-row">
+                <div v-if="speakerSuggestion(issue)" class="speaker-content">
+                  <div class="dialogue-copy"><strong>“{{ speakerSuggestion(issue)?.source_text || '（无文本）' }}”</strong><span>{{ formatTime(speakerSuggestion(issue)?.dialogue_start_us) }} – {{ formatTime(speakerSuggestion(issue)?.dialogue_end_us) }}</span></div>
+                  <div v-if="speakerDependsOnPendingPeople(issue)" class="speaker-lock">
+                    <strong>先确认人物，才能确认对白</strong>
+                    <span>当前镜头仍有人物身份未确定。确认人物后，这条对白会自动解锁并只显示已绑定的正式人物。</span>
+                  </div>
+                  <template v-else>
+                    <div class="speaker-options"><button v-for="person in confirmedCandidatePeople(issue)" :key="person.person_key" type="button" :class="{ selected: speakerChoice[issue.id] === person.person_key }" @click="chooseSpeaker(issue.id, person.person_key)"><img v-if="person.cover_url" :src="person.cover_url" alt="" /><span>{{ speakerPersonTitle(person) }}</span></button></div>
+                    <div class="save-line"><span v-if="!confirmedCandidatePeople(issue).length">当前没有已确认的可选人物，请先完成人物确认。</span><span v-else>这里只能选择已经绑定正式人物的说话人。</span><button type="button" class="primary" :disabled="saving || !confirmedCandidatePeople(issue).some((person) => person.person_key === speakerChoice[issue.id])" @click="saveSpeaker(issue)">确认说话人</button></div>
+                  </template>
+                </div>
+              </article>
             </section>
           </section>
         </div>
@@ -394,5 +438,5 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
 </template>
 
 <style scoped>
-.source-shot-review-v2{height:100%;min-height:0;color:#273b58}.review-error{margin:0 0 8px;padding:9px 12px;border:1px solid #efcaca;border-radius:8px;background:#fff2f2;color:#a34848;font-size:11px}.review-loading,.review-complete{height:100%;min-height:360px;display:grid;place-items:center;align-content:center;gap:8px;background:#fff}.review-complete .check{width:52px;height:52px;display:grid;place-items:center;border-radius:50%;background:#eaf8ef;color:#29a85d;font-size:26px;font-weight:900}.review-complete strong{font-size:18px}.review-complete span{color:#7c899b;font-size:11px}.review-shell{height:100%;min-height:0;display:grid;grid-template-columns:300px minmax(0,1fr);background:#f5f7fa}.shot-queue{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);border-right:1px solid #e1e6ed;background:#fff}.shot-queue>header{display:grid;gap:9px;padding:13px;border-bottom:1px solid #e8ecf1}.shot-queue>header>div{display:flex;justify-content:space-between;align-items:center}.shot-queue strong{font-size:13px}.shot-queue header span{padding:3px 7px;border-radius:99px;background:#fff1d8;color:#986519;font-size:9px;font-weight:800}.shot-queue input{height:34px;border:1px solid #dbe2eb;border-radius:8px;padding:0 10px;font-size:10px;outline:none}.shot-list{min-height:0;overflow:auto;padding:8px}.shot-row{width:100%;display:grid;grid-template-columns:70px minmax(0,1fr);gap:9px;margin-bottom:7px;padding:7px;border:1px solid transparent;border-radius:9px;background:#fff;text-align:left;cursor:pointer}.shot-row:hover{background:#f7f9fc}.shot-row.active{border-color:#8caff0;background:#f1f6ff}.thumb{height:76px;overflow:hidden;display:grid;place-items:center;border-radius:7px;background:#111a27;color:#7e8997;font-size:9px}.thumb img{width:100%;height:100%;object-fit:cover}.copy{min-width:0;display:grid;align-content:center;gap:3px}.copy strong{font-size:10px;color:#344b69}.copy>span{overflow:hidden;color:#7d899a;font-size:9px;text-overflow:ellipsis;white-space:nowrap}.badges{display:flex;gap:4px;flex-wrap:wrap}.badges i{padding:2px 5px;border-radius:99px;background:#eef3fa;color:#58739a;font-size:8px;font-style:normal}.shot-editor{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden}.editor-head{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 15px;border-bottom:1px solid #e2e7ee;background:#fff}.editor-head>div:first-child{display:grid;gap:1px}.editor-head small{font-size:8px;color:#8b97a8}.editor-head strong{font-size:13px}.editor-head span,.editor-progress{font-size:9px;color:#7d899b}.editor-progress{padding:5px 8px;border-radius:99px;background:#edf4ff;color:#5072a5}.editor-body{min-height:0;overflow:auto;display:grid;grid-template-columns:minmax(360px,46%) minmax(480px,54%);gap:12px;padding:12px}.preview-panel{position:sticky;top:0;align-self:start;min-height:320px;display:grid;place-items:center;overflow:hidden;border-radius:11px;background:#101824}.preview-panel video,.preview-panel img{display:block;width:100%;max-height:calc(100vh - 220px);object-fit:contain;background:#101824}.no-preview{color:#7e8998;font-size:10px}.facts-panel{display:grid;align-content:start;gap:10px}.fact-card{overflow:hidden;border:1px solid #dfe5ed;border-radius:11px;background:#fff}.fact-card>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-bottom:1px solid #ebeff4}.fact-card>header>div{display:grid;gap:2px}.fact-card header small{font-size:8px;color:#8492a5}.fact-card header strong{font-size:12px}.fact-card header>span{font-size:9px;color:#7a899c}.person-row,.speaker-row{display:grid;gap:10px;padding:11px 12px;border-bottom:1px solid #eef1f5}.person-row:last-child,.speaker-row:last-child{border-bottom:0}.person-info{display:grid;gap:2px}.person-info strong{font-size:11px}.person-info span{color:#7d8999;font-size:9px;line-height:1.5}.person-info small{color:#3f77c8;font-size:8px}.new-person-divider{display:flex;align-items:center;gap:8px;color:#8a96a6;font-size:8px}.new-person-divider:before,.new-person-divider:after{content:"";height:1px;flex:1;background:#e8ecf1}.new-person{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.new-person input,.field-block select{width:100%;height:34px;box-sizing:border-box;border:1px solid #d9e1eb;border-radius:7px;padding:0 9px;background:#fff;color:#40516b;font-size:10px}.new-person button,.ghost,.primary{min-height:34px;border-radius:7px;padding:0 11px;font-size:9px;font-weight:800;cursor:pointer}.new-person button{border:1px solid #a9bfe3;background:#f7faff;color:#496b9f}.new-person button:disabled,.primary:disabled{opacity:.45;cursor:not-allowed}.asset-card{padding-bottom:11px}.asset-card>header{margin-bottom:10px}.ghost{border:1px solid #d5dfec;background:#fff;color:#5b6f8d}.field-block{display:grid;gap:6px;padding:0 12px 10px}.field-block>label,.field-block>div>label{color:#65748a;font-size:9px;font-weight:800}.two-col{grid-template-columns:1fr 1fr;gap:10px}.two-col>div{display:grid;gap:6px}.option-grid{display:flex;flex-wrap:wrap;gap:5px}.option-grid button{min-height:29px;border:1px solid #dbe2eb;border-radius:7px;padding:0 8px;background:#fff;color:#596a80;font-size:9px;cursor:pointer}.option-grid button.selected{border-color:#5d89dc;background:#edf4ff;color:#315d9f}.visual-binding button{display:grid;grid-template-columns:28px auto;gap:6px;align-items:center;padding:4px 8px 4px 4px}.visual-binding img{width:28px;height:34px;border-radius:5px;object-fit:cover}.ai-details{margin:0 12px 10px;border:1px solid #e3e8ef;border-radius:7px;background:#fafbfd}.ai-details summary{padding:7px 9px;color:#6e7e93;font-size:9px;cursor:pointer}.ai-details p{margin:0;padding:3px 9px;color:#78879a;font-size:8px}.save-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 12px}.save-line>span{color:#8491a2;font-size:8px}.primary{border:0;background:#1769ff;color:#fff}.speaker-content{display:grid;gap:10px}.dialogue-copy{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.dialogue-copy strong{font-size:12px;line-height:1.45}.dialogue-copy span{flex:none;color:#8995a5;font-size:8px}.speaker-options{display:flex;flex-wrap:wrap;gap:6px}.speaker-options button{display:grid;grid-template-columns:30px auto;gap:6px;align-items:center;border:1px solid #dce3ec;border-radius:8px;padding:5px 8px 5px 5px;background:#fff;color:#40536e;font-size:9px;cursor:pointer}.speaker-options button.selected{border-color:#5c87d9;background:#eef4ff}.speaker-options img{width:30px;height:38px;border-radius:6px;object-fit:cover}@media(max-width:1000px){.review-shell{grid-template-columns:240px minmax(0,1fr)}.editor-body{grid-template-columns:1fr}.preview-panel{position:static;min-height:260px}.two-col{grid-template-columns:1fr}}@media(max-width:760px){.review-shell{grid-template-columns:1fr;grid-template-rows:210px minmax(0,1fr)}.shot-queue{border-right:0;border-bottom:1px solid #e1e6ed}.shot-list{display:flex;overflow:auto}.shot-row{min-width:230px}.editor-body{padding:8px}.new-person,.two-col{grid-template-columns:1fr}.save-line,.dialogue-copy{align-items:stretch;flex-direction:column}}
+.source-shot-review-v2{height:100%;min-height:0;color:#273b58}.review-error{margin:0 0 8px;padding:9px 12px;border:1px solid #efcaca;border-radius:8px;background:#fff2f2;color:#a34848;font-size:11px}.review-loading,.review-complete{height:100%;min-height:360px;display:grid;place-items:center;align-content:center;gap:8px;background:#fff}.review-complete .check{width:52px;height:52px;display:grid;place-items:center;border-radius:50%;background:#eaf8ef;color:#29a85d;font-size:26px;font-weight:900}.review-complete strong{font-size:18px}.review-complete span{color:#7c899b;font-size:11px}.review-shell{height:100%;min-height:0;display:grid;grid-template-columns:300px minmax(0,1fr);background:#f5f7fa}.shot-queue{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);border-right:1px solid #e1e6ed;background:#fff}.shot-queue>header{display:grid;gap:9px;padding:13px;border-bottom:1px solid #e8ecf1}.shot-queue>header>div{display:flex;justify-content:space-between;align-items:center}.shot-queue strong{font-size:13px}.shot-queue header span{padding:3px 7px;border-radius:99px;background:#fff1d8;color:#986519;font-size:9px;font-weight:800}.shot-queue input{height:34px;border:1px solid #dbe2eb;border-radius:8px;padding:0 10px;font-size:10px;outline:none}.shot-list{min-height:0;overflow:auto;padding:8px}.shot-row{width:100%;display:grid;grid-template-columns:70px minmax(0,1fr);gap:9px;margin-bottom:7px;padding:7px;border:1px solid transparent;border-radius:9px;background:#fff;text-align:left;cursor:pointer}.shot-row:hover{background:#f7f9fc}.shot-row.active{border-color:#8caff0;background:#f1f6ff}.thumb{height:76px;overflow:hidden;display:grid;place-items:center;border-radius:7px;background:#111a27;color:#7e8997;font-size:9px}.thumb img{width:100%;height:100%;object-fit:cover}.copy{min-width:0;display:grid;align-content:center;gap:3px}.copy strong{font-size:10px;color:#344b69}.copy>span{overflow:hidden;color:#7d899a;font-size:9px;text-overflow:ellipsis;white-space:nowrap}.badges{display:flex;gap:4px;flex-wrap:wrap}.badges i{padding:2px 5px;border-radius:99px;background:#eef3fa;color:#58739a;font-size:8px;font-style:normal}.shot-editor{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden}.editor-head{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 15px;border-bottom:1px solid #e2e7ee;background:#fff}.editor-head>div:first-child{display:grid;gap:1px}.editor-head small{font-size:8px;color:#8b97a8}.editor-head strong{font-size:13px}.editor-head span,.editor-progress{font-size:9px;color:#7d899b}.editor-progress{padding:5px 8px;border-radius:99px;background:#edf4ff;color:#5072a5}.editor-body{min-height:0;overflow:auto;display:grid;grid-template-columns:minmax(360px,46%) minmax(480px,54%);gap:12px;padding:12px}.preview-panel{position:sticky;top:0;align-self:start;min-height:320px;display:grid;place-items:center;overflow:hidden;border-radius:11px;background:#101824}.preview-panel video,.preview-panel img{display:block;width:100%;max-height:calc(100vh - 220px);object-fit:contain;background:#101824}.no-preview{color:#7e8998;font-size:10px}.facts-panel{display:grid;align-content:start;gap:10px}.fact-card{overflow:hidden;border:1px solid #dfe5ed;border-radius:11px;background:#fff}.fact-card>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-bottom:1px solid #ebeff4}.fact-card>header>div{display:grid;gap:2px}.fact-card header small{font-size:8px;color:#8492a5}.fact-card header strong{font-size:12px}.fact-card header>span{font-size:9px;color:#7a899c}.person-row,.speaker-row{display:grid;gap:10px;padding:11px 12px;border-bottom:1px solid #eef1f5}.person-row:last-child,.speaker-row:last-child{border-bottom:0}.person-info{display:grid;gap:2px}.person-info strong{font-size:11px}.person-info span{color:#7d8999;font-size:9px;line-height:1.5}.person-info small{color:#3f77c8;font-size:8px}.new-person-divider{display:flex;align-items:center;gap:8px;color:#8a96a6;font-size:8px}.new-person-divider:before,.new-person-divider:after{content:"";height:1px;flex:1;background:#e8ecf1}.new-person{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.new-person input,.field-block select{width:100%;height:34px;box-sizing:border-box;border:1px solid #d9e1eb;border-radius:7px;padding:0 9px;background:#fff;color:#40516b;font-size:10px}.new-person button,.ghost,.primary{min-height:34px;border-radius:7px;padding:0 11px;font-size:9px;font-weight:800;cursor:pointer}.new-person button{border:1px solid #a9bfe3;background:#f7faff;color:#496b9f}.new-person button:disabled,.primary:disabled{opacity:.45;cursor:not-allowed}.asset-card{padding-bottom:11px}.asset-card>header{margin-bottom:10px}.ghost{border:1px solid #d5dfec;background:#fff;color:#5b6f8d}.field-block{display:grid;gap:6px;padding:0 12px 10px}.field-block>label,.field-block>div>label{color:#65748a;font-size:9px;font-weight:800}.two-col{grid-template-columns:1fr 1fr;gap:10px}.two-col>div{display:grid;gap:6px}.option-grid{display:flex;flex-wrap:wrap;gap:5px}.option-grid button{min-height:29px;border:1px solid #dbe2eb;border-radius:7px;padding:0 8px;background:#fff;color:#596a80;font-size:9px;cursor:pointer}.option-grid button.selected{border-color:#5d89dc;background:#edf4ff;color:#315d9f}.visual-binding button{display:grid;grid-template-columns:28px auto;gap:6px;align-items:center;padding:4px 8px 4px 4px}.visual-binding img{width:28px;height:34px;border-radius:5px;object-fit:cover}.ai-details{margin:0 12px 10px;border:1px solid #e3e8ef;border-radius:7px;background:#fafbfd}.ai-details summary{padding:7px 9px;color:#6e7e93;font-size:9px;cursor:pointer}.ai-details p{margin:0;padding:3px 9px;color:#78879a;font-size:8px}.save-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 12px}.save-line>span{color:#8491a2;font-size:8px}.primary{border:0;background:#1769ff;color:#fff}.speaker-content{display:grid;gap:10px}.dialogue-copy{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.dialogue-copy strong{font-size:12px;line-height:1.45}.dialogue-copy span{flex:none;color:#8995a5;font-size:8px}.speaker-lock{display:grid;gap:4px;padding:10px 12px;border:1px solid #f0d7a3;border-radius:8px;background:#fff8e8}.speaker-lock strong{color:#8a5c14;font-size:10px}.speaker-lock span{color:#927441;font-size:9px;line-height:1.55}.speaker-options{display:flex;flex-wrap:wrap;gap:6px}.speaker-options button{display:grid;grid-template-columns:30px auto;gap:6px;align-items:center;border:1px solid #dce3ec;border-radius:8px;padding:5px 8px 5px 5px;background:#fff;color:#40536e;font-size:9px;cursor:pointer}.speaker-options button.selected{border-color:#5c87d9;background:#eef4ff}.speaker-options img{width:30px;height:38px;border-radius:6px;object-fit:cover}@media(max-width:1000px){.review-shell{grid-template-columns:240px minmax(0,1fr)}.editor-body{grid-template-columns:1fr}.preview-panel{position:static;min-height:260px}.two-col{grid-template-columns:1fr}}@media(max-width:760px){.review-shell{grid-template-columns:1fr;grid-template-rows:210px minmax(0,1fr)}.shot-queue{border-right:0;border-bottom:1px solid #e1e6ed}.shot-list{display:flex;overflow:auto}.shot-row{min-width:230px}.editor-body{padding:8px}.new-person,.two-col{grid-template-columns:1fr}.save-line,.dialogue-copy{align-items:stretch;flex-direction:column}}
 </style>
