@@ -6,18 +6,23 @@
  */
 
 .source-confirm-dialog .identity-review .locator-modal {
-  max-height: calc(100vh - 56px) !important;
+  width: min(920px, calc(100vw - 48px)) !important;
+  max-height: calc(100vh - 40px) !important;
   overflow-y: auto !important;
   overflow-x: hidden !important;
 }
 
-/* 画布高度由原图自身宽高比决定，禁止设计稿层强制 500~620px。 */
+/*
+ * 画布宽度主动收窄，让 4:3 / 16:9 分镜在普通屏幕里能够一次完整看到。
+ * 图片高度继续由原始宽高比决定，因此 canvas 边界始终等于实际图片边界，
+ * 不影响现有 0~1 框选坐标。
+ */
 .source-confirm-dialog .identity-review .locator-canvas {
-  width: calc(100% - 32px) !important;
+  width: min(760px, calc(100% - 32px)) !important;
   height: auto !important;
   min-height: 0 !important;
   max-height: none !important;
-  margin: 12px 16px 0 !important;
+  margin: 12px auto 0 !important;
   display: block !important;
   overflow: hidden !important;
   background: #101925 !important;
@@ -48,20 +53,51 @@
   z-index: 2;
   flex: 0 0 auto;
   overflow-x: auto !important;
+  padding: 8px 16px !important;
   background: #fff !important;
+}
+
+.source-confirm-dialog .identity-review .locator-shots button {
+  min-height: 34px !important;
+  padding: 0 12px !important;
+  font-size: 11px !important;
 }
 
 .source-confirm-dialog .identity-review .locator-modal > footer {
   position: sticky !important;
   bottom: 0;
   z-index: 3;
+  min-height: 58px !important;
   background: #fff !important;
   border-top: 1px solid #e5ebf2 !important;
 }
 
-/* 矮屏幕不裁图片，改为弹窗内部滚动。 */
+/* 900px 以下高度进一步收窄画布，优先保证整张图片和操作按钮同屏。 */
+@media (max-height: 900px) {
+  .source-confirm-dialog .identity-review .locator-canvas {
+    width: min(680px, calc(100% - 32px)) !important;
+  }
+}
+
+/* 760px 以下高度继续收窄，避免出现必须滚动才能看到人物全貌。 */
 @media (max-height: 760px) {
   .source-confirm-dialog .identity-review .locator-modal {
-    max-height: calc(100vh - 28px) !important;
+    max-height: calc(100vh - 24px) !important;
+  }
+
+  .source-confirm-dialog .identity-review .locator-canvas {
+    width: min(600px, calc(100% - 28px)) !important;
+    margin-top: 10px !important;
+  }
+}
+
+@media (max-width: 820px) {
+  .source-confirm-dialog .identity-review .locator-modal {
+    width: calc(100vw - 24px) !important;
+  }
+
+  .source-confirm-dialog .identity-review .locator-canvas {
+    width: calc(100% - 24px) !important;
+    margin-top: 10px !important;
   }
 }
