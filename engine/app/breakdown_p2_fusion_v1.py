@@ -411,18 +411,11 @@ def _appearance_key(
     appearance = _normalized_text(subject.get("appearance_summary"))
     if len(appearance) >= 4 and appearance not in (ambiguous_appearances or set()):
         return f"appearance:{appearance}"
-    # VLM label 只在单 Shot 内有效。没有足够外观文本，或同一外观在同镜头出现多人时，
-    # 都必须退回 Shot-local key，防止语义 Draft 制造伪身份合并。
     return f"shot:{shot.revision_item_id}:{label}"
 
 
 def _ambiguous_subject_appearances(segment_plan: _SegmentPlan) -> set[str]:
-    """返回本 Segment 内不能用于跨 Shot 合并的外观签名。
-
-    只要某个 normalized appearance 在任一 Shot 同时出现两次以上，就说明仅靠这段
-    appearance_summary 无法区分当时的两个人。此时整个 Segment 都禁用该 appearance
-    的跨 Shot 合并；宁可多建匿名 LocalSubject，也不能把同镜头两个人合成一个人。
-    """
+    """返回本 Segment 内不能用于跨 Shot 合并的外观签名。"""
 
     ambiguous: set[str] = set()
     for semantic in segment_plan.semantics:
@@ -602,6 +595,28 @@ def _component_records(bundle: FusionInputBundle, component: str, source_type: s
     ]
 
 
+def _continuity_hint(shot_semantic: Mapping[str, Any], record: p2.P2EvidenceRecord | None) -> str | None:
+    """Prefer exact semantic continuity, then map the validated Episode-window scene relation."""
+
+    direct = _clean_text(shot_semantic.get("continuity_hint"), max_len=1000)
+    if direct:
+        return direct
+    if record is None or not isinstance(record.payload, Mapping):
+        return None
+    episode_window = record.payload.get("episode_window")
+    if not isinstance(episode_window, Mapping):
+        return None
+    context_note = _clean_text(episode_window.get("context_note"), max_len=1000)
+    if context_note:
+        return context_note
+    continuity = str(episode_window.get("scene_continuity") or "UNCERTAIN").strip().upper()
+    if continuity == "SAME":
+        return "同场景延续"
+    if continuity == "NEW_SCENE":
+        return "新场景起点"
+    return None
+
+
 def _safe_fail_run(run_id: str, exc: BaseException) -> None:
     try:
         with studio_v2.get_session() as session:
@@ -613,7 +628,6 @@ def _safe_fail_run(run_id: str, exc: BaseException) -> None:
                 f"P2.5 Fusion failed: {type(exc).__name__}",
             )
     except Exception:
-        # 原异常更重要；STALE/并发状态变化时不覆盖其生命周期事实。
         return
 
 
@@ -699,7 +713,6 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
     )
     warnings.extend(ocr_warnings)
 
-    # ASR word → segment provenance index.
     words_by_segment: dict[str, list[p2.P2EvidenceRecord]] = {}
     for word in asr_words:
         payload = word.payload if isinstance(word.payload, Mapping) else {}
@@ -803,6 +816,9 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                         ),
                         "vlm_output_missing": vlm_record is None,
                         "composition_hint": _clean_text(shot_semantic.get("composition_hint"), max_len=500),
+                        "camera_angle_hint": _clean_text(shot_semantic.get("camera_angle_hint"), max_len=500),
+                        "lighting_hint": _clean_text(shot_semantic.get("lighting_hint"), max_len=1200),
+                        "continuity_hint": _continuity_hint(shot_semantic, vlm_record),
                     }),
                 )
                 session.add(draft)
@@ -810,26 +826,8 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                 segment_by_shot_item[shot.revision_item_id] = segment
                 generated_counts["shot"] += 1
                 if vlm_record is not None:
-                    _add_link(
-                        session,
-                        link_dedupe,
-                        run_id=run.id,
-                        owner_type="SHOT_DRAFT",
-                        owner_id=draft.id,
-                        record=vlm_record,
-                        source_uri=vlm_uri,
-                        role="PRIMARY",
-                    )
-                    _add_link(
-                        session,
-                        link_dedupe,
-                        run_id=run.id,
-                        owner_type="SCENE_SEGMENT",
-                        owner_id=segment.id,
-                        record=vlm_record,
-                        source_uri=vlm_uri,
-                        role="CONTEXT",
-                    )
+                    _add_link(session, link_dedupe, run_id=run.id, owner_type="SHOT_DRAFT", owner_id=draft.id, record=vlm_record, source_uri=vlm_uri, role="PRIMARY")
+                    _add_link(session, link_dedupe, run_id=run.id, owner_type="SCENE_SEGMENT", owner_id=segment.id, record=vlm_record, source_uri=vlm_uri, role="CONTEXT")
 
         # 2) Segment-scoped LocalSubject + per-Shot presence.
         for segment_plan in segment_plans:
@@ -910,6 +908,10 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                         "source_vlm_label": label,
                         "raw_screen_position": _clean_text(raw_subject.get("screen_position"), max_len=200),
                         "appearance_summary": _clean_text(raw_subject.get("appearance_summary"), max_len=2000),
+                        "expression_summary": _clean_text(raw_subject.get("expression_summary"), max_len=1200),
+                        "posture_summary": _clean_text(raw_subject.get("posture_summary"), max_len=1200),
+                        "gaze_summary": _clean_text(raw_subject.get("gaze_summary"), max_len=1200),
+                        "interaction_summary": _clean_text(raw_subject.get("interaction_summary"), max_len=1200),
                     }),
                 )
                 session.add(presence)
@@ -956,11 +958,7 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                 event_type = str(raw_event.get("event_type") or "").strip().upper()
                 if not content or event_type not in {"VISUAL", "ACTION"}:
                     continue
-                source_start, source_end = _ratio_range(
-                    shot,
-                    raw_event.get("start_ratio"),
-                    raw_event.get("end_ratio"),
-                )
+                source_start, source_end = _ratio_range(shot, raw_event.get("start_ratio"), raw_event.get("end_ratio"))
                 draft = shot_draft_by_item[shot.revision_item_id]
                 event_ordinals[shot.revision_item_id] += 1
                 event = TimelineEvent(
@@ -988,16 +986,7 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                 )
                 session.add(event)
                 generated_counts["timeline_event"] += 1
-                _add_link(
-                    session,
-                    link_dedupe,
-                    run_id=run.id,
-                    owner_type="TIMELINE_EVENT",
-                    owner_id=event.id,
-                    record=vlm_record,
-                    source_uri=vlm_uri,
-                    role="PRIMARY",
-                )
+                _add_link(session, link_dedupe, run_id=run.id, owner_type="TIMELINE_EVENT", owner_id=event.id, record=vlm_record, source_uri=vlm_uri, role="PRIMARY")
                 raw_labels = raw_event.get("subject_labels")
                 if isinstance(raw_labels, list):
                     for raw_label in raw_labels:
@@ -1005,13 +994,7 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                         local = subject_by_shot_label.get((shot.revision_item_id, label))
                         if local is None:
                             continue
-                        session.add(TimelineEventSubject(
-                            id=studio_v2.new_id("EVENTSUBJECT"),
-                            event_id=event.id,
-                            local_subject_id=local.id,
-                            role="ACTOR",
-                            confidence=None,
-                        ))
+                        session.add(TimelineEventSubject(id=studio_v2.new_id("EVENTSUBJECT"), event_id=event.id, local_subject_id=local.id, role="ACTOR", confidence=None))
                         generated_counts["timeline_event_subject"] += 1
 
         # 4) ASR: split every segment against exact historical Shot boundaries.
@@ -1019,10 +1002,7 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
             if segment_record.source_start_us is None or segment_record.source_end_us is None:
                 warnings.append({"code": "ASR_SEGMENT_NO_TIME", "message": f"ASR segment {segment_record.source_id} 无合法 source time，已忽略"})
                 continue
-            segment_words = sorted(
-                words_by_segment.get(segment_record.source_id, []),
-                key=lambda item: (item.source_start_us or 0, item.source_id),
-            )
+            segment_words = sorted(words_by_segment.get(segment_record.source_id, []), key=lambda item: (item.source_start_us or 0, item.source_id))
             matched_shots = 0
             for shot in context.shots:
                 overlap_start = max(segment_record.source_start_us, shot.start_us)
@@ -1049,14 +1029,8 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                     source_start, source_end = overlap_start, overlap_end
                     content = _clean_text(segment_record.text, max_len=4000) or ""
                     text_policy = "segment-text-fallback"
-                    if matched_shots > 1 or (
-                        segment_record.source_start_us < shot.start_us
-                        or segment_record.source_end_us > shot.end_us
-                    ):
-                        warnings.append({
-                            "code": "ASR_CROSS_SHOT_TEXT_FALLBACK",
-                            "message": f"ASR segment {segment_record.source_id} 跨 Shot 但无可用 word timing；片段文本被保守复制到交集事件",
-                        })
+                    if matched_shots > 1 or segment_record.source_start_us < shot.start_us or segment_record.source_end_us > shot.end_us:
+                        warnings.append({"code": "ASR_CROSS_SHOT_TEXT_FALLBACK", "message": f"ASR segment {segment_record.source_id} 跨 Shot 但无可用 word timing；片段文本被保守复制到交集事件"})
                 if not content:
                     continue
                 source_start = max(shot.start_us, min(shot.end_us - 1, int(source_start)))
@@ -1064,55 +1038,25 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                 draft = shot_draft_by_item[shot.revision_item_id]
                 event_ordinals[shot.revision_item_id] += 1
                 event = TimelineEvent(
-                    id=studio_v2.new_id("EVENT"),
-                    run_id=run.id,
-                    shot_draft_id=draft.id,
-                    ordinal=event_ordinals[shot.revision_item_id],
-                    event_type="DIALOGUE",
-                    source_start_us=source_start,
-                    source_end_us=source_end,
-                    shot_relative_start_us=source_start - shot.start_us,
-                    shot_relative_end_us=source_end - shot.start_us,
-                    content_text=content,
-                    language=segment_record.language or context.source_language or None,
-                    emotion_hint=None,
-                    speaking_style_hint=None,
-                    confidence=_mean_confidence(words_in_shot),
-                    origin="ASR",
+                    id=studio_v2.new_id("EVENT"), run_id=run.id, shot_draft_id=draft.id,
+                    ordinal=event_ordinals[shot.revision_item_id], event_type="DIALOGUE",
+                    source_start_us=source_start, source_end_us=source_end,
+                    shot_relative_start_us=source_start - shot.start_us, shot_relative_end_us=source_end - shot.start_us,
+                    content_text=content, language=segment_record.language or context.source_language or None,
+                    emotion_hint=None, speaking_style_hint=None, confidence=_mean_confidence(words_in_shot), origin="ASR",
                     metadata_json=_json_text({
                         "fusion_profile": FUSION_PROFILE,
                         "asr_segment_id": segment_record.source_id,
                         "text_policy": text_policy,
                         "word_ids": [item.source_id for item in words_in_shot],
-                        "cross_shot": not (
-                            segment_record.source_start_us >= shot.start_us
-                            and segment_record.source_end_us <= shot.end_us
-                        ),
+                        "cross_shot": not (segment_record.source_start_us >= shot.start_us and segment_record.source_end_us <= shot.end_us),
                     }),
                 )
                 session.add(event)
                 generated_counts["timeline_event"] += 1
-                _add_link(
-                    session,
-                    link_dedupe,
-                    run_id=run.id,
-                    owner_type="TIMELINE_EVENT",
-                    owner_id=event.id,
-                    record=segment_record,
-                    source_uri=asr_uri,
-                    role="PRIMARY",
-                )
+                _add_link(session, link_dedupe, run_id=run.id, owner_type="TIMELINE_EVENT", owner_id=event.id, record=segment_record, source_uri=asr_uri, role="PRIMARY")
                 for word in words_in_shot:
-                    _add_link(
-                        session,
-                        link_dedupe,
-                        run_id=run.id,
-                        owner_type="TIMELINE_EVENT",
-                        owner_id=event.id,
-                        record=word,
-                        source_uri=asr_uri,
-                        role="SUPPORT",
-                    )
+                    _add_link(session, link_dedupe, run_id=run.id, owner_type="TIMELINE_EVENT", owner_id=event.id, record=word, source_uri=asr_uri, role="SUPPORT")
             if matched_shots == 0:
                 warnings.append({"code": "ASR_SEGMENT_OUTSIDE_SHOTS", "message": f"ASR segment {segment_record.source_id} 未与任何 source Shot 相交，已忽略"})
 
@@ -1136,21 +1080,12 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
             draft = shot_draft_by_item[shot.revision_item_id]
             event_ordinals[shot.revision_item_id] += 1
             event = TimelineEvent(
-                id=studio_v2.new_id("EVENT"),
-                run_id=run.id,
-                shot_draft_id=draft.id,
-                ordinal=event_ordinals[shot.revision_item_id],
-                event_type="OCR",
-                source_start_us=source_start,
-                source_end_us=source_end,
-                shot_relative_start_us=source_start - shot.start_us,
-                shot_relative_end_us=source_end - shot.start_us,
-                content_text=cluster.text,
-                language=first.language or context.source_language or None,
-                emotion_hint=None,
-                speaking_style_hint=None,
-                confidence=_mean_confidence(cluster.records),
-                origin="OCR",
+                id=studio_v2.new_id("EVENT"), run_id=run.id, shot_draft_id=draft.id,
+                ordinal=event_ordinals[shot.revision_item_id], event_type="OCR",
+                source_start_us=source_start, source_end_us=source_end,
+                shot_relative_start_us=source_start - shot.start_us, shot_relative_end_us=source_end - shot.start_us,
+                content_text=cluster.text, language=first.language or context.source_language or None,
+                emotion_hint=None, speaking_style_hint=None, confidence=_mean_confidence(cluster.records), origin="OCR",
                 metadata_json=_json_text({
                     "fusion_profile": FUSION_PROFILE,
                     "duration_policy": duration_policy,
@@ -1162,16 +1097,7 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
             session.add(event)
             generated_counts["timeline_event"] += 1
             for index, record in enumerate(cluster.records):
-                _add_link(
-                    session,
-                    link_dedupe,
-                    run_id=run.id,
-                    owner_type="TIMELINE_EVENT",
-                    owner_id=event.id,
-                    record=record,
-                    source_uri=ocr_uri,
-                    role="PRIMARY" if index == 0 else "SUPPORT",
-                )
+                _add_link(session, link_dedupe, run_id=run.id, owner_type="TIMELINE_EVENT", owner_id=event.id, record=record, source_uri=ocr_uri, role="PRIMARY" if index == 0 else "SUPPORT")
 
         # 6) VLM props → Segment-scoped DraftPropHint + per-Shot occurrence.
         prop_plans_by_segment: dict[str, dict[str, _PropPlan]] = {}
@@ -1197,13 +1123,8 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                 seen_in_shot.add(normalized)
                 plan = plans.get(normalized)
                 if plan is None:
-                    plan = _PropPlan(
-                        normalized_label=normalized,
-                        label=label,
-                        importance=_importance(raw_prop.get("importance")),
-                    )
+                    plan = _PropPlan(normalized_label=normalized, label=label, importance=_importance(raw_prop.get("importance")))
                     plans[normalized] = plan
-                # 同一 prop 多 Shot 出现时保留更高重要度。
                 rank = {"UNKNOWN": 0, "AMBIENT": 1, "SUPPORTING": 2, "KEY": 3}
                 candidate_importance = _importance(raw_prop.get("importance"))
                 if rank[candidate_importance] > rank[plan.importance]:
@@ -1221,21 +1142,11 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
         for segment_id, plans in prop_plans_by_segment.items():
             for ordinal, plan in enumerate(plans.values(), start=1):
                 prop = DraftPropHint(
-                    id=studio_v2.new_id("PROPHINT"),
-                    run_id=run.id,
-                    scene_segment_id=segment_id,
-                    ordinal=ordinal,
-                    label_hint=plan.label,
-                    normalized_hint=plan.normalized_label[:255],
-                    importance=plan.importance,
-                    narrative_reason=_unique_join(plan.reasons, max_len=3000),
-                    first_seen_us=int(plan.first_seen_us or 0),
-                    last_seen_us=int(plan.last_seen_us or plan.first_seen_us or 0),
-                    confidence=None,
-                    metadata_json=_json_text({
-                        "fusion_profile": FUSION_PROFILE,
-                        "source": "VLM",
-                    }),
+                    id=studio_v2.new_id("PROPHINT"), run_id=run.id, scene_segment_id=segment_id, ordinal=ordinal,
+                    label_hint=plan.label, normalized_hint=plan.normalized_label[:255], importance=plan.importance,
+                    narrative_reason=_unique_join(plan.reasons, max_len=3000), first_seen_us=int(plan.first_seen_us or 0),
+                    last_seen_us=int(plan.last_seen_us or plan.first_seen_us or 0), confidence=None,
+                    metadata_json=_json_text({"fusion_profile": FUSION_PROFILE, "source": "VLM"}),
                 )
                 session.add(prop)
                 prop_row_by_segment_key[(segment_id, plan.normalized_label)] = prop
@@ -1243,16 +1154,7 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
                 for source_id in plan.source_ids:
                     source_record = next((item for item in vlm_records if item.source_id == source_id), None)
                     if source_record is not None:
-                        _add_link(
-                            session,
-                            link_dedupe,
-                            run_id=run.id,
-                            owner_type="PROP_HINT",
-                            owner_id=prop.id,
-                            record=source_record,
-                            source_uri=vlm_uri,
-                            role="SUPPORT",
-                        )
+                        _add_link(session, link_dedupe, run_id=run.id, owner_type="PROP_HINT", owner_id=prop.id, record=source_record, source_uri=vlm_uri, role="SUPPORT")
 
         for normalized, shot, raw_prop, _vlm_record in prop_occurrence_specs:
             segment = segment_by_shot_item[shot.revision_item_id]
@@ -1264,18 +1166,11 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
             if label_text:
                 interaction = f"{label_text}: {reason}" if reason else label_text
             session.add(DraftPropOccurrence(
-                id=studio_v2.new_id("PROPOCC"),
-                prop_hint_id=prop.id,
+                id=studio_v2.new_id("PROPOCC"), prop_hint_id=prop.id,
                 shot_draft_id=shot_draft_by_item[shot.revision_item_id].id,
-                source_start_us=shot.start_us,
-                source_end_us=shot.end_us,
-                screen_position_hint=None,
-                interaction_summary=interaction,
-                confidence=None,
-                search_region_hint_json=_json_text({
-                    "source": "VLM",
-                    "subject_labels": labels if isinstance(labels, list) else [],
-                }),
+                source_start_us=shot.start_us, source_end_us=shot.end_us,
+                screen_position_hint=None, interaction_summary=interaction, confidence=None,
+                search_region_hint_json=_json_text({"source": "VLM", "subject_labels": labels if isinstance(labels, list) else []}),
             ))
             generated_counts["prop_occurrence"] += 1
 
@@ -1297,6 +1192,7 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
             "asr_policy": "exact-shot-boundary-word-timestamp-split-v1",
             "ocr_policy": "text-time-geometry-stitch-v1",
             "vlm_event_time_policy": "shot-relative-ratio-to-source-us-v1",
+            "h3_directing_fact_policy": "exact-shot-structured-performance-plus-video-motion-v1",
         }
         run.component_status_json = _json_text(statuses)
         run.provider_metadata_json = _json_text(providers)
@@ -1305,19 +1201,12 @@ def _write_fused_draft(bundle: FusionInputBundle) -> tuple[list[dict[str, Any]],
 
 
 def fuse_breakdown_run(run_id: str) -> BreakdownRun:
-    """P2.5 正式入口：读取 immutable sidecars → 写完整匿名 Draft → validator/publish。
-
-    任一 pre-publish Fusion 硬失败会把仍处于 PROCESSING 的 Run 安全收口为 FAILED；
-    若 Run 已因 ShotRevision 切换变为 STALE，则保留 STALE，不覆盖生命周期事实。
-    """
+    """P2.5 正式入口：读取 immutable sidecars → 写完整匿名 Draft → validator/publish。"""
 
     try:
         bundle = load_fusion_inputs(run_id)
         warnings, _generated_counts = _write_fused_draft(bundle)
-        return breakdown_service_v1.publish_breakdown_run(
-            run_id,
-            warnings=warnings or None,
-        )
+        return breakdown_service_v1.publish_breakdown_run(run_id, warnings=warnings or None)
     except Exception as exc:
         _safe_fail_run(run_id, exc)
         raise
