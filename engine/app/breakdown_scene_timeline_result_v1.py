@@ -1,11 +1,12 @@
 """G2.5 ordinary-user Scene Timeline result resolver and Narrative artifact store.
 
 This layer is intentionally thin:
-- frozen G2.2 assembler remains the only source of Scene/Shot AI evidence;
+- frozen G2.2 assembler remains the only source of Scene/Shot baseline AI evidence;
 - frozen G2.3/G2.4 code remains the only authority allowed to validate/apply Narrative text;
 - GET/read paths never start Qwen or any other model;
 - accepted Narrative overlays are materialized explicitly into the Episode workspace and revalidated
   against Run / ShotRevision / Scene source fingerprints every time they are consumed;
+- explicit single-Shot AI reruns are projected after the full-Run baseline but before user edits;
 - explicit user corrections are projected last from a ShotRevision-scoped manual artifact;
 - primary user payloads remain exactly ``scene-timeline-v1`` and never expose support Fxxxx,
   Evidence IDs, LocalSubject IDs, provider/model diagnostics or raw validator output.
@@ -31,6 +32,7 @@ from engine.app.breakdown_scene_narrative_validator_v1 import (
 )
 from engine.app.breakdown_scene_timeline_assembler_v1 import assemble_scene_timeline_v1
 from engine.app.breakdown_scene_timeline_contract_v1 import SceneTimelinePayloadV1
+from engine.app.breakdown_shot_rerun_v1 import apply_shot_rerun_overrides_v1
 
 
 SCENE_TIMELINE_RESULT_PROFILE = "breakdown-g2-scene-timeline-api-v1"
@@ -180,37 +182,49 @@ def load_scene_narrative_overlay_v1(draft: Mapping[str, Any]) -> dict[str, Any] 
         raise SceneNarrativeArtifactError("Scene Narrative artifact 无法安全读取") from exc
 
 
-def _with_manual_overrides(draft: Mapping[str, Any], timeline: Mapping[str, Any]) -> dict[str, Any]:
-    """Manual user facts are projected after AI/narrative organization and before downstream use."""
+def _with_current_overlays(
+    draft: Mapping[str, Any],
+    source_timeline: Mapping[str, Any],
+    display_timeline: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Apply current AI reruns first, then explicit user corrections as the final authority."""
 
-    return apply_manual_overrides_v1(draft, timeline)
+    rerun = apply_shot_rerun_overrides_v1(draft, display_timeline)
+    return apply_manual_overrides_v1(
+        draft,
+        rerun,
+        source_timeline_payload=source_timeline,
+    )
 
 
 def build_scene_timeline_result_v1(draft: Mapping[str, Any]) -> dict[str, Any]:
-    """Build the ordinary-user G2.5 payload without any model execution or AI-evidence writes."""
+    """Build ordinary-user result without model execution or immutable AI-evidence writes."""
 
     assert_scene_timeline_ready_draft_v1(draft)
-    timeline = assemble_scene_timeline_v1(draft)
+    source_timeline = assemble_scene_timeline_v1(draft)
 
     try:
         overlay = load_scene_narrative_overlay_v1(draft)
     except SceneNarrativeArtifactError:
-        return _with_manual_overrides(draft, _append_user_warning(timeline, NARRATIVE_FALLBACK_WARNING))
+        display = _append_user_warning(source_timeline, NARRATIVE_FALLBACK_WARNING)
+        return _with_current_overlays(draft, source_timeline, display)
 
     if overlay is None:
-        return _with_manual_overrides(draft, _append_user_warning(timeline, NARRATIVE_MISSING_WARNING))
+        display = _append_user_warning(source_timeline, NARRATIVE_MISSING_WARNING)
+        return _with_current_overlays(draft, source_timeline, display)
 
     try:
-        normalized_overlay = _revalidate_overlay_v1(timeline, overlay)
-        applied = apply_scene_narrative_overlay_v1(timeline, normalized_overlay)
+        normalized_overlay = _revalidate_overlay_v1(source_timeline, overlay)
+        applied = apply_scene_narrative_overlay_v1(source_timeline, normalized_overlay)
     except (ValidationError, SceneNarrativeValidationError, SceneNarrativeArtifactError, ValueError):
-        return _with_manual_overrides(draft, _append_user_warning(timeline, NARRATIVE_FALLBACK_WARNING))
+        display = _append_user_warning(source_timeline, NARRATIVE_FALLBACK_WARNING)
+        return _with_current_overlays(draft, source_timeline, display)
 
     if normalized_overlay["status"] == "READY_WITH_WARNINGS":
         applied = _append_user_warning(applied, NARRATIVE_PARTIAL_WARNING)
 
     strict = SceneTimelinePayloadV1.model_validate(applied).model_dump(mode="json")
-    return _with_manual_overrides(draft, strict)
+    return _with_current_overlays(draft, source_timeline, strict)
 
 
 __all__ = [
