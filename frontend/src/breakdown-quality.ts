@@ -6,6 +6,7 @@ export interface BreakdownQualityResult {
 }
 
 const WEAK_PERFORMANCE_RE = /^(?:正在)?(?:说话|讲话|对话|发言|talking|speaking|speaks?|talks?)$/i
+const UNKNOWN_PERFORMANCE_RE = /^(?:未知|不明|不确定|无法判断|无法确认|看不清|未识别|待补充|待确认|暂无.*|无|unknown|unclear|n\/?a|[-—]+)$/i
 
 function normalizedPerformanceText(value: string): string {
   return value.trim().replace(/[，。！？、；：,.!?;:\s]+/g, '')
@@ -14,12 +15,13 @@ function normalizedPerformanceText(value: string): string {
 function isWeakPerformanceText(value: string): boolean {
   const normalized = normalizedPerformanceText(value)
   const withoutAnonymousSubject = normalized.replace(/^(?:人物\d+|P\d+)/i, '')
-  return WEAK_PERFORMANCE_RE.test(withoutAnonymousSubject)
+  return !withoutAnonymousSubject || WEAK_PERFORMANCE_RE.test(withoutAnonymousSubject) || UNKNOWN_PERFORMANCE_RE.test(withoutAnonymousSubject)
 }
 
 function hasUsefulPerformance(shot: SceneTimelineShot): boolean {
   if (!shot.people.length) return true
-  const rows = shot.performance.map((item) => item.text.trim()).filter(Boolean)
+  const rows = [...shot.performance.map((item) => item.text), ...Object.values(shot.performance_details || {})]
+    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
   if (!rows.length) return false
   return rows.some((row) => !isWeakPerformanceText(row))
 }
@@ -60,6 +62,7 @@ export function evaluateBreakdownShotQuality(shot: SceneTimelineShot): Breakdown
 
 /** Anonymous observations and missing speaker references are never formal identities. */
 export function hasUnconfirmedSourcePeople(shot: SceneTimelineShot, people: SceneTimelinePerson[]): boolean {
+  if (shot.presence_review_id) return true
   const refs = new Set([...shot.people, ...shot.dialogue.flatMap((item) => item.speakers)])
   return [...refs].some((ref) => !people.find((person) => person.ref === ref)?.final_character)
 }

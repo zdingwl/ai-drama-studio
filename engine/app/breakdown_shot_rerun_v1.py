@@ -785,6 +785,11 @@ def run_shot_breakdown_rerun_v1(
         target=target, base_timeline=base_timeline, asr_result=asr_result,
         ocr_result=ocr_result, vlm_result=vlm_result, rerun_id=rerun_id,
     )
+    from engine.app import source_presence_audit_v1 as presence_audit
+    _, base_shot = _timeline_scene_and_shot(base_timeline, target.ordinal)
+    record = _target_vlm_record(target, vlm_result)
+    _report(progress, 90.0, "breakdown_shot_presence", "逐帧核对出镜覆盖，保留原人物绑定")
+    audit = presence_audit.inspect_shot(project_id, target, dict(record.payload), previous_count=len(base_shot.get('people') or []))
     _report(progress, 92.0, "breakdown_shot_fusion", "融合当前分镜 ASR / OCR / VLM 结果")
 
     artifact: dict[str, Any] = {
@@ -809,6 +814,7 @@ def run_shot_breakdown_rerun_v1(
         "artifact_fingerprint": "",
     }
     path = persist_shot_rerun_artifact_v1(draft, artifact)
+    presence_audit.publish(project_id, episode_id, run_id, revision_id, [audit])
     artifact["artifact_fingerprint"] = _canonical_fingerprint(artifact)
     _report(progress, 100.0, "breakdown_shot_ready", f"Shot {shot_ordinal:02d} 单镜拉片完成")
     return {

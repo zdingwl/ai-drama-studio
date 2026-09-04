@@ -15,7 +15,7 @@ from engine.app.studio_v2 import get_session, utcnow
 SPEAKER_PREFIX = "auto:source-speaker:"
 
 
-def _auto_resolve_missing(project_id: str, prefix: str, active_keys: set[str]) -> None:
+def _auto_resolve_missing(project_id: str, prefix: str, active_keys: set[str], episode_ids: set[str] | None = None) -> None:
     with get_session() as session:
         rows = session.scalars(select(ReviewIssue).where(
             ReviewIssue.project_id == project_id,
@@ -24,6 +24,8 @@ def _auto_resolve_missing(project_id: str, prefix: str, active_keys: set[str]) -
         )).all()
         changed = False
         for row in rows:
+            if episode_ids is not None and row.episode_id not in episode_ids:
+                continue
             if row.source_key in active_keys:
                 continue
             row.status = "RESOLVED"
@@ -41,6 +43,9 @@ def _auto_resolve_missing(project_id: str, prefix: str, active_keys: set[str]) -
 def sync_source_drama_speaker_issues(
     project_id: str,
     snapshot_payload: dict[str, Any] | SourceDramaProjectSnapshotV1,
+    *,
+    episode_scope: bool = False,
+    require_explicit_speakers: bool = False,
 ) -> int:
     snapshot = (
         snapshot_payload
@@ -72,7 +77,7 @@ def sync_source_drama_speaker_issues(
                     performance=performance_payload,
                 )
                 for dialogue, resolution in zip(shot.source_dialogue, resolutions, strict=True):
-                    if resolution.status == "RESOLVED":
+                    if resolution.status == "RESOLVED" and (not require_explicit_speakers or len(dialogue.speakers) == 1):
                         continue
 
                     if len(resolution.speaker_keys) > 1:
@@ -155,7 +160,10 @@ def sync_source_drama_speaker_issues(
                     )
                     count += 1
 
-    _auto_resolve_missing(project_id, SPEAKER_PREFIX, active)
+    if episode_scope:
+        _auto_resolve_missing(project_id, SPEAKER_PREFIX, active, {ep.episode_id for ep in snapshot.episodes})
+    else:
+        _auto_resolve_missing(project_id, SPEAKER_PREFIX, active)
     return count
 
 

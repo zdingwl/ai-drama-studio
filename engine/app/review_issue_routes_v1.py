@@ -19,6 +19,8 @@ from engine.app.source_dialogue_speaker_override_v1 import upsert_source_dialogu
 from engine.app.source_drama_review_issue_sync_v1 import SPEAKER_PREFIX, sync_source_drama_speaker_issues
 from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError, load_project_source_drama_snapshot_v1
 from engine.app.studio_v2 import get_session
+from engine.app.studio_v2 import Episode, Project
+from engine.app.source_drama_snapshot_v1 import load_episode_source_drama_snapshot_v1, compose_project_source_drama_snapshot_v1
 from engine.app.target_dialogue_auto_review_guard_v1 import cleanup_incomplete_auto_dialogue_reviews_v1
 
 router = APIRouter(prefix="/api", tags=["review-issues"])
@@ -31,6 +33,33 @@ class ReviewIssueStatusPatch(BaseModel):
 
 class SpeakerReviewResolutionPatch(BaseModel):
     person_key: str = Field(min_length=1, max_length=220)
+
+
+def _episode_review_snapshot(project_id: str, episode_id: str) -> dict:
+    # 审核专用的单集上下文，绝不作为全项目正式就绪快照发布。
+    with get_session() as session:
+        episode = session.get(Episode, episode_id)
+        project = session.get(Project, project_id)
+        if project is None or episode is None or episode.project_id != project_id:
+            raise LookupError('剧集不属于当前项目')
+        name, language = project.name, project.source_language
+    snapshot = load_episode_source_drama_snapshot_v1(episode_id, infer_speakers=False)
+    if snapshot is None:
+        raise SourceDramaSnapshotError('当前剧集没有有效拉片结果，请先完成本集拉片')
+    return compose_project_source_drama_snapshot_v1(project_id=project_id, project_name=name, source_language=language, episodes=[snapshot])
+
+
+@router.post('/projects/{project_id}/episodes/{episode_id}/speaker-reviews/prepare')
+def api_prepare_episode_speaker_reviews(project_id: str, episode_id: str):
+    """用户明确请求审核时补齐本集任务；唯一 source_key 保证重复调用不重复建单。"""
+    try:
+        snapshot = _episode_review_snapshot(project_id, episode_id)
+        sync_source_drama_speaker_issues(project_id, snapshot, episode_scope=True, require_explicit_speakers=True)
+        return [item for item in list_review_issues(project_id, status='OPEN') if item['episode_id'] == episode_id and item['issue_type'] == 'SPEAKER']
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (SourceDramaSnapshotError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 def _find_source_dialogue_for_issue(
@@ -182,7 +211,7 @@ def api_resolve_speaker_review_issue(issue_id: str, payload: SpeakerReviewResolu
             if not episode_id:
                 raise ValueError("说话人问题缺少 Episode 定位信息")
 
-        snapshot = load_project_source_drama_snapshot_v1(project_id)
+        snapshot = _episode_review_snapshot(project_id, episode_id)
         _episode, scene, dialogue = _find_source_dialogue_for_issue(
             snapshot,
             source_key=source_key,
@@ -205,8 +234,8 @@ def api_resolve_speaker_review_issue(issue_id: str, payload: SpeakerReviewResolu
 
         # The override is authoritative source truth. Recompose and resync instead of merely
         # toggling ReviewIssue.status, so downstream TargetDialogue/TTS sees the correction.
-        updated_snapshot = load_project_source_drama_snapshot_v1(project_id)
-        sync_source_drama_speaker_issues(project_id, updated_snapshot)
+        updated_snapshot = _episode_review_snapshot(project_id, episode_id)
+        sync_source_drama_speaker_issues(project_id, updated_snapshot, episode_scope=True, require_explicit_speakers=True)
 
         with get_session() as session:
             updated_issue = session.get(ReviewIssue, issue_id)

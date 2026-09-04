@@ -3,9 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ShotFramePreviewV4 from '../components/ShotFramePreviewV4.vue'
+import MissingPersonReview from '../components/MissingPersonReview.vue'
+import PerformanceSuggestion from '../components/PerformanceSuggestion.vue'
 import { breakdownApi } from '../api/breakdown'
 import { startQuietPolling } from '../utils/quietPolling'
 import { api } from '../api/client'
+import { remakeApi } from '../api/remake'
 import { getProjectFlowState } from '../api/project-flow-state'
 import { sceneTimelineApi, type SceneTimelineManualShotEdit } from '../api/scene-timeline'
 import { evaluateBreakdownShotQuality, hasUnconfirmedSourcePeople } from '../breakdown-quality'
@@ -20,8 +23,8 @@ import type {
 } from '../types/scene-timeline'
 import type { BackgroundTask, Episode, Project, Shot } from '../types/studio'
 
-type ShotFilter = 'all' | 'unprocessed' | 'review' | 'failed'
-type ShotUiStatus = 'completed' | 'unprocessed' | 'review' | 'failed'
+type ShotFilter = 'all' | 'unprocessed' | 'review' | 'incomplete' | 'failed'
+type ShotUiStatus = 'completed' | 'unprocessed' | 'review' | 'incomplete' | 'failed'
 type DetailTab = 'shot' | 'people' | 'assets' | 'dialogue' | 'remake'
 type StageVisualState = 'complete' | 'active' | 'processing' | 'review' | 'waiting'
 type ManualEditMode = 'summary' | 'performance' | 'camera' | 'scene' | 'dialogue'
@@ -82,6 +85,17 @@ const adjustingBoundary = ref(false)
 const selectedEpisodeId = ref('')
 const selectedShotId = ref('')
 const shotFilter = ref<ShotFilter>('all')
+const presenceEditorShot = ref('')
+const performanceSuggestion = ref<{ episodeId: string; ordinal: number } | null>(null)
+async function onPerformanceSaved(): Promise<void> {
+  performanceSuggestion.value = null
+  await Promise.all([loadProjectContext(), loadEpisodeData()])
+  window.dispatchEvent(new CustomEvent('studio-project-truth-changed', { detail: { project_id: projectId.value } }))
+}
+async function onPresenceSaved(): Promise<void> {
+  presenceEditorShot.value = ''
+  await Promise.all([loadProjectContext(), loadEpisodeData()])
+}
 const detailTab = ref<DetailTab>('shot')
 const searchText = ref('')
 const currentPage = ref(1)
@@ -235,14 +249,16 @@ function statusForShot(shot: Shot): ShotStatusDisplay {
   const context = timelineShotMap.value.get(shot.ordinal)
   if (!context) return { state: 'unprocessed', label: '待拉片' }
   if (!timeline.value?.is_current) return { state: 'unprocessed', label: '结果已过期', detail: '请重新整集拉片' }
+  if (context.shot.presence_review_id) return { state: 'review', label: '出镜待核对', detail: '疑似漏人或人物结构变化' }
   if (hasCharacterReviewForShot(context)) return { state: 'review', label: '待确认', detail: '人物身份待确认' }
+  if (context.shot.dialogue.some(item => item.text.trim() && !item.speakers.length)) return { state: 'review', label: '说话人待确认', detail: '对白说话人待确认' }
   const quality = evaluateBreakdownShotQuality(context.shot)
-  if (!quality.ready) return { state: 'review', label: '待确认', detail: quality.reason }
-  return { state: 'completed', label: '已完成' }
+  if (!quality.ready) return { state: 'incomplete', label: '内容待补全', detail: quality.reason }
+  return { state: 'completed', label: '内容检查通过' }
 }
 
 const statusCounts = computed(() => {
-  const counts: Record<ShotUiStatus, number> = { completed: 0, unprocessed: 0, review: 0, failed: 0 }
+  const counts: Record<ShotUiStatus, number> = { completed: 0, unprocessed: 0, review: 0, incomplete: 0, failed: 0 }
   for (const shot of shots.value) counts[statusForShot(shot).state] += 1
   return counts
 })
@@ -301,6 +317,7 @@ const filteredShots = computed(() => {
     const matchesFilter = shotFilter.value === 'all'
       || (shotFilter.value === 'unprocessed' && status === 'unprocessed')
       || (shotFilter.value === 'review' && status === 'review')
+      || (shotFilter.value === 'incomplete' && status === 'incomplete')
       || (shotFilter.value === 'failed' && status === 'failed')
     if (!matchesFilter) return false
     return !keyword || shotSearchText(shot).includes(keyword)
@@ -361,7 +378,7 @@ const selectedPendingItems = computed<PendingItem[]>(() => {
   if (selectedPeople.value.some((person) => !person.final_character)) items.push({ key: 'person', label: '人物身份待确认', tone: 'orange' })
   if (selectedDialogue.value.some((dialogue) => !dialogue.speakers.length)) items.push({ key: 'dialogue', label: '对白说话人待确认', tone: 'blue' })
   const status = selectedStatus.value
-  if (status?.state === 'review' && status.detail && !items.some((item) => status.detail?.includes(item.key === 'person' ? '人物' : '对白'))) {
+  if ((status?.state === 'review' || status?.state === 'incomplete') && status.detail && !items.some((item) => status.detail?.includes(item.key === 'person' ? '人物' : '对白'))) {
     items.push({ key: 'quality', label: status.detail, tone: 'red' })
   }
   if (status?.state === 'failed' && status.detail) items.push({ key: 'failed', label: status.detail, tone: 'red' })
@@ -464,8 +481,9 @@ function selectShot(shot: Shot, openPendingConfirm = false): void {
   actionError.value = ''
   actionMessage.value = ''
   syncBoundaryInputs()
-  if (openPendingConfirm && selectedPendingItems.value.some((item) => item.key === 'person' || item.key === 'dialogue')) {
-    goSourceConfirm()
+  if (openPendingConfirm && selectedPendingItems.value.length) {
+    void router.replace({ query: { ...route.query, episode: selectedEpisodeId.value, shot: String(shot.ordinal) } })
+    handlePendingItem(selectedPendingItems.value[0]!)
     return
   }
   void router.replace({ query: { ...route.query, episode: selectedEpisodeId.value, shot: String(shot.ordinal) } })
@@ -473,7 +491,7 @@ function selectShot(shot: Shot, openPendingConfirm = false): void {
 
 function selectStage(item: StageDisplay): void {
   if (item.number === 1) void router.push({ name: 'studio', params: { projectId: projectId.value } })
-  if (item.number === 3) void router.push({ name: 'source-confirm', params: { projectId: projectId.value } })
+  if (item.number === 3) handleSourceNextAction()
   if (item.number === 4) void router.push({ name: 'remake', params: { projectId: projectId.value } })
   if (item.number === 5) void router.push({ name: 'output', params: { projectId: projectId.value } })
 }
@@ -483,6 +501,42 @@ function goSourceConfirm(): void {
   if (selectedEpisodeId.value) query.episode = selectedEpisodeId.value
   if (selectedShot.value) query.shot = String(selectedShot.value.ordinal)
   void router.push({ name: 'source-confirm', params: { projectId: projectId.value }, query })
+}
+
+function handleSourceNextAction(): void {
+  if (flowState.value?.next_action.target_surface !== 'REVIEW') {
+    actionError.value = flowState.value?.next_action.reason || '原片理解状态尚未就绪，请先检查拉片结果。'
+    return
+  }
+  const item = selectedPendingItems.value[0]
+  if (item) handlePendingItem(item)
+  else actionMessage.value = '当前镜头没有可处理的审核项，请从待确认或内容待补全列表选择具体镜头。'
+}
+
+async function openSpeakerReview(): Promise<void> {
+  detailTab.value = 'dialogue'
+  const shot = selectedShot.value
+  if (!shot) return
+  try {
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId.value)}/episodes/${encodeURIComponent(selectedEpisodeId.value)}/speaker-reviews/prepare`, { method: 'POST' })
+    if (!response.ok) {
+      const body = await response.json() as { detail?: string }
+      throw new Error(body.detail || '说话人审核准备失败')
+    }
+    const issues = await response.json() as Awaited<ReturnType<typeof remakeApi.listReviewIssues>>
+    if (selectedShot.value?.id !== shot.id) return
+    const available = issues.some(issue => {
+      const suggestion = issue.ai_suggestion as { shot_id?: string } | null
+      return issue.issue_type === 'SPEAKER' && (issue.shot_id === shot.id || suggestion?.shot_id === shot.id)
+    })
+    if (!available) {
+      actionError.value = '当前对白缺少说话人，但后端没有对应的说话人审核任务。已定位到对白栏；暂不能提交说话人，不会打开空审核弹窗。'
+      return
+    }
+    goSourceConfirm()
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : '说话人审核任务读取失败'
+  }
 }
 
 function manualFieldValue(key: string): string {
@@ -605,14 +659,16 @@ async function saveManualEdit(): Promise<void> {
 }
 
 function handlePendingItem(item: PendingItem): void {
-  if (item.key === 'person' || item.key === 'dialogue') {
+  if (item.key === 'person') {
     goSourceConfirm()
     return
   }
+  if (item.key === 'dialogue') { void openSpeakerReview(); return }
   if (item.key === 'failed') {
     void startEpisodeBreakdown(true)
     return
   }
+  if (editingBlocked.value) { actionError.value = '当前结果过期、未就绪或正在处理中，暂不能编辑。请先检查拉片状态。'; return }
   if (item.label.includes('动作')) openManualEditor('performance')
   else if (item.label.includes('景别') || item.label.includes('构图')) openManualEditor('camera')
   else if (item.label.includes('对白')) detailTab.value = 'dialogue'
@@ -937,6 +993,7 @@ onBeforeUnmount(() => {
               <div class="stat-card"><span class="stat-icon blue">⌘</span><p><b>{{ shots.length }}</b><small>个分镜</small></p></div>
               <div class="stat-card"><span class="stat-icon green">✓</span><p><b>{{ statusCounts.completed }}</b><small>已完成</small></p></div>
               <div class="stat-card"><span class="stat-icon orange">!</span><p><b>{{ statusCounts.review }}</b><small>待确认</small></p></div>
+              <div class="stat-card"><span class="stat-icon orange">!</span><p><b>{{ statusCounts.incomplete }}</b><small>内容待补全</small></p></div>
               <div class="stat-card"><span class="stat-icon red">×</span><p><b>{{ statusCounts.failed }}</b><small>失败</small></p></div>
               <span v-if="activeBreakdownTask" class="running-pill">{{ breakdownProgressLabel }}</span>
             </div>
@@ -959,7 +1016,7 @@ onBeforeUnmount(() => {
         <div class="message warning" v-if="timeline && !timeline.is_current">当前展示历史拉片结果，不计入完成数量。请明确点击整集拉片更新结果。</div>
         <section class="workflow-notice" v-if="flowState" aria-label="当前流程提示">
           <div><strong>{{ flowState.next_action.reason }}</strong><p>待确认数量表示受影响镜头，不代表独立审核任务数。</p></div>
-          <button class="button secondary" type="button" @click="goSourceConfirm">进入原片确认</button>
+          <button class="button secondary" type="button" @click="handleSourceNextAction">{{ flowState.next_action.target_surface === 'REVIEW' ? '处理当前问题' : '查看阻塞原因' }}</button>
         </section>
         <section class="workspace-grid">
           <aside class="shot-list-card panel-card">
@@ -969,6 +1026,7 @@ onBeforeUnmount(() => {
               <button :class="{ active: shotFilter === 'all' }" type="button" @click="changeFilter('all')">全部 {{ shots.length }}</button>
               <button :class="{ active: shotFilter === 'unprocessed' }" type="button" @click="changeFilter('unprocessed')">待处理 {{ statusCounts.unprocessed }}</button>
               <button :class="{ active: shotFilter === 'review' }" type="button" @click="changeFilter('review')">待确认 {{ statusCounts.review }}</button>
+              <button :class="{ active: shotFilter === 'incomplete' }" type="button" @click="changeFilter('incomplete')">内容待补全 {{ statusCounts.incomplete }}</button>
               <button :class="{ active: shotFilter === 'failed' }" type="button" @click="changeFilter('failed')">失败 {{ statusCounts.failed }}</button>
             </div>
 
@@ -1067,7 +1125,7 @@ onBeforeUnmount(() => {
                   </section>
 
                   <section class="info-card editable-card">
-                    <div class="info-card-title"><h3>动作与表演</h3><button type="button" :disabled="editingBlocked" @click="openManualEditor('performance')">✎ 编辑</button></div>
+                    <div class="info-card-title"><h3>动作与表演</h3><button type="button" :disabled="editingBlocked || !selectedShot" @click="selectedShot && (performanceSuggestion = { episodeId: selectedEpisodeId, ordinal: selectedShot.ordinal })">AI 补充</button><button type="button" :disabled="editingBlocked" @click="openManualEditor('performance')">✎ 编辑</button></div>
                     <dl class="field-list"><div><dt>动作</dt><dd>{{ actionSummary }}</dd></div><div><dt>表情</dt><dd>{{ expressionSummary }}</dd></div><div><dt>姿态</dt><dd>{{ postureSummary }}</dd></div><div><dt>视线</dt><dd>{{ gazeSummary }}</dd></div><div><dt>人物交互</dt><dd>{{ interactionSummary }}</dd></div></dl>
                   </section>
 
@@ -1097,6 +1155,8 @@ onBeforeUnmount(() => {
 
                 <template v-else-if="detailTab === 'people'">
                   <section class="tab-heading-row"><div><strong>当前分镜人物</strong><span>{{ selectedPeople.length }} 人</span></div><button type="button" @click="goSourceConfirm">管理本集人物</button></section>
+                  <button v-if="selectedShot" type="button" class="button secondary" :disabled="editingBlocked" @click="presenceEditorShot = selectedShot.id">漏了一个人？补充出镜人物</button>
+                  <MissingPersonReview v-if="selectedShot && presenceEditorShot === selectedShot.id" :key="presenceEditorShot" :project-id="projectId" :shot-id="presenceEditorShot" @close="presenceEditorShot = ''" @saved="onPresenceSaved" />
                   <section v-if="selectedPeople.length" class="person-list">
                     <article v-for="person in selectedPeople" :key="person.ref" class="person-card">
                       <span class="person-avatar"><img v-if="person.final_character?.cover_url" :src="person.final_character.cover_url" alt="" /><b v-else>{{ personDisplayName(person).slice(0, 1) }}</b></span>
@@ -1117,7 +1177,7 @@ onBeforeUnmount(() => {
                       <header><span>对白 {{ String(index + 1).padStart(2, '0') }}</span><button type="button" :disabled="editingBlocked" @click="openManualEditor('dialogue', index)">✎ 编辑文本</button></header>
                       <div class="dialogue-speaker"><span>说话人</span><strong>{{ dialogueSpeaker(dialogue) }}</strong></div>
                       <p>{{ dialogue.text }}</p>
-                      <footer><span>{{ formatTimeUs(dialogue.start_us) }} → {{ formatTimeUs(dialogue.end_us) }}</span><em>{{ dialogue.speakers.length ? '已绑定说话人' : '需要确认说话人' }}</em><button v-if="!dialogue.speakers.length" type="button" @click="goSourceConfirm">确认说话人</button></footer>
+                      <footer><span>{{ formatTimeUs(dialogue.start_us) }} → {{ formatTimeUs(dialogue.end_us) }}</span><em>{{ dialogue.speakers.length ? '已绑定说话人' : '需要确认说话人' }}</em><button v-if="!dialogue.speakers.length" type="button" @click="openSpeakerReview">确认说话人</button></footer>
                     </article>
                   </section>
                   <div v-else class="tab-empty">本镜头无对白</div>
@@ -1142,6 +1202,7 @@ onBeforeUnmount(() => {
         <img :src="framePreview.src" :alt="framePreview.title" />
       </section>
     </div>
+    <PerformanceSuggestion v-if="performanceSuggestion" :episode-id="performanceSuggestion.episodeId" :ordinal="performanceSuggestion.ordinal" @close="performanceSuggestion = null" @saved="onPerformanceSaved" />
     <div v-if="helpOpen" class="modal-backdrop" @click.self="helpOpen = false">
       <section class="help-dialog"><header><strong>AI 拉片操作说明</strong><button type="button" @click="helpOpen = false">×</button></header><div><p>1. 选择剧集后，可查看每个分镜的 Reference Clip、时间范围和拉片结果。</p><p>2. 内容概要、动作与表演、镜头语言、画面信息和对白文本可在本页直接人工修正；人物、场景、道具和说话人进入“原片确认”统一修改。</p><p>3. “当前分镜拉片 / 重新拉片”只重跑当前 Shot：ASR / OCR 只处理当前分镜，VLM 最多读取前后相邻镜头作为上下文；不会重跑整集。</p></div></section>
     </div>

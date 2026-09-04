@@ -20,10 +20,12 @@ from typing import Any, Mapping, Sequence
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+if str(SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
 
 import run_breakdown_vlm_fast_grounded_qwen3 as fast
 
-EXACT_SHOT_PROMPT_PROFILE = "breakdown-p2-vlm-exact-shot-compact-reconstruction-zh-v3"
+EXACT_SHOT_PROMPT_PROFILE = "breakdown-p2-vlm-exact-shot-presence-zh-v4"
 _ALLOWED_IE = {"INT", "EXT", "MIXED", "UNKNOWN"}
 _ALLOWED_VISIBILITY = {"FULL", "PARTIAL", "OCCLUDED", "BACK_VIEW", "UNKNOWN"}
 _ALLOWED_IMPORTANCE = {"LOW", "MEDIUM", "HIGH"}
@@ -104,6 +106,8 @@ Scene上下文（只可补地点/INT-EXT/时间/同场景连续关系，不能�
 12. 静态采样图不能可靠判断推/拉/摇/移，因此不要输出 camera motion；程序统一记 UNKNOWN，运镜由视频窗口阶段补充。
 13. visible<=80字；appearance<=32字；activity<=24字；expression/posture/gaze/interaction<=20字；composition<=24字；angle<=12字；lighting<=28字；continuity<=24字。
 14. 每个 ShotIndex 必须且只能输出一次。不要输出 revision_item_id、人物身份标签、跨镜人物标签、events、长解释。
+15. 逐帧枚举所有可见的人，包括前景背身、侧身、遮挡、贴边、只露头肩或躯干的人。不能只列正脸、正在说话或能认出身份的人；背身人物的表情可空，但 people 不能漏掉。不能把两个人合成一个外观描述。
+16. 同一人在不同采样帧只列一个 people 条目；无法确认是同一人时不要强行合并。只在实际出现的帧列 frame_boxes，frame 是本 Shot 从 1 开始的图片序号，box 是该帧整个可见人体的 [x,y,width,height]，坐标除以原图宽高归一化到 0..1。不能把脸框当全身框，也不能搬用别帧的位置。不能定位时 frame_boxes=[]，不要编造框。
 
 JSON schema：
 {{
@@ -124,7 +128,8 @@ JSON schema：
       "gaze":"当前可见视线或空",
       "interaction":"当前可见人物/道具交互或空",
       "position":"左侧|中央|右侧|前景|背景|UNKNOWN",
-      "visibility":"FULL|PARTIAL|OCCLUDED|BACK_VIEW|UNKNOWN"
+      "visibility":"FULL|PARTIAL|OCCLUDED|BACK_VIEW|UNKNOWN",
+      "frame_boxes":[{{"frame":1,"box":[0.1,0.2,0.3,0.6]}}]
     }}],
     "props":[{{
       "label":"对镜头重建重要的显著可见物体",
@@ -170,6 +175,7 @@ def _messages(
 
 
 def _canonical_subjects(raw: Any) -> list[dict[str, Any]]:
+    from engine.app.person_presence_geometry_v1 import frame_boxes
     if not isinstance(raw, list):
         return []
     result: list[dict[str, Any]] = []
@@ -190,6 +196,7 @@ def _canonical_subjects(raw: Any) -> list[dict[str, Any]]:
             "screen_position": _clean(item.get("position"), 48) or "UNKNOWN",
             "visibility": visibility,
             "speaking_state": "UNKNOWN",
+            "frame_boxes": frame_boxes(item.get("frame_boxes")),
         })
     return result
 

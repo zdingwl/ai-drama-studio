@@ -5,6 +5,17 @@ from copy import deepcopy
 from engine.app import source_drama_review_issue_sync_v1 as sync
 
 
+def test_explicit_episode_review_does_not_guess_single_person_or_close_other_episodes(monkeypatch):
+    created = []
+    scopes = []
+    monkeypatch.setattr(sync, 'upsert_review_issue', lambda **kwargs: created.append(kwargs))
+    monkeypatch.setattr(sync, '_auto_resolve_missing', lambda project, prefix, active, episodes: scopes.append(episodes))
+    sync.sync_source_drama_speaker_issues('PROJECT_1', _snapshot(), episode_scope=True, require_explicit_speakers=True)
+    assert len(created) == 1
+    assert created[0]['issue_type'] == 'SPEAKER'
+    assert scopes == [{'EP_1'}]
+
+
 def _snapshot() -> dict:
     person_key = "EP_1:RUN_1:S1:P1"
     scene_key = "EP_1:RUN_1:S1"

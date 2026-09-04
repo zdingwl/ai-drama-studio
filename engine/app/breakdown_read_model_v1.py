@@ -384,4 +384,31 @@ __all__ = [
 
 def load_episode_breakdown_read_model_v1(episode_id: str):
     from engine.app.source_person_assets_v1 import apply_person_mapping
-    return apply_person_mapping(episode_id, _load_episode_breakdown_read_model_v1(episode_id))
+    from engine.app.source_dialogue_speaker_override_v1 import load_episode_source_dialogue_speaker_overrides_v1, source_dialogue_signature_v1
+    result = apply_person_mapping(episode_id, _load_episode_breakdown_read_model_v1(episode_id))
+    if not result:
+        return result
+    timeline = result['timeline']
+    overrides = load_episode_source_dialogue_speaker_overrides_v1(episode_id)
+    projected = {}
+    for scene in timeline['scenes']:
+        prefix = f"{episode_id}:{timeline['source_breakdown_run_id']}:S{scene['ordinal']}:"
+        refs = {person['ref'] for person in scene['people']}
+        for shot in scene['shots']:
+            for index, dialogue in enumerate(shot['dialogue'], 1):
+                key = f"{episode_id}:{timeline['source_shot_revision_id']}:H{shot['ordinal']}:D{index}"
+                override = overrides.get(key)
+                if not override:
+                    continue
+                person = override['person_key']
+                ref = person[len(prefix):] if person.startswith(prefix) else ''
+                signature = source_dialogue_signature_v1(dict(dialogue_key=key, start_us=dialogue['start_us'], end_us=dialogue['end_us'], source_text=dialogue['text']))
+                if ref in refs and signature == override['dialogue_signature']:
+                    projected[key] = ref
+    result['speaker_overrides'] = projected
+    from engine.app.source_presence_correction_v1 import overlay
+    result['manual_presence'] = overlay(result, episode_id)
+    from engine.app.source_presence_audit_v1 import pending
+    result['presence_review'] = {str(row['ai_suggestion']['ordinal']): row['id'] for row in
+        pending(episode_id, timeline['source_breakdown_run_id'], timeline['source_shot_revision_id'])}
+    return result

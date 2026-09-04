@@ -138,6 +138,9 @@ class BreakdownReadModelV1(_StrictReadModel):
     timeline: SceneTimelinePayloadV1
     identity: BreakdownReadIdentityOverlayV1
     assets: BreakdownReadAssetOverlayV1 | None = None
+    speaker_overrides: dict[str, str] = Field(default_factory=dict)
+    manual_presence: dict[str, list[str]] = Field(default_factory=dict)
+    presence_review: dict[str, str] = Field(default_factory=dict)
 
 
 __all__ = [

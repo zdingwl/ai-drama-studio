@@ -18,10 +18,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, model_serializer
 
 from engine.app.breakdown_scene_timeline_contract_v1 import (
     SceneTimelineCinematographyV1,
+    SceneTimelinePerformanceDetailsV1,
     SceneTimelineSceneInfoV1,
 )
 
@@ -155,11 +156,19 @@ class SourceDramaShotV1(_StrictSourceDramaModel):
     visual_description: str | None = None
     people: list[str] = Field(default_factory=list, description="person_key references")
     performance: list[SourceDramaPerformanceV1] = Field(default_factory=list)
+    performance_details: SceneTimelinePerformanceDetailsV1 | None = None
     source_dialogue: list[SourceDramaDialogueV1] = Field(default_factory=list, description="Shot dialogue projections")
     observed_props: list[SourceDramaObservedPropV1] = Field(default_factory=list)
     final_props: list[SourceDramaAssetRefV1] = Field(default_factory=list)
     cinematography: SceneTimelineCinematographyV1
     source_on_screen_text: list[SourceDramaOnScreenTextV1] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def _serialize_performance_compatible(self, handler):
+        payload = handler(self)
+        if self.performance_details is None:
+            payload.pop("performance_details", None)
+        return payload
 
     @model_validator(mode="after")
     def _validate_shot(self) -> "SourceDramaShotV1":

@@ -55,6 +55,49 @@ class Assignment(BaseModel):
     localizations: dict | None = None
 
 
+class PresenceSupplement(BaseModel):
+    character_id: str = ''
+    expected_revision: str
+    localization: dict
+    issue_id: str | None = None
+    candidate_id: str | None = None
+    decision: str = 'BIND'
+    reason: str = Field(default='', max_length=2000)
+
+
+@router.get('/projects/{project_id}/character-assets/shots/{shot_id}/presence')
+def get_presence_context(project_id: str, shot_id: str):
+    from engine.app.source_presence_correction_v1 import context
+    try:
+        return context(project_id, shot_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post('/projects/{project_id}/character-assets/shots/{shot_id}/presence')
+def add_presence(project_id: str, shot_id: str, payload: PresenceSupplement):
+    from engine.app.source_presence_correction_v1 import supplement
+    try:
+        return supplement(project_id, shot_id, payload.character_id, payload.localization, payload.expected_revision,
+                          issue_id=payload.issue_id, candidate_id=payload.candidate_id, decision=payload.decision, reason=payload.reason)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get('/projects/{project_id}/presence-frames/{frame_id}')
+def get_presence_frame(project_id: str, frame_id: str):
+    from engine.app.source_presence_audit_v1 import frame_path
+    if not project_id.startswith('PROJECT_') or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in project_id):
+        raise HTTPException(404, '项目不存在')
+    try:
+        path = frame_path(project_id, frame_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(404, '核对画面不存在')
+    return FileResponse(path, media_type='image/jpeg')
+
+
 class Design(BaseModel):
     source_character_id: str
     expected_revision: str

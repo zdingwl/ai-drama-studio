@@ -1,4 +1,4 @@
-export type PersonMark = { shot_id: string; image_url: string; box: number[] }
+export type PersonMark = { shot_id: string; image_url: string; box: number[]; source?: string | null }
 export type PersonObservation = {
   key: string; anchor: string; name: string; appearance: string | null
   episode_id: string; episode_title: string; character_id: string | null

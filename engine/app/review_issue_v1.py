@@ -23,6 +23,7 @@ SEVERITIES = {"REVIEW", "BLOCKING"}
 # These issues represent authoritative domain facts. They may only close as a side effect
 # of writing the real domain row, never by a generic UI acknowledgement.
 DOMAIN_EDITED_ISSUE_TYPES = {
+    "PERSON_PRESENCE",
     "SPEAKER",
     "TARGET_CHARACTER",
     "SCENE_LOCALIZATION",
@@ -167,7 +168,11 @@ def list_review_issues(project_id: str, *, status: str | None = "OPEN") -> list[
             ReviewIssue.severity.desc(),
             ReviewIssue.created_at.asc(),
         )).all()
-        return [serialize_review_issue(row) for row in rows]
+        result = [serialize_review_issue(row) for row in rows]
+    if status == 'OPEN':
+        from engine.app.source_presence_audit_v1 import is_current
+        result = [row for row in result if row['issue_type'] != 'PERSON_PRESENCE' or is_current(row)]
+    return result
 
 
 def set_review_issue_status(issue_id: str, *, status: str, resolution: Any = None) -> dict[str, Any]:

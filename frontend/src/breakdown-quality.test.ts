@@ -29,6 +29,18 @@ function makeShot(overrides: Partial<SceneTimelineShot> = {}): SceneTimelineShot
 }
 
 describe('evaluateBreakdownShotQuality', () => {
+  it('uses visible expression even when action only says speaking', () => {
+    expect(evaluateBreakdownShotQuality(makeShot({ performance: [{ text: '说话', people: ['P1'] }], performance_details: { expression: '惊讶', posture: '直立', gaze: '前方', interaction: null } })).ready).toBe(true)
+  })
+  it('does not accept unknown placeholders as performance evidence', () => {
+    expect(evaluateBreakdownShotQuality(makeShot({ performance: [{ text: '说话', people: ['P1'] }], performance_details: { expression: '无法判断', posture: '未知', gaze: null, interaction: '暂无独立人物交互描述' } })).reason).toBe('动作/表情信息不足')
+  })
+  it('allows an observed lack of movement without inventing action', () => {
+    expect(evaluateBreakdownShotQuality(makeShot({ performance: [{ text: '保持站姿，未见明显动作变化', people: ['P1'] }] })).ready).toBe(true)
+  })
+  it('does not waive speaker confirmation when expression is useful', () => {
+    expect(evaluateBreakdownShotQuality(makeShot({ performance: [], performance_details: { expression: '皱眉', posture: null, gaze: null, interaction: null }, dialogue: [{ text: '你好', start_us: 0, end_us: 1000, speakers: [] }] })).reason).toBe('对白说话人待确认')
+  })
   it('blocks completed status when dialogue speaker is unresolved', () => {
     const result = evaluateBreakdownShotQuality(makeShot({
       dialogue: [{ start_us: 200_000, end_us: 1_200_000, text: '你好', speakers: [] }],

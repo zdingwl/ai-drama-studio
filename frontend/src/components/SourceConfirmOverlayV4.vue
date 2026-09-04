@@ -35,11 +35,13 @@ const sourceIssueTypes = new Set(['CHARACTER_IDENTITY', 'ASSET_BINDING', 'SPEAKE
 function stage(key: string): ProjectFlowStage | null { return flow.value?.stages.find((item) => item.stage_key === key) || null }
 const sourceAssetsStage = computed(() => stage('source_assets'))
 const sourceSnapshotStage = computed(() => stage('source_snapshot'))
-const sourceReady = computed(() => Boolean(sourceAssetsStage.value?.consumable && sourceSnapshotStage.value?.consumable))
+const sourceReady = computed(() => Boolean(!loading.value && !error.value && sourceAssetsStage.value?.consumable && sourceSnapshotStage.value?.consumable))
+const blockingReason = computed(() => error.value || flow.value?.stages.find(item => ['source_assets', 'source_snapshot'].includes(item.stage_key) && !item.consumable)?.reason || flow.value?.next_action.reason || '正在等待原片状态校验。')
 const sourceIssues = computed(() => issues.value.filter((item) => sourceIssueTypes.has(item.issue_type)))
 
 async function refresh(): Promise<void> {
   if (!props.projectId) return
+  loading.value = true
   try {
     const [projectResult, flowResult, issueResult] = await Promise.all([
       api.getProject(props.projectId),
@@ -120,6 +122,8 @@ onBeforeUnmount(() => {
           :episodes="project.episodes"
           :focus-episode-id="focusEpisodeId"
           :focus-shot-ordinal="focusShotOrdinal"
+          :source-ready="sourceReady"
+          :blocking-reason="blockingReason"
           @changed="onWorkspaceChanged"
           @completed="onWorkspaceCompleted"
         />
@@ -127,8 +131,8 @@ onBeforeUnmount(() => {
 
       <footer v-if="reviewTab === 'shots'" class="confirm-footer">
         <div>
-          <strong>{{ sourceReady ? '原片确认完成' : '只剩下真正需要人工判断的内容' }}</strong>
-          <span>{{ sourceReady ? 'SourceDramaSnapshot 已满足进入视频重做条件。' : `当前仍有 ${sourceIssues.length} 项底层待确认事实。` }}</span>
+          <strong>{{ sourceReady ? '原片确认完成' : '原片尚未满足继续条件' }}</strong>
+          <span>{{ sourceReady ? 'SourceDramaSnapshot 已满足进入视频重做条件。' : `${blockingReason} · 已有审核任务 ${sourceIssues.length} 项（不代表全部缺失内容）` }}</span>
         </div>
         <div class="footer-actions">
           <button type="button" class="secondary" @click="close">返回拉片</button>

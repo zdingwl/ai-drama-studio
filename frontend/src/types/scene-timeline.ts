@@ -72,6 +72,7 @@ export interface SceneTimelineCinematography {
 }
 
 export interface SceneTimelineShot {
+  presence_review_id?: string
   ordinal: number
   start_us: number
   end_us: number

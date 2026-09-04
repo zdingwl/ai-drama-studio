@@ -62,6 +62,7 @@ _ISSUE_STAGE = {
     "SHOT_BOUNDARY": "source_split",
     "CHARACTER_IDENTITY": "source_assets",
     "ASSET_BINDING": "source_assets",
+    "PERSON_PRESENCE": "source_assets",
     "SPEAKER": "source_snapshot",
     "TARGET_CHARACTER": "target_design",
     "SCENE_LOCALIZATION": "target_design",

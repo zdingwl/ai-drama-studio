@@ -42,6 +42,27 @@ def test_merge_binds_all_shots_and_read_model_without_mutating_evidence(monkeypa
         people.assign(project, [inv["observations"][0]["key"]], "重复", None, inv["revision"])
 
 
+def test_single_person_assignment_requires_revision_frame_and_persists_cover(monkeypatch, tmp_path):
+    project, timeline = setup(monkeypatch, tmp_path)
+    frame = '/api/shot-revision-items/REV_ITEM_1/thumbnail'
+    timeline['scenes'][0]['shots'][0]['thumbnail_url'] = frame
+    inv = people.inventory(project)
+    row = inv['observations'][0]
+    mark = {'shot_id': 'SHOT_1', 'image_url': '/api/shots/SHOT_1/thumbnail',
+            'box': [0, 0, 1, 1], 'source': 'MANUAL_SINGLE_PERSON'}
+    with pytest.raises(ValueError, match='位置标记无效或已过期'):
+        people.assign(project, [row['key']], '徐然', None, inv['revision'], {row['key']: mark})
+    assert people.inventory(project)['revision'] == inv['revision']
+    mark['image_url'] = frame
+    result = people.assign(project, [row['key']], '徐然', None, inv['revision'], {row['key']: mark})
+    character = next(c for c in result['characters'] if c['name'] == '徐然')
+    assert character['cover_url'] == frame
+    assert character['cover_box'] == [0, 0, 1, 1]
+    saved = next(o for o in people.inventory(project)['observations'] if o['key'] == row['key'])
+    assert saved['character_id'] == character['id']
+    assert saved['localization']['source'] == 'MANUAL_SINGLE_PERSON'
+
+
 def test_reassignment_splits_only_mapping_owned_binding(monkeypatch, tmp_path):
     project, _ = setup(monkeypatch, tmp_path)
     inv = people.inventory(project)

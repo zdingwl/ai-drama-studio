@@ -184,6 +184,17 @@ def _episode_snapshot(read_model: dict | None = None, *, speaker_overrides: dict
     )
 
 
+def test_performance_details_survive_snapshot_and_change_fingerprint() -> None:
+    source = _read_model()
+    before = _episode_snapshot(source)
+    source['timeline']['scenes'][0]['shots'][0]['performance_details'] = {'expression': '皱眉', 'posture': '站立', 'gaze': '画面左侧', 'interaction': None}
+    after = _episode_snapshot(source)
+    assert after['scenes'][0]['shots'][0]['performance_details']['expression'] == '皱眉'
+    assert after['source_fingerprint'] != before['source_fingerprint']
+    assert after['source_dialogue_utterances'] == before['source_dialogue_utterances']
+    assert after['scenes'][0]['shots'][0]['people'] == before['scenes'][0]['shots'][0]['people']
+
+
 def test_episode_snapshot_exposes_remake_source_truth_without_legacy_layers() -> None:
     snapshot = _episode_snapshot()
 

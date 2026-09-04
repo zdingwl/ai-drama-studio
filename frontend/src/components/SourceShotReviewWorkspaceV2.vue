@@ -5,6 +5,10 @@ import { api } from '../api/client'
 import { remakeApi } from '../api/remake'
 import { resolveSourcePersonChoiceV1 } from '../utils/sourcePersonChoiceV1'
 import VisualCharacterPickerV1 from './VisualCharacterPickerV1.vue'
+import PersonLocalizationReview from './PersonLocalizationReview.vue'
+import MissingPersonReview from './MissingPersonReview.vue'
+import { shotSpeakerCandidates } from '../utils/shotSpeakerCandidates'
+import { personConfirmationMark } from '../utils/personConfirmationMark'
 import type {
   AssetEvidenceItem,
   AssetWorkspace,
@@ -20,9 +24,13 @@ const props = withDefaults(defineProps<{
   episodes: Episode[]
   focusEpisodeId?: string
   focusShotOrdinal?: number | null
+  sourceReady?: boolean
+  blockingReason?: string
 }>(), {
   focusEpisodeId: '',
   focusShotOrdinal: null,
+  sourceReady: false,
+  blockingReason: '',
 })
 const emit = defineEmits<{ changed: []; completed: [] }>()
 
@@ -114,7 +122,29 @@ const draftSceneId = ref<string | null>(null)
 const draftPropIds = ref<string[]>([])
 const personChoice = ref<Record<string, string>>({})
 const newPersonName = ref<Record<string, string>>({})
+const personMarks = ref<Record<string, Mark>>({})
+function updatePersonMark(key: string, mark: Mark | null): void {
+  if (mark) personMarks.value[key] = mark
+  else delete personMarks.value[key]
+}
+const activePersonKey = ref('')
+const activePerson = computed(() => selectedObservations.value.find(item => item.key === activePersonKey.value) || selectedObservations.value[0])
+function observationFrame(observation: CharacterObservation): CharacterObservationShot | null {
+  return observation.shots.find(shot => shot.id === selectedEntry.value?.shot.id) || null
+}
 const speakerChoice = ref<Record<string, string>>({})
+const supplementShotId = ref('')
+async function presenceSaved(): Promise<void> {
+  const shotId = supplementShotId.value || selectedEntry.value?.shot.id || ''
+  supplementShotId.value = ''
+  await afterChange(shotId)
+}
+const offscreenSpeaker = ref<Record<string, boolean>>({})
+function setSpeakerMode(issueId: string, offscreen: boolean): void {
+  offscreenSpeaker.value[issueId] = offscreen
+  delete speakerChoice.value[issueId]
+  error.value = ''
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -157,7 +187,10 @@ function speakerIssuesForShot(shotId: string): ReviewIssue[] {
   return issues.value.filter((issue) => issue.issue_type === 'SPEAKER' && (issue.shot_id === shotId || speakerSuggestion(issue)?.shot_id === shotId))
 }
 function shotNeedsReview(entry: ReviewEntry): boolean {
-  return assetNeedsReview(entry.shot) || observationsForShot(entry.shot.id).length > 0 || speakerIssuesForShot(entry.shot.id).length > 0
+  return presenceIssuesForShot(entry.shot.id).length > 0 || assetNeedsReview(entry.shot) || observationsForShot(entry.shot.id).length > 0 || speakerIssuesForShot(entry.shot.id).length > 0
+}
+function presenceIssuesForShot(shotId: string): ReviewIssue[] {
+  return issues.value.filter(issue => issue.issue_type === 'PERSON_PRESENCE' && issue.shot_id === shotId)
 }
 function compareReviewEntries(a: ReviewEntry, b: ReviewEntry): number {
   const episodeOrder = Number(a.episode.sort_order || 0) - Number(b.episode.sort_order || 0)
@@ -190,7 +223,7 @@ const selectedEntry = computed(() => pendingEntries.value.find((entry) => entry.
 const selectedObservations = computed(() => selectedEntry.value ? observationsForShot(selectedEntry.value.shot.id) : [])
 const selectedSpeakerIssues = computed(() => selectedEntry.value ? speakerIssuesForShot(selectedEntry.value.shot.id) : [])
 const selectedHasAssetIssue = computed(() => Boolean(selectedEntry.value && assetNeedsReview(selectedEntry.value.shot)))
-const selectedHasPendingPeople = computed(() => selectedObservations.value.length > 0)
+const selectedHasPendingPeople = computed(() => selectedObservations.value.length > 0 || Boolean(selectedEntry.value && presenceIssuesForShot(selectedEntry.value.shot.id).length))
 const finalCharacters = computed<SourceCharacter[]>(() => characterWorkspace.value?.characters.length
   ? characterWorkspace.value.characters
   : (assetWorkspace.value?.characters || []).map((item) => ({ id: item.id, name: item.name, cover_url: item.cover_url, confidence: item.confidence, shot_ids: item.shot_ids, shot_count: item.shot_count })))
@@ -234,6 +267,7 @@ function chooseSpeaker(issueId: string, personKey: string): void { speakerChoice
 function initSelectedShot(entry: ReviewEntry | null): void {
   if (!entry) return
   selectedShotId.value = entry.shot.id
+  activePersonKey.value = observationsForShot(entry.shot.id)[0]?.key || ''
   const binding = bindingsFor(entry.shot.id)
   draftCharacterIds.value = [...binding.character_ids]
   draftSceneId.value = binding.scene_id
@@ -260,7 +294,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 async function loadCharacterWorkspace(runAuto = false): Promise<void> {
   const initial = await request<CharacterWorkspace>(`/api/projects/${encodeURIComponent(props.projectId)}/character-assets`)
-  if (!runAuto) { characterWorkspace.value = initial; return }
+  if (!runAuto) {
+    if (characterWorkspace.value?.revision !== initial.revision) personMarks.value = {}
+    characterWorkspace.value = initial; return
+  }
   try {
     const result = await request<AutoResolveResponse>(`/api/projects/${encodeURIComponent(props.projectId)}/character-assets/auto-resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expected_revision: initial.revision }) })
     characterWorkspace.value = result.workspace
@@ -298,16 +335,16 @@ async function saveAssetBinding(): Promise<void> {
     await afterChange(entry.shot.id)
   } catch (err) { error.value = err instanceof Error ? err.message : '镜头资产保存失败' } finally { saving.value = false }
 }
-async function assignObservation(observation: CharacterObservation): Promise<void> {
+async function assignObservation(observation: CharacterObservation, confirmSinglePerson = false): Promise<void> {
   if (!characterWorkspace.value || saving.value) return
   if (observation.identity_issue) { error.value = observation.identity_issue; return }
+  const localization = personConfirmationMark(observationFrame(observation), personMarks.value[observation.key], confirmSinglePerson)
+  if (!localization) { error.value = '请先在多人画面中框出此人，或使用单人确认。'; return }
   const characterId = selectedPersonId(observation)
   const createName = (newPersonName.value[observation.key] || '').trim()
   if (!characterId && !createName) { error.value = '请选择已有正式人物，或输入新人物名称。'; return }
   saving.value = true; error.value = ''
   try {
-    const proposal = reviewProposals.value[observation.key]
-    const localization = observation.localization || proposal?.localization || proposal?.localizations?.find((item) => item.shot_id === selectedEntry.value?.shot.id) || null
     characterWorkspace.value = await request<CharacterWorkspace>(`/api/projects/${encodeURIComponent(props.projectId)}/character-assets/assign`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: [observation.key], name: characterId ? '' : createName, character_id: characterId || null, expected_revision: characterWorkspace.value.revision, localizations: localization ? { [observation.key]: localization } : null }),
     })
@@ -316,8 +353,12 @@ async function assignObservation(observation: CharacterObservation): Promise<voi
   } catch (err) { error.value = err instanceof Error ? err.message : '人物身份保存失败' } finally { saving.value = false }
 }
 function candidatePeople(issue: ReviewIssue): SpeakerCandidate[] { return speakerSuggestion(issue)?.candidate_people?.filter((item) => item?.person_key) || [] }
-function confirmedCandidatePeople(issue: ReviewIssue): SpeakerCandidate[] { return candidatePeople(issue).filter((person) => Boolean(person.character_id)) }
+function confirmedCandidatePeople(issue: ReviewIssue): SpeakerCandidate[] {
+  const shotId = issue.shot_id || speakerSuggestion(issue)?.shot_id || selectedEntry.value?.shot.id || ''
+  return shotSpeakerCandidates(candidatePeople(issue), bindingsFor(shotId).character_ids, Boolean(offscreenSpeaker.value[issue.id]))
+}
 function speakerDependsOnPendingPeople(issue: ReviewIssue): boolean {
+  if (supplementShotId.value === selectedEntry.value?.shot.id) return true
   if (selectedHasPendingPeople.value) return true
   return candidatePeople(issue).some((person) => !person.character_id && Boolean(person.visible_in_shot || person.in_performance))
 }
@@ -364,7 +405,7 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
   <section class="source-shot-review-v2">
     <div v-if="error" class="review-error">{{ error }}</div>
     <div v-if="loading && !assetWorkspace" class="review-loading">正在整理真正需要你确认的分镜…</div>
-    <section v-else-if="!pendingEntries.length" class="review-complete"><div class="check">✓</div><strong>原片确认完成</strong><span>没有剩余需要人工判断的分镜。</span></section>
+    <section v-else-if="!pendingEntries.length" class="review-complete"><div class="check">{{ sourceReady && !error ? '✓' : 'i' }}</div><strong>{{ sourceReady && !error ? '原片确认完成' : '当前审核队列为空，原片尚未就绪' }}</strong><span>{{ sourceReady && !error ? '原片资产与快照均已满足下游条件。' : blockingReason || '请返回拉片检查内容完整性及上游状态；没有审核任务不代表全部完成。' }}</span></section>
 
     <div v-else class="review-shell">
       <aside class="shot-queue">
@@ -381,16 +422,20 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
         <header class="editor-head"><div><small>当前分镜</small><strong>第{{ String(selectedEntry.episode.sort_order).padStart(2, '0') }}集 · 镜头 {{ String(selectedEntry.shot.ordinal).padStart(2, '0') }}</strong><span>{{ formatTime(selectedEntry.shot.start_us) }} – {{ formatTime(selectedEntry.shot.end_us) }}</span></div><div class="editor-progress">按顺序处理：人物 → 场景 / 道具 → 对白</div></header>
         <div class="editor-body">
           <section class="preview-panel">
-            <video v-if="selectedEntry.shot.reference_url" :src="selectedEntry.shot.reference_url" :poster="selectedEntry.shot.thumbnail_url || undefined" controls preload="metadata" />
+            <PersonLocalizationReview v-if="activePerson" :key="`${selectedEntry.shot.id}:${activePerson.key}:${observationFrame(activePerson)?.thumbnail_url}`" :image-url="observationFrame(activePerson)?.thumbnail_url || ''" :shot-id="selectedEntry.shot.id" :label="`${activePerson.name} · ${activePerson.appearance || '请核对人物位置'}`" :model-value="personMarks[activePerson.key]" :disabled="saving || Boolean(activePerson.identity_issue)" @update:model-value="updatePersonMark(activePerson.key, $event)" />
+            <video v-else-if="selectedEntry.shot.reference_url" :src="selectedEntry.shot.reference_url" :poster="selectedEntry.shot.thumbnail_url || undefined" controls preload="metadata" />
             <img v-else-if="selectedEntry.shot.thumbnail_url" :src="thumbnailUrl(selectedEntry.shot)" alt="当前分镜" />
             <div v-else class="no-preview">暂无分镜画面</div>
+            <details v-if="activePerson && selectedEntry.shot.reference_url" style="width:100%;color:#fff;padding:8px;box-sizing:border-box"><summary>查看原视频（定位框仅对应上方静态帧）</summary><video :src="selectedEntry.shot.reference_url" controls preload="none" /></details>
           </section>
 
           <section class="facts-panel">
+            <button type="button" class="ghost" @click="supplementShotId = selectedEntry.shot.id">漏了一个人？补充本镜头出镜人物</button>
+            <MissingPersonReview v-if="supplementShotId === selectedEntry.shot.id || presenceIssuesForShot(selectedEntry.shot.id).length" :key="selectedEntry.shot.id" :project-id="projectId" :shot-id="selectedEntry.shot.id" @close="supplementShotId = ''" @saved="presenceSaved" />
             <section v-if="selectedObservations.length" class="fact-card person-card">
               <header><div><small>1 · 人物身份</small><strong>先确认这个镜头里的人是谁</strong></div><span>{{ selectedObservations.length }} 项</span></header>
               <article v-for="observation in selectedObservations" :key="observation.key" class="person-row">
-                <div class="person-info"><strong>{{ observation.name }}</strong><span>{{ observation.appearance || '暂无稳定外观描述' }}</span><small v-if="reviewProposals[observation.key]?.localization">AI 已定位人物位置</small></div>
+                <div class="person-info"><strong>{{ observation.name }}</strong><span>{{ observation.appearance || '暂无稳定外观描述' }}</span><button type="button" class="ghost" @click="activePersonKey = observation.key">{{ activePerson?.key === observation.key ? '正在左侧核对' : '在左侧核对此人' }} · {{ personMarks[observation.key]?.source === 'MANUAL_SINGLE_PERSON' ? '单人，无需框选' : personMarks[observation.key] ? '已框选，可调整' : '待核对画面' }}</button></div>
 
                 <div v-if="observation.identity_issue" class="review-error" role="alert">
                   <strong>原片人物识别需修正</strong>
@@ -410,8 +455,9 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
                 <div v-if="!observation.identity_issue" class="new-person-divider"><span>找不到这个人？</span></div>
                 <div v-if="!observation.identity_issue" class="new-person">
                   <input :value="newPersonName[observation.key] || ''" type="text" placeholder="这是新人物：输入人物名称" @input="setNewPersonName(observation.key, ($event.target as HTMLInputElement).value)" />
-                  <button type="button" :disabled="saving || (!selectedPersonId(observation) && !(newPersonName[observation.key] || '').trim())" @click="assignObservation(observation)">{{ saving ? '保存中…' : '确认人物' }}</button>
+                  <button type="button" :disabled="saving || !observationFrame(observation)?.thumbnail_url || (!selectedPersonId(observation) && !(newPersonName[observation.key] || '').trim())" @click="assignObservation(observation, !personMarks[observation.key])">{{ saving ? '保存中…' : personMarks[observation.key] ? '确认人物' : '单人画面，确认人物' }}</button>
                 </div>
+                <small v-if="!observation.identity_issue && !personMarks[observation.key]" style="color:#63748b">只有画面中仅有此人时才直接确认；有其他人时，请先在左侧框出目标。</small>
               </article>
             </section>
 
@@ -433,8 +479,9 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
                     <span>当前镜头仍有人物身份未确定。确认人物后，这条对白会自动解锁并只显示已绑定的正式人物。</span>
                   </div>
                   <template v-else>
+                    <div class="speaker-options" aria-label="说话人候选范围"><button type="button" :disabled="saving" :class="{selected:!offscreenSpeaker[issue.id]}" @click="setSpeakerMode(issue.id, false)">当前镜头人物</button><button type="button" :disabled="saving" :class="{selected:offscreenSpeaker[issue.id]}" @click="setSpeakerMode(issue.id, true)">画外说话人</button></div>
                     <div class="speaker-options"><button v-for="person in confirmedCandidatePeople(issue)" :key="person.person_key" type="button" :class="{ selected: speakerChoice[issue.id] === person.person_key }" @click="chooseSpeaker(issue.id, person.person_key)"><img v-if="person.cover_url" :src="person.cover_url" alt="" /><span>{{ speakerPersonTitle(person) }}</span></button></div>
-                    <div class="save-line"><span v-if="!confirmedCandidatePeople(issue).length">当前没有已确认的可选人物，请先完成人物确认。</span><span v-else>这里只能选择已经绑定正式人物的说话人。</span><button type="button" class="primary" :disabled="saving || !confirmedCandidatePeople(issue).some((person) => person.person_key === speakerChoice[issue.id])" @click="saveSpeaker(issue)">确认说话人</button></div>
+                    <div class="save-line"><span v-if="!confirmedCandidatePeople(issue).length">{{ offscreenSpeaker[issue.id] ? '当前场景没有其他已确认人物可选，请先补齐人物身份。' : '当前镜头没有可选的绑定人物；声音来自画外时，请选择“画外说话人”。' }}</span><span v-else>{{ offscreenSpeaker[issue.id] ? '画外候选：当前场景其他已确认人物。此选择不添加镜头出镜绑定。' : '仅显示当前镜头绑定人物，同一正式身份只显示一次。' }}</span><button type="button" class="primary" :disabled="saving || !confirmedCandidatePeople(issue).some((person) => person.person_key === speakerChoice[issue.id])" @click="saveSpeaker(issue)">确认说话人</button></div>
                   </template>
                 </div>
               </article>

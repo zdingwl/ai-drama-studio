@@ -12,8 +12,8 @@ from __future__ import annotations
 from threading import Lock
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Header
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from engine.app.breakdown_g1_acceptance_diagnostics_v1 import build_g1_acceptance_snapshot
@@ -48,7 +48,7 @@ router = APIRouter(prefix="/api", tags=["breakdown"])
 BREAKDOWN_TASK_TYPE = "EPISODE_BREAKDOWN_P2"
 BREAKDOWN_BATCH_TASK_TYPE = "BATCH_BREAKDOWN_P2"
 BREAKDOWN_SHOT_TASK_TYPE = "SHOT_BREAKDOWN_P2"
-_P2_TASK_TYPES = {BREAKDOWN_TASK_TYPE, BREAKDOWN_BATCH_TASK_TYPE, BREAKDOWN_SHOT_TASK_TYPE}
+_P2_TASK_TYPES = {BREAKDOWN_TASK_TYPE, BREAKDOWN_BATCH_TASK_TYPE, BREAKDOWN_SHOT_TASK_TYPE, "SHOT_PERFORMANCE_SUGGESTION"}
 _P2_ENQUEUE_LOCK = Lock()
 _STAGE_LABELS = {
     "breakdown_prepare": "准备 AI 拉片",
@@ -69,6 +69,97 @@ _STAGE_LABELS = {
 class P2AcceptanceRequest(BaseModel):
     human_review: dict[str, Any] | None = None
     include_preflight: bool = True
+
+
+class PerformanceCommand(BaseModel):
+    input_fingerprint: str = Field(min_length=1, max_length=128)
+    workflow_revision: str = Field(min_length=1, max_length=128)
+
+
+class PerformanceAdoption(BaseModel):
+    fields: list[str] = Field(min_length=1, max_length=5)
+
+
+@router.get("/episodes/{episode_id}/shots/{shot_ordinal}/performance-suggestion")
+def api_performance_context(episode_id: str, shot_ordinal: int) -> dict:
+    from engine.app import breakdown_performance_v1 as performance
+    try:
+        return performance.context(episode_id, shot_ordinal)
+    except (ValueError, LookupError, RuntimeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/episodes/{episode_id}/shots/{shot_ordinal}/performance-suggestion", status_code=202)
+def api_start_performance(
+    episode_id: str, shot_ordinal: int, payload: PerformanceCommand,
+    background: BackgroundTasks,
+    idempotency_key: str = Header(..., min_length=1, max_length=200),
+) -> dict:
+    import json
+    from engine.app import breakdown_performance_v1 as performance
+    from engine.app.task_progress_v2 import get_task, serialize_task
+    task_id = "PERF_" + performance.fingerprint([episode_id, shot_ordinal, idempotency_key])[:56]
+    with _P2_ENQUEUE_LOCK:
+        existing = get_task(task_id)
+        if existing:
+            command = (existing.get("result") or {}).get("command", {})
+            if any(command.get(key) != value for key, value in payload.model_dump().items()):
+                raise HTTPException(409, "同一个请求标识不能用于不同输入")
+            return existing
+        current = api_performance_context(episode_id, shot_ordinal)
+        if any(current[key] != value for key, value in payload.model_dump().items()):
+            raise HTTPException(409, "原片版本已变化，请重新打开补充窗口")
+        if _has_any_active_p2_task():
+            raise HTTPException(409, "已有视频分析任务正在执行，请完成后再补充")
+        command = {**current, "idempotency_key": idempotency_key}
+        # 持久命令收据使用唯一主键，刷新/网络重放不会再次启动模型。
+        with get_session() as session:
+            record = BackgroundTaskRecord(
+                id=task_id, project_id=current["project_id"], episode_id=episode_id,
+                task_type=performance.TASK_TYPE, title=f"AI 补充动作/表情 · Shot {shot_ordinal:02d}",
+                status="QUEUED", progress_mode="indeterminate", result_json=json.dumps({"command": command}, ensure_ascii=False),
+            )
+            session.add(record)
+            session.commit()
+            task = serialize_task(record)
+        background.add_task(performance.run_task, task_id, command)
+        return task
+
+
+@router.get("/performance-suggestions/{task_id}")
+def api_get_performance(task_id: str) -> dict:
+    from engine.app.task_progress_v2 import get_task
+    task = get_task(task_id)
+    if not task or task["task_type"] != "SHOT_PERFORMANCE_SUGGESTION":
+        raise HTTPException(404, "动作与表演建议不存在")
+    return task
+
+
+@router.post("/performance-suggestions/{task_id}/adopt")
+def api_adopt_performance(task_id: str, payload: PerformanceAdoption) -> dict:
+    import json
+    from engine.app import breakdown_performance_v1 as performance
+    from engine.app.studio_v2 import utcnow
+    with _P2_ENQUEUE_LOCK:
+        task = api_get_performance(task_id)
+        result = task.get("result") or {}
+        if task["status"] != "READY" or not result.get("suggested"):
+            raise HTTPException(409, "建议尚未生成或无可采用内容")
+        if result.get("adopted"):
+            if set(result.get("adopted_fields", [])) != set(payload.fields):
+                raise HTTPException(409, "该建议已经采用，请重新生成新建议")
+            return {"adopted": True}
+        try:
+            performance.adopt(result, payload.fields)
+        except (ValueError, LookupError, RuntimeError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        result.update(adopted=True, adopted_fields=payload.fields)
+        with get_session() as session:
+            record = session.get(BackgroundTaskRecord, task_id)
+            record.result_json = json.dumps(result, ensure_ascii=False)
+            record.updated_at = utcnow()
+            session.commit()
+        return {"adopted": True}
 
 
 def _not_found(message: str) -> HTTPException:
@@ -224,11 +315,9 @@ def run_shot_breakdown_task(task_id: str, episode_id: str, shot_ordinal: int) ->
             task_id,
             stage_key="breakdown_shot_prepare",
             stage_label=_stage_label("breakdown_shot_prepare"),
-            current_item=shot_label,
-            current_index=1,
-            total_items=1,
             message=f"正在准备 {shot_label} 的局部 ASR / OCR / VLM",
         )
+        update_task(task_id, current_item=shot_label, current_index=1, total_items=1)
 
         def report(percent: float, stage: str, message: str) -> None:
             update_task(

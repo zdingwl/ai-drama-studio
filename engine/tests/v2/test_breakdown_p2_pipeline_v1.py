@@ -23,8 +23,11 @@ def execution(component: str, status: str = "READY") -> pipeline.ProviderExecuti
 
 
 def prepare(monkeypatch):
-    monkeypatch.setattr(pipeline.p2, "load_p2_run_context", lambda run_id: SimpleNamespace(run_id=run_id))
+    monkeypatch.setattr(pipeline.p2, "load_p2_run_context", lambda run_id: SimpleNamespace(run_id=run_id, project_id='PROJECT_1', episode_id='EPISODE_1', source_shot_revision_id='REV_1'))
     monkeypatch.setattr(pipeline, "_pipeline_state", lambda *args, **kwargs: None)
+    from engine.app import source_presence_audit_v1 as audit
+    monkeypatch.setattr(audit, 'inspect_artifact', lambda context, artifact: [])
+    monkeypatch.setattr(audit, 'publish', lambda *args: None)
 
 
 def test_pipeline_runs_fixed_asr_ocr_vlm_order_then_fusion(monkeypatch) -> None:

@@ -196,6 +196,7 @@ def compose_episode_source_drama_snapshot_v1(
     source_language: str,
     revision_items_by_ordinal: Mapping[int, ShotRevisionItem] | None = None,
     speaker_overrides: Mapping[str, Mapping[str, str]] | None = None,
+    infer_speakers: bool = True,
 ) -> dict[str, Any]:
     """Pure composition from one current P6 read model into product-facing source truth."""
 
@@ -204,7 +205,13 @@ def compose_episode_source_drama_snapshot_v1(
         if isinstance(read_model_payload, BreakdownReadModelV1)
         else BreakdownReadModelV1.model_validate(read_model_payload)
     )
-    timeline = read_model.timeline
+    timeline = read_model.timeline.model_copy(deep=True)
+    if read_model.presence_review:
+        raise SourceDramaSnapshotError(f'{len(read_model.presence_review)} 个镜头的出镜人物覆盖尚未核对，不能固化原片事实')
+    for scene in timeline.scenes:
+        refs = {person.ref for person in scene.people}
+        for shot in scene.shots:
+            shot.people = list(dict.fromkeys(shot.people + [ref for ref in read_model.manual_presence.get(str(shot.ordinal), []) if ref in refs]))
     if timeline.episode_id != episode_id:
         raise SourceDramaSnapshotError("Breakdown read model belongs to another Episode")
     if not timeline.is_current:
@@ -333,7 +340,7 @@ def compose_episode_source_drama_snapshot_v1(
             dialogue_rows = [
                 {
                     **dialogue,
-                    "speakers": list(speaker_resolutions[index].speaker_keys),
+                    "speakers": list(speaker_resolutions[index].speaker_keys) if infer_speakers else dialogue["speakers"],
                 }
                 for index, dialogue in enumerate(dialogue_inputs)
             ]
@@ -371,6 +378,7 @@ def compose_episode_source_drama_snapshot_v1(
                 "visual_description": shot.visual_description,
                 "people": shot_people,
                 "performance": performance_rows,
+                **({"performance_details": shot.performance_details.model_dump(mode="json")} if shot.performance_details else {}),
                 "source_dialogue": dialogue_rows,
                 "observed_props": [
                     {"label": prop.label, "interaction": prop.interaction}
@@ -442,7 +450,7 @@ def compose_episode_source_drama_snapshot_v1(
     return SourceDramaEpisodeSnapshotV1.model_validate(payload).model_dump(mode="json")
 
 
-def load_episode_source_drama_snapshot_v1(episode_id: str) -> dict[str, Any] | None:
+def load_episode_source_drama_snapshot_v1(episode_id: str, *, infer_speakers: bool = True) -> dict[str, Any] | None:
     read_model_raw = load_episode_breakdown_read_model_v1(episode_id)
     if read_model_raw is None:
         return None
@@ -471,6 +479,7 @@ def load_episode_source_drama_snapshot_v1(episode_id: str) -> dict[str, Any] | N
             source_language=project.source_language,
             revision_items_by_ordinal=item_map,
             speaker_overrides=speaker_overrides,
+            infer_speakers=infer_speakers,
         )
 
 

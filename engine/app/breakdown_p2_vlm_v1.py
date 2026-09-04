@@ -345,6 +345,9 @@ class Qwen3VLSemanticProvider:
             item["speaking_state"] = self._enum(
                 raw.get("speaking_state"), _ALLOWED_SPEAKING_STATE, "UNKNOWN"
             )
+            from engine.app.person_presence_geometry_v1 import frame_boxes
+            if raw.get('frame_boxes') is not None:
+                item['frame_boxes'] = frame_boxes(raw['frame_boxes'])
             normalized.append(item)
         return tuple(normalized)
 

@@ -220,7 +220,7 @@ def run_breakdown_p2_run(
     provider_by_component = _provider_map(providers)
     executions: list[ProviderExecution] = []
     # Loading the context here is also the initial current-Revision/status gate.
-    p2.load_p2_run_context(run_id)
+    initial_context = p2.load_p2_run_context(run_id)
     _pipeline_state(run_id, status="PROCESSING", stage="prepare", executions=executions)
     _report(progress, 0.0, "breakdown_prepare", "准备匿名 AI 拉片")
 
@@ -265,7 +265,11 @@ def run_breakdown_p2_run(
             executions=executions,
         )
         _report(progress, 90.0, "breakdown_fusion", "按整集上下文融合 ASR / OCR / VLM，生成结构化匿名 Draft")
+        from engine.app import source_presence_audit_v1 as presence_audit
+        vlm_artifact = next(item.artifact for item in executions if item.component == 'VLM')
+        audits = presence_audit.inspect_artifact(initial_context, vlm_artifact)
         published = fusion.fuse_breakdown_run(run_id)
+        presence_audit.publish(initial_context.project_id, initial_context.episode_id, run_id, initial_context.source_shot_revision_id, audits)
         _report(progress, 100.0, "breakdown_ready", "匿名结构化拉片完成")
         return published
     except Exception as exc:
