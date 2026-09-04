@@ -12,11 +12,9 @@ import type { ReviewIssue } from '../types/remake'
 import type { Project } from '../types/studio'
 
 type ConfirmTab = 'pending' | 'assets' | 'speaker'
+type AssetTab = 'inbox' | 'people' | 'matrix'
 
-const props = defineProps<{
-  projectId: string
-}>()
-
+const props = defineProps<{ projectId: string }>()
 const route = useRoute()
 const router = useRouter()
 
@@ -39,6 +37,12 @@ function tabFromQuery(): ConfirmTab {
   return 'pending'
 }
 
+function assetTabFromQuery(): AssetTab {
+  const value = String(route.query.asset_tab || '')
+  if (value === 'people' || value === 'matrix') return value
+  return 'inbox'
+}
+
 function stage(key: string): ProjectFlowStage | null {
   return flow.value?.stages.find((item) => item.stage_key === key) || null
 }
@@ -46,10 +50,10 @@ function stage(key: string): ProjectFlowStage | null {
 const sourceAssetsStage = computed(() => stage('source_assets'))
 const sourceSnapshotStage = computed(() => stage('source_snapshot'))
 const sourceReady = computed(() => Boolean(sourceAssetsStage.value?.consumable && sourceSnapshotStage.value?.consumable))
-
 const sourceIssues = computed(() => issues.value.filter((item) => sourceIssueTypes.has(item.issue_type)))
 const speakerIssues = computed(() => sourceIssues.value.filter((item) => item.issue_type === 'SPEAKER'))
 const assetIssues = computed(() => sourceIssues.value.filter((item) => item.issue_type !== 'SPEAKER'))
+const characterIssues = computed(() => sourceIssues.value.filter((item) => item.issue_type === 'CHARACTER_IDENTITY'))
 
 const selectedEpisode = computed(() => {
   const episodeId = String(route.query.episode || '')
@@ -63,34 +67,36 @@ const selectedShotOrdinal = computed(() => {
 
 const locationLabel = computed(() => {
   const episode = selectedEpisode.value
-  const episodeText = episode ? `EP${String(episode.sort_order).padStart(2, '0')}` : '当前剧集'
+  const episodeText = episode ? `EP${String(episode.sort_order).padStart(2, '0')}` : '当前项目'
   const shotText = selectedShotOrdinal.value ? ` · Shot ${String(selectedShotOrdinal.value).padStart(2, '0')}` : ''
   return `${episodeText}${shotText}`
 })
 
 const blockingReason = computed(() => {
-  if (sourceReady.value) return '原片人物、场景、道具和正式事实快照均已就绪。'
+  if (sourceReady.value) return '原片事实已经可以供后续视频重做使用。'
   const assetStage = sourceAssetsStage.value
   if (assetStage && !assetStage.consumable) return assetStage.reason
   const snapshotStage = sourceSnapshotStage.value
   if (snapshotStage && !snapshotStage.consumable) return snapshotStage.reason
-  return '原片确认状态尚未就绪，请先处理待确认问题。'
+  return '请先处理仍会影响后续重做的原片问题。'
 })
 
-const sourceMetrics = computed(() => {
-  const snapshot = sourceSnapshotStage.value?.metrics || {}
-  const assets = sourceAssetsStage.value?.metrics || {}
-  const readNumber = (value: unknown): number => {
-    const parsed = Number(value || 0)
-    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0
+const dialogTitle = computed(() => {
+  if (activeTab.value === 'speaker') return '核对对白说话人'
+  if (activeTab.value === 'assets') {
+    const assetTab = assetTabFromQuery()
+    if (assetTab === 'people') return '核对原片人物'
+    if (assetTab === 'matrix') return '核对场景与道具绑定'
+    return '处理原片资产问题'
   }
-  return {
-    episodes: readNumber(snapshot.episode_count),
-    shots: readNumber(snapshot.shot_count),
-    characters: readNumber(snapshot.resolved_character_count ?? assets.character_count),
-    scenes: readNumber(snapshot.scene_count ?? assets.scene_count),
-    dialogues: readNumber(snapshot.source_dialogue_count),
-  }
+  return '原片确认'
+})
+
+const dialogHint = computed(() => {
+  if (activeTab.value === 'speaker') return '只处理无法自动确定说话人的对白。'
+  if (activeTab.value === 'assets' && assetTabFromQuery() === 'people') return '把无法唯一确定的人物归并到正确的原片人物资产。'
+  if (activeTab.value === 'assets') return '检查真正有冲突或缺失的 Final Binding。'
+  return '系统能确定的内容自动采用，这里只保留需要你判断的部分。'
 })
 
 function issueTitle(issue: ReviewIssue): string {
@@ -141,13 +147,28 @@ async function refresh(): Promise<void> {
   }
 }
 
-function openTab(tab: ConfirmTab): void {
+function openTab(tab: ConfirmTab, assetTab?: AssetTab): void {
   activeTab.value = tab
-  void router.replace({ query: { ...route.query, mode: 'confirm', confirm_tab: tab } })
+  void router.replace({
+    query: {
+      ...route.query,
+      mode: 'confirm',
+      confirm_tab: tab,
+      ...(assetTab ? { asset_tab: assetTab } : {}),
+    },
+  })
 }
 
 function openIssue(issue: ReviewIssue): void {
-  openTab(issue.issue_type === 'SPEAKER' ? 'speaker' : 'assets')
+  if (issue.issue_type === 'SPEAKER') {
+    openTab('speaker')
+    return
+  }
+  if (issue.issue_type === 'CHARACTER_IDENTITY') {
+    openTab('assets', 'people')
+    return
+  }
+  openTab('assets', 'inbox')
 }
 
 function close(): void {
@@ -198,43 +219,38 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="source-confirm-overlay" @click.self="close">
-    <section class="source-confirm-dialog" role="dialog" aria-modal="true" aria-label="原片确认">
+    <section class="source-confirm-dialog" role="dialog" aria-modal="true" :aria-label="dialogTitle">
       <header class="source-confirm-head">
-        <div>
-          <small>03 · 原片确认</small>
-          <strong>直接在拉片页面处理</strong>
-          <span>{{ locationLabel }} · 这里只处理真正影响后续视频重做的问题，修改后立即写回当前原片事实。</span>
+        <div class="head-copy">
+          <small>03 · 原片确认 · {{ locationLabel }}</small>
+          <div class="title-row">
+            <strong>{{ dialogTitle }}</strong>
+            <span :class="['ready-chip', { ready: sourceReady }]">
+              {{ sourceReady ? '已就绪' : `${sourceIssues.length} 项待处理` }}
+            </span>
+          </div>
+          <span>{{ dialogHint }}</span>
         </div>
-        <button type="button" aria-label="关闭原片确认" @click="close">×</button>
+        <button type="button" class="close-button" aria-label="关闭原片确认" @click="close">×</button>
       </header>
 
-      <div class="source-confirm-summary">
-        <div><small>剧集</small><strong>{{ sourceMetrics.episodes || project?.episodes.length || 0 }}</strong></div>
-        <div><small>镜头</small><strong>{{ sourceMetrics.shots }}</strong></div>
-        <div><small>人物</small><strong>{{ sourceMetrics.characters }}</strong></div>
-        <div><small>场景</small><strong>{{ sourceMetrics.scenes }}</strong></div>
-        <div><small>源对白</small><strong>{{ sourceMetrics.dialogues }}</strong></div>
-        <div :class="{ warning: sourceIssues.length }"><small>待处理</small><strong>{{ sourceIssues.length }}</strong></div>
-      </div>
+      <div class="source-confirm-toolbar">
+        <nav class="source-confirm-tabs" aria-label="原片确认工具">
+          <button type="button" :class="{ active: activeTab === 'pending' }" @click="openTab('pending')">
+            待处理 <b>{{ sourceIssues.length }}</b>
+          </button>
+          <button type="button" :class="{ active: activeTab === 'assets' }" @click="openTab('assets', characterIssues.length ? 'people' : 'inbox')">
+            人物 / 场景 / 道具 <b>{{ assetIssues.length }}</b>
+          </button>
+          <button type="button" :class="{ active: activeTab === 'speaker' }" @click="openTab('speaker')">
+            对白说话人 <b>{{ speakerIssues.length }}</b>
+          </button>
+        </nav>
 
-      <div v-if="error" class="source-confirm-message danger">{{ error }}</div>
-      <div v-else-if="loading" class="source-confirm-message">正在读取当前原片确认状态…</div>
-      <div v-else :class="['source-confirm-message', sourceReady ? 'success' : 'warning']">
-        <strong>{{ sourceReady ? '原片已经可以进入视频重做' : '原片还不能进入视频重做' }}</strong>
-        <span>{{ blockingReason }}</span>
+        <div v-if="error" class="state-line danger">{{ error }}</div>
+        <div v-else-if="loading" class="state-line">正在读取当前原片状态…</div>
+        <div v-else-if="!sourceReady" class="state-line warning">{{ blockingReason }}</div>
       </div>
-
-      <nav class="source-confirm-tabs" aria-label="原片确认工具">
-        <button type="button" :class="{ active: activeTab === 'pending' }" @click="openTab('pending')">
-          <strong>待处理</strong><span>{{ sourceIssues.length }} 项</span>
-        </button>
-        <button type="button" :class="{ active: activeTab === 'assets' }" @click="openTab('assets')">
-          <strong>人物 / 场景 / 道具</strong><span>{{ assetIssues.length ? `${assetIssues.length} 项需要判断` : '查看或修改绑定' }}</span>
-        </button>
-        <button type="button" :class="{ active: activeTab === 'speaker' }" @click="openTab('speaker')">
-          <strong>对白说话人</strong><span>{{ speakerIssues.length ? `${speakerIssues.length} 条待确认` : '没有待确认说话人' }}</span>
-        </button>
-      </nav>
 
       <main class="source-confirm-body">
         <template v-if="activeTab === 'pending'">
@@ -245,13 +261,16 @@ onBeforeUnmount(() => {
                 <strong>{{ issueTitle(issue) }}</strong>
                 <p>{{ issue.reason }}</p>
               </div>
-              <button type="button" @click="openIssue(issue)">处理</button>
+              <button type="button" @click="openIssue(issue)">处理 →</button>
             </article>
           </section>
+
           <section v-else class="source-confirm-empty">
             <span>✓</span>
-            <strong>没有需要人工处理的原片问题</strong>
-            <p>系统能够确定的内容已经自动采用，不需要逐镜头点击确认。</p>
+            <div>
+              <strong>没有需要人工处理的原片问题</strong>
+              <p>系统能够确定的内容已经自动采用，不需要逐镜头重复确认。</p>
+            </div>
           </section>
 
           <section v-if="sourceSnapshotStage?.warnings.length" class="source-confirm-warnings">
@@ -262,6 +281,7 @@ onBeforeUnmount(() => {
 
         <AssetStageV4
           v-else-if="activeTab === 'assets' && project"
+          compact
           :project-id="project.id"
           :episodes="project.episodes"
         />
@@ -271,24 +291,26 @@ onBeforeUnmount(() => {
             v-if="speakerIssues.length"
             :issues="speakerIssues"
             @changed="refresh"
-            @open-asset-editor="openTab('assets')"
+            @open-asset-editor="openTab('assets', 'people')"
           />
           <section v-else class="source-confirm-empty">
             <span>✓</span>
-            <strong>没有待确认的对白说话人</strong>
-            <p>已经确定的说话人不会要求你重复确认。</p>
+            <div>
+              <strong>没有待确认的对白说话人</strong>
+              <p>已经确定的说话人不会要求你重复确认。</p>
+            </div>
           </section>
         </template>
       </main>
 
       <footer class="source-confirm-footer">
-        <div>
+        <div class="footer-state">
           <strong>{{ sourceReady ? '原片确认完成' : `还需处理 ${sourceIssues.length} 项` }}</strong>
-          <span>{{ sourceReady ? '后续本土化、配音和 H3 生成将使用当前 SourceDramaSnapshot。' : blockingReason }}</span>
+          <span>{{ sourceReady ? '当前原片事实可直接进入视频重做。' : blockingReason }}</span>
         </div>
         <div class="source-confirm-actions">
-          <button class="secondary" type="button" @click="close">继续看拉片</button>
-          <button class="primary" type="button" :disabled="!sourceReady" @click="enterRemake">原片确认完成，进入视频重做 →</button>
+          <button class="secondary" type="button" @click="close">返回拉片</button>
+          <button class="primary" type="button" :disabled="!sourceReady" @click="enterRemake">进入视频重做 →</button>
         </div>
       </footer>
     </section>
@@ -296,14 +318,78 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.source-confirm-overlay{position:fixed;inset:0;z-index:1200;display:flex;align-items:center;justify-content:center;padding:28px;background:rgba(18,28,45,.48);backdrop-filter:blur(3px)}
-.source-confirm-dialog{width:min(1480px,calc(100vw - 56px));height:min(900px,calc(100vh - 56px));display:grid;grid-template-rows:auto auto auto auto minmax(0,1fr) auto;overflow:hidden;border:1px solid #dfe5ee;border-radius:16px;background:#f7f9fc;box-shadow:0 28px 80px rgba(17,32,58,.28);font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#263850}
-.source-confirm-head{min-height:78px;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 18px;border-bottom:1px solid #e4e9f0;background:#fff}.source-confirm-head>div{display:grid;gap:2px}.source-confirm-head small{color:#1769ff;font-size:10px;font-weight:800}.source-confirm-head strong{font-size:20px;color:#1f3048}.source-confirm-head span{color:#7b899b;font-size:11px}.source-confirm-head>button{width:36px;height:36px;border:1px solid #dce3ec;border-radius:9px;background:#fff;color:#6f7d90;font-size:22px;cursor:pointer}
-.source-confirm-summary{display:grid;grid-template-columns:repeat(6,minmax(92px,1fr));gap:8px;padding:10px 14px;background:#f7f9fc}.source-confirm-summary>div{display:grid;gap:1px;padding:8px 10px;border:1px solid #e1e6ed;border-radius:9px;background:#fff}.source-confirm-summary small{color:#8a96a6;font-size:9px}.source-confirm-summary strong{font-size:15px;color:#34465f}.source-confirm-summary .warning{border-color:#eed8ad;background:#fff9ed}.source-confirm-summary .warning strong{color:#a56a18}
-.source-confirm-message{margin:0 14px 10px;padding:9px 11px;display:flex;align-items:center;gap:8px;border:1px solid #dce4ef;border-radius:8px;background:#fff;color:#65758a;font-size:10px}.source-confirm-message strong{color:#33465f}.source-confirm-message.success{border-color:#c9e6d7;background:#f4fbf7;color:#4f7a64}.source-confirm-message.warning{border-color:#ecd7af;background:#fff9ed;color:#8c6a31}.source-confirm-message.danger{border-color:#efc9cf;background:#fff5f6;color:#a84c58}
-.source-confirm-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:0 14px 10px}.source-confirm-tabs button{min-height:54px;display:grid;gap:2px;align-content:center;padding:8px 12px;border:1px solid #dde4ed;border-radius:10px;background:#fff;text-align:left;cursor:pointer}.source-confirm-tabs button.active{border-color:#91b3ee;background:#eef5ff;box-shadow:inset 3px 0 0 #1769ff}.source-confirm-tabs strong{font-size:12px;color:#344a66}.source-confirm-tabs span{font-size:9px;color:#8490a1}
-.source-confirm-body{min-height:0;overflow:auto;padding:0 14px 14px}.source-confirm-issues{display:grid;gap:8px}.source-confirm-issues article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 13px;border:1px solid #e0e5ec;border-radius:10px;background:#fff}.source-confirm-issues article.current{border-color:#9bb9ec;box-shadow:0 0 0 2px rgba(74,116,190,.08)}.source-confirm-issues article>div{display:grid;gap:3px;min-width:0}.source-confirm-issues small{color:#7d8a9c;font-size:9px}.source-confirm-issues strong{font-size:12px;color:#334861}.source-confirm-issues p{margin:0;color:#6f7f92;font-size:10px;line-height:1.55}.source-confirm-issues button{flex:none;min-height:34px;padding:0 13px;border:1px solid #bcd0f4;border-radius:8px;background:#f4f8ff;color:#2564c7;font-size:10px;font-weight:800;cursor:pointer}
-.source-confirm-empty{min-height:230px;display:grid;place-items:center;align-content:center;gap:8px;border:1px dashed #d8e1eb;border-radius:12px;background:#fff;text-align:center}.source-confirm-empty>span{width:44px;height:44px;display:grid;place-items:center;border-radius:50%;background:#eaf8f0;color:#27935c;font-size:22px}.source-confirm-empty strong{font-size:15px;color:#365069}.source-confirm-empty p{margin:0;color:#8190a3;font-size:10px}.source-confirm-warnings{margin-top:10px;padding:11px 12px;border:1px solid #ead9b6;border-radius:10px;background:#fffaf0}.source-confirm-warnings strong{font-size:10px;color:#7e612e}.source-confirm-warnings p{margin:4px 0 0;color:#90784d;font-size:9px;line-height:1.5}
-.source-confirm-footer{min-height:70px;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 16px;border-top:1px solid #e1e6ed;background:#fff}.source-confirm-footer>div:first-child{display:grid;gap:2px;min-width:0}.source-confirm-footer strong{font-size:11px;color:#354a65}.source-confirm-footer span{max-width:760px;color:#7d899a;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-confirm-actions{display:flex;gap:8px;flex:none}.source-confirm-actions button{min-height:38px;padding:0 14px;border-radius:8px;font-size:10px;font-weight:800;cursor:pointer}.source-confirm-actions .secondary{border:1px solid #d6dee9;background:#fff;color:#52637a}.source-confirm-actions .primary{border:1px solid #1769ff;background:#1769ff;color:#fff}.source-confirm-actions .primary:disabled{opacity:.45;cursor:not-allowed}
-@media(max-width:900px){.source-confirm-overlay{padding:10px}.source-confirm-dialog{width:calc(100vw - 20px);height:calc(100vh - 20px)}.source-confirm-summary{grid-template-columns:repeat(3,minmax(0,1fr))}.source-confirm-tabs{grid-template-columns:1fr}.source-confirm-footer{align-items:stretch;flex-direction:column}.source-confirm-footer span{white-space:normal}.source-confirm-actions{justify-content:flex-end}}
+.source-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(18, 28, 45, .46);
+  backdrop-filter: blur(3px);
+}
+.source-confirm-dialog {
+  width: min(1540px, calc(100vw - 40px));
+  height: min(940px, calc(100vh - 40px));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid #dfe5ee;
+  border-radius: 15px;
+  background: #f6f8fb;
+  box-shadow: 0 28px 80px rgba(17, 32, 58, .28);
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #263850;
+}
+.source-confirm-head {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e9ef;
+  background: #fff;
+}
+.head-copy { min-width: 0; display: grid; gap: 2px; }
+.head-copy > small { color: #1769ff; font-size: 9px; font-weight: 850; }
+.title-row { display: flex; align-items: center; gap: 8px; }
+.title-row > strong { color: #20334e; font-size: 19px; }
+.head-copy > span { color: #7d8999; font-size: 10px; }
+.ready-chip { padding: 3px 7px; border-radius: 999px; background: #fff3df; color: #986a25; font-size: 9px; font-weight: 800; }
+.ready-chip.ready { background: #e7f6ed; color: #31754c; }
+.close-button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #dce3ec; border-radius: 9px; background: #fff; color: #6f7d90; font-size: 21px; cursor: pointer; }
+.source-confirm-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px; padding: 8px 14px; border-bottom: 1px solid #e6eaf0; background: #fafbfd; }
+.source-confirm-tabs { display: flex; align-items: center; gap: 6px; }
+.source-confirm-tabs button { min-height: 34px; border: 1px solid #dce3ec; border-radius: 8px; padding: 6px 11px; background: #fff; color: #53637a; font-size: 10px; font-weight: 750; cursor: pointer; }
+.source-confirm-tabs button.active { border-color: #7fa2e9; background: #edf4ff; color: #315fae; }
+.source-confirm-tabs b { display: inline-grid; min-width: 18px; height: 18px; place-items: center; margin-left: 4px; border-radius: 999px; background: #f0f3f7; color: #607089; font-size: 9px; }
+.source-confirm-tabs button.active b { background: #dbe8ff; color: #315fae; }
+.state-line { max-width: 580px; overflow: hidden; color: #778499; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.state-line.warning { color: #8a672c; }.state-line.danger { color: #a84444; }
+.source-confirm-body { min-height: 0; overflow: auto; padding: 12px 14px 16px; }
+.source-confirm-issues { display: grid; gap: 8px; max-width: 980px; margin: 0 auto; }
+.source-confirm-issues article { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 13px; border: 1px solid #dfe5ed; border-radius: 10px; background: #fff; }
+.source-confirm-issues article.current { border-color: #8eadeb; background: #f4f8ff; }
+.source-confirm-issues article > div { min-width: 0; display: grid; gap: 2px; }
+.source-confirm-issues small { color: #8090a4; font-size: 9px; }.source-confirm-issues strong { color: #324866; font-size: 12px; }.source-confirm-issues p { margin: 0; color: #738197; font-size: 10px; line-height: 1.45; }
+.source-confirm-issues button { flex: 0 0 auto; border: 1px solid #9db6e5; border-radius: 8px; padding: 7px 10px; background: #fff; color: #4069b5; font-size: 10px; font-weight: 800; cursor: pointer; }
+.source-confirm-empty { min-height: 180px; display: flex; align-items: center; justify-content: center; gap: 12px; border: 1px solid #cce4d6; border-radius: 11px; background: #f3fbf7; }
+.source-confirm-empty > span { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: #dff3e7; color: #317d50; font-size: 20px; font-weight: 900; }
+.source-confirm-empty > div { display: grid; gap: 3px; }.source-confirm-empty strong { color: #315c45; font-size: 14px; }.source-confirm-empty p { margin: 0; color: #759180; font-size: 10px; }
+.source-confirm-warnings { max-width: 980px; display: grid; gap: 4px; margin: 10px auto 0; padding: 10px 12px; border: 1px solid #ead8b3; border-radius: 9px; background: #fff9ee; }
+.source-confirm-warnings strong { color: #795f2e; font-size: 10px; }.source-confirm-warnings p { margin: 0; color: #8e7750; font-size: 9px; }
+.source-confirm-footer { min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 10px 14px; border-top: 1px solid #e3e8ef; background: #fff; }
+.footer-state { min-width: 0; display: grid; gap: 2px; }.footer-state strong { color: #344964; font-size: 11px; }.footer-state span { overflow: hidden; color: #7c899a; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.source-confirm-actions { display: flex; gap: 7px; flex: 0 0 auto; }.source-confirm-actions button { min-height: 36px; border-radius: 8px; padding: 0 12px; font-size: 10px; font-weight: 800; cursor: pointer; }.source-confirm-actions .secondary { border: 1px solid #d9e1eb; background: #fff; color: #5b6d84; }.source-confirm-actions .primary { border: 1px solid #4c78df; background: #4c78df; color: #fff; }.source-confirm-actions button:disabled { opacity: .48; cursor: not-allowed; }
+@media (max-width: 900px) {
+  .source-confirm-overlay { padding: 8px; }
+  .source-confirm-dialog { width: calc(100vw - 16px); height: calc(100vh - 16px); }
+  .source-confirm-toolbar { align-items: flex-start; flex-direction: column; }
+  .source-confirm-tabs { width: 100%; overflow-x: auto; }
+  .state-line { max-width: 100%; }
+  .source-confirm-footer { align-items: flex-start; flex-direction: column; }
+  .source-confirm-actions { width: 100%; }.source-confirm-actions button { flex: 1; }
+}
 </style>
