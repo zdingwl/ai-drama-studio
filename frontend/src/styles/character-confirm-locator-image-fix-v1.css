@@ -1,0 +1,67 @@
+/* 原片人物确认 - 多人框选画布显示修复
+ * 关键约束：locator-canvas 的 DOM 边界必须与实际图片边界一致，
+ * 因为 CharacterAssetsWorkbenchV1 会直接用 canvas.getBoundingClientRect()
+ * 计算 0~1 的人物框坐标。
+ * 因此这里不能使用 cover、固定画布高度或 contain 留黑边。
+ */
+
+.source-confirm-dialog .identity-review .locator-modal {
+  max-height: calc(100vh - 56px) !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+/* 画布高度由原图自身宽高比决定，禁止设计稿层强制 500~620px。 */
+.source-confirm-dialog .identity-review .locator-canvas {
+  width: calc(100% - 32px) !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  margin: 12px 16px 0 !important;
+  display: block !important;
+  overflow: hidden !important;
+  background: #101925 !important;
+  line-height: 0 !important;
+}
+
+/* 图片本身决定 canvas 高度：完整显示，不裁切、不拉伸、不留 contain 黑边。 */
+.source-confirm-dialog .identity-review .locator-canvas > img {
+  display: block !important;
+  width: 100% !important;
+  height: auto !important;
+  max-width: 100% !important;
+  max-height: none !important;
+  object-fit: fill !important;
+  object-position: center center !important;
+  transform: none !important;
+  scale: 1 !important;
+  user-select: none !important;
+}
+
+/* 框选层仍然使用相对于真实图片区域的百分比坐标。 */
+.source-confirm-dialog .identity-review .locator-canvas .person-box {
+  box-sizing: border-box !important;
+}
+
+.source-confirm-dialog .identity-review .locator-shots {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  overflow-x: auto !important;
+  background: #fff !important;
+}
+
+.source-confirm-dialog .identity-review .locator-modal > footer {
+  position: sticky !important;
+  bottom: 0;
+  z-index: 3;
+  background: #fff !important;
+  border-top: 1px solid #e5ebf2 !important;
+}
+
+/* 矮屏幕不裁图片，改为弹窗内部滚动。 */
+@media (max-height: 760px) {
+  .source-confirm-dialog .identity-review .locator-modal {
+    max-height: calc(100vh - 28px) !important;
+  }
+}
