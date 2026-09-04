@@ -4,9 +4,8 @@ import { useRoute } from 'vue-router'
 import SourceCharacterAssetLibraryV1 from './SourceCharacterAssetLibraryV1.vue'
 import TargetCharacterAssetPanelV1 from './TargetCharacterAssetPanelV1.vue'
 
-const props = defineProps<{
-  projectId: string
-}>()
+const props = defineProps<{ projectId: string }>()
+const emit = defineEmits<{ 'next-stage': [] }>()
 
 type CharacterAssetMode = 'source' | 'target'
 const route = useRoute()
@@ -41,7 +40,11 @@ const sourceConfirmMode = computed(() => String(route.query.mode || '') === 'con
       </button>
     </nav>
 
-    <SourceCharacterAssetLibraryV1 v-if="sourceConfirmMode || mode === 'source'" :project-id="props.projectId" />
+    <SourceCharacterAssetLibraryV1
+      v-if="sourceConfirmMode || mode === 'source'"
+      :project-id="props.projectId"
+      @next-stage="emit('next-stage')"
+    />
     <TargetCharacterAssetPanelV1 v-else :project-id="props.projectId" />
   </section>
 </template>
