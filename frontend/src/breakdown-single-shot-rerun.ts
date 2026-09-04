@@ -1,9 +1,17 @@
 import { breakdownApi } from './api/breakdown'
+import { sceneTimelineApi } from './api/scene-timeline'
+import type { BackgroundTask } from './types/studio'
 
 const PAGE_SELECTOR = '.breakdown-page-v2'
 const FLASH_CLASS = 'single-shot-rerun-flash'
+const WARNING_PANEL_CLASS = 'single-shot-rerun-warning-panel'
+const RERUN_WARNING_MARKERS = ['单镜重拉', '跨越多个分镜']
 
 let requestInFlight = false
+let warningRequestSerial = 0
+let lastWarningEpisodeId = ''
+let warningRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let pageWasMounted = false
 
 function selectedEpisodeId(): string {
   return (document.querySelector<HTMLSelectElement>(`${PAGE_SELECTOR} .heading-data-row select`)?.value || '').trim()
@@ -49,6 +57,103 @@ function patchHelpCopy(): void {
   }
 }
 
+function relevantRerunWarnings(warnings: string[]): string[] {
+  return Array.from(new Set(
+    warnings
+      .map((item) => String(item || '').trim())
+      .filter((item) => item && RERUN_WARNING_MARKERS.some((marker) => item.includes(marker))),
+  ))
+}
+
+function renderRerunWarnings(warnings: string[]): void {
+  const page = document.querySelector<HTMLElement>(PAGE_SELECTOR)
+  const heading = page?.querySelector<HTMLElement>('.page-heading-card')
+  if (!page || !heading) return
+
+  page.querySelector<HTMLElement>(`.${WARNING_PANEL_CLASS}`)?.remove()
+  if (!warnings.length) return
+
+  const panel = document.createElement('section')
+  panel.className = WARNING_PANEL_CLASS
+  panel.setAttribute('role', 'status')
+  panel.setAttribute('aria-live', 'polite')
+
+  const icon = document.createElement('span')
+  icon.className = 'single-shot-rerun-warning-icon'
+  icon.textContent = '!'
+
+  const content = document.createElement('div')
+  const title = document.createElement('strong')
+  title.textContent = '当前拉片结果有需要注意的地方'
+  content.appendChild(title)
+
+  if (warnings.length === 1) {
+    const paragraph = document.createElement('p')
+    paragraph.textContent = warnings[0]
+    content.appendChild(paragraph)
+  } else {
+    const list = document.createElement('ul')
+    for (const warning of warnings) {
+      const item = document.createElement('li')
+      item.textContent = warning
+      list.appendChild(item)
+    }
+    content.appendChild(list)
+  }
+
+  panel.append(icon, content)
+
+  const flash = page.querySelector<HTMLElement>(`.${FLASH_CLASS}`)
+  if (flash) flash.insertAdjacentElement('afterend', panel)
+  else heading.insertAdjacentElement('afterend', panel)
+}
+
+async function refreshRerunWarnings(force = false): Promise<void> {
+  const page = document.querySelector<HTMLElement>(PAGE_SELECTOR)
+  if (!page) {
+    pageWasMounted = false
+    lastWarningEpisodeId = ''
+    return
+  }
+
+  const episodeId = selectedEpisodeId()
+  if (!episodeId) return
+  if (!force && episodeId === lastWarningEpisodeId) return
+
+  const serial = ++warningRequestSerial
+  try {
+    const timeline = await sceneTimelineApi.getEpisode(episodeId)
+    if (serial !== warningRequestSerial || episodeId !== selectedEpisodeId()) return
+    lastWarningEpisodeId = episodeId
+    renderRerunWarnings(relevantRerunWarnings(timeline?.warnings || []))
+  } catch {
+    // 主页面本身已经负责 Timeline 读取错误；sidecar 不重复制造第二套错误状态。
+  }
+}
+
+function scheduleWarningRefresh(force = false, delayMs = 120): void {
+  if (warningRefreshTimer) window.clearTimeout(warningRefreshTimer)
+  warningRefreshTimer = window.setTimeout(() => {
+    warningRefreshTimer = null
+    void refreshRerunWarnings(force)
+  }, delayMs)
+}
+
+function handlePageMutation(): void {
+  patchHelpCopy()
+  const mounted = Boolean(document.querySelector(PAGE_SELECTOR))
+  if (!mounted) {
+    pageWasMounted = false
+    lastWarningEpisodeId = ''
+    return
+  }
+  const episodeId = selectedEpisodeId()
+  if (!pageWasMounted || (episodeId && episodeId !== lastWarningEpisodeId)) {
+    pageWasMounted = true
+    scheduleWarningRefresh(false)
+  }
+}
+
 async function startSelectedShot(button: HTMLButtonElement): Promise<void> {
   if (requestInFlight || button.disabled) return
   const episodeId = selectedEpisodeId()
@@ -88,7 +193,24 @@ document.addEventListener('click', (event) => {
   void startSelectedShot(button)
 }, true)
 
-const observer = new MutationObserver(() => patchHelpCopy())
+document.addEventListener('change', (event) => {
+  const element = event.target
+  if (!(element instanceof HTMLSelectElement)) return
+  if (!element.matches(`${PAGE_SELECTOR} .heading-data-row select`)) return
+  lastWarningEpisodeId = ''
+  scheduleWarningRefresh(true, 180)
+})
+
+window.addEventListener('studio-task-finished', (event) => {
+  const task = (event as CustomEvent<BackgroundTask>).detail
+  if (!task || task.task_type !== 'SHOT_BREAKDOWN_P2') return
+  if (task.episode_id !== selectedEpisodeId()) return
+  // V2 页面会同时刷新正式 Timeline；稍后再读一次，只负责提取用户级安全提示。
+  scheduleWarningRefresh(true, 350)
+})
+
+const observer = new MutationObserver(handlePageMutation)
 observer.observe(document.documentElement, { childList: true, subtree: true })
+handlePageMutation()
 
 export {}
