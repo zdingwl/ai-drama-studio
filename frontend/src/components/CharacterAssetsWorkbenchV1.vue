@@ -14,6 +14,9 @@ type Mark = {
   shot_id: string
   image_url: string
   box: number[]
+  source?: string | null
+  track_id?: string | null
+  candidate_id?: string | null
 }
 
 type ObservationShot = {
@@ -52,12 +55,36 @@ type Workspace = {
   characters: SourceCharacter[]
 }
 
+type AutoProposal = {
+  decision: 'AUTO' | 'REVIEW'
+  source: string
+  source_run_id?: string | null
+  candidate_id?: string | null
+  candidate_confidence?: number | null
+  character_id?: string | null
+  shot_ids: string[]
+  localization?: Mark | null
+  localizations?: Mark[]
+  reason?: string | null
+}
+
+type AutoResolveResponse = {
+  changed: boolean
+  auto_bound_count: number
+  review_count: number
+  review_proposals: Record<string, AutoProposal>
+  workspace: Workspace
+}
+
 type QueueMode = 'pending' | 'assigned' | 'all'
 
 const data = ref<Workspace | null>(null)
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
+const autoNotice = ref('')
+const autoBoundCount = ref(0)
+const reviewProposals = ref<Record<string, AutoProposal>>({})
 const search = ref('')
 const candidateSearch = ref('')
 const queueMode = ref<QueueMode>('pending')
@@ -95,6 +122,7 @@ const filteredRows = computed(() => {
 
 const focused = computed(() => allObservations.value.find((item) => item.key === focusKey.value) || null)
 const currentShot = computed(() => focused.value?.shots[shotIndex.value] || null)
+const focusedAutoProposal = computed(() => focused.value ? reviewProposals.value[focused.value.key] || null : null)
 const suggestedCharacter = computed(() => {
   const id = focused.value?.suggested_character_id
   return id ? charactersById.value.get(id) || null : null
@@ -120,7 +148,7 @@ const shownMark = computed(() => {
   if (!mark.value || !currentShot.value) return null
   return mark.value.shot_id === currentShot.value.id ? mark.value : null
 })
-
+const hasAiMark = computed(() => Boolean(shownMark.value?.source?.startsWith('CHARACTER_V10_1')))
 const canConfirm = computed(() => Boolean(focused.value && selectedCharacter.value && !busy.value))
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -138,15 +166,28 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+function aiMarkFor(item: Observation, shotId?: string | null): Mark | null {
+  const proposal = reviewProposals.value[item.key]
+  if (!proposal) return null
+  const marks = proposal.localizations || []
+  if (shotId) {
+    const exact = marks.find((value) => value.shot_id === shotId)
+    if (exact) return { ...exact, box: [...exact.box] }
+  }
+  const fallback = proposal.localization || marks[0]
+  return fallback ? { ...fallback, box: [...fallback.box] } : null
+}
+
 function selectObservation(item: Observation): void {
   focusKey.value = item.key
   shotIndex.value = 0
   destinationCharacterId.value = item.character_id || item.suggested_character_id || ''
   candidateSearch.value = ''
-  mark.value = item.localization ? {
-    shot_id: item.localization.shot_id,
-    image_url: item.localization.image_url,
-    box: [...item.localization.box],
+  const currentShotId = item.shots[0]?.id || null
+  const preferred = item.localization || aiMarkFor(item, currentShotId)
+  mark.value = preferred ? {
+    ...preferred,
+    box: [...preferred.box],
   } : null
   createModalOpen.value = false
   locatorOpen.value = false
@@ -154,17 +195,54 @@ function selectObservation(item: Observation): void {
 }
 
 function ensureFocus(): void {
-  if (focused.value && queueRows.value.some((item) => item.key === focused.value?.key)) return
+  if (focused.value && queueRows.value.some((item) => item.key === focused.value?.key)) {
+    selectObservation(focused.value)
+    return
+  }
   const next = filteredRows.value[0] || queueRows.value[0] || allObservations.value[0]
   if (next) selectObservation(next)
   else focusKey.value = ''
 }
 
+async function runAutoResolve(initial: Workspace): Promise<Workspace> {
+  try {
+    const result = await request<AutoResolveResponse>(
+      `/api/projects/${encodeURIComponent(props.projectId)}/character-assets/auto-resolve`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expected_revision: initial.revision }),
+      },
+    )
+    autoBoundCount.value = result.auto_bound_count
+    reviewProposals.value = result.review_proposals || {}
+    if (result.auto_bound_count > 0) {
+      autoNotice.value = `AI 已根据 Character V10.1 自动确认 ${result.auto_bound_count} 组人物；其余只保留需要人工判断的项目。`
+      window.dispatchEvent(new CustomEvent('studio-project-truth-changed', {
+        detail: { project_id: props.projectId },
+      }))
+    } else if (result.review_count > 0) {
+      autoNotice.value = `AI 已完成自动定位检查，${result.review_count} 组人物仍需要人工判断。`
+    } else {
+      autoNotice.value = 'AI 已完成 Character V10.1 人物整理。'
+    }
+    return result.workspace
+  } catch (err) {
+    autoNotice.value = err instanceof Error
+      ? `AI 自动整理暂未完成：${err.message}。你仍可继续人工确认。`
+      : 'AI 自动整理暂未完成，你仍可继续人工确认。'
+    reviewProposals.value = {}
+    return initial
+  }
+}
+
 async function load(): Promise<void> {
   loading.value = true
   error.value = ''
+  autoNotice.value = '正在用 Character V10.1 自动定位并归并人物…'
   try {
-    data.value = await request<Workspace>(`/api/projects/${encodeURIComponent(props.projectId)}/character-assets`)
+    const initial = await request<Workspace>(`/api/projects/${encodeURIComponent(props.projectId)}/character-assets`)
+    data.value = await runAutoResolve(initial)
     ensureFocus()
   } catch (err) {
     error.value = err instanceof Error ? err.message : '人物归并数据读取失败'
@@ -233,6 +311,7 @@ function moveMark(event: PointerEvent): void {
       Math.abs(x - startX),
       Math.abs(y - startY),
     ],
+    source: 'MANUAL_PERSON_LOCATOR',
   }
 }
 
@@ -250,6 +329,16 @@ function clearMark(): void {
 function changeShot(index: number): void {
   shotIndex.value = index
   dragStart = null
+  if (!focused.value) {
+    mark.value = null
+    return
+  }
+  const shotId = focused.value.shots[index]?.id || null
+  if (focused.value.localization?.shot_id === shotId) {
+    mark.value = { ...focused.value.localization, box: [...focused.value.localization.box] }
+    return
+  }
+  mark.value = aiMarkFor(focused.value, shotId)
 }
 
 function nextPendingAfter(key: string): Observation | null {
@@ -286,12 +375,15 @@ async function submitAssignment(characterId: string | null, name: string): Promi
           name,
           character_id: characterId,
           expected_revision: data.value.revision,
-          // 只有多人同框时用户主动框选，普通身份确认不重复要求定位。
+          // AI 已定位时直接复用 Track bbox；只有 AI 漏检/判断错误时才由用户手动重框。
           localizations: mark.value ? { [savingKey]: mark.value } : null,
         }),
       },
     )
     data.value = result
+    const nextPlans = { ...reviewProposals.value }
+    delete nextPlans[savingKey]
+    reviewProposals.value = nextPlans
     createModalOpen.value = false
     locatorOpen.value = false
     mark.value = null
@@ -342,7 +434,7 @@ onMounted(load)
       <button type="button" class="back-button" @click="emit('back-to-library')">← 返回</button>
       <div class="topbar-title">
         <strong>原片人物确认</strong>
-        <span>每次只判断一个人物，确认后自动进入下一条</span>
+        <span>{{ autoBoundCount ? `AI 已自动确认 ${autoBoundCount} 组，只处理剩余问题` : 'AI 先自动识别，人工只处理无法唯一判断的人物' }}</span>
       </div>
       <div class="progress-box">
         <span>{{ completedCount }} / {{ totalCount }}</span>
@@ -352,12 +444,13 @@ onMounted(load)
     </header>
 
     <div v-if="error" class="error" role="alert">{{ error }}</div>
-    <div v-if="loading && !data" class="loading">正在读取人物确认任务…</div>
+    <div v-if="loading && !data" class="loading">正在读取人物确认任务并运行 Character V10.1 自动整理…</div>
+    <div v-else-if="autoNotice" class="auto-notice">{{ autoNotice }}</div>
 
-    <section v-else-if="data && !pending.length && queueMode === 'pending'" class="completion-screen">
+    <section v-if="!loading && data && !pending.length && queueMode === 'pending'" class="completion-screen">
       <div class="completion-check">✓</div>
       <h2>人物确认完成！</h2>
-      <p>所有需要人工判断的人物都已完成归并，人物资产和分镜绑定已经更新。</p>
+      <p>AI 自动识别和必要的人工确认均已完成，人物资产和分镜绑定已经更新。</p>
 
       <div class="completion-metrics">
         <article><strong>{{ data.characters.length }}</strong><span>原片人物</span></article>
@@ -372,7 +465,7 @@ onMounted(load)
       </div>
     </section>
 
-    <template v-else-if="data">
+    <template v-else-if="!loading && data">
       <nav class="queue-tabs" aria-label="人物确认筛选">
         <button type="button" :class="{ active: queueMode === 'pending' }" @click="setQueueMode('pending')">
           待处理 <b>{{ pending.length }}</b>
@@ -410,6 +503,7 @@ onMounted(load)
                 <small>{{ item.shots.length }} 个分镜</small>
               </div>
               <em v-if="item.character_id">已确认</em>
+              <em v-else-if="reviewProposals[item.key]?.localization" class="suggested">AI 已定位</em>
               <em v-else-if="item.suggested_character_id" class="suggested">有推荐</em>
               <em v-else class="pending">待确认</em>
             </button>
@@ -435,7 +529,9 @@ onMounted(load)
                 draggable="false"
               />
               <div v-else class="no-frame">当前分镜没有可用画面</div>
-              <div v-if="shownMark" class="person-box" :style="markStyle(shownMark)"><span>已定位人物</span></div>
+              <div v-if="shownMark" class="person-box" :class="{ ai: hasAiMark }" :style="markStyle(shownMark)">
+                <span>{{ hasAiMark ? 'AI 已定位' : '已定位人物' }}</span>
+              </div>
             </div>
 
             <div v-if="focused.shots.length > 1" class="shot-strip">
@@ -459,18 +555,22 @@ onMounted(load)
               <div class="evidence-actions">
                 <button type="button" @click="openBreakdown">查看完整分镜 ↗</button>
                 <button type="button" :class="{ marked: Boolean(mark) }" @click="openLocator">
-                  {{ mark ? '已框选人物 · 修改' : '需要框选人物' }}
+                  {{ hasAiMark ? 'AI 已定位 · 可修正' : mark ? '已框选人物 · 修改' : 'AI 未定位 · 手动框选' }}
                 </button>
               </div>
             </div>
-            <p class="locator-help">只有多人同框、容易认错时才需要框选。普通人物确认直接选择身份即可。</p>
+            <p class="locator-help">
+              {{ focusedAutoProposal?.localization
+                ? 'Character V10.1 已自动定位人物；只有 AI 框错时才需要手动修正。'
+                : 'AI 无法唯一定位时才需要人工框选；普通人物确认直接选择身份即可。' }}
+            </p>
           </section>
 
           <aside class="decision-panel">
             <div class="decision-head">
               <small>确认人物身份</small>
               <h2>这个人是谁？</h2>
-              <p>优先选择已有原片人物；确认是新角色时再创建。</p>
+              <p>高置信度人物已经自动处理；这里只保留 AI 无法唯一判断的情况。</p>
             </div>
 
             <button
@@ -575,8 +675,8 @@ onMounted(load)
       <section class="locator-modal" role="dialog" aria-modal="true" aria-label="框选人物">
         <header>
           <div>
-            <small>多人镜头定位</small>
-            <h3>框选画面中要确认的人物</h3>
+            <small>{{ hasAiMark ? 'AI 人物定位' : '多人镜头定位' }}</small>
+            <h3>{{ hasAiMark ? 'AI 已定位当前人物，可手动修正' : 'AI 未定位到人物，请手动框选' }}</h3>
           </div>
           <button type="button" aria-label="关闭" @click="locatorOpen = false">×</button>
         </header>
@@ -588,10 +688,12 @@ onMounted(load)
           @pointerup="endMark"
           @pointercancel="dragStart = null"
         >
-          <img v-if="currentShot?.thumbnail_url" :src="currentShot.thumbnail_url" alt="多人镜头，请框选目标人物" draggable="false" />
+          <img v-if="currentShot?.thumbnail_url" :src="currentShot.thumbnail_url" alt="多人镜头，请确认目标人物" draggable="false" />
           <div v-else class="no-frame">当前分镜没有可用画面</div>
-          <div v-if="shownMark" class="person-box" :style="markStyle(shownMark)"><span>确认对象</span></div>
-          <div v-if="!shownMark && currentShot?.thumbnail_url" class="drag-tip">按住鼠标拖动框选人物</div>
+          <div v-if="shownMark" class="person-box" :class="{ ai: hasAiMark }" :style="markStyle(shownMark)">
+            <span>{{ hasAiMark ? 'AI 定位' : '确认对象' }}</span>
+          </div>
+          <div v-if="!shownMark && currentShot?.thumbnail_url" class="drag-tip">AI 未定位到目标人物，按住鼠标拖动框选</div>
         </div>
 
         <div v-if="focused && focused.shots.length > 1" class="locator-shots">
@@ -607,10 +709,12 @@ onMounted(load)
         </div>
 
         <footer>
-          <button v-if="mark" type="button" @click="clearMark">清除框选</button>
+          <button v-if="mark && !hasAiMark" type="button" @click="clearMark">清除框选</button>
           <span />
           <button type="button" @click="locatorOpen = false">取消</button>
-          <button type="button" class="primary" :disabled="!mark" @click="locatorOpen = false">确认框选并继续选人物</button>
+          <button type="button" class="primary" :disabled="!mark" @click="locatorOpen = false">
+            {{ hasAiMark ? 'AI 定位正确，继续选人物' : '确认框选并继续选人物' }}
+          </button>
         </footer>
       </section>
     </div>
@@ -665,6 +769,7 @@ input:focus { border-color: #7ba3f5; box-shadow: 0 0 0 3px rgba(23,105,255,.08);
 
 .error { margin: 0; padding: 9px 11px; border: 1px solid #efc7c7; border-radius: 8px; background: #fff3f3; color: #a93c3c; font-size: 11px; }
 .loading { padding: 28px; border: 1px dashed #dbe2eb; border-radius: 10px; background: #fff; color: #7b899b; text-align: center; }
+.auto-notice { margin: 0; padding: 8px 12px; border: 1px solid #cfe0fb; border-radius: 8px; background: #f3f7ff; color: #53709d; font-size: 10px; }
 
 .queue-tabs {
   display: flex;
@@ -734,7 +839,9 @@ input:focus { border-color: #7ba3f5; box-shadow: 0 0 0 3px rgba(23,105,255,.08);
 .locator-canvas > img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .no-frame { color: #b7c1ce; font-size: 11px; }
 .person-box { position: absolute; border: 2px solid #1769ff; box-shadow: 0 0 0 9999px rgba(8,18,34,.08); pointer-events: none; }
+.person-box.ai { border-color: #2c7df0; box-shadow: 0 0 0 9999px rgba(8,18,34,.05), 0 0 0 2px rgba(44,125,240,.12); }
 .person-box span { position: absolute; top: -24px; left: -2px; padding: 4px 6px; border-radius: 5px; background: #1769ff; color: #fff; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.person-box.ai span { background: #2c7df0; }
 .shot-strip { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; padding-bottom: 2px; }
 .shot-strip button { min-width: 72px; display: grid; gap: 3px; padding: 4px; }
 .shot-strip button.active { border-color: #1769ff; background: #eef4ff; }
