@@ -30,6 +30,10 @@ type TargetCharacter = {
   target_name: string
   appearance_profile: string
   generation_prompt: string
+  confidence?: number | null
+  status: string
+  decision_source: string
+  updated_at: string
   current: boolean
   fingerprint: string
   versions: FourViewVersion[]
@@ -67,16 +71,31 @@ const targetBySource = computed(() => new Map((workspace.value?.targets || []).m
 const activeGeneration = computed(() => (workspace.value?.targets || []).some((target) =>
   target.versions.some((version) => ['QUEUED', 'PROCESSING'].includes(version.status)),
 ))
-const designedCount = computed(() => (workspace.value?.targets || []).filter((item) => item.current).length)
+const readyDesignCount = computed(() => (workspace.value?.targets || []).filter((item) => item.current && item.status === 'READY').length)
+const pendingDesignCount = computed(() => (workspace.value?.characters || []).filter((source) => {
+  const item = targetBySource.value.get(source.id)
+  return !item || !item.current || item.status !== 'READY'
+}).length)
 const acceptedCount = computed(() => (workspace.value?.targets || []).filter((item) =>
-  item.current && item.versions.some((version) => version.current && version.accepted),
+  item.current && item.status === 'READY' && item.versions.some((version) => version.current && version.accepted),
 ).length)
+const canAutoDesign = computed(() => Boolean(
+  workspace.value
+  && workspace.value.characters.length
+  && workspace.value.designable_ids.length
+  && !workspace.value.snapshot_error,
+))
 
-async function request<T>(path: string, body?: unknown, idempotencyKey?: string): Promise<T> {
+async function request<T>(
+  path: string,
+  body?: unknown,
+  idempotencyKey?: string,
+  method: 'POST' | 'PATCH' = 'POST',
+): Promise<T> {
   const options: RequestInit | undefined = body === undefined
     ? undefined
     : {
-        method: 'POST',
+        method,
         headers: {
           'Content-Type': 'application/json',
           ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
@@ -145,21 +164,46 @@ async function act(action: () => Promise<unknown>): Promise<void> {
   }
 }
 
+async function autoDesign(): Promise<void> {
+  if (!workspace.value) return
+  const expectedRevision = workspace.value.revision
+  await act(() => request(
+    `/api/projects/${encodeURIComponent(props.projectId)}/target-characters/auto-design`,
+    { expected_revision: expectedRevision },
+  ))
+}
+
 async function save(sourceId: string): Promise<void> {
   const draft = drafts[sourceId]
-  if (!draft) return
+  const current = target(sourceId)
+  if (!draft || !workspace.value) return
+
   await act(async () => {
-    await request(
-      `/api/projects/${encodeURIComponent(props.projectId)}/character-assets/design`,
-      {
-        source_character_id: sourceId,
-        expected_revision: editRevisions[sourceId],
-        expected_target_fingerprint: editFingerprints[sourceId],
-        target_name: draft.target_name,
-        appearance_profile: draft.appearance_profile,
-        generation_prompt: draft.generation_prompt,
-      },
-    )
+    if (current?.current) {
+      await request(
+        `/api/target-characters/${encodeURIComponent(current.id)}`,
+        {
+          target_name: draft.target_name,
+          appearance_profile: draft.appearance_profile,
+          generation_prompt: draft.generation_prompt,
+          expected_updated_at: current.updated_at,
+        },
+        undefined,
+        'PATCH',
+      )
+    } else {
+      await request(
+        `/api/projects/${encodeURIComponent(props.projectId)}/character-assets/design`,
+        {
+          source_character_id: sourceId,
+          expected_revision: editRevisions[sourceId],
+          expected_target_fingerprint: editFingerprints[sourceId],
+          target_name: draft.target_name,
+          appearance_profile: draft.appearance_profile,
+          generation_prompt: draft.generation_prompt,
+        },
+      )
+    }
     opened.value = ''
   })
 }
@@ -188,6 +232,11 @@ function viewName(view: string): string {
     left: '左侧（历史）',
     right: '右侧（历史）',
   } as Record<string, string>)[view] || view
+}
+
+function confidenceText(item?: TargetCharacter): string {
+  if (typeof item?.confidence !== 'number') return ''
+  return `${Math.round(item.confidence * 100)}%`
 }
 
 function acceptedVersion(item?: TargetCharacter): FourViewVersion | undefined {
@@ -221,16 +270,30 @@ onBeforeUnmount(() => {
     <header class="panel-header">
       <div>
         <small>替换人物资产</small>
-        <h2>为每个原片人物建立本土化替换人物和四视图</h2>
+        <h2>系统先自动设计本土化人物，只把不确定项交给你确认</h2>
         <p>
-          四视图使用同一次连续 H3 身份转台生成，再抽取正面、45°、侧面、背面，
-          避免四次独立生成造成脸、发型和服装漂移。
+          自动设计只处理人物，不处理场景。系统会根据原片人物在剧情中的身份、外观与关系，结合
+          {{ workspace?.target_region || '目标地区' }} / {{ workspace?.target_language || '目标语言' }} 生成新人物；
+          已人工确认的人物不会被自动覆盖。
         </p>
       </div>
-      <button type="button" :disabled="loading || busy" @click="load">刷新</button>
+      <div class="header-actions">
+        <button
+          type="button"
+          class="primary"
+          :disabled="loading || busy || !canAutoDesign"
+          @click="autoDesign"
+        >{{ busy ? '处理中…' : 'AI 自动设计人物' }}</button>
+        <button type="button" :disabled="loading || busy" @click="load">刷新</button>
+      </div>
     </header>
 
     <div v-if="error" class="error" role="alert">{{ error }}</div>
+
+    <p v-if="workspace?.characters.length" class="automation-note">
+      自动结果置信度足够时直接形成可用人物；低置信度会标记“待人工确认”。重新运行只更新 AI 设计，
+      人工确认结果保持不变；人物设计变化后旧四视图会自动失效。
+    </p>
 
     <div v-if="workspace" class="metrics">
       <article>
@@ -238,15 +301,15 @@ onBeforeUnmount(() => {
         <strong>{{ workspace.characters.length }}</strong>
         <span>已形成项目级人物资产</span>
       </article>
-      <article>
-        <small>已设计替换人物</small>
-        <strong>{{ designedCount }}</strong>
+      <article :class="{ ready: readyDesignCount === workspace.characters.length && workspace.characters.length > 0 }">
+        <small>可用替换人物</small>
+        <strong>{{ readyDesignCount }}</strong>
         <span>{{ workspace.target_region || '目标地区' }} · {{ workspace.target_language || '目标语言' }}</span>
       </article>
-      <article :class="{ warning: designedCount < workspace.characters.length }">
-        <small>待设计</small>
-        <strong>{{ Math.max(0, workspace.characters.length - designedCount) }}</strong>
-        <span>需要确定新的本土化人物</span>
+      <article :class="{ warning: pendingDesignCount > 0 }">
+        <small>待处理</small>
+        <strong>{{ pendingDesignCount }}</strong>
+        <span>未设计、已失效或需要人工确认</span>
       </article>
       <article :class="{ ready: acceptedCount === workspace.characters.length && workspace.characters.length > 0 }">
         <small>四视图已采用</small>
@@ -284,30 +347,41 @@ onBeforeUnmount(() => {
               <div>
                 <small>替换人物</small>
                 <strong>{{ target(source.id)!.target_name }}</strong>
-                <span v-if="target(source.id)!.current">✓ 当前设计</span>
-                <span v-else class="stale">原片人物或地区已变化</span>
+                <div class="design-badges">
+                  <span v-if="!target(source.id)!.current" class="state-badge stale">原片人物或地区已变化</span>
+                  <span v-else-if="target(source.id)!.status === 'REVIEW'" class="state-badge review">
+                    待人工确认<span v-if="confidenceText(target(source.id))"> · AI {{ confidenceText(target(source.id)) }}</span>
+                  </span>
+                  <span v-else-if="target(source.id)!.decision_source === 'MANUAL'" class="state-badge manual">✓ 人工已确认</span>
+                  <span v-else class="state-badge ai">
+                    ✓ AI 自动设计<span v-if="confidenceText(target(source.id))"> · {{ confidenceText(target(source.id)) }}</span>
+                  </span>
+                </div>
               </div>
               <button
                 type="button"
+                :class="{ primary: target(source.id)!.status === 'REVIEW' }"
                 :disabled="busy || !workspace.designable_ids.includes(source.id)"
                 @click="edit(source.id)"
-              >编辑设计</button>
+              >{{ target(source.id)!.status === 'REVIEW' ? '确认 / 修改' : '编辑设计' }}</button>
             </div>
             <p>{{ target(source.id)!.appearance_profile }}</p>
+            <p v-if="target(source.id)!.current && target(source.id)!.status === 'REVIEW'" class="review-hint">
+              AI 已给出草案，但当前信息不足以安全自动通过。确认或修改姓名和稳定外观后，才能生成四视图。
+            </p>
           </template>
           <template v-else>
             <div class="target-empty">
               <div>
                 <small>替换人物</small>
                 <strong>尚未设计</strong>
-                <span>先定义目标地区中的新人物身份与外观</span>
+                <span>点击顶部“AI 自动设计人物”可批量生成，也可以手工创建</span>
               </div>
               <button
                 type="button"
-                class="primary"
                 :disabled="busy || !workspace.designable_ids.includes(source.id)"
                 @click="edit(source.id)"
-              >设计替换人物</button>
+              >手工设计</button>
             </div>
           </template>
 
@@ -336,11 +410,11 @@ onBeforeUnmount(() => {
             </label>
             <div class="form-actions">
               <button type="button" @click="opened = ''">取消</button>
-              <button type="submit" class="primary" :disabled="busy">保存人物设计</button>
+              <button type="submit" class="primary" :disabled="busy">确认人物设计</button>
             </div>
           </form>
 
-          <section v-if="target(source.id)?.current" class="reference-set">
+          <section v-if="target(source.id)?.current && target(source.id)?.status === 'READY'" class="reference-set">
             <div class="reference-heading">
               <div>
                 <strong>人物四视图</strong>
@@ -410,10 +484,12 @@ onBeforeUnmount(() => {
 .panel-header small { color: #70809a; font-size: 10px; font-weight: 850; letter-spacing: .05em; }
 .panel-header h2 { margin: 3px 0 5px; color: #253a58; font-size: 18px; }
 .panel-header p { max-width: 820px; margin: 0; color: #758398; font-size: 11px; line-height: 1.65; }
+.header-actions { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
 button, input, textarea { box-sizing: border-box; border: 1px solid #d6dfeb; border-radius: 8px; padding: 8px 10px; background: #fff; color: #43536b; font: inherit; font-size: 11px; }
 button { cursor: pointer; } button:disabled { opacity: .55; cursor: not-allowed; } button.primary { border-color: #426fd2; background: #426fd2; color: #fff; font-weight: 800; }
 .error { padding: 9px 11px; border: 1px solid #f0c7c7; border-radius: 8px; background: #fff3f3; color: #a83a3a; font-size: 11px; }
 .notice { margin: 0; padding: 10px 12px; border: 1px solid #ecd29f; border-radius: 9px; background: #fff8ea; color: #7b642f; font-size: 11px; }
+.automation-note { margin: 0; padding: 10px 12px; border: 1px solid #cedcf5; border-radius: 9px; background: #f5f8ff; color: #5e7192; font-size: 11px; line-height: 1.6; }
 .empty { padding: 24px; border: 1px dashed #d8e0ea; border-radius: 10px; background: #fff; color: #78869a; font-size: 12px; text-align: center; }
 .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
 .metrics article { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid #dfe5ed; border-radius: 11px; background: #fff; }
@@ -430,12 +506,16 @@ button { cursor: pointer; } button:disabled { opacity: .55; cursor: not-allowed;
 .replace-arrow { display: grid; place-items: center; color: #9aa7b9; font-size: 16px; }
 .target-side { min-width: 0; display: grid; gap: 10px; align-content: start; }
 .target-heading, .target-empty, .reference-heading, .version-title, .form-actions { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-.target-heading .stale { color: #a8663a; }.target-side > p { margin: 0; color: #6f7e92; font-size: 11px; line-height: 1.6; }
+.target-side > p { margin: 0; color: #6f7e92; font-size: 11px; line-height: 1.6; }
+.design-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.state-badge { width: fit-content; padding: 2px 6px; border-radius: 999px; font-size: 9px !important; font-weight: 800; }
+.state-badge.ai { background: #eef4ff; color: #496da9; }.state-badge.manual { background: #edf8f2; color: #46765a; }.state-badge.review { background: #fff4df; color: #98691f; }.state-badge.stale { background: #fff0e9; color: #a45f3d; }
+.review-hint { padding: 8px 10px; border-radius: 8px; background: #fff8e9; color: #866523 !important; }
 .design-form { display: grid; gap: 9px; padding: 12px; border-radius: 9px; background: #f7f9fc; }
 .design-form label { display: grid; gap: 4px; }.design-form label > span { color: #5e6f86; font-size: 10px; font-weight: 750; }.design-form input, .design-form textarea { width: 100%; resize: vertical; }.form-actions { justify-content: flex-end; }
 .reference-set { display: grid; gap: 8px; padding-top: 9px; border-top: 1px solid #edf0f4; }.reference-heading { align-items: center; }.reference-heading > div { display: grid; gap: 2px; }.reference-heading strong { font-size: 12px; }.reference-heading span { font-size: 9px; }
 .version { display: grid; gap: 8px; padding: 10px; border: 1px solid #e2e7ee; border-radius: 9px; background: #f8fafc; }.version.accepted { border-color: #bfdcca; background: #f2faf6; }.version-title { align-items: center; }.version-title strong { font-size: 10px; }.version-title span { color: #8290a3; font-size: 9px; }.version-state { margin: 0; color: #77859a; font-size: 10px; }
 .four-views { display: grid; grid-template-columns: repeat(4, minmax(0, 140px)); gap: 7px; }.four-views button { padding: 4px; display: grid; gap: 3px; }.four-views img { width: 100%; height: 170px; object-fit: contain; background: #edf1f5; }.four-views span { color: #56677e; font-size: 9px; font-weight: 750; text-align: center; }.accept-button { justify-self: start; border-color: #70a986; color: #3d7454; background: #eff8f3; font-weight: 800; }
 .preview { position: fixed; inset: 0; z-index: 1400; display: grid; place-items: center; padding: 24px; background: #101722c7; }.preview > div { display: grid; gap: 8px; }.preview button { justify-self: end; }.preview img { max-width: 90vw; max-height: 84vh; border-radius: 8px; background: #fff; }
-@media (max-width: 980px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.target-card { grid-template-columns: 1fr; }.source-side { border-right: 0; border-bottom: 1px solid #edf0f4; padding: 0 0 10px; }.replace-arrow { transform: rotate(90deg); }.four-views { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 980px) { .panel-header { align-items: flex-start; flex-direction: column; }.header-actions { width: 100%; }.metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.target-card { grid-template-columns: 1fr; }.source-side { border-right: 0; border-bottom: 1px solid #edf0f4; padding: 0 0 10px; }.replace-arrow { transform: rotate(90deg); }.four-views { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>
