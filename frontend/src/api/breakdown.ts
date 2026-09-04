@@ -4,7 +4,7 @@ import type { BackgroundTask } from '../types/studio'
 /**
  * P3 Breakdown Draft 请求入口。
  *
- * 读取仍然只消费 P1/P2 已持久化结果；运行按钮只调用正式 P2 production task endpoint，
+ * 读取仍然只消费已持久化结果；运行按钮只调用正式 P2 task endpoint，
  * 不在前端复制 ASR/OCR/VLM/Fusion 逻辑。
  */
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -35,5 +35,6 @@ export const breakdownApi = {
   getCurrent: (episodeId: string) => request<BreakdownDraftPayload | null>(`/api/episodes/${episodeId}/breakdown-current`),
   getRun: (runId: string) => request<BreakdownDraftPayload>(`/api/breakdown-runs/${runId}`),
   startEpisode: (episodeId: string) => requestTask(`/api/episodes/${episodeId}/tasks/breakdown`),
+  startShot: (episodeId: string, shotOrdinal: number) => requestTask(`/api/episodes/${episodeId}/shots/${shotOrdinal}/tasks/breakdown`),
   startBatch: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/breakdown-batch`),
 }
