@@ -189,6 +189,8 @@ def _with_current_overlays(
 ) -> dict[str, Any]:
     """Apply current AI reruns first, then explicit user corrections as the final authority."""
 
+    if _run_payload(draft).get("is_current") is not True:
+        return SceneTimelinePayloadV1.model_validate(display_timeline).model_dump(mode="json")
     rerun = apply_shot_rerun_overrides_v1(draft, display_timeline)
     return apply_manual_overrides_v1(
         draft,
