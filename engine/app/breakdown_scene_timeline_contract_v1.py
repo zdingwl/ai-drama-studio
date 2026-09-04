@@ -49,6 +49,23 @@ class SceneTimelinePerformanceV1(_StrictTimelineModel):
     people: list[str] = Field(default_factory=list, description="参与该动作的 Scene-local P* 引用；无法可靠绑定时为空。")
 
 
+class SceneTimelinePerformanceDetailsV1(_StrictTimelineModel):
+    """H3 重拍需要的结构化表演事实；只承载 Exact-Shot 已持久化结果。"""
+
+    expression: str | None = Field(default=None, description="当前 Shot 可见表情；未知时为空。")
+    posture: str | None = Field(default=None, description="当前 Shot 可见身体姿态；未知时为空。")
+    gaze: str | None = Field(default=None, description="当前 Shot 可见视线方向；未知时为空。")
+    interaction: str | None = Field(default=None, description="当前 Shot 可见人物/道具交互；未知时为空。")
+
+    @model_serializer(mode="wrap")
+    def _serialize_optional_fields(self, handler):
+        payload = handler(self)
+        for key in ("expression", "posture", "gaze", "interaction"):
+            if getattr(self, key) is None:
+                payload.pop(key, None)
+        return payload
+
+
 class SceneTimelineDialogueV1(_StrictTimelineModel):
     """ASR 完整对白在当前 Shot 上的投影；text 必须保持 G1 ASR/Fusion 已落库文本原样。"""
 
@@ -96,8 +113,19 @@ class SceneTimelineCinematographyV1(_StrictTimelineModel):
     """只展示 G1 已经存在的镜头语言事实，不让 G2 猜测。"""
 
     shot_type: str | None = Field(default=None, description="G1 Exact-Shot 已有景别提示；未知时为空。")
+    camera_angle: str | None = Field(default=None, description="G1 Exact-Shot 已有机位/视角提示；未知时为空。")
     composition: str | None = Field(default=None, description="G1 Exact-Shot composition_hint；未知时为空。")
     camera_motion: str | None = Field(default=None, description="只有 G1 有可靠值时展示；UNKNOWN 转为空，不由 G2 推断。")
+    lighting: str | None = Field(default=None, description="G1 Exact-Shot 已有光线事实；未知时为空。")
+
+    @model_serializer(mode="wrap")
+    def _serialize_legacy_compatible(self, handler):
+        payload = handler(self)
+        if self.camera_angle is None:
+            payload.pop("camera_angle", None)
+        if self.lighting is None:
+            payload.pop("lighting", None)
+        return payload
 
 
 class SceneTimelineShotV1(_StrictTimelineModel):
@@ -114,20 +142,26 @@ class SceneTimelineShotV1(_StrictTimelineModel):
     visual_description: str | None = Field(default=None, description="Exact-Shot 优先的当前镜头可见事实；缺失时不让 G2 猜。")
     people: list[str] = Field(default_factory=list, description="当前 Shot 已确认出现的 Scene-local P* 引用。")
     performance: list[SceneTimelinePerformanceV1] = Field(default_factory=list, description="当前 Shot 已有动作/表演事实。")
+    performance_details: SceneTimelinePerformanceDetailsV1 | None = Field(default=None, description="H3 使用的结构化表情、姿态、视线、交互事实。")
     dialogue: list[SceneTimelineDialogueV1] = Field(default_factory=list, description="按原片时间排序的 ASR 对白投影。")
     props: list[SceneTimelinePropV1] = Field(default_factory=list, description="当前 Shot 已有可见道具/交互。")
-    cinematography: SceneTimelineCinematographyV1 = Field(description="当前 Shot 已有景别、构图、运镜事实。")
+    cinematography: SceneTimelineCinematographyV1 = Field(description="当前 Shot 已有景别、机位、构图、运镜、光线事实。")
+    continuity: str | None = Field(default=None, description="H3 重拍需要保持的跨镜连续性；仅来自已持久化 Exact-Shot/Scene 上下文。")
     on_screen_text: list[SceneTimelineOnScreenTextV1] = Field(default_factory=list, description="当前 Shot OCR 可见文字。")
 
     @model_serializer(mode="wrap")
     def _serialize_legacy_compatible(self, handler):
-        """旧 SceneTimeline 没有 Shot narrative 字段时保持原 JSON 形状不变。"""
+        """旧 SceneTimeline 没有新增字段时保持原 JSON 形状不变。"""
 
         payload = handler(self)
         if self.summary is None:
             payload.pop("summary", None)
         if self.narrative_function is None:
             payload.pop("narrative_function", None)
+        if self.performance_details is None:
+            payload.pop("performance_details", None)
+        if self.continuity is None:
+            payload.pop("continuity", None)
         return payload
 
 
@@ -172,6 +206,7 @@ __all__ = [
     "SceneTimelineDialogueV1",
     "SceneTimelineOnScreenTextV1",
     "SceneTimelinePayloadV1",
+    "SceneTimelinePerformanceDetailsV1",
     "SceneTimelinePerformanceV1",
     "SceneTimelinePersonV1",
     "SceneTimelinePropV1",
