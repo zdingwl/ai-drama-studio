@@ -3,3 +3,56 @@
   border-radius: 10px;
   box-shadow: 0 4px 16px rgba(23, 43, 77, .04);
 }
+
+.breakdown-page-v2 .single-shot-rerun-warning-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #f2d7a1;
+  border-radius: 10px;
+  background: #fffaf0;
+  color: #7a5311;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.breakdown-page-v2 .single-shot-rerun-warning-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: #f4b740;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.breakdown-page-v2 .single-shot-rerun-warning-panel > div {
+  min-width: 0;
+}
+
+.breakdown-page-v2 .single-shot-rerun-warning-panel strong {
+  display: block;
+  margin-bottom: 2px;
+  color: #68450d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.breakdown-page-v2 .single-shot-rerun-warning-panel p,
+.breakdown-page-v2 .single-shot-rerun-warning-panel ul {
+  margin: 0;
+}
+
+.breakdown-page-v2 .single-shot-rerun-warning-panel ul {
+  padding-left: 18px;
+}
+
+.breakdown-page-v2 .single-shot-rerun-warning-panel li + li {
+  margin-top: 3px;
+}
