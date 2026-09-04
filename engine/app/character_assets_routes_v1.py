@@ -51,7 +51,8 @@ class Assignment(BaseModel):
     name: str = Field(default="", max_length=200)
     character_id: str | None = None
     expected_revision: str
-    localizations: dict = Field(default_factory=dict)
+    # 用户已经明确选择 Local Person 时允许不重复框人；只有 UI 真正提交定位框时才校验坐标。
+    localizations: dict | None = None
 
 
 class Design(BaseModel):
