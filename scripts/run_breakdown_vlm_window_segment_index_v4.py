@@ -9,7 +9,9 @@ outside the frozen target ordinals.
 v4 removes Episode identifiers from the model contract completely. Qwen sees only 1-based positions
 inside the current Window (1..N). This adapter deterministically maps those local indexes back to the
 frozen Shot ordinals/revision_item_id values before Exact-Shot grounding and E6 consume the result.
-Exact-Shot visible truth and all downstream safety rules remain unchanged.
+The continuous-video pass also owns conservative per-Shot camera-motion extraction because motion
+cannot be established from the static Exact-Shot frame samples. Exact-Shot visible truth and all
+downstream safety rules remain unchanged.
 """
 from __future__ import annotations
 
@@ -55,7 +57,8 @@ def _segment_prompt(source_language: str, window: Mapping[str, Any]) -> str:
 本窗口共有 {shot_count} 个 Shot。下面所有 index 都是“窗口内位置”，范围只能是 1..{shot_count}；
 不要输出 Episode 全局 Shot 编号，不要输出 revision_item_id。
 
-只做跨镜上下文。Exact-Shot 图片将在下一阶段单独负责当前 Shot 的人物、动作、道具、构图和可见事实。
+主要任务是跨镜上下文；Exact-Shot 图片将在下一阶段单独负责当前 Shot 的人物、动作、道具、构图和可见事实。
+这个连续视频窗口额外负责一个静态图片无法可靠判断的事实：每个 Shot 的真实运镜。
 
 硬规则：
 1. 切镜不等于换场；特写、背景虚化、插入镜头不自动换场。
@@ -66,8 +69,10 @@ def _segment_prompt(source_language: str, window: Mapping[str, Any]) -> str:
 6. 匿名人物只记录稳定外观与出现位置，不猜姓名/Character ID；动作、表情、姿态、说话、屏幕位置不是身份依据。
 7. subject_continuity_hints 最多6项，只保留跨>=2个 Shot 的主要重复人物；appearance_summary<=24字。
 8. prop_continuity_hints 最多3项，只保留跨>=2个 Shot 的剧情相关重复道具。
-9. window_summary<=24字；location_hint<=16字。不要对白/OCR文字。
-10. Scene 段最多6项；能合并就合并。
+9. shot_motion_hints 必须覆盖 1..{shot_count} 每个 Shot；只根据该 Shot 在连续视频中的真实画面运动判断。可写“静止、推近、拉远、左摇、右摇、上摇、下摇、左移、右移、跟拍、手持晃动、复合运动、UNKNOWN”等简短事实；切镜本身不是运镜。不确定写 UNKNOWN。
+10. 不从前后 Shot 把某个运镜复制给当前 Shot；一个 index 只对应自己的时间范围。
+11. window_summary<=24字；location_hint<=16字。不要对白/OCR文字。
+12. Scene 段最多6项；能合并就合并。
 
 JSON schema：
 {{
@@ -87,6 +92,10 @@ JSON schema：
   "prop_continuity_hints":[{{
     "label":"道具名",
     "shot_indexes":[1,2]
+  }}],
+  "shot_motion_hints":[{{
+    "index":1,
+    "camera_motion":"静止|推近|拉远|左摇|右摇|上摇|下摇|左移|右移|跟拍|手持晃动|复合运动|UNKNOWN"
   }}]
 }}
 """
@@ -158,6 +167,25 @@ def _prop_hints(raw: Any, shots: tuple[Mapping[str, Any], ...]) -> list[dict[str
     return result
 
 
+def _motion_hints(raw: Any, shots: tuple[Mapping[str, Any], ...]) -> dict[int, str]:
+    """Normalize local-index camera motion and require exact Window coverage."""
+
+    if not isinstance(raw, list):
+        raise ValueError("segment-index shot_motion_hints must be a list")
+    by_index: dict[int, str] = {}
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        index = fast._safe_int(item.get("index"))
+        if index < 1 or index > len(shots) or index in by_index:
+            raise ValueError("segment-index shot_motion_hints has invalid/duplicate index")
+        motion = " ".join(str(item.get("camera_motion") or "UNKNOWN").strip().split())[:64]
+        by_index[index] = motion or "UNKNOWN"
+    if set(by_index) != set(range(1, len(shots) + 1)):
+        raise ValueError("segment-index shot_motion_hints must cover every Window position exactly once")
+    return by_index
+
+
 def expand_segments(value: Mapping[str, Any], window: Mapping[str, Any]) -> dict[str, Any]:
     """Validate local-index v4 segments and expand them into canonical legacy Window hints."""
 
@@ -199,12 +227,14 @@ def expand_segments(value: Mapping[str, Any], window: Mapping[str, Any]) -> dict
     if covered != list(range(1, shot_count + 1)):
         raise ValueError("segment-index scene_segments must cover every Window position exactly once")
 
+    motion_by_index = _motion_hints(value.get("shot_motion_hints"), shots)
     segment_for_index: dict[int, tuple[int, str, dict[str, Any]]] = {}
     for start, end, basis, scene in normalized:
         for index in range(start, end + 1):
             segment_for_index[index] = (start, basis, scene)
 
     shot_scene_hints: list[dict[str, Any]] = []
+    canonical_motion_hints: list[dict[str, Any]] = []
     for index, shot in enumerate(shots, start=1):
         ordinal = fast._safe_int(shot.get("ordinal"))
         item_id = str(shot.get("revision_item_id") or "").strip()
@@ -220,13 +250,20 @@ def expand_segments(value: Mapping[str, Any], window: Mapping[str, Any]) -> dict
         else:
             continuity = "SAME"
             scene_basis = "CONTEXT"
+        camera_motion = motion_by_index[index]
         shot_scene_hints.append({
             "revision_item_id": item_id,
             "ordinal": ordinal,
             "scene_continuity": continuity,
             "scene_basis": scene_basis,
             "context_note": "",
+            "camera_motion_hint": camera_motion,
             "scene": dict(scene),
+        })
+        canonical_motion_hints.append({
+            "revision_item_id": item_id,
+            "ordinal": ordinal,
+            "camera_motion_hint": camera_motion,
         })
 
     return {
@@ -234,6 +271,7 @@ def expand_segments(value: Mapping[str, Any], window: Mapping[str, Any]) -> dict
         "scene_change_candidates": [],
         "subject_continuity_hints": _subject_hints(value.get("subject_continuity_hints"), shots),
         "prop_continuity_hints": _prop_hints(value.get("prop_continuity_hints"), shots),
+        "shot_motion_hints": canonical_motion_hints,
         "shot_scene_hints": shot_scene_hints,
         "scene_segments": [
             {
