@@ -237,11 +237,36 @@ def persist_shot_manual_edit_v1(
         _persist_artifact(draft, artifact)
 
 
+def _source_shot_map(
+    source_timeline_payload: Mapping[str, Any] | SceneTimelinePayloadV1 | None,
+) -> dict[int, Mapping[str, Any]]:
+    if source_timeline_payload is None:
+        return {}
+    normalized = (
+        source_timeline_payload.model_dump(mode="json")
+        if isinstance(source_timeline_payload, SceneTimelinePayloadV1)
+        else SceneTimelinePayloadV1.model_validate(source_timeline_payload).model_dump(mode="json")
+    )
+    result: dict[int, Mapping[str, Any]] = {}
+    for scene in normalized["scenes"]:
+        for shot in scene["shots"]:
+            result[int(shot["ordinal"])] = shot
+    return result
+
+
 def apply_manual_overrides_v1(
     draft: Mapping[str, Any],
     timeline_payload: Mapping[str, Any] | SceneTimelinePayloadV1,
+    *,
+    source_timeline_payload: Mapping[str, Any] | SceneTimelinePayloadV1 | None = None,
 ) -> dict[str, Any]:
-    """Project only revision-compatible edits onto the current SceneTimeline payload."""
+    """Project revision-compatible user edits onto the current SceneTimeline payload.
+
+    When ``source_timeline_payload`` is supplied, dialogue authority is anchored to the immutable
+    full-Run AI baseline while the effective (possibly single-Shot-rerun) dialogue must still retain
+    the same index and exact time range.  This keeps an explicit user correction above later AI text
+    without ever forcing it onto a structurally different dialogue segment.
+    """
 
     timeline = (
         timeline_payload.model_dump(mode="json")
@@ -253,6 +278,7 @@ def apply_manual_overrides_v1(
     if _draft_run(draft).get("is_current") is not True:
         return timeline
 
+    source_shots = _source_shot_map(source_timeline_payload)
     artifact = _load_artifact(draft)
     if not artifact["shots"] and not artifact["scenes"] and not artifact["dialogues"]:
         return timeline
@@ -294,6 +320,10 @@ def apply_manual_overrides_v1(
 
             dialogue_overrides = artifact["dialogues"].get(shot_key)
             if isinstance(dialogue_overrides, Mapping):
+                source_shot = source_shots.get(int(shot["ordinal"]), shot)
+                source_dialogues = source_shot.get("dialogue") if isinstance(source_shot, Mapping) else []
+                if not isinstance(source_dialogues, list):
+                    source_dialogues = []
                 for raw_index, override in dialogue_overrides.items():
                     if not isinstance(override, Mapping):
                         continue
@@ -301,13 +331,18 @@ def apply_manual_overrides_v1(
                         index = int(raw_index)
                     except (TypeError, ValueError):
                         continue
-                    if index < 0 or index >= len(shot["dialogue"]):
+                    if index < 0 or index >= len(shot["dialogue"]) or index >= len(source_dialogues):
                         continue
                     dialogue = shot["dialogue"][index]
+                    source_dialogue = source_dialogues[index]
+                    if not isinstance(source_dialogue, Mapping):
+                        continue
                     if (
-                        override.get("start_us") != dialogue["start_us"]
+                        override.get("start_us") != source_dialogue.get("start_us")
+                        or override.get("end_us") != source_dialogue.get("end_us")
+                        or override.get("source_text_sha256") != _text_hash(source_dialogue.get("text"))
+                        or override.get("start_us") != dialogue["start_us"]
                         or override.get("end_us") != dialogue["end_us"]
-                        or override.get("source_text_sha256") != _text_hash(dialogue.get("text"))
                     ):
                         continue
                     text = override.get("text")
