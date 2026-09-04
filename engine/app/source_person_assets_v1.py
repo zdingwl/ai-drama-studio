@@ -278,8 +278,8 @@ def assign(
 ) -> dict[str, Any]:
     """显式把若干人物观察归并到一个 Final Character。
 
-    已有 Final Shot Binding 唯一指向目标人物时，不再要求重复手工框选；
-    其余情况仍必须标记具体人物，防止同框人物误归并。
+    兼容已有服务语义：调用方已经显式选择 observation 时，localizations=None 可以直接归并。
+    新 UI 若提交定位框则严格校验定位框；自动建议只有 Final Shot Binding 唯一交集时才允许免框确认。
     """
 
     with LOCK:
@@ -291,18 +291,8 @@ def assign(
         if not chosen or len(chosen) != len(key_set) or any(not row["shots"] for row in chosen):
             raise ValueError("请选择当前有镜头证据的人物")
 
-        submitted_marks = localizations or {}
-        normalized_localizations: dict[str, dict[str, Any] | None] = {}
-        for row in chosen:
-            mark = submitted_marks.get(row["key"])
-            if _valid_localization(row, mark):
-                normalized_localizations[row["key"]] = mark
-                continue
-            if character_id and row.get("suggested_character_id") == character_id:
-                normalized_localizations[row["key"]] = row.get("localization")
-                continue
-            raise ValueError("该人物在当前镜头中无法唯一确定，请先框选具体人物再归并")
-
+        # 先检查身份结构，再检查可选的画面定位。这样同镜两个 Local Person 被一起
+        # 合并时始终返回真正的结构错误，而不会被“缺少定位框”掩盖。
         existing = [
             row
             for row in current["observations"]
@@ -314,6 +304,23 @@ def assign(
             if seen & ids:
                 raise ValueError("同一镜头中的不同人物不能合并；请先修正重复的人物观察证据")
             seen.update(ids)
+
+        normalized_localizations: dict[str, dict[str, Any] | None] = {}
+        if localizations is None:
+            # 旧服务调用已经通过 keys 明确选择了 Local Person；保持兼容，不凭空要求新定位证据。
+            for row in chosen:
+                normalized_localizations[row["key"]] = row.get("localization")
+        else:
+            for row in chosen:
+                mark = localizations.get(row["key"])
+                if _valid_localization(row, mark):
+                    normalized_localizations[row["key"]] = mark
+                    continue
+                if character_id and row.get("suggested_character_id") == character_id and not mark:
+                    # 这是 Final Shot Binding 唯一交集产生的自动建议；不需要用户重复框同一个人。
+                    normalized_localizations[row["key"]] = row.get("localization")
+                    continue
+                raise ValueError("人物位置标记无效或已过期，请在当前镜头重新标记人物")
 
         with get_session() as session:
             target = session.get(Character, character_id) if character_id else None
