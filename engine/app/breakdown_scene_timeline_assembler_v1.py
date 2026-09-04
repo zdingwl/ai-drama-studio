@@ -82,6 +82,19 @@ def _clean_text(value: Any, *, limit: int = 4000) -> str | None:
     return text[:limit] if text else None
 
 
+def _unique_join(values: list[str | None], *, limit: int = 2000) -> str | None:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = _clean_text(value, limit=limit)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    joined = "；".join(result)
+    return joined[:limit] if joined else None
+
+
 def _verbatim_text(value: Any) -> str | None:
     """对白/OCR 专用：只判断是否为空，不做 trim/空白归一化，避免改写源文本。"""
 
@@ -282,6 +295,32 @@ def _shot_people_and_performance(
     return people, performance
 
 
+def _shot_performance_details(
+    shot: Mapping[str, Any],
+    label_replacements: Mapping[str, str],
+) -> dict[str, str] | None:
+    """从 Fusion 已落库的 ShotLocalSubject.search_hint 聚合 H3 结构化表演事实。"""
+
+    keys = {
+        "expression": "expression_summary",
+        "posture": "posture_summary",
+        "gaze": "gaze_summary",
+        "interaction": "interaction_summary",
+    }
+    result: dict[str, str] = {}
+    for output_key, source_key in keys.items():
+        values: list[str | None] = []
+        for presence in _records(shot.get("subjects")):
+            raw_hint = presence.get("search_hint")
+            hint = raw_hint if isinstance(raw_hint, Mapping) else {}
+            value = _clean_text(hint.get(source_key), limit=1200)
+            values.append(_replace_local_labels(value, label_replacements))
+        joined = _unique_join(values, limit=2000)
+        if joined:
+            result[output_key] = joined
+    return result or None
+
+
 def _shot_dialogue(
     shot: Mapping[str, Any],
     ref_by_subject_id: Mapping[str, str],
@@ -365,9 +404,18 @@ def _cinematography(shot: Mapping[str, Any]) -> dict[str, Any]:
     metadata_map = metadata if isinstance(metadata, Mapping) else {}
     return {
         "shot_type": _display_shot_type(shot.get("shot_type_hint")),
+        "camera_angle": _clean_text(metadata_map.get("camera_angle_hint"), limit=256),
         "composition": _clean_text(metadata_map.get("composition_hint"), limit=500),
         "camera_motion": _display_camera_motion(shot.get("camera_motion_hint")),
+        "lighting": _clean_text(metadata_map.get("lighting_hint"), limit=1000),
     }
+
+
+def _continuity(shot: Mapping[str, Any], label_replacements: Mapping[str, str]) -> str | None:
+    metadata = shot.get("model_metadata")
+    metadata_map = metadata if isinstance(metadata, Mapping) else {}
+    value = _clean_text(metadata_map.get("continuity_hint"), limit=1500)
+    return _replace_local_labels(value, label_replacements)
 
 
 def _source_media(shot: Mapping[str, Any]) -> tuple[str | None, str | None]:
@@ -466,6 +514,7 @@ def assemble_scene_timeline_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
                 ref_by_subject_id,
                 label_replacements,
             )
+            performance_details = _shot_performance_details(shot, label_replacements)
             dialogue, ignored_dialogue = _shot_dialogue(shot, ref_by_subject_id, run_id=run_id)
             on_screen_text, ignored_ocr = _shot_ocr(shot)
             ignored_non_asr_dialogue_count += ignored_dialogue
@@ -484,9 +533,11 @@ def assemble_scene_timeline_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
                 "visual_description": visual,
                 "people": shot_people,
                 "performance": performance,
+                "performance_details": performance_details,
                 "dialogue": dialogue,
                 "props": _shot_props(shot, label_replacements),
                 "cinematography": _cinematography(shot),
+                "continuity": _continuity(shot, label_replacements),
                 "on_screen_text": on_screen_text,
             })
 
