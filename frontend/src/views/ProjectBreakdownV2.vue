@@ -95,13 +95,36 @@ function isBreakdownTask(task: BackgroundTask): boolean {
   return String(task.task_type || '').toUpperCase().includes('BREAKDOWN')
 }
 
+function shotTaskOrdinal(task: BackgroundTask): number | null {
+  if (task.task_type !== 'SHOT_BREAKDOWN_P2') return null
+  const match = task.title.match(/Shot\s+(\d+)/i)
+  if (!match) return null
+  const ordinal = Number(match[1])
+  return Number.isInteger(ordinal) && ordinal > 0 ? ordinal : null
+}
+
 const latestEpisodeBreakdownTask = computed(() => tasks.value
   .filter((task) => isBreakdownTask(task) && (task.episode_id === selectedEpisodeId.value || task.episode_id === null))
   .sort((a, b) => taskTimestamp(b) - taskTimestamp(a))[0] || null)
 
-const activeBreakdownTask = computed(() => {
-  const task = latestEpisodeBreakdownTask.value
-  return task && (task.status === 'QUEUED' || task.status === 'PROCESSING') ? task : null
+const activeBreakdownTask = computed(() => tasks.value
+  .filter((task) => (
+    isBreakdownTask(task)
+    && (task.episode_id === selectedEpisodeId.value || task.episode_id === null)
+    && (task.status === 'QUEUED' || task.status === 'PROCESSING')
+  ))
+  .sort((a, b) => taskTimestamp(b) - taskTimestamp(a))[0] || null)
+
+const latestShotBreakdownTaskByOrdinal = computed(() => {
+  const result = new Map<number, BackgroundTask>()
+  const relevant = tasks.value
+    .filter((task) => task.episode_id === selectedEpisodeId.value && task.task_type === 'SHOT_BREAKDOWN_P2')
+    .sort((a, b) => taskTimestamp(b) - taskTimestamp(a))
+  for (const task of relevant) {
+    const ordinal = shotTaskOrdinal(task)
+    if (ordinal !== null && !result.has(ordinal)) result.set(ordinal, task)
+  }
+  return result
 })
 
 const timelineShotMap = computed(() => {
@@ -173,6 +196,19 @@ function hasCharacterReviewForShot(context: TimelineShotContext): boolean {
 }
 
 function statusForShot(shot: Shot): ShotStatusDisplay {
+  const latestTask = latestShotBreakdownTaskByOrdinal.value.get(shot.ordinal)
+  if (latestTask?.status === 'FAILED') {
+    return {
+      state: 'failed',
+      label: '失败',
+      detail: latestTask.error_message || latestTask.message || '单分镜拉片失败',
+    }
+  }
+  if (latestTask?.status === 'QUEUED') return { state: 'unprocessed', label: '排队中' }
+  if (latestTask?.status === 'PROCESSING') {
+    return { state: 'unprocessed', label: '拉片中', detail: latestTask.stage_label || undefined }
+  }
+
   const context = timelineShotMap.value.get(shot.ordinal)
   if (!context) return { state: 'unprocessed', label: '待拉片' }
   if (hasCharacterReviewForShot(context)) return { state: 'review', label: '待确认', detail: '人物身份待确认' }
@@ -313,6 +349,7 @@ const selectedPendingItems = computed<PendingItem[]>(() => {
   if (status?.state === 'review' && status.detail && !items.some((item) => status.detail?.includes(item.key === 'person' ? '人物' : '对白'))) {
     items.push({ key: 'quality', label: status.detail, tone: 'red' })
   }
+  if (status?.state === 'failed' && status.detail) items.push({ key: 'failed', label: status.detail, tone: 'red' })
   return items
 })
 
@@ -512,9 +549,14 @@ async function startEpisodeBreakdown(fromShot = false): Promise<void> {
     actionError.value = '本集还没有可用分镜，请先回到“原短剧视频”完成镜头检测。'
     return
   }
+
+  const shot = selectedShot.value
   if (fromShot) {
-    const proceed = window.confirm('当前后端还没有真正的单分镜拉片接口。继续会重新拉片本集全部分镜；不会伪装成只处理当前 Shot。是否继续？')
-    if (!proceed) return
+    if (!shot) return
+    if (!timeline.value) {
+      actionError.value = '当前分镜拉片需要完整整集基线，请先完成本集整集拉片。'
+      return
+    }
   } else if (timeline.value) {
     const proceed = window.confirm('重新整集拉片会生成新的拉片 Run，当前结果会保留为历史。是否继续？')
     if (!proceed) return
@@ -524,12 +566,16 @@ async function startEpisodeBreakdown(fromShot = false): Promise<void> {
   actionError.value = ''
   actionMessage.value = ''
   try {
-    const task = await breakdownApi.startEpisode(episode.id)
+    const task = fromShot && shot
+      ? await breakdownApi.startShot(episode.id, shot.ordinal)
+      : await breakdownApi.startEpisode(episode.id)
     tasks.value = [task, ...tasks.value.filter((item) => item.id !== task.id)]
-    actionMessage.value = 'AI 拉片任务已进入后台执行。刷新页面只读取状态，不会重复启动任务。'
+    actionMessage.value = fromShot && shot
+      ? `Shot ${String(shot.ordinal).padStart(2, '0')} 单镜拉片任务已启动；整集其他分镜不会重跑。`
+      : '整集 AI 拉片任务已进入后台执行。刷新页面只读取状态，不会重复启动任务。'
     await loadProjectContext()
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : 'AI 拉片任务启动失败'
+    actionError.value = err instanceof Error ? err.message : (fromShot ? '当前分镜拉片任务启动失败' : 'AI 拉片任务启动失败')
   } finally {
     actionBusy.value = false
   }
@@ -742,7 +788,7 @@ onBeforeUnmount(() => {
 
               <div class="video-stage">
                 <span class="video-label">Reference Video</span>
-                <video v-if="shotReference(selectedShot)" :key="shotReference(selectedShot) || ''" :src="shotReference(selectedShot) || ''" controls playsinline preload="metadata"></video>
+                <video v-if="shotReference(selectedShot)" :key="shotReference(selectedShot) || ''" :src="shotReference(selectedShot) || ''" controls loop playsinline preload="metadata"></video>
                 <div v-else class="video-empty"><strong>当前分镜没有可播放 Reference Clip</strong><span>请先确认镜头检测结果和媒体文件。</span></div>
               </div>
 
@@ -854,7 +900,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="helpOpen" class="modal-backdrop" @click.self="helpOpen = false">
-      <section class="help-dialog"><header><strong>AI 拉片操作说明</strong><button type="button" @click="helpOpen = false">×</button></header><div><p>1. 选择剧集后，可查看每个分镜的 Reference Clip、时间范围和拉片结果。</p><p>2. 当前页面按设计稿预留镜头、人物、场景道具、对白和重拍信息编辑入口；没有安全写接口的字段不会做前端假保存。</p><p>3. “当前分镜拉片”在后端单分镜任务完成前仍会明确提示整集重跑，不会伪装成单 Shot 成功。</p></div></section>
+      <section class="help-dialog"><header><strong>AI 拉片操作说明</strong><button type="button" @click="helpOpen = false">×</button></header><div><p>1. 选择剧集后，可查看每个分镜的 Reference Clip、时间范围和拉片结果。</p><p>2. 当前页面按设计稿预留镜头、人物、场景道具、对白和重拍信息编辑入口；没有安全写接口的字段不会做前端假保存。</p><p>3. “当前分镜拉片 / 重新拉片”只重跑当前 Shot：ASR / OCR 只处理当前分镜，VLM 最多读取前后相邻镜头作为上下文；不会重跑整集。</p></div></section>
     </div>
   </div>
 </template>
