@@ -255,7 +255,7 @@ const selectedObservations = computed(() => selectedEntry.value ? observationsFo
 const selectedSpeakerIssues = computed(() => selectedEntry.value ? speakerIssuesForShot(selectedEntry.value.shot.id) : [])
 const selectedHasAssetIssue = computed(() => Boolean(selectedEntry.value && assetNeedsReview(selectedEntry.value.shot)))
 
-const finalCharacters = computed(() => {
+const finalCharacters = computed<SourceCharacter[]>(() => {
   if (characterWorkspace.value?.characters.length) return characterWorkspace.value.characters
   return (assetWorkspace.value?.characters || []).map((item) => ({
     id: item.id,
@@ -294,6 +294,18 @@ function selectedPersonId(observation: CharacterObservation): string {
     || observation.suggested_character_id
     || reviewProposals.value[observation.key]?.character_id
     || ''
+}
+
+function setPersonChoice(observationKey: string, event: Event): void {
+  const target = event.target as HTMLSelectElement | null
+  if (!target) return
+  personChoice.value = { ...personChoice.value, [observationKey]: target.value }
+  error.value = ''
+}
+
+function chooseSpeaker(issueId: string, personKey: string): void {
+  speakerChoice.value = { ...speakerChoice.value, [issueId]: personKey }
+  error.value = ''
 }
 
 function initSelectedShot(entry: ReviewEntry | null): void {
@@ -422,7 +434,10 @@ async function assignObservation(observation: CharacterObservation): Promise<voi
   error.value = ''
   try {
     const proposal = reviewProposals.value[observation.key]
-    const localization = observation.localization || proposal?.localization || proposal?.localizations?.find((item) => item.shot_id === selectedEntry.value?.shot.id) || null
+    const localization = observation.localization
+      || proposal?.localization
+      || proposal?.localizations?.find((item) => item.shot_id === selectedEntry.value?.shot.id)
+      || null
     characterWorkspace.value = await request<CharacterWorkspace>(
       `/api/projects/${encodeURIComponent(props.projectId)}/character-assets/assign`,
       {
@@ -490,9 +505,13 @@ function fillAiSuggestion(): void {
   const entry = selectedEntry.value
   if (!entry) return
   const evidence = evidenceFor(entry.shot.id)
-  draftCharacterIds.value = Array.from(new Set(evidence.characters.map((item) => item.final_asset_id).filter((id): id is string => Boolean(id))))
+  draftCharacterIds.value = Array.from(new Set(
+    evidence.characters.map((item) => item.final_asset_id).filter((id): id is string => Boolean(id)),
+  ))
   draftSceneId.value = evidence.scene?.final_asset_id ?? null
-  draftPropIds.value = Array.from(new Set(evidence.props.map((item) => item.final_asset_id).filter((id): id is string => Boolean(id))))
+  draftPropIds.value = Array.from(new Set(
+    evidence.props.map((item) => item.final_asset_id).filter((id): id is string => Boolean(id)),
+  ))
 }
 
 function evidenceLabel(items: AssetEvidenceItem[]): string {
@@ -614,7 +633,7 @@ onUnmounted(() => {
                   <small v-if="reviewProposals[observation.key]?.localization">AI 已定位人物位置</small>
                 </div>
                 <div class="person-action">
-                  <select :value="selectedPersonId(observation)" @change="personChoice = { ...personChoice, [observation.key]: ($event.target as HTMLSelectElement).value }">
+                  <select :value="selectedPersonId(observation)" @change="setPersonChoice(observation.key, $event)">
                     <option value="">选择已有正式人物</option>
                     <option v-for="character in finalCharacters" :key="character.id" :value="character.id">
                       {{ character.name }}{{ observation.suggested_character_id === character.id ? ' · AI 推荐' : '' }}
@@ -691,10 +710,10 @@ onUnmounted(() => {
               </header>
 
               <article v-for="issue in selectedSpeakerIssues" :key="issue.id" class="speaker-row">
-                <template v-if="speakerSuggestion(issue) as info">
+                <div v-if="speakerSuggestion(issue)" class="speaker-content">
                   <div class="dialogue-copy">
-                    <strong>“{{ info.source_text || '（无文本）' }}”</strong>
-                    <span>{{ formatTime(info.dialogue_start_us) }} – {{ formatTime(info.dialogue_end_us) }}</span>
+                    <strong>“{{ speakerSuggestion(issue)?.source_text || '（无文本）' }}”</strong>
+                    <span>{{ formatTime(speakerSuggestion(issue)?.dialogue_start_us) }} – {{ formatTime(speakerSuggestion(issue)?.dialogue_end_us) }}</span>
                   </div>
                   <div class="speaker-options">
                     <button
@@ -702,7 +721,7 @@ onUnmounted(() => {
                       :key="person.person_key"
                       type="button"
                       :class="{ selected: speakerChoice[issue.id] === person.person_key }"
-                      @click="speakerChoice = { ...speakerChoice, [issue.id]: person.person_key }"
+                      @click="chooseSpeaker(issue.id, person.person_key)"
                     >
                       <img v-if="person.cover_url" :src="person.cover_url" alt="" />
                       <span>{{ speakerPersonTitle(person) }}</span>
@@ -713,7 +732,7 @@ onUnmounted(() => {
                     <span v-else>选择真正的说话人后直接保存。</span>
                     <button type="button" class="primary" :disabled="saving || !speakerChoice[issue.id]" @click="saveSpeaker(issue)">确认说话人</button>
                   </div>
-                </template>
+                </div>
               </article>
             </section>
 
@@ -729,5 +748,5 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.source-shot-review{height:100%;min-height:0;color:#273b58}.review-error{margin:0 0 8px;padding:9px 12px;border:1px solid #efcaca;border-radius:8px;background:#fff2f2;color:#a34848;font-size:11px}.review-loading,.review-complete{height:100%;min-height:360px;display:grid;place-items:center;align-content:center;gap:8px;background:#fff}.review-complete .check{width:52px;height:52px;display:grid;place-items:center;border-radius:50%;background:#eaf8ef;color:#29a85d;font-size:26px;font-weight:900}.review-complete strong{font-size:18px}.review-complete span{color:#7c899b;font-size:11px}.review-shell{height:100%;min-height:0;display:grid;grid-template-columns:300px minmax(0,1fr);background:#f5f7fa}.shot-queue{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);border-right:1px solid #e1e6ed;background:#fff}.shot-queue>header{display:grid;gap:9px;padding:13px;border-bottom:1px solid #e8ecf1}.shot-queue>header>div{display:flex;justify-content:space-between;align-items:center}.shot-queue strong{font-size:13px}.shot-queue header span{padding:3px 7px;border-radius:99px;background:#fff1d8;color:#986519;font-size:9px;font-weight:800}.shot-queue input{height:34px;border:1px solid #dbe2eb;border-radius:8px;padding:0 10px;font-size:10px;outline:none}.shot-list{min-height:0;overflow:auto;padding:8px}.shot-row{width:100%;display:grid;grid-template-columns:70px minmax(0,1fr);gap:9px;margin-bottom:7px;padding:7px;border:1px solid transparent;border-radius:9px;background:#fff;text-align:left;cursor:pointer}.shot-row:hover{background:#f7f9fc}.shot-row.active{border-color:#8caff0;background:#f1f6ff}.thumb{height:76px;overflow:hidden;display:grid;place-items:center;border-radius:7px;background:#111a27;color:#7e8997;font-size:9px}.thumb img{width:100%;height:100%;object-fit:cover}.copy{min-width:0;display:grid;align-content:center;gap:3px}.copy strong{font-size:10px;color:#344b69}.copy>span{overflow:hidden;color:#7d899a;font-size:9px;text-overflow:ellipsis;white-space:nowrap}.badges{display:flex;gap:4px;flex-wrap:wrap}.badges i{padding:2px 5px;border-radius:99px;background:#eef3fa;color:#58739a;font-size:8px;font-style:normal}.shot-editor{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden}.editor-head{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 15px;border-bottom:1px solid #e2e7ee;background:#fff}.editor-head>div:first-child{display:grid;gap:1px}.editor-head small{font-size:8px;color:#8b97a8}.editor-head strong{font-size:13px}.editor-head span,.editor-progress{font-size:9px;color:#7d899b}.editor-progress{padding:5px 8px;border-radius:99px;background:#edf4ff;color:#5072a5}.editor-body{min-height:0;overflow:auto;display:grid;grid-template-columns:minmax(360px,46%) minmax(420px,54%);gap:12px;padding:12px}.preview-panel{position:sticky;top:0;align-self:start;min-height:320px;display:grid;place-items:center;overflow:hidden;border-radius:11px;background:#101824}.preview-panel video,.preview-panel img{display:block;width:100%;max-height:calc(100vh - 220px);object-fit:contain;background:#101824}.no-preview{color:#7e8998;font-size:10px}.facts-panel{display:grid;align-content:start;gap:10px}.fact-card{overflow:hidden;border:1px solid #dfe5ed;border-radius:11px;background:#fff}.fact-card>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-bottom:1px solid #ebeff4}.fact-card>header>div{display:grid;gap:2px}.fact-card header small{font-size:8px;color:#8492a5}.fact-card header strong{font-size:12px}.fact-card header>span{font-size:9px;color:#7a899c}.person-row,.speaker-row{display:grid;gap:10px;padding:11px 12px;border-bottom:1px solid #eef1f5}.person-row:last-child,.speaker-row:last-child{border-bottom:0}.person-info{display:grid;gap:2px}.person-info strong{font-size:11px}.person-info span{color:#7d8999;font-size:9px;line-height:1.5}.person-info small{color:#3f77c8;font-size:8px}.person-action{display:grid;gap:7px}.person-action select,.new-person input,.field-block select{width:100%;height:34px;border:1px solid #d9e1eb;border-radius:7px;padding:0 9px;background:#fff;color:#40516b;font-size:10px}.new-person{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.new-person button,.ghost,.primary{min-height:34px;border-radius:7px;padding:0 11px;font-size:9px;font-weight:800;cursor:pointer}.new-person button{border:1px solid #a9bfe3;background:#f7faff;color:#496b9f}.new-person button:disabled,.primary:disabled{opacity:.45;cursor:not-allowed}.asset-card{padding-bottom:11px}.asset-card>header{margin-bottom:10px}.ghost{border:1px solid #d5dfec;background:#fff;color:#5b6f8d}.field-block{display:grid;gap:6px;padding:0 12px 10px}.field-block>label,.field-block>div>label{color:#65748a;font-size:9px;font-weight:800}.two-col{grid-template-columns:1fr 1fr;gap:10px}.two-col>div{display:grid;gap:6px}.option-grid{display:flex;flex-wrap:wrap;gap:5px}.option-grid button{min-height:29px;border:1px solid #dbe2eb;border-radius:7px;padding:0 8px;background:#fff;color:#596a80;font-size:9px;cursor:pointer}.option-grid button.selected{border-color:#5d89dc;background:#edf4ff;color:#315d9f}.ai-details{margin:0 12px 10px;border:1px solid #e3e8ef;border-radius:7px;background:#fafbfd}.ai-details summary{padding:7px 9px;color:#6e7e93;font-size:9px;cursor:pointer}.ai-details p{margin:0;padding:3px 9px;color:#78879a;font-size:8px}.save-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 12px}.save-line>span{color:#8491a2;font-size:8px}.primary{border:0;background:#1769ff;color:#fff}.dialogue-copy{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.dialogue-copy strong{font-size:12px;line-height:1.45}.dialogue-copy span{flex:none;color:#8995a5;font-size:8px}.speaker-options{display:flex;flex-wrap:wrap;gap:6px}.speaker-options button{display:grid;grid-template-columns:30px auto;gap:6px;align-items:center;border:1px solid #dce3ec;border-radius:8px;padding:5px 8px 5px 5px;background:#fff;color:#40536e;font-size:9px;cursor:pointer}.speaker-options button.selected{border-color:#5c87d9;background:#eef4ff}.speaker-options img{width:30px;height:38px;border-radius:6px;object-fit:cover}.empty-card{padding:28px;text-align:center}.empty-card strong{display:block;font-size:12px}.empty-card span{font-size:9px;color:#8793a3}@media(max-width:1000px){.review-shell{grid-template-columns:240px minmax(0,1fr)}.editor-body{grid-template-columns:1fr}.preview-panel{position:static;min-height:260px}.two-col{grid-template-columns:1fr}}@media(max-width:760px){.review-shell{grid-template-columns:1fr;grid-template-rows:210px minmax(0,1fr)}.shot-queue{border-right:0;border-bottom:1px solid #e1e6ed}.shot-list{display:flex;overflow:auto}.shot-row{min-width:230px}.editor-body{padding:8px}.new-person,.two-col{grid-template-columns:1fr}.save-line,.dialogue-copy{align-items:stretch;flex-direction:column}}
+.source-shot-review{height:100%;min-height:0;color:#273b58}.review-error{margin:0 0 8px;padding:9px 12px;border:1px solid #efcaca;border-radius:8px;background:#fff2f2;color:#a34848;font-size:11px}.review-loading,.review-complete{height:100%;min-height:360px;display:grid;place-items:center;align-content:center;gap:8px;background:#fff}.review-complete .check{width:52px;height:52px;display:grid;place-items:center;border-radius:50%;background:#eaf8ef;color:#29a85d;font-size:26px;font-weight:900}.review-complete strong{font-size:18px}.review-complete span{color:#7c899b;font-size:11px}.review-shell{height:100%;min-height:0;display:grid;grid-template-columns:300px minmax(0,1fr);background:#f5f7fa}.shot-queue{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);border-right:1px solid #e1e6ed;background:#fff}.shot-queue>header{display:grid;gap:9px;padding:13px;border-bottom:1px solid #e8ecf1}.shot-queue>header>div{display:flex;justify-content:space-between;align-items:center}.shot-queue strong{font-size:13px}.shot-queue header span{padding:3px 7px;border-radius:99px;background:#fff1d8;color:#986519;font-size:9px;font-weight:800}.shot-queue input{height:34px;border:1px solid #dbe2eb;border-radius:8px;padding:0 10px;font-size:10px;outline:none}.shot-list{min-height:0;overflow:auto;padding:8px}.shot-row{width:100%;display:grid;grid-template-columns:70px minmax(0,1fr);gap:9px;margin-bottom:7px;padding:7px;border:1px solid transparent;border-radius:9px;background:#fff;text-align:left;cursor:pointer}.shot-row:hover{background:#f7f9fc}.shot-row.active{border-color:#8caff0;background:#f1f6ff}.thumb{height:76px;overflow:hidden;display:grid;place-items:center;border-radius:7px;background:#111a27;color:#7e8997;font-size:9px}.thumb img{width:100%;height:100%;object-fit:cover}.copy{min-width:0;display:grid;align-content:center;gap:3px}.copy strong{font-size:10px;color:#344b69}.copy>span{overflow:hidden;color:#7d899a;font-size:9px;text-overflow:ellipsis;white-space:nowrap}.badges{display:flex;gap:4px;flex-wrap:wrap}.badges i{padding:2px 5px;border-radius:99px;background:#eef3fa;color:#58739a;font-size:8px;font-style:normal}.shot-editor{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden}.editor-head{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 15px;border-bottom:1px solid #e2e7ee;background:#fff}.editor-head>div:first-child{display:grid;gap:1px}.editor-head small{font-size:8px;color:#8b97a8}.editor-head strong{font-size:13px}.editor-head span,.editor-progress{font-size:9px;color:#7d899b}.editor-progress{padding:5px 8px;border-radius:99px;background:#edf4ff;color:#5072a5}.editor-body{min-height:0;overflow:auto;display:grid;grid-template-columns:minmax(360px,46%) minmax(420px,54%);gap:12px;padding:12px}.preview-panel{position:sticky;top:0;align-self:start;min-height:320px;display:grid;place-items:center;overflow:hidden;border-radius:11px;background:#101824}.preview-panel video,.preview-panel img{display:block;width:100%;max-height:calc(100vh - 220px);object-fit:contain;background:#101824}.no-preview{color:#7e8998;font-size:10px}.facts-panel{display:grid;align-content:start;gap:10px}.fact-card{overflow:hidden;border:1px solid #dfe5ed;border-radius:11px;background:#fff}.fact-card>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-bottom:1px solid #ebeff4}.fact-card>header>div{display:grid;gap:2px}.fact-card header small{font-size:8px;color:#8492a5}.fact-card header strong{font-size:12px}.fact-card header>span{font-size:9px;color:#7a899c}.person-row,.speaker-row{display:grid;gap:10px;padding:11px 12px;border-bottom:1px solid #eef1f5}.person-row:last-child,.speaker-row:last-child{border-bottom:0}.person-info{display:grid;gap:2px}.person-info strong{font-size:11px}.person-info span{color:#7d8999;font-size:9px;line-height:1.5}.person-info small{color:#3f77c8;font-size:8px}.person-action{display:grid;gap:7px}.person-action select,.new-person input,.field-block select{width:100%;height:34px;border:1px solid #d9e1eb;border-radius:7px;padding:0 9px;background:#fff;color:#40516b;font-size:10px}.new-person{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.new-person button,.ghost,.primary{min-height:34px;border-radius:7px;padding:0 11px;font-size:9px;font-weight:800;cursor:pointer}.new-person button{border:1px solid #a9bfe3;background:#f7faff;color:#496b9f}.new-person button:disabled,.primary:disabled{opacity:.45;cursor:not-allowed}.asset-card{padding-bottom:11px}.asset-card>header{margin-bottom:10px}.ghost{border:1px solid #d5dfec;background:#fff;color:#5b6f8d}.field-block{display:grid;gap:6px;padding:0 12px 10px}.field-block>label,.field-block>div>label{color:#65748a;font-size:9px;font-weight:800}.two-col{grid-template-columns:1fr 1fr;gap:10px}.two-col>div{display:grid;gap:6px}.option-grid{display:flex;flex-wrap:wrap;gap:5px}.option-grid button{min-height:29px;border:1px solid #dbe2eb;border-radius:7px;padding:0 8px;background:#fff;color:#596a80;font-size:9px;cursor:pointer}.option-grid button.selected{border-color:#5d89dc;background:#edf4ff;color:#315d9f}.ai-details{margin:0 12px 10px;border:1px solid #e3e8ef;border-radius:7px;background:#fafbfd}.ai-details summary{padding:7px 9px;color:#6e7e93;font-size:9px;cursor:pointer}.ai-details p{margin:0;padding:3px 9px;color:#78879a;font-size:8px}.save-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 12px}.save-line>span{color:#8491a2;font-size:8px}.primary{border:0;background:#1769ff;color:#fff}.speaker-content{display:grid;gap:10px}.dialogue-copy{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.dialogue-copy strong{font-size:12px;line-height:1.45}.dialogue-copy span{flex:none;color:#8995a5;font-size:8px}.speaker-options{display:flex;flex-wrap:wrap;gap:6px}.speaker-options button{display:grid;grid-template-columns:30px auto;gap:6px;align-items:center;border:1px solid #dce3ec;border-radius:8px;padding:5px 8px 5px 5px;background:#fff;color:#40536e;font-size:9px;cursor:pointer}.speaker-options button.selected{border-color:#5c87d9;background:#eef4ff}.speaker-options img{width:30px;height:38px;border-radius:6px;object-fit:cover}.empty-card{padding:28px;text-align:center}.empty-card strong{display:block;font-size:12px}.empty-card span{font-size:9px;color:#8793a3}@media(max-width:1000px){.review-shell{grid-template-columns:240px minmax(0,1fr)}.editor-body{grid-template-columns:1fr}.preview-panel{position:static;min-height:260px}.two-col{grid-template-columns:1fr}}@media(max-width:760px){.review-shell{grid-template-columns:1fr;grid-template-rows:210px minmax(0,1fr)}.shot-queue{border-right:0;border-bottom:1px solid #e1e6ed}.shot-list{display:flex;overflow:auto}.shot-row{min-width:230px}.editor-body{padding:8px}.new-person,.two-col{grid-template-columns:1fr}.save-line,.dialogue-copy{align-items:stretch;flex-direction:column}}
 </style>
