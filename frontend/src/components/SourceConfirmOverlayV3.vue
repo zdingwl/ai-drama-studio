@@ -4,10 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '../api/client'
 import { getProjectFlowState } from '../api/project-flow-state'
-import { remakeApi } from '../api/remake'
 import SourceShotReviewWorkspaceV1 from './SourceShotReviewWorkspaceV1.vue'
 import type { ProjectFlowStage, ProjectFlowState } from '../types/project-flow-state'
-import type { ReviewIssue } from '../types/remake'
 import type { Project } from '../types/studio'
 
 const props = defineProps<{ projectId: string }>()
@@ -16,11 +14,8 @@ const router = useRouter()
 
 const project = ref<Project | null>(null)
 const flow = ref<ProjectFlowState | null>(null)
-const issues = ref<ReviewIssue[]>([])
 const loading = ref(true)
 const error = ref('')
-
-const sourceIssueTypes = new Set(['CHARACTER_IDENTITY', 'ASSET_BINDING', 'SPEAKER'])
 
 function stage(key: string): ProjectFlowStage | null {
   return flow.value?.stages.find((item) => item.stage_key === key) || null
@@ -29,19 +24,16 @@ function stage(key: string): ProjectFlowStage | null {
 const sourceAssetsStage = computed(() => stage('source_assets'))
 const sourceSnapshotStage = computed(() => stage('source_snapshot'))
 const sourceReady = computed(() => Boolean(sourceAssetsStage.value?.consumable && sourceSnapshotStage.value?.consumable))
-const sourceIssues = computed(() => issues.value.filter((item) => sourceIssueTypes.has(item.issue_type)))
 
 async function refresh(): Promise<void> {
   if (!props.projectId) return
   try {
-    const [projectResult, flowResult, issueResult] = await Promise.all([
+    const [projectResult, flowResult] = await Promise.all([
       api.getProject(props.projectId),
       getProjectFlowState(props.projectId),
-      remakeApi.listReviewIssues(props.projectId, 'OPEN'),
     ])
     project.value = projectResult
     flow.value = flowResult
-    issues.value = issueResult
     error.value = ''
   } catch (err) {
     error.value = err instanceof Error ? err.message : '原片确认数据读取失败'
@@ -119,7 +111,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="head-actions">
           <span v-if="!loading" :class="['pending-chip', { ready: sourceReady }]">
-            {{ sourceReady ? '已完成' : `${sourceIssues.length} 项待确认` }}
+            {{ sourceReady ? '已完成' : '待确认' }}
           </span>
           <button type="button" aria-label="关闭原片确认" @click="close">×</button>
         </div>
