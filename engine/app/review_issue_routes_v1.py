@@ -51,6 +51,22 @@ def _find_source_dialogue_for_issue(
     raise LookupError("这条说话人问题对应的源对白已经不存在，请刷新待确认列表")
 
 
+def _require_confirmed_speaker_person(
+    people: dict[str, dict[str, Any]],
+    *,
+    person_key: str,
+) -> dict[str, Any]:
+    """Only a scene person already bound to a Final Character can become dialogue truth."""
+
+    person = people.get(person_key)
+    if person is None:
+        raise ValueError("所选人物不属于这条对白所在场景，请刷新后重新选择")
+    character = person.get("character")
+    if not isinstance(character, dict) or not str(character.get("id") or "").strip():
+        raise ValueError("请先确认人物身份并绑定正式人物，再确认对白说话人")
+    return person
+
+
 def _legacy_speaker_context_needs_refresh(project_id: str) -> bool:
     """Detect old speaker rows without recomposing the whole project."""
 
@@ -178,8 +194,7 @@ def api_resolve_speaker_review_issue(issue_id: str, payload: SpeakerReviewResolu
             for person in (scene.get("people") or [])
             if isinstance(person, dict)
         }
-        if person_key not in people:
-            raise ValueError("所选人物不属于这条对白所在场景，请刷新后重新选择")
+        _require_confirmed_speaker_person(people, person_key=person_key)
 
         upsert_source_dialogue_speaker_override_v1(
             project_id=project_id,
