@@ -1,7 +1,9 @@
 """Breakdown read API plus P2 production/acceptance task entrypoints.
 
 P1 read endpoints remain history-safe. P2 write endpoints only enqueue background execution of the
-formal ASR -> OCR -> VLM -> Fusion pipeline; they do not expose lower-level provider writes.
+formal providers/pipelines; they do not expose lower-level provider writes. Complete Episode runs
+publish immutable BreakdownRuns. Single-Shot reruns reuse the same providers but persist a scoped
+AI overlay instead of pretending that a partial Run is a complete Episode truth.
 G1 diagnostic endpoints are strictly read-only: they inspect already-completed Fast Grounded Runs
 and never start providers, mutate Draft rows or write acceptance artifacts.
 """
@@ -28,6 +30,7 @@ from engine.app.breakdown_serializer_v1 import (
     get_current_breakdown,
     list_breakdown_runs,
 )
+from engine.app.breakdown_shot_rerun_v1 import run_shot_breakdown_rerun_v1
 from engine.app.studio_v2 import get_episode, get_project, get_session, list_episode_records
 from engine.app.task_progress_v2 import (
     ACTIVE_TASK_STATUSES,
@@ -44,7 +47,8 @@ router = APIRouter(prefix="/api", tags=["breakdown"])
 
 BREAKDOWN_TASK_TYPE = "EPISODE_BREAKDOWN_P2"
 BREAKDOWN_BATCH_TASK_TYPE = "BATCH_BREAKDOWN_P2"
-_P2_TASK_TYPES = {BREAKDOWN_TASK_TYPE, BREAKDOWN_BATCH_TASK_TYPE}
+BREAKDOWN_SHOT_TASK_TYPE = "SHOT_BREAKDOWN_P2"
+_P2_TASK_TYPES = {BREAKDOWN_TASK_TYPE, BREAKDOWN_BATCH_TASK_TYPE, BREAKDOWN_SHOT_TASK_TYPE}
 _P2_ENQUEUE_LOCK = Lock()
 _STAGE_LABELS = {
     "breakdown_prepare": "准备 AI 拉片",
@@ -53,6 +57,12 @@ _STAGE_LABELS = {
     "breakdown_vlm": "视频内容理解",
     "breakdown_fusion": "多模态融合",
     "breakdown_ready": "AI 拉片完成",
+    "breakdown_shot_prepare": "准备当前分镜",
+    "breakdown_shot_asr": "当前分镜对白识别",
+    "breakdown_shot_ocr": "当前分镜画面文字",
+    "breakdown_shot_vlm": "当前分镜视频理解",
+    "breakdown_shot_fusion": "当前分镜融合",
+    "breakdown_shot_ready": "当前分镜拉片完成",
 }
 
 
@@ -111,7 +121,7 @@ def _enqueue(
         existing = _active_task(project_id, task_type, episode_id)
         if existing is not None:
             return existing
-        # Different single/batch/project P2 jobs must not run concurrently on the same local runtime/GPU.
+        # Episode/batch/single-Shot P2 jobs must never run concurrently on the same local GPU/runtime.
         if _has_any_active_p2_task():
             raise HTTPException(
                 status_code=409,
@@ -187,6 +197,52 @@ def run_episode_breakdown_task(task_id: str, episode_id: str) -> None:
             result={"run_id": run.id, "episode_id": episode_id, "status": run.status},
             message="匿名结构化 AI 拉片完成",
             status="READY_WITH_WARNINGS" if run.status == "READY_WITH_WARNINGS" else "READY",
+        )
+    except Exception as exc:
+        fail_task(task_id, exc)
+
+
+def run_shot_breakdown_task(task_id: str, episode_id: str, shot_ordinal: int) -> None:
+    """Run one real scoped Shot rerun without publishing a fake partial BreakdownRun."""
+
+    try:
+        episode = get_episode(episode_id)
+        if episode is None:
+            raise LookupError("剧集不存在")
+        shot_label = f"Shot {shot_ordinal:02d}"
+        start_task(
+            task_id,
+            stage_key="breakdown_shot_prepare",
+            stage_label=_stage_label("breakdown_shot_prepare"),
+            current_item=shot_label,
+            current_index=1,
+            total_items=1,
+            message=f"正在准备 {shot_label} 的局部 ASR / OCR / VLM",
+        )
+
+        def report(percent: float, stage: str, message: str) -> None:
+            update_task(
+                task_id,
+                progress_mode="determinate",
+                progress_percent=percent,
+                stage_key=stage,
+                stage_label=_stage_label(stage),
+                current_item=shot_label,
+                current_index=1,
+                total_items=1,
+                message=message,
+            )
+
+        result = run_shot_breakdown_rerun_v1(
+            episode_id,
+            shot_ordinal,
+            progress=report,
+        )
+        finish_task(
+            task_id,
+            result=result,
+            message=f"{shot_label} 单镜 AI 拉片完成；整集其他分镜未重跑",
+            status="READY_WITH_WARNINGS" if result.get("warnings") else "READY",
         )
     except Exception as exc:
         fail_task(task_id, exc)
@@ -330,6 +386,37 @@ def api_start_episode_breakdown(episode_id: str, background: BackgroundTasks) ->
         title=f"AI 拉片 · {episode['title']}",
         runner=run_episode_breakdown_task,
         runner_args=(episode_id,),
+        total_items=1,
+    )
+
+
+@router.post("/episodes/{episode_id}/shots/{shot_ordinal}/tasks/breakdown", status_code=202)
+def api_start_shot_breakdown(
+    episode_id: str,
+    shot_ordinal: int,
+    background: BackgroundTasks,
+) -> dict[str, Any]:
+    """真正只重跑一个 Shot；VLM 最多读取相邻 Shot 做上下文，不重跑整集。"""
+
+    episode = get_episode(episode_id)
+    if episode is None:
+        raise _not_found("剧集不存在")
+    if shot_ordinal <= 0:
+        raise HTTPException(status_code=400, detail="shot_ordinal 必须大于 0")
+    try:
+        current = get_current_breakdown(episode_id)
+    except LookupError as exc:
+        raise _not_found(str(exc)) from exc
+    if current is None:
+        raise HTTPException(status_code=409, detail="当前分镜拉片需要完整整集基线，请先完成本集整集拉片")
+    return _enqueue(
+        background,
+        project_id=episode["project_id"],
+        episode_id=episode_id,
+        task_type=BREAKDOWN_SHOT_TASK_TYPE,
+        title=f"AI 拉片 · {episode['title']} · Shot {shot_ordinal:02d}",
+        runner=run_shot_breakdown_task,
+        runner_args=(episode_id, shot_ordinal),
         total_items=1,
     )
 
