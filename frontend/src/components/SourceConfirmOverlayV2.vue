@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import type { LocationQueryRaw } from 'vue-router'
 
 import { api } from '../api/client'
 import { getProjectFlowState } from '../api/project-flow-state'
@@ -102,7 +103,7 @@ async function refresh(): Promise<void> {
 
 function replaceConfirmQuery(tab: ConfirmTab): void {
   const { confirm_tab: _confirmTab, asset_tab: _assetTab, ...rest } = route.query
-  const query: Record<string, unknown> = { ...rest, mode: 'confirm' }
+  const query: LocationQueryRaw = { ...rest, mode: 'confirm' }
   if (tab === 'speaker') {
     query.confirm_tab = 'speaker'
   } else {
