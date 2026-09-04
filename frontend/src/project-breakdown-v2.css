@@ -133,10 +133,9 @@
 .shot-filters button.active { border-color: #cfe0ff; background: #f2f7ff; color: #1769e8; }
 .shot-filters button:last-child { color: #c84c55; }
 .shot-list-scroll { flex: 1; min-height: 0; padding: 0 8px 6px; overflow: auto; }
-.shot-row { width: 100%; min-height: 96px; margin-bottom: 4px; padding: 8px 7px 8px 2px; display: grid; grid-template-columns: 16px 80px minmax(0,1fr); gap: 7px; align-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; text-align: left; cursor: pointer; }
+.shot-row { width: 100%; min-height: 96px; margin-bottom: 4px; padding: 8px 7px; display: grid; grid-template-columns: 80px minmax(0,1fr); gap: 9px; align-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; text-align: left; cursor: pointer; }
 .shot-row:hover { background: #f8faff; }
 .shot-row.selected { border-color: #89b3ff; background: #f1f6ff; }
-.drag-dots { color: #9aa6b7; font-size: 17px; }
 .shot-thumb { width: 80px; height: 54px; overflow: hidden; display: flex; align-items: center; justify-content: center; border-radius: 5px; background: #e9edf3; color: #8793a5; font-size: 10px; }
 .shot-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .shot-thumb i { font-style: normal; }
