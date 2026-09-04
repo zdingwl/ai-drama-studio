@@ -61,14 +61,17 @@ export const sceneTimelineApi = {
     return sanitizeOrdinarySceneTimelinePayload(payload)
   },
   editShot: async (episodeId: string, shotOrdinal: number, payload: SceneTimelineManualShotEdit) => {
-    const result = await request<SceneTimelinePayload>(
-      `/api/episodes/${encodeURIComponent(episodeId)}/scene-timeline/shots/${shotOrdinal}`,
+    const encodedEpisodeId = encodeURIComponent(episodeId)
+    await request<SceneTimelinePayload>(
+      `/api/episodes/${encodedEpisodeId}/scene-timeline/shots/${shotOrdinal}`,
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       },
     )
-    return sanitizeOrdinarySceneTimelinePayload(result)
+    // PATCH 只返回 G2 Scene Timeline。普通 UI 还需要重新读取 P6，恢复 Final Character / Scene / Prop overlays，
+    // 否则一次人工编辑会让页面在刷新前临时丢失正式资产绑定。
+    return requestOrdinaryReadModel(`/api/episodes/${encodedEpisodeId}/breakdown-read-model`)
   },
 }
