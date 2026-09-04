@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 
 import SourceConfirmOverlayV1 from './components/SourceConfirmOverlayV1.vue'
 import './styles/character-confirm-flow-v1.css'
+import './styles/character-confirm-image-fix-v1.css'
 
 const route = useRoute()
 const workspaceKey = ref(0)
