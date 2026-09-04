@@ -1,4 +1,13 @@
 from engine.app.source_person_assets_v1 import _binding_intersection_suggestion
+from engine.app.source_person_assets_v1 import person_observation_issue
+
+
+def test_mixed_person_description_is_blocked_but_normal_appearance_is_not():
+    assert person_observation_issue('男性灰卫衣，女性白上衣')
+    assert person_observation_issue('男人灰衣；男人黑衣')
+    assert person_observation_issue('女性，白上衣，黑裤子') is None
+    assert person_observation_issue('男性，女性化的发型') is None
+    assert person_observation_issue(None) is None
 
 
 def test_binding_intersection_returns_unique_character_across_all_observation_shots():

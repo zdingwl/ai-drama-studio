@@ -163,7 +163,7 @@ export const api = {
   startBatchShotsTask: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/shots-batch`, { method: 'POST' }),
   startAssetExtractionTask: (projectId: string) => requestTask(`/api/projects/${projectId}/tasks/assets`, { method: 'POST' }),
   listProjectTasks: (projectId: string, limit = 30) => requestProjectTaskSummaries(projectId, limit),
-  getTask: (taskId: string) => request<BackgroundTask>(`/api/tasks/${taskId}`),
+  getTask: (taskId: string, signal?: AbortSignal) => request<BackgroundTask>(`/api/tasks/${taskId}`, { signal }),
 
   // 同步兼容接口仅供测试/调试，不给正式页面使用。
   preprocessEpisodeSync: (episodeId: string) => request(`/api/episodes/${episodeId}/preprocess`, { method: 'POST' }),

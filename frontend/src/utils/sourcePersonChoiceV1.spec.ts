@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest'
 import { resolveSourcePersonChoiceV1 } from './sourcePersonChoiceV1'
 
 describe('resolveSourcePersonChoiceV1', () => {
+  it('keeps a new name authoritative after shot initialization restores a default selection', () => {
+    expect(resolveSourcePersonChoiceV1({
+      explicitCharacterId: 'CHAR_002',
+      suggestedCharacterId: 'CHAR_002',
+      proposalCharacterId: 'CHAR_003',
+      newPersonName: ' 新人物 ',
+    })).toEqual({ characterId: '', createName: '新人物' })
+  })
+
   it('prefers an explicit new-person name over AI and existing-character suggestions', () => {
     expect(resolveSourcePersonChoiceV1({
       explicitCharacterId: '',

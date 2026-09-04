@@ -203,7 +203,7 @@ def build_auto_resolution_plan(project_id: str, observations: list[dict[str, Any
 
         proposals: dict[str, dict[str, Any]] = {}
         for observation in observations:
-            if observation.get("character_id"):
+            if observation.get("character_id") or observation.get("identity_issue"):
                 continue
             observation_shots = list(observation.get("shots") or [])
             row_shot_ids = {str(item.get("id") or "") for item in observation_shots if item.get("id")}

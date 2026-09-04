@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from threading import RLock
 from typing import Any
 
@@ -27,6 +28,17 @@ from engine.app.studio_v2 import Character, Episode, Shot, get_session, new_id
 
 LOCK = RLock()
 MAPPING_KEY = "source_person_mappings_v1"
+
+
+def person_observation_issue(appearance: str | None) -> str | None:
+    """保守拦截多个独立人物描述，不按文本猜测拆分对白或动作归属。"""
+    parts = re.split(r"[，,；;、\n]+", appearance or "")
+    subjects = [part.strip() for part in parts if re.match(
+        r"^(?:男性|女性|男人|女人|男生|女生|男孩|女孩|一名男子|一名女子|一个男人|一个女人)(?!化)", part.strip()
+    )]
+    if len(subjects) > 1:
+        return "这条观察混合了多个人物，请先修正原片人物识别，不能整体绑定给一个人物。"
+    return None
 
 
 def digest(value: Any) -> str:
@@ -65,6 +77,7 @@ def observations(episode_id: str, timeline: dict[str, Any], shot_ids: dict[int, 
                 "ref": person["ref"],
                 "name": person["display_name"],
                 "appearance": person.get("appearance"),
+                "identity_issue": person_observation_issue(person.get("appearance")),
                 "scene": scene["title"],
                 "shots": [
                     {
@@ -194,7 +207,9 @@ def inventory(project_id: str) -> dict[str, Any]:
                     )
                     and row_shot_ids <= set(character["shot_ids"])
                 ]
-                if len(matches) == 1:
+                if row.get("identity_issue"):
+                    row["localization"] = None
+                elif len(matches) == 1:
                     matched = matches[0]
                     row["character_id"] = matched["id"]
                     mapping = next(
@@ -219,6 +234,18 @@ def inventory(project_id: str) -> dict[str, Any]:
                         row["suggested_character_id"] = suggestion
                         row["suggestion_source"] = "FINAL_SHOT_BINDING_INTERSECTION"
                 rows.append(row)
+
+    # 人工新建人物没有候选封面；只从当前有效的正式映射定位投影展示图。
+    # 不写回 metadata，避免 GET 写库，以及旧 anchor 的图片继续冒充当前证据。
+    for character in character_rows:
+        if character.get("cover_url"):
+            continue
+        for row in rows:
+            mark = row.get("localization")
+            if row.get("character_id") == character["id"] and _valid_localization(row, mark):
+                character["cover_url"] = mark["image_url"]
+                character["cover_box"] = mark["box"]
+                break
 
     public_characters = [
         {key: value for key, value in character.items() if key != "metadata"}
@@ -290,6 +317,8 @@ def assign(
         chosen = [row for row in current["observations"] if row["key"] in key_set]
         if not chosen or len(chosen) != len(key_set) or any(not row["shots"] for row in chosen):
             raise ValueError("请选择当前有镜头证据的人物")
+        if any(row.get("identity_issue") for row in chosen):
+            raise ValueError("人物观察混合了多个人物，请先修正原片人物识别，禁止整体绑定")
 
         # 先检查身份结构，再检查可选的画面定位。这样同镜两个 Local Person 被一起
         # 合并时始终返回真正的结构错误，而不会被“缺少定位框”掩盖。
@@ -426,6 +455,10 @@ def apply_person_mapping(episode_id: str, result: dict[str, Any]) -> dict[str, A
                     if item["scene_ordinal"] == scene["scene_ordinal"] and item["ref"] == person["ref"]
                 ), None)
                 if not row:
+                    continue
+                if row.get("identity_issue"):
+                    person["character"] = None
+                    changed = True
                     continue
                 matches: list[dict[str, Any]] = []
                 for character in characters:

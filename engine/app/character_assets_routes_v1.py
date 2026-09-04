@@ -210,6 +210,15 @@ def assign_people(project_id: str, payload: Assignment):
         raise HTTPException(409, str(exc)) from exc
 
 
+@router.get("/projects/{project_id}/character-assets/review-plan")
+def get_person_review_plan(project_id: str):
+    """只读候选分组与定位证据，不持久化自动身份，不运行模型。"""
+    from engine.app.source_person_auto_resolver_v1 import build_auto_resolution_plan
+
+    workspace = inventory(project_id)
+    return {"workspace": workspace, "proposals": build_auto_resolution_plan(project_id, workspace["observations"])}
+
+
 @router.post("/projects/{project_id}/character-assets/design")
 def save_design(project_id: str, payload: Design):
     with LOCK:

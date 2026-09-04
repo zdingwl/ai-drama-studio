@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import ShotFramePreviewV4 from '../components/ShotFramePreviewV4.vue'
 import { breakdownApi } from '../api/breakdown'
+import { startQuietPolling } from '../utils/quietPolling'
 import { api } from '../api/client'
 import { getProjectFlowState } from '../api/project-flow-state'
 import { sceneTimelineApi, type SceneTimelineManualShotEdit } from '../api/scene-timeline'
@@ -100,7 +101,11 @@ const manualEditError = ref('')
 let episodeRequestSerial = 0
 let loadedEpisodeId = ''
 let refreshing = false
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let stopPolling: (() => void) | null = null
+let disposed = false
+let resultsRefreshPending = false
+const handledFinishedTasks = new Set<string>()
+const pollingError = ref('')
 
 const episodes = computed(() => [...(project.value?.episodes || [])].sort((a, b) => a.sort_order - b.sort_order))
 const currentEpisode = computed(() => episodes.value.find((item) => item.id === selectedEpisodeId.value) || null)
@@ -813,7 +818,39 @@ function onTaskCreated(event: Event): void {
 function onTaskFinished(event: Event): void {
   const task = (event as CustomEvent<BackgroundTask>).detail
   if (!task || task.project_id !== projectId.value || !isBreakdownTask(task)) return
-  void refreshAll(false)
+  markTaskFinished(task)
+}
+
+function markTaskFinished(task: BackgroundTask): void {
+  tasks.value = tasks.value.map((item) => item.id === task.id ? task : item)
+  if (handledFinishedTasks.has(task.id)) return
+  handledFinishedTasks.add(task.id)
+  resultsRefreshPending = true
+}
+
+async function pollProgress(signal: AbortSignal): Promise<void> {
+  if (refreshing || disposed) return
+  const task = activeBreakdownTask.value
+  const expectedProject = projectId.value
+  if (task) {
+    try {
+      const updated = await api.getTask(task.id, signal)
+      if (disposed || signal.aborted || projectId.value !== expectedProject) return
+      // 完成事件可能先于较旧的在途进度响应到达，不能倒退为处理中。
+      if (!handledFinishedTasks.has(updated.id)) {
+        tasks.value = tasks.value.map((item) => item.id === updated.id ? updated : item)
+        if (updated.status !== 'QUEUED' && updated.status !== 'PROCESSING') markTaskFinished(updated)
+      }
+      pollingError.value = ''
+    } catch (err) {
+      if (!disposed && !signal.aborted) pollingError.value = '任务进度暂时无法更新，已降低重试频率；当前结果保持不变。'
+      throw err
+    }
+  }
+  if (resultsRefreshPending && !manualEditOpen.value && !adjustingBoundary.value && !episodeLoading.value && !boundaryChanged.value) {
+    resultsRefreshPending = false
+    await refreshAll(false)
+  }
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -830,16 +867,16 @@ onMounted(async () => {
   window.addEventListener('studio-task-finished', onTaskFinished)
   window.addEventListener('keydown', onKeydown)
   await refreshAll(true)
-  pollTimer = setInterval(() => {
-    if (activeBreakdownTask.value) void refreshAll(false)
-  }, 2500)
+  if (!disposed) stopPolling = startQuietPolling(pollProgress, () => document.visibilityState === 'visible')
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  episodeRequestSerial += 1
   window.removeEventListener('studio-task-created', onTaskCreated)
   window.removeEventListener('studio-task-finished', onTaskFinished)
   window.removeEventListener('keydown', onKeydown)
-  if (pollTimer) clearInterval(pollTimer)
+  stopPolling?.()
 })
 </script>
 
@@ -907,7 +944,8 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <div v-if="pageError || actionError || actionMessage || timelineError" class="message-stack">
+        <div v-if="pageError || actionError || actionMessage || timelineError || pollingError" class="message-stack">
+          <div v-if="pollingError" class="message warning">{{ pollingError }}</div>
           <div v-if="pageError" class="message danger">{{ pageError }}</div>
           <div v-if="actionError" class="message danger">{{ actionError }}</div>
           <div v-if="actionMessage" class="message success">{{ actionMessage }}</div>

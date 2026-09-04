@@ -5,6 +5,7 @@ type CharacterOption = {
   id: string
   name: string
   cover_url?: string | null
+  cover_box?: number[] | null
   confidence?: number | null
   shot_ids?: string[]
   shot_count?: number
@@ -45,6 +46,18 @@ function choose(id: string): void {
 function shotCount(item: CharacterOption): number {
   return Number(item.shot_count ?? item.shot_ids?.length ?? 0)
 }
+
+function coverStyle(item: CharacterOption): Record<string, string> {
+  const box = item.cover_box
+  if (!box || box.length !== 4 || !box.every(Number.isFinite)) return {}
+  const [x, y, width, height] = box as [number, number, number, number]
+  if (width <= 0 || height <= 0) return {}
+  return {
+    position: 'absolute', objectFit: 'fill', maxWidth: 'none',
+    width: `${100 / width}%`, height: `${100 / height}%`,
+    left: `${-100 * x / width}%`, top: `${-100 * y / height}%`,
+  }
+}
 </script>
 
 <template>
@@ -67,7 +80,7 @@ function shotCount(item: CharacterOption): number {
         @click="choose(character.id)"
       >
         <div class="character-image">
-          <img v-if="character.cover_url" :src="character.cover_url" :alt="`${character.name} 人物参考图`" loading="lazy" />
+          <img v-if="character.cover_url" :src="character.cover_url" :style="coverStyle(character)" :alt="`${character.name} 人物参考图`" loading="lazy" />
           <span v-else>{{ character.name.slice(0, 1) || '人' }}</span>
           <i v-if="modelValue === character.id">✓</i>
         </div>

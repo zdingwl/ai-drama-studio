@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import { api } from '../api/client'
 import { remakeApi } from '../api/remake'
+import { resolveSourcePersonChoiceV1 } from '../utils/sourcePersonChoiceV1'
 import VisualCharacterPickerV1 from './VisualCharacterPickerV1.vue'
 import type {
   AssetEvidenceItem,
@@ -32,6 +33,7 @@ type CharacterObservation = {
   key: string
   name: string
   appearance: string | null
+  identity_issue?: string | null
   episode_id: string
   episode_title: string
   scene: string
@@ -185,7 +187,13 @@ function shotIssueSummary(entry: ReviewEntry): string[] {
   return labels
 }
 function selectedPersonId(observation: CharacterObservation): string {
-  return personChoice.value[observation.key] || observation.suggested_character_id || reviewProposals.value[observation.key]?.character_id || ''
+  if (observation.identity_issue) return ''
+  return resolveSourcePersonChoiceV1({
+    explicitCharacterId: personChoice.value[observation.key],
+    suggestedCharacterId: observation.suggested_character_id,
+    proposalCharacterId: reviewProposals.value[observation.key]?.character_id,
+    newPersonName: newPersonName.value[observation.key],
+  }).characterId
 }
 function setPersonChoice(observationKey: string, characterId: string): void {
   personChoice.value = { ...personChoice.value, [observationKey]: characterId }
@@ -261,6 +269,7 @@ async function saveAssetBinding(): Promise<void> {
 }
 async function assignObservation(observation: CharacterObservation): Promise<void> {
   if (!characterWorkspace.value || saving.value) return
+  if (observation.identity_issue) { error.value = observation.identity_issue; return }
   const characterId = selectedPersonId(observation)
   const createName = (newPersonName.value[observation.key] || '').trim()
   if (!characterId && !createName) { error.value = '请选择已有正式人物，或输入新人物名称。'; return }
@@ -306,7 +315,7 @@ function onTruthChanged(event: Event): void {
   if (detail?.project_id && detail.project_id !== props.projectId) return
   if (!saving.value) void load(false)
 }
-onMounted(() => { window.addEventListener('studio-project-truth-changed', onTruthChanged); void load(true) })
+onMounted(() => { window.addEventListener('studio-project-truth-changed', onTruthChanged); void load(false) })
 onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onTruthChanged))
 </script>
 
@@ -342,7 +351,14 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
               <article v-for="observation in selectedObservations" :key="observation.key" class="person-row">
                 <div class="person-info"><strong>{{ observation.name }}</strong><span>{{ observation.appearance || '暂无稳定外观描述' }}</span><small v-if="reviewProposals[observation.key]?.localization">AI 已定位人物位置</small></div>
 
+                <div v-if="observation.identity_issue" class="review-error" role="alert">
+                  <strong>原片人物识别需修正</strong>
+                  <p>{{ observation.identity_issue }}</p>
+                  <span>这不是一个可确认的单人人物条目。原始对白与动作暂不分配给任何一个人。</span>
+                </div>
+
                 <VisualCharacterPickerV1
+                  v-if="!observation.identity_issue"
                   :model-value="selectedPersonId(observation)"
                   :characters="finalCharacters"
                   :suggested-character-id="observation.suggested_character_id || reviewProposals[observation.key]?.character_id || null"
@@ -350,8 +366,8 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
                   @update:model-value="setPersonChoice(observation.key, $event)"
                 />
 
-                <div class="new-person-divider"><span>找不到这个人？</span></div>
-                <div class="new-person">
+                <div v-if="!observation.identity_issue" class="new-person-divider"><span>找不到这个人？</span></div>
+                <div v-if="!observation.identity_issue" class="new-person">
                   <input :value="newPersonName[observation.key] || ''" type="text" placeholder="这是新人物：输入人物名称" @input="setNewPersonName(observation.key, ($event.target as HTMLInputElement).value)" />
                   <button type="button" :disabled="saving || (!selectedPersonId(observation) && !(newPersonName[observation.key] || '').trim())" @click="assignObservation(observation)">{{ saving ? '保存中…' : '确认人物' }}</button>
                 </div>

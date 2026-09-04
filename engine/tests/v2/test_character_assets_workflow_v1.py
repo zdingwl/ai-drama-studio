@@ -65,6 +65,48 @@ def test_same_shot_cannot_merge_and_changed_evidence_drops_mapping(monkeypatch, 
     assert not people.inventory(project)["observations"][0]["character_id"]
 
 
+def test_manual_character_cover_uses_current_localization_without_get_writes(monkeypatch, tmp_path):
+    project, timeline = setup(monkeypatch, tmp_path)
+    timeline['scenes'][0]['shots'][0]['thumbnail_url'] = '/current.jpg'
+    inv = people.inventory(project)
+    row = inv['observations'][0]
+    mark = {'shot_id': 'SHOT_1', 'image_url': '/current.jpg', 'box': [0.1, 0.2, 0.4, 0.6]}
+    result = people.assign(project, [row['key']], '新人', None, inv['revision'], {row['key']: mark})
+    character = result['characters'][0]
+    assert character['cover_url'] == '/current.jpg'
+    assert character['cover_box'] == mark['box']
+    with studio_v2.get_session() as session:
+        before = session.get(studio_v2.Character, character['id']).metadata_json
+    assert people.inventory(project)['characters'][0]['cover_url'] == '/current.jpg'
+    with studio_v2.get_session() as session:
+        assert session.get(studio_v2.Character, character['id']).metadata_json == before
+    timeline['scenes'][0]['shots'][0]['thumbnail_url'] = '/changed.jpg'
+    assert people.inventory(project)['characters'][0]['cover_url'] is None
+    timeline['scenes'][0]['shots'][0]['thumbnail_url'] = '/current.jpg'
+    timeline['source_breakdown_run_id'] = 'new_run'
+    assert people.inventory(project)['characters'][0]['cover_url'] is None
+
+
+def test_mixed_people_refuses_assignment_suggestion_and_read_model_identity(monkeypatch, tmp_path):
+    project, timeline = setup(monkeypatch, tmp_path)
+    inv = people.inventory(project)
+    inv = people.assign(project, [inv['observations'][0]['key']], '男主', None, inv['revision'])
+    timeline['scenes'][0]['people'][0]['appearance'] = '男性灰卫衣，女性白上衣'
+    inv = people.inventory(project)
+    row = inv['observations'][0]
+    assert row['identity_issue']
+    assert row['character_id'] is None
+    assert row['suggested_character_id'] is None
+    with pytest.raises(ValueError, match='混合'):
+        people.assign(project, [row['key']], '', inv['characters'][0]['id'], inv['revision'])
+    payload = {'timeline': timeline, 'identity': {'scenes': [
+        {'scene_ordinal': 1, 'people': [{'ref': 'P1', 'character': {'id': 'wrong'}}]}
+    ]}}
+    result = people.apply_person_mapping('EPISODE_1', payload)
+    assert result['identity']['scenes'][0]['people'][0]['character'] is None
+    assert result['identity']['unresolved_count'] == 1
+
+
 def test_runtime_offline_does_not_create_task(monkeypatch, tmp_path):
     project, _ = setup(monkeypatch, tmp_path)
     character = dict(id="T", project_id=project, source_character_signature="s", target_language="en", target_region="US", target_name="New", appearance_profile="adult", generation_prompt="new actor")
@@ -77,6 +119,17 @@ def test_runtime_offline_does_not_create_task(monkeypatch, tmp_path):
     assert exc.value.status_code == 503
     with studio_v2.get_session() as session:
         assert not session.scalars(select(routes.BackgroundTaskRecord)).all()
+
+
+def test_review_plan_is_read_only(monkeypatch, tmp_path):
+    project, _ = setup(monkeypatch, tmp_path)
+    from engine.app import source_person_auto_resolver_v1 as resolver
+    monkeypatch.setattr(resolver, 'build_auto_resolution_plan', lambda *args: {'candidate': {'decision': 'REVIEW'}})
+    before = people.inventory(project)
+    result = routes.get_person_review_plan(project)
+    assert result['workspace']['revision'] == before['revision']
+    assert result['proposals']['candidate']['decision'] == 'REVIEW'
+    assert people.inventory(project) == before
 
 
 def test_four_views_remain_review_until_accepted_and_reject_stale(monkeypatch, tmp_path):
