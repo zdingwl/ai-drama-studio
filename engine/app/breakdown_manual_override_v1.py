@@ -29,10 +29,19 @@ _SHOT_FIELDS = frozenset({
     "visual_description",
     "narrative_function",
     "performance_text",
+    "expression",
+    "posture",
+    "gaze",
+    "interaction",
     "shot_type",
+    "camera_angle",
     "composition",
     "camera_motion",
+    "lighting",
+    "continuity",
 })
+_PERFORMANCE_DETAIL_FIELDS = frozenset({"expression", "posture", "gaze", "interaction"})
+_CAMERA_FIELDS = frozenset({"shot_type", "camera_angle", "composition", "camera_motion", "lighting"})
 _SCENE_FIELDS = frozenset({"location", "interior_exterior", "time_of_day", "environment"})
 _WRITE_LOCK = RLock()
 
@@ -306,14 +315,20 @@ def apply_manual_overrides_v1(
             ):
                 fields = shot_override.get("fields")
                 if isinstance(fields, Mapping):
-                    for key in ("summary", "visual_description", "narrative_function"):
+                    for key in ("summary", "visual_description", "narrative_function", "continuity"):
                         if key in fields:
                             shot[key] = fields[key]
                     if "performance_text" in fields:
                         text = fields["performance_text"]
                         shot["performance"] = [] if not text else [{"text": text, "people": list(shot["people"])}]
+                    if any(key in fields for key in _PERFORMANCE_DETAIL_FIELDS):
+                        details = dict(shot.get("performance_details") or {})
+                        for key in _PERFORMANCE_DETAIL_FIELDS:
+                            if key in fields:
+                                details[key] = fields[key]
+                        shot["performance_details"] = details
                     camera = dict(shot["cinematography"])
-                    for key in ("shot_type", "composition", "camera_motion"):
+                    for key in _CAMERA_FIELDS:
                         if key in fields:
                             camera[key] = fields[key]
                     shot["cinematography"] = camera
