@@ -22,11 +22,15 @@ from typing import Any
 
 from sqlalchemy import select
 
-from engine.app.asset_workspace_v3 import ShotCharacterBinding
+from engine.app.asset_workspace_v3 import (
+    ShotCharacterBinding,
+    _create_revision,
+    _current_revision,
+)
 from engine.app.content_analysis_v2 import CharacterCandidate, CharacterTrack, ContentAnalysisRun
 from engine.app.studio_v2 import Character, Shot, get_session
 
-AUTO_MAPPING_KEY = "source_person_auto_mappings_v1"
+MAPPING_KEY = "source_person_mappings_v1"
 AUTO_SOURCE = "CHARACTER_V10_1_EXACT_CANDIDATE"
 
 
@@ -89,10 +93,8 @@ def _image_dimensions(path: str | None) -> tuple[int, int] | None:
 def _shot_dimensions(shot: Shot, cache: dict[str, tuple[int, int] | None]) -> tuple[int, int] | None:
     if shot.id in cache:
         return cache[shot.id]
-    # bbox 来自 Reference Clip 的检测坐标，必须优先使用 Reference Clip 的真实尺寸。
     dimensions = _video_dimensions(shot.reference_clip_path)
     if dimensions is None:
-        # Fallback 只在 Reference Clip 不可读时使用；正常 F04/F05 项目不会走这里。
         dimensions = _image_dimensions(shot.thumbnail_path)
     cache[shot.id] = dimensions
     return dimensions
@@ -143,10 +145,7 @@ def _best_track(rows: list[CharacterTrack]) -> CharacterTrack | None:
 
 
 def build_auto_resolution_plan(project_id: str, observations: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """为当前未确认 LocalSubject 生成只读自动解析计划。
-
-    返回 key -> proposal。proposal.decision 只有 AUTO / REVIEW 两种；调用方只有 AUTO 才可写库。
-    """
+    """为当前未确认 LocalSubject 生成只读自动解析计划。"""
 
     if not observations:
         return {}
@@ -260,8 +259,25 @@ def build_auto_resolution_plan(project_id: str, observations: list[dict[str, Any
                 ),
             }
 
-    # 同一 Candidate 如果被两个有重叠 Shot 的 LocalSubject 同时命中，说明仅靠 Shot 集合无法区分同框人物。
-    # 双方都必须降级 REVIEW，不能用循环顺序决定谁先自动绑定。
+    resolved_by_character: dict[str, list[set[str]]] = {}
+    for observation in observations:
+        character_id = str(observation.get("character_id") or "")
+        if not character_id:
+            continue
+        resolved_by_character.setdefault(character_id, []).append({
+            str(item.get("id") or "")
+            for item in observation.get("shots") or []
+            if item.get("id")
+        })
+    for proposal in proposals.values():
+        character_id = str(proposal.get("character_id") or "")
+        if proposal["decision"] != "AUTO" or not character_id:
+            continue
+        if any(set(proposal["shot_ids"]) & used for used in resolved_by_character.get(character_id, [])):
+            proposal["decision"] = "REVIEW"
+            proposal["character_id"] = None
+            proposal["reason"] = "目标 FinalCharacter 已有另一个 LocalSubject 占用重叠 Shot，需要人工区分"
+
     keys = list(proposals)
     for index, left_key in enumerate(keys):
         left = proposals[left_key]
@@ -284,8 +300,82 @@ def build_auto_resolution_plan(project_id: str, observations: list[dict[str, Any
     return proposals
 
 
+def persist_auto_resolutions(
+    project_id: str,
+    observations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """持久化当前计划中所有 AUTO LocalSubject 映射；无安全结果时完全不写库。"""
+
+    plan = build_auto_resolution_plan(project_id, observations)
+    auto_rows = {
+        key: proposal
+        for key, proposal in plan.items()
+        if proposal.get("decision") == "AUTO" and proposal.get("character_id")
+    }
+    if not auto_rows:
+        return {"changed": False, "auto_bound_count": 0, "plan": plan}
+
+    observations_by_key = {str(row.get("key") or ""): row for row in observations}
+    with get_session() as session:
+        current_revision = _current_revision(session, project_id)
+        current_run = session.scalar(
+            select(ContentAnalysisRun)
+            .where(ContentAnalysisRun.project_id == project_id, ContentAnalysisRun.is_current.is_(True))
+            .order_by(ContentAnalysisRun.completed_at.desc())
+        )
+        characters = {
+            character.id: character
+            for character in session.scalars(select(Character).where(Character.project_id == project_id)).all()
+        }
+
+        changed = 0
+        for key, proposal in auto_rows.items():
+            row = observations_by_key.get(key)
+            target = characters.get(str(proposal["character_id"]))
+            if row is None or target is None:
+                continue
+            metadata = _json_object(target.metadata_json)
+            mappings = list(metadata.get(MAPPING_KEY) or [])
+            if any(
+                isinstance(mapping, dict)
+                and mapping.get("key") == key
+                and mapping.get("anchor") == row.get("anchor")
+                for mapping in mappings
+            ):
+                continue
+            mappings.append({
+                "key": key,
+                "anchor": row.get("anchor"),
+                "shot_ids": list(proposal.get("shot_ids") or []),
+                "localization": proposal.get("localization"),
+                "decision_source": AUTO_SOURCE,
+                "source_run_id": proposal.get("source_run_id"),
+                "source_candidate_id": proposal.get("candidate_id"),
+            })
+            metadata[MAPPING_KEY] = mappings
+            target.metadata_json = json.dumps(metadata, ensure_ascii=False)
+            changed += 1
+
+        if not changed:
+            return {"changed": False, "auto_bound_count": 0, "plan": plan}
+
+        revision_kind = current_revision.kind if current_revision is not None else "AUTO"
+        _create_revision(
+            session,
+            project_id=project_id,
+            kind=revision_kind,
+            note=f"Character V10.1 自动确认 {changed} 组原片人物",
+            source_run_id=current_run.id if current_run is not None else None,
+            source_revision_id=current_revision.id if current_revision is not None else None,
+        )
+        session.commit()
+
+    return {"changed": True, "auto_bound_count": changed, "plan": plan}
+
+
 __all__ = [
-    "AUTO_MAPPING_KEY",
     "AUTO_SOURCE",
+    "MAPPING_KEY",
     "build_auto_resolution_plan",
+    "persist_auto_resolutions",
 ]
