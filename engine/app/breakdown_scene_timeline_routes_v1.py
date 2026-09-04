@@ -45,9 +45,16 @@ class ShotManualEditRequest(BaseModel):
     visual_description: str | None = Field(default=None, max_length=8000)
     narrative_function: str | None = Field(default=None, max_length=4000)
     performance_text: str | None = Field(default=None, max_length=8000)
+    expression: str | None = Field(default=None, max_length=2000)
+    posture: str | None = Field(default=None, max_length=2000)
+    gaze: str | None = Field(default=None, max_length=2000)
+    interaction: str | None = Field(default=None, max_length=2000)
     shot_type: str | None = Field(default=None, max_length=128)
+    camera_angle: str | None = Field(default=None, max_length=256)
     composition: str | None = Field(default=None, max_length=1000)
     camera_motion: str | None = Field(default=None, max_length=256)
+    lighting: str | None = Field(default=None, max_length=2000)
+    continuity: str | None = Field(default=None, max_length=2000)
     scene: SceneManualEditRequest | None = None
     dialogues: list[DialogueManualEditRequest] | None = Field(default=None, max_length=200)
 
