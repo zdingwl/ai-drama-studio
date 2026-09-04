@@ -200,15 +200,18 @@ def _grounding_prompt(
 
 最重要的硬规则：
 1. subjects / events / props / shot.visual_description / shot.summary 的“可见内容”只能来自当前 Shot 自己的图片。
-2. Scene 上下文只能帮助填写 scene.location_hint / interior_exterior / time_of_day / environment_description，不能把邻镜的人、动作、道具搬进当前 Shot。
+2. Scene 上下文只能帮助填写 scene.location_hint / interior_exterior / time_of_day / environment_description，以及 continuity_hint 的跨镜连续性判断；绝不能把邻镜的人、动作、表情、姿态、道具搬进当前 Shot。
 3. 如果当前 Shot 图片只有花束，就必须 subjects=[]；不能因为上下文有人物而写人物。
 4. 如果当前 Shot 图片没有某个道具，就不能因为前后镜出现该道具而写进 props。
 5. 人物仅用当前 Shot 内匿名 subject_A/subject_B...；按当前 Shot 的稳定视觉顺序标记，不代表跨镜身份。
-6. 不转录对白、字幕、招牌、手机/文件文字；ASR/OCR 单独负责。
-7. 不猜真实姓名、Character/Scene/Prop/Asset/Binding ID。
-8. camera_motion_hint 在静态采样图无法确认时写空字符串或 UNKNOWN，不要猜。
-9. 每个目标 Shot 必须且只能输出一次；revision_item_id 原样复制。
-10. 描述简洁，优先保证严格合法、完整闭合 JSON；JSON 外不要解释。
+6. expression_summary / posture_summary / gaze_summary / interaction_summary 只写当前 Shot 图片直接支持的可见事实；无法确认就写空字符串。
+7. camera_angle_hint 和 lighting_hint 只写当前 Shot 自身画面可以直接判断的机位/视角与光线事实；无法确认就写空字符串，禁止猜测。
+8. continuity_hint 可以参考允许的 Scene 上下文，但只描述“需要保持什么连续性”，不能引入当前 Shot 不可见的人、动作、道具或身份。
+9. camera_motion_hint 在静态采样图无法确认时写空字符串或 UNKNOWN，不要猜。
+10. 不转录对白、字幕、招牌、手机/文件文字；ASR/OCR 单独负责。
+11. 不猜真实姓名、Character/Scene/Prop/Asset/Binding ID。
+12. 每个目标 Shot 必须且只能输出一次；revision_item_id 原样复制。
+13. 描述简洁，优先保证严格合法、完整闭合 JSON；JSON 外不要解释。
 
 JSON schema：
 {{
@@ -225,7 +228,10 @@ JSON schema：
         "summary":"当前 Shot 核心可见内容",
         "visual_description":"只写当前 Shot 图片直接支持的画面事实",
         "shot_type_hint":"特写/近景/中景/全景或空字符串",
+        "camera_angle_hint":"平视/俯拍/仰拍/侧视/过肩等可见机位或空字符串",
         "camera_motion_hint":"静止/UNKNOWN/空字符串",
+        "lighting_hint":"当前 Shot 可见光线方向、明暗、软硬或空字符串",
+        "continuity_hint":"结合当前 Shot 与允许 Scene 上下文概括需要保持的连续性或空字符串",
         "narrative_function_hint":"基于画面与 Scene 上下文的简短叙事作用",
         "composition_hint":"当前 Shot 构图或空字符串"
       }},
@@ -233,6 +239,10 @@ JSON schema：
         "label":"subject_A",
         "appearance_summary":"当前 Shot 可见稳定外观",
         "activity_summary":"当前 Shot 可见动作",
+        "expression_summary":"当前 Shot 可见表情或空字符串",
+        "posture_summary":"当前 Shot 可见姿态或空字符串",
+        "gaze_summary":"当前 Shot 可见视线方向或空字符串",
+        "interaction_summary":"当前 Shot 可见人物/道具交互或空字符串",
         "screen_position":"左侧/中央/右侧/前景/背景",
         "visibility":"FULL|PARTIAL|OCCLUDED|UNKNOWN",
         "speaking_state":"LIKELY_SPEAKING|NOT_SPEAKING|UNKNOWN"
