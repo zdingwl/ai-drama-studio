@@ -1,0 +1,60 @@
+/* 原片人物确认 - 证据图片显示修复
+ * 主证据图必须完整展示 Shot 画面，不允许为了铺满工作区裁切人物。
+ * 注意：多人框选弹窗暂不改变 canvas 坐标系，避免影响归一化 box 坐标。
+ */
+
+/* 中间证据画布不要随着剩余高度无限放大。 */
+.source-confirm-dialog .identity-review .frame-stage {
+  flex: 0 0 auto !important;
+  width: 100% !important;
+  height: clamp(300px, 48vh, 460px) !important;
+  min-height: 0 !important;
+  max-height: 460px !important;
+  overflow: hidden !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: #101925 !important;
+}
+
+/* 证据图只允许完整等比缩放，禁止 cover / transform 造成的裁切。 */
+.source-confirm-dialog .identity-review .frame-stage > img {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain !important;
+  object-position: center center !important;
+  transform: none !important;
+  scale: 1 !important;
+}
+
+/* 下方 Shot 缩略图也优先展示完整画面，避免用户误把裁切结果当原片事实。 */
+.source-confirm-dialog .identity-review .shot-strip img {
+  object-fit: contain !important;
+  object-position: center center !important;
+  background: #111b29 !important;
+}
+
+/* 人物队列与候选人物属于“人物头像”，这里可以继续使用 cover。 */
+.source-confirm-dialog .identity-review .queue-thumb img,
+.source-confirm-dialog .identity-review .candidate-cover img {
+  object-fit: cover !important;
+  object-position: center top !important;
+}
+
+/* 小屏幕时进一步控制证据图高度，保证人物选择区仍可操作。 */
+@media (max-height: 780px) {
+  .source-confirm-dialog .identity-review .frame-stage {
+    height: clamp(260px, 42vh, 360px) !important;
+    max-height: 360px !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .source-confirm-dialog .identity-review .frame-stage {
+    height: clamp(260px, 42vh, 380px) !important;
+    max-height: 380px !important;
+  }
+}
