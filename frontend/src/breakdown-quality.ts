@@ -32,6 +32,10 @@ function hasDialogueTimingIssue(shot: SceneTimelineShot): boolean {
   ))
 }
 
+function hasUnresolvedDialogueSpeaker(shot: SceneTimelineShot): boolean {
+  return shot.dialogue.some((item) => item.text.trim().length > 0 && item.speakers.length === 0)
+}
+
 export function evaluateBreakdownShotQuality(shot: SceneTimelineShot): BreakdownQualityResult {
   if (!shot.visual_description?.trim()) {
     return { ready: false, reason: '缺少镜头画面描述' }
@@ -41,6 +45,9 @@ export function evaluateBreakdownShotQuality(shot: SceneTimelineShot): Breakdown
   }
   if (hasDialogueTimingIssue(shot)) {
     return { ready: false, reason: '对白时间超出镜头范围' }
+  }
+  if (hasUnresolvedDialogueSpeaker(shot)) {
+    return { ready: false, reason: '对白说话人待确认' }
   }
   if (!shot.cinematography.shot_type?.trim()) {
     return { ready: false, reason: '缺少景别信息' }
