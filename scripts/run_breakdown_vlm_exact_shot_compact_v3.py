@@ -3,12 +3,13 @@
 
 Compact v2 substantially reduced generation cost, but real selected-batch acceptance exposed a
 quality regression on Shot 1: the visible description correctly mentioned blue roses and a glass
-vase while ``props`` remained empty. v3 keeps the same compact/local-index architecture and adds one
-semantic requirement only: every salient independently visible object needed to reconstruct the
-Shot must be represented in ``props`` even when nobody is interacting with it.
+vase while ``props`` remained empty. v3 keeps the same compact/local-index architecture, preserves
+salient reconstruction objects, and now also extracts the Shot-level directing facts needed by H3:
+angle, lighting and structured performance (expression/posture/gaze/interaction).
 
 The model still never emits frozen revision_item_id values or internal anonymous subject labels.
-Those remain deterministic host-side compatibility fields.
+Those remain deterministic host-side compatibility fields. Camera motion is intentionally not
+inferred from static frames; the Episode-window temporal pass owns that fact.
 """
 from __future__ import annotations
 
@@ -59,6 +60,7 @@ def _compact_scene_contexts(
                 "loc": _clean(scene.get("location_hint"), 40),
                 "ie": str(scene.get("interior_exterior") or "UNKNOWN").strip().upper(),
                 "tod": _clean(scene.get("time_of_day"), 16),
+                "sc": str(hint.get("scene_continuity") or "UNCERTAIN").strip().upper(),
             }
             if compact not in contexts:
                 contexts.append(compact)
@@ -83,21 +85,25 @@ def _prompt(
 只输出一个合法 JSON object，不要 Markdown、解释、额外字段。
 
 本批 ShotIndex：{targets}
-Scene上下文（只可补地点/INT-EXT/时间，不能搬入邻镜人物动作道具）：{context_json}
+Scene上下文（只可补地点/INT-EXT/时间/同场景连续关系，不能搬入邻镜人物动作道具）：{context_json}
 
 随后图片按 ShotIndex 分组；每组图片只属于该 Shot。
 
 硬规则：
-1. visible / people / props / shot_type / composition 只能来自当前 Shot 图片。
-2. 当前 Shot 看不到的人、动作、道具绝不能从上下文补入。
+1. visible / people / props / shot_type / angle / composition / lighting 只能来自当前 Shot 图片。
+2. 当前 Shot 看不到的人、动作、表情、姿态、视线、交互、道具绝不能从上下文补入。
 3. props 不只记录“人物正在使用的剧情道具”；凡是对镜头重建重要、画面中显著且可独立识别的可见物体都必须列出，例如花束、花瓶、手机、袋子、书籍等。
 4. 如果 visible 明确写到了这类具体物体，props 不能漏掉；人物没有接触该物体时 people=[]、interaction="" 即可。
 5. 桌面/沙发/门等大环境结构只在它本身是镜头核心或后续重建必须保留时列 props，避免把整个背景家具清单化。
-6. 不猜姓名、Character/Scene/Prop ID；people 按当前 Shot 稳定视觉顺序输出。
-7. 不转录对白/OCR；说话真相由 ASR 负责。
-8. 静态采样图不能可靠判断推/拉/摇/移，因此不要输出 camera motion；程序统一记 UNKNOWN。
-9. visible<=80字；appearance<=32字；activity<=24字；composition<=24字；interaction<=20字。
-10. 每个 ShotIndex 必须且只能输出一次。不要输出 revision_item_id、人物身份标签、跨镜人物标签、events、长解释。
+6. people 的 expression/posture/gaze/interaction 只写当前 Shot 图片直接支持的事实；看不清就写空字符串，不要从人物身份或剧情猜。
+7. angle 写镜头视角/机位关系，例如平视、俯拍、仰拍、过肩、侧面、背面、顶视；无法确认写空字符串。
+8. lighting 只写当前 Shot 直接可见的主光方向/软硬/明暗/色温等简短事实；无法确认写空字符串。
+9. continuity 只允许根据给定 scene_ctx.sc 写“同场景延续/新场景起点”这类保守提示；不能发明服装、人物、道具连续性。UNCERTAIN 时写空字符串。
+10. 不猜姓名、Character/Scene/Prop ID；people 按当前 Shot 稳定视觉顺序输出。
+11. 不转录对白/OCR；说话真相由 ASR 负责。
+12. 静态采样图不能可靠判断推/拉/摇/移，因此不要输出 camera motion；程序统一记 UNKNOWN，运镜由视频窗口阶段补充。
+13. visible<=80字；appearance<=32字；activity<=24字；expression/posture/gaze/interaction<=20字；composition<=24字；angle<=12字；lighting<=28字；continuity<=24字。
+14. 每个 ShotIndex 必须且只能输出一次。不要输出 revision_item_id、人物身份标签、跨镜人物标签、events、长解释。
 
 JSON schema：
 {{
@@ -106,10 +112,17 @@ JSON schema：
     "scene":{{"loc":"地点或空","ie":"INT|EXT|MIXED|UNKNOWN","tod":"白天|夜晚|未知"}},
     "visible":"当前Shot核心可见事实",
     "shot_type":"特写|近景|中景|全景|远景|空",
+    "angle":"平视|俯拍|仰拍|过肩|侧面|背面|顶视|空",
     "composition":"简短构图或空",
+    "lighting":"当前Shot可见光线事实或空",
+    "continuity":"同场景延续|新场景起点|空",
     "people":[{{
       "appearance":"稳定可见外观",
       "activity":"当前可见动作",
+      "expression":"当前可见表情或空",
+      "posture":"当前可见姿态或空",
+      "gaze":"当前可见视线或空",
+      "interaction":"当前可见人物/道具交互或空",
       "position":"左侧|中央|右侧|前景|背景|UNKNOWN",
       "visibility":"FULL|PARTIAL|OCCLUDED|BACK_VIEW|UNKNOWN"
     }}],
@@ -170,6 +183,10 @@ def _canonical_subjects(raw: Any) -> list[dict[str, Any]]:
             "label": _subject_label(index),
             "appearance_summary": _clean(item.get("appearance"), 160),
             "activity_summary": _clean(item.get("activity"), 160),
+            "expression_summary": _clean(item.get("expression"), 160),
+            "posture_summary": _clean(item.get("posture"), 160),
+            "gaze_summary": _clean(item.get("gaze"), 160),
+            "interaction_summary": _clean(item.get("interaction"), 160),
             "screen_position": _clean(item.get("position"), 48) or "UNKNOWN",
             "visibility": visibility,
             "speaking_state": "UNKNOWN",
@@ -255,7 +272,10 @@ def expand_compact(value: Mapping[str, Any], batch: Sequence[Mapping[str, Any]])
                 "summary": visible,
                 "visual_description": visible,
                 "shot_type_hint": _clean(raw.get("shot_type"), 64),
+                "camera_angle_hint": _clean(raw.get("angle"), 160),
                 "camera_motion_hint": "UNKNOWN",
+                "lighting_hint": _clean(raw.get("lighting"), 500),
+                "continuity_hint": _clean(raw.get("continuity"), 500),
                 "narrative_function_hint": "",
                 "composition_hint": _clean(raw.get("composition"), 160),
             },
