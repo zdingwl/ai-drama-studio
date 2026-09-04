@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+
 import { api } from '../api/client'
 import type { BackgroundTask, ContentAnalysisRun, Episode, F05ModelStatus } from '../types/studio'
 import AssetReviewInboxV1 from './AssetReviewInboxV1.vue'
@@ -27,14 +28,6 @@ type AssetWorkspaceMode = 'inbox' | 'matrix' | 'people'
 
 const route = useRoute()
 const router = useRouter()
-
-function workspaceModeFromRoute(): AssetWorkspaceMode {
-  const requested = String(route.query.asset_tab || '')
-  if (requested === 'people') return 'people'
-  if (requested === 'matrix') return 'matrix'
-  return 'inbox'
-}
-
 const status = ref<CharacterModelStatus | null>(null)
 const loading = ref(true)
 const preparing = ref(false)
@@ -44,41 +37,51 @@ const unresolvedEvidenceCount = ref(0)
 const analysisProfile = ref('')
 const workspaceMode = ref<AssetWorkspaceMode>(workspaceModeFromRoute())
 
+function workspaceModeFromRoute(): AssetWorkspaceMode {
+  const requested = String(route.query.asset_tab || '')
+  if (requested === 'people') return 'people'
+  if (requested === 'matrix') return 'matrix'
+  return 'inbox'
+}
+
 const missingModels = computed(() => (status.value?.models ?? []).filter((item) => !item.ready))
 const runtimeLabel = computed(() => {
   const runtime = status.value?.runtime
-  if (!runtime) return '运行时未知'
-  if (runtime.device === 'GPU') return `GPU · CUDA · ${runtime.provider || 'CUDAExecutionProvider'}`
-  return `CPU fallback · ${runtime.provider || 'CPUExecutionProvider'}`
+  if (!runtime) return '未知'
+  if (runtime.device === 'GPU') return `GPU · ${runtime.provider || 'CUDA'}`
+  return `CPU · ${runtime.provider || 'fallback'}`
 })
 const trackingLabel = computed(() => {
   const tracking = status.value?.tracking_runtime
-  if (!tracking) return 'MOT 未知'
-  if (!tracking.ready) return 'MOT 未准备'
-  return `${tracking.tracker || 'Mature MOT'} · ${tracking.frame_rate || 12}fps`
+  if (!tracking) return '未知'
+  if (!tracking.ready) return '未准备'
+  return `${tracking.tracker || 'MOT'} · ${tracking.frame_rate || 12}fps`
 })
 const userStatus = computed(() => {
-  if (loading.value) return { title: '正在读取资产状态', detail: '正在检查人物、场景和道具结果。', tone: 'neutral' }
-  if (!status.value) return { title: '资产状态暂时不可用', detail: '可以继续查看已经保存的结果。', tone: 'warning' }
-  if (!status.value.ready) return { title: '需要先准备识别环境', detail: '现有资产结果不会丢失；重新提取前先完成模型准备。', tone: 'warning' }
+  if (loading.value) {
+    return { title: '正在读取原片资产', detail: '正在检查人物、场景、道具和需要人工判断的问题。', tone: 'neutral' }
+  }
+  if (!status.value) {
+    return { title: '已有资产仍可查看', detail: '识别环境状态暂时读取失败，不影响已经保存的 Final Asset。', tone: 'warning' }
+  }
+  if (!status.value.ready) {
+    return { title: '识别环境需要准备', detail: '现有结果不会丢失；只有重新提取人物时才需要准备模型。', tone: 'warning' }
+  }
   if (resolvedCount.value > 0) {
-    const evidenceNote = unresolvedEvidenceCount.value > 0
-      ? `；另有 ${unresolvedEvidenceCount.value} 条未归属人物 Evidence 仅作为内部识别证据保留，不计入人工待办`
-      : ''
     return {
-      title: '资产结果已生成',
-      detail: `当前已形成 ${resolvedCount.value} 个最终人物${evidenceNote}。真正需要人工处理的内容只看下方“待处理”。`,
+      title: `已形成 ${resolvedCount.value} 个正式人物资产`,
+      detail: '人物页会继续完成跨分镜归并和 Shot Binding；真正有歧义的内容才进入人工处理。',
       tone: 'ready',
     }
   }
   if (unresolvedEvidenceCount.value > 0) {
     return {
-      title: '人物识别证据已归档',
-      detail: `${unresolvedEvidenceCount.value} 条证据尚未形成安全 Final Character，系统会保留用于后续自动判断；它们本身不是人工待办。`,
+      title: '已有视觉人物证据',
+      detail: '这些仍是识别 Evidence，不会直接冒充正式人物资产；请进入人物资产查看归并结果。',
       tone: 'neutral',
     }
   }
-  return { title: '等待资产提取结果', detail: '完成资产提取后，这里会汇总人物、场景和道具的识别结果。', tone: 'neutral' }
+  return { title: '等待资产提取', detail: '完成拉片后执行资产提取，系统会自动形成原片人物、场景和道具资产。', tone: 'neutral' }
 })
 
 function selectWorkspaceMode(next: AssetWorkspaceMode): void {
@@ -91,15 +94,11 @@ function selectWorkspaceMode(next: AssetWorkspaceMode): void {
 function syncWorkspaceModeFromRoute(): void {
   const next = workspaceModeFromRoute()
   if (workspaceMode.value !== next) workspaceMode.value = next
-  if (String(route.query.asset_tab || '') !== next) {
-    void router.replace({ query: { ...route.query, asset_tab: next } })
-  }
 }
 
 async function refreshModelStatus(): Promise<void> {
   try {
     status.value = await api.getF05ModelStatus() as CharacterModelStatus
-    error.value = ''
   } catch (err) {
     error.value = err instanceof Error ? err.message : '人物模型状态读取失败'
   } finally {
@@ -131,7 +130,7 @@ async function prepareModels(): Promise<void> {
   try {
     status.value = await api.prepareF05Models() as CharacterModelStatus
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '人物 V10.1 模型准备失败'
+    error.value = err instanceof Error ? err.message : '人物识别环境准备失败'
   } finally {
     preparing.value = false
   }
@@ -139,15 +138,11 @@ async function prepareModels(): Promise<void> {
 
 function onTaskFinished(event: Event): void {
   const task = (event as CustomEvent<BackgroundTask>).detail
-  if (!task || task.project_id !== props.projectId) return
-  if (task.task_type !== 'ASSET_EXTRACTION_V3') return
+  if (!task || task.project_id !== props.projectId || task.task_type !== 'ASSET_EXTRACTION_V3') return
   void refreshPersonCompleteness()
 }
 
-watch(
-  () => route.query.asset_tab,
-  syncWorkspaceModeFromRoute,
-)
+watch(() => route.query.asset_tab, syncWorkspaceModeFromRoute)
 
 onMounted(async () => {
   window.addEventListener('studio-task-finished', onTaskFinished)
@@ -164,45 +159,45 @@ onUnmounted(() => {
   <div class="asset-stage-v4">
     <section :class="['asset-user-summary', `tone-${userStatus.tone}`]">
       <div class="asset-user-summary-copy">
-        <small>03 · 人物 / 场景 / 道具</small>
+        <small>03 · 原片资产</small>
         <strong>{{ userStatus.title }}</strong>
         <span>{{ userStatus.detail }}</span>
       </div>
-
       <div class="asset-user-stats">
         <div>
-          <small>最终人物</small>
+          <small>正式人物</small>
           <strong>{{ resolvedCount }}</strong>
         </div>
-        <div class="evidence" title="未安全归属到 Final Character 的识别 Evidence，仅用于追溯和后续自动判断，不需要人工逐条处理">
-          <small>内部证据</small>
+        <div>
+          <small>待归属视觉证据</small>
           <strong>{{ unresolvedEvidenceCount }}</strong>
         </div>
-        <div>
-          <small>识别环境</small>
-          <strong>{{ loading ? '读取中' : status?.ready ? '可用' : '需准备' }}</strong>
-        </div>
       </div>
-
-      <button v-if="!loading && status && !status.ready" class="asset-prepare-button" :disabled="preparing" @click="prepareModels">
+      <button
+        v-if="!loading && status && !status.ready"
+        class="asset-prepare-button"
+        :disabled="preparing"
+        type="button"
+        @click="prepareModels"
+      >
         {{ preparing ? '正在准备…' : '准备识别环境' }}
       </button>
     </section>
 
-    <div v-if="error" class="character-v4-error">{{ error }}</div>
+    <div v-if="error" class="asset-error">{{ error }}</div>
 
-    <nav class="asset-workspace-tabs" aria-label="资产工作区">
+    <nav class="asset-workspace-tabs" aria-label="原片资产工作区">
       <button :class="{ active: workspaceMode === 'inbox' }" type="button" @click="selectWorkspaceMode('inbox')">
         <strong>待处理</strong>
-        <span>只看真正需要人工判断的冲突、未绑定和低置信度镜头</span>
+        <span>只处理真正有冲突、缺绑定或低置信度的问题</span>
+      </button>
+      <button :class="{ active: workspaceMode === 'people' }" type="button" @click="selectWorkspaceMode('people')">
+        <strong>人物资产</strong>
+        <span>跨分镜归并、人物资产库、Shot Binding 与替换人物入口</span>
       </button>
       <button :class="{ active: workspaceMode === 'matrix' }" type="button" @click="selectWorkspaceMode('matrix')">
         <strong>完整绑定</strong>
-        <span>查看并编辑全部人物、场景、道具 Binding</span>
-      </button>
-      <button :class="{ active: workspaceMode === 'people' }" type="button" @click="selectWorkspaceMode('people')">
-        <strong>人物结果</strong>
-        <span>{{ resolvedCount }} 个最终人物<template v-if="unresolvedEvidenceCount"> · {{ unresolvedEvidenceCount }} 条内部识别证据</template></span>
+        <span>高级查看全部人物、场景和道具 Final Binding</span>
       </button>
     </nav>
 
@@ -212,22 +207,27 @@ onUnmounted(() => {
       :episodes="props.episodes"
       @open-matrix="selectWorkspaceMode('matrix')"
     />
-    <AssetReviewMatrixV4 v-else-if="workspaceMode === 'matrix'" :project-id="props.projectId" :episodes="props.episodes" />
-    <CharacterPersonGalleryV10 v-else :project-id="props.projectId" />
+    <CharacterPersonGalleryV10
+      v-else-if="workspaceMode === 'people'"
+      :project-id="props.projectId"
+    />
+    <AssetReviewMatrixV4
+      v-else
+      :project-id="props.projectId"
+      :episodes="props.episodes"
+    />
 
     <details v-if="status" class="asset-runtime-details">
-      <summary>识别技术信息</summary>
+      <summary>高级 · 识别技术信息</summary>
       <div class="asset-runtime-grid">
         <div><span>人物识别</span><strong>Character V10.1</strong></div>
         <div><span>计算设备</span><strong>{{ runtimeLabel }}</strong></div>
         <div><span>人物跟踪</span><strong>{{ trackingLabel }}</strong></div>
-        <div><span>当前分析</span><strong>{{ analysisProfile || '暂无 Current Asset Run' }}</strong></div>
+        <div><span>当前分析</span><strong>{{ analysisProfile || '暂无' }}</strong></div>
       </div>
       <p v-if="missingModels.length">缺少模型：{{ missingModels.map((item) => item.filename).join('、') }}</p>
-      <p v-if="status.tracking_runtime && !status.tracking_runtime.ready">MOT：{{ status.tracking_runtime.error || 'trackers/supervision 未准备' }}</p>
-      <p v-if="status.runtime?.fallback">当前正在使用 CPU fallback；结果逻辑不变，但处理速度会更慢。</p>
-      <p v-if="unresolvedEvidenceCount">{{ unresolvedEvidenceCount }} 条未归属人物 Evidence 仅用于算法追溯和后续自动判断，不属于人工待确认数量。</p>
-      <p>人物身份仍遵守 Final Character Gate：动态表情、动作、姿态、说话状态和画面位置不能作为身份主键。</p>
+      <p v-if="status.tracking_runtime && !status.tracking_runtime.ready">MOT：{{ status.tracking_runtime.error || '未准备' }}</p>
+      <p>动态表情、动作、姿态、说话状态和画面位置不能作为人物身份主键。</p>
     </details>
   </div>
 </template>
@@ -251,77 +251,33 @@ onUnmounted(() => {
 .asset-user-summary-copy { min-width: 0; display: grid; gap: 2px; }
 .asset-user-summary-copy small { color: #8793a4; font-size: 10px; font-weight: 850; letter-spacing: .04em; }
 .asset-user-summary-copy strong { color: #2f4059; font-size: 15px; }
-.asset-user-summary-copy span { color: #738095; font-size: 11px; }
-.asset-user-stats { display: grid; grid-template-columns: repeat(3, minmax(84px, 1fr)); gap: 7px; }
-.asset-user-stats > div {
-  min-width: 84px;
-  display: grid;
-  gap: 1px;
-  padding: 7px 9px;
-  border: 1px solid #e3e8ef;
-  border-radius: 9px;
-  background: rgba(255,255,255,.8);
-}
+.asset-user-summary-copy span { color: #738095; font-size: 11px; line-height: 1.5; }
+.asset-user-stats { display: grid; grid-template-columns: repeat(2, minmax(105px, 1fr)); gap: 7px; }
+.asset-user-stats > div { display: grid; gap: 1px; padding: 7px 9px; border: 1px solid #e3e8ef; border-radius: 9px; background: rgba(255,255,255,.8); }
 .asset-user-stats small { color: #8994a4; font-size: 9px; }
-.asset-user-stats strong { color: #3d4c61; font-size: 12px; }
-.asset-user-stats > div.evidence { background: #f7f9fb; }
-.asset-user-stats > div.evidence small,
-.asset-user-stats > div.evidence strong { color: #7a8798; }
-.asset-prepare-button {
-  min-height: 38px;
-  border: 0;
-  border-radius: 9px;
-  padding: 0 13px;
-  background: #2f60e8;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 800;
-  cursor: pointer;
-}
+.asset-user-stats strong { color: #3d4c61; font-size: 13px; }
+.asset-prepare-button { min-height: 38px; border: 0; border-radius: 9px; padding: 0 13px; background: #2f60e8; color: #fff; font-size: 11px; font-weight: 800; cursor: pointer; }
 .asset-prepare-button:disabled { opacity: .6; cursor: wait; }
-.character-v4-error { margin: 8px 22px 0; padding: 8px 11px; border-radius: 8px; background: #fff0f0; color: #b53a3a; font-size: 12px; }
-.asset-workspace-tabs {
-  margin: 10px 22px 0;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-.asset-workspace-tabs button {
-  min-width: 0;
-  min-height: 52px;
-  display: grid;
-  gap: 2px;
-  align-content: center;
-  border: 1px solid #dde3eb;
-  border-radius: 10px;
-  padding: 8px 12px;
-  background: #fff;
-  color: #536176;
-  text-align: left;
-  cursor: pointer;
-}
+.asset-error { margin: 8px 22px 0; padding: 8px 11px; border-radius: 8px; background: #fff0f0; color: #b53a3a; font-size: 12px; }
+.asset-workspace-tabs { margin: 10px 22px 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.asset-workspace-tabs button { min-width: 0; min-height: 54px; display: grid; gap: 2px; align-content: center; border: 1px solid #dde3eb; border-radius: 10px; padding: 8px 12px; background: #fff; color: #536176; text-align: left; cursor: pointer; }
 .asset-workspace-tabs button:hover { border-color: #bfcce0; background: #fafcff; }
 .asset-workspace-tabs button.active { border-color: #8fa9df; background: #eef4ff; box-shadow: inset 3px 0 0 #5d82d6; }
 .asset-workspace-tabs strong { color: #354965; font-size: 13px; }
 .asset-workspace-tabs span { overflow: hidden; color: #8490a2; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.asset-runtime-details {
-  margin: 10px 22px 18px;
-  border: 1px solid #e1e6ed;
-  border-radius: 10px;
-  background: #fff;
-  overflow: hidden;
-}
+.asset-runtime-details { margin: 10px 22px 18px; border: 1px solid #e1e6ed; border-radius: 10px; background: #fff; overflow: hidden; }
 .asset-runtime-details > summary { padding: 8px 11px; color: #7e8999; font-size: 10px; font-weight: 800; cursor: pointer; }
 .asset-runtime-details[open] > summary { border-bottom: 1px solid #edf0f4; background: #fafbfc; }
 .asset-runtime-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 10px 11px 6px; }
 .asset-runtime-grid > div { min-width: 0; display: grid; gap: 2px; padding: 8px; border-radius: 8px; background: #f7f9fb; }
-.asset-runtime-grid span { color: #8793a4; font-size: 9px; }
-.asset-runtime-grid strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #4c596b; font-size: 10px; }
-.asset-runtime-details p { margin: 0; padding: 3px 11px; color: #758196; font-size: 10px; line-height: 1.45; }
-.asset-runtime-details p:last-child { padding-bottom: 10px; }
-@media (max-width: 1350px) {
-  .asset-user-summary { grid-template-columns: minmax(240px, 1fr) auto; }
-  .asset-prepare-button { grid-column: 1 / -1; justify-self: start; }
+.asset-runtime-grid span { color: #8994a4; font-size: 9px; }
+.asset-runtime-grid strong { overflow: hidden; color: #4c5d73; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.asset-runtime-details p { margin: 0; padding: 4px 11px 9px; color: #8792a1; font-size: 9px; }
+@media (max-width: 980px) {
+  .asset-user-summary { grid-template-columns: 1fr; }
+  .asset-user-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .asset-workspace-tabs { grid-template-columns: 1fr; }
+  .asset-workspace-tabs span { white-space: normal; }
   .asset-runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>
