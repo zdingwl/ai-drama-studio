@@ -159,7 +159,16 @@ function speakerIssuesForShot(shotId: string): ReviewIssue[] {
 function shotNeedsReview(entry: ReviewEntry): boolean {
   return assetNeedsReview(entry.shot) || observationsForShot(entry.shot.id).length > 0 || speakerIssuesForShot(entry.shot.id).length > 0
 }
-const pendingEntries = computed(() => entries.value.filter(shotNeedsReview))
+function compareReviewEntries(a: ReviewEntry, b: ReviewEntry): number {
+  const episodeOrder = Number(a.episode.sort_order || 0) - Number(b.episode.sort_order || 0)
+  if (episodeOrder !== 0) return episodeOrder
+  const shotOrder = Number(a.shot.ordinal || 0) - Number(b.shot.ordinal || 0)
+  if (shotOrder !== 0) return shotOrder
+  const startOrder = Number(a.shot.start_us || 0) - Number(b.shot.start_us || 0)
+  if (startOrder !== 0) return startOrder
+  return String(a.shot.id).localeCompare(String(b.shot.id))
+}
+const pendingEntries = computed(() => entries.value.filter(shotNeedsReview).sort(compareReviewEntries))
 function focusedPendingEntry(): ReviewEntry | null {
   const ordinal = Number(props.focusShotOrdinal || 0)
   if (!Number.isInteger(ordinal) || ordinal <= 0) return null
