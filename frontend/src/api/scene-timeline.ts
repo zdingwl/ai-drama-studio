@@ -20,9 +20,16 @@ export interface SceneTimelineManualShotEdit {
   visual_description?: string | null
   narrative_function?: string | null
   performance_text?: string | null
+  expression?: string | null
+  posture?: string | null
+  gaze?: string | null
+  interaction?: string | null
   shot_type?: string | null
+  camera_angle?: string | null
   composition?: string | null
   camera_motion?: string | null
+  lighting?: string | null
+  continuity?: string | null
   scene?: SceneTimelineManualSceneEdit
   dialogues?: SceneTimelineManualDialogueEdit[]
 }
