@@ -8,10 +8,13 @@ import AssetReviewInboxV1 from './AssetReviewInboxV1.vue'
 import AssetReviewMatrixV4 from './AssetReviewMatrixV4.vue'
 import CharacterPersonGalleryV10 from './CharacterPersonGalleryV10.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   projectId: string
   episodes: Episode[]
-}>()
+  compact?: boolean
+}>(), {
+  compact: false,
+})
 
 type CharacterModelStatus = F05ModelStatus & {
   tracking_runtime?: {
@@ -156,8 +159,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="asset-stage-v4">
-    <section :class="['asset-user-summary', `tone-${userStatus.tone}`]">
+  <div :class="['asset-stage-v4', { compact: props.compact }]">
+    <section v-if="!props.compact" :class="['asset-user-summary', `tone-${userStatus.tone}`]">
       <div class="asset-user-summary-copy">
         <small>03 · 原片资产</small>
         <strong>{{ userStatus.title }}</strong>
@@ -186,18 +189,18 @@ onUnmounted(() => {
 
     <div v-if="error" class="asset-error">{{ error }}</div>
 
-    <nav class="asset-workspace-tabs" aria-label="原片资产工作区">
+    <nav :class="['asset-workspace-tabs', { compact: props.compact }]" aria-label="原片资产工作区">
       <button :class="{ active: workspaceMode === 'inbox' }" type="button" @click="selectWorkspaceMode('inbox')">
         <strong>待处理</strong>
-        <span>只处理真正有冲突、缺绑定或低置信度的问题</span>
+        <span v-if="!props.compact">只处理真正有冲突、缺绑定或低置信度的问题</span>
       </button>
       <button :class="{ active: workspaceMode === 'people' }" type="button" @click="selectWorkspaceMode('people')">
-        <strong>人物资产</strong>
-        <span>跨分镜归并、人物资产库、Shot Binding 与替换人物入口</span>
+        <strong>人物</strong>
+        <span v-if="!props.compact">跨分镜归并、人物资产库、Shot Binding 与替换人物入口</span>
       </button>
       <button :class="{ active: workspaceMode === 'matrix' }" type="button" @click="selectWorkspaceMode('matrix')">
-        <strong>完整绑定</strong>
-        <span>高级查看全部人物、场景和道具 Final Binding</span>
+        <strong>场景 / 道具 / 完整绑定</strong>
+        <span v-if="!props.compact">高级查看全部人物、场景和道具 Final Binding</span>
       </button>
     </nav>
 
@@ -217,7 +220,7 @@ onUnmounted(() => {
       :episodes="props.episodes"
     />
 
-    <details v-if="status" class="asset-runtime-details">
+    <details v-if="status && !props.compact" class="asset-runtime-details">
       <summary>高级 · 识别技术信息</summary>
       <div class="asset-runtime-grid">
         <div><span>人物识别</span><strong>Character V10.1</strong></div>
@@ -234,6 +237,7 @@ onUnmounted(() => {
 
 <style scoped>
 .asset-stage-v4 { min-height: 100%; }
+.asset-stage-v4.compact { padding: 0; background: transparent; }
 .asset-user-summary {
   margin: 14px 22px 0;
   min-height: 78px;
@@ -259,12 +263,17 @@ onUnmounted(() => {
 .asset-prepare-button { min-height: 38px; border: 0; border-radius: 9px; padding: 0 13px; background: #2f60e8; color: #fff; font-size: 11px; font-weight: 800; cursor: pointer; }
 .asset-prepare-button:disabled { opacity: .6; cursor: wait; }
 .asset-error { margin: 8px 22px 0; padding: 8px 11px; border-radius: 8px; background: #fff0f0; color: #b53a3a; font-size: 12px; }
+.compact .asset-error { margin: 8px 0; }
 .asset-workspace-tabs { margin: 10px 22px 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .asset-workspace-tabs button { min-width: 0; min-height: 54px; display: grid; gap: 2px; align-content: center; border: 1px solid #dde3eb; border-radius: 10px; padding: 8px 12px; background: #fff; color: #536176; text-align: left; cursor: pointer; }
 .asset-workspace-tabs button:hover { border-color: #bfcce0; background: #fafcff; }
 .asset-workspace-tabs button.active { border-color: #8fa9df; background: #eef4ff; box-shadow: inset 3px 0 0 #5d82d6; }
 .asset-workspace-tabs strong { color: #354965; font-size: 13px; }
 .asset-workspace-tabs span { overflow: hidden; color: #8490a2; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.asset-workspace-tabs.compact { margin: 0 0 10px; display: flex; gap: 6px; }
+.asset-workspace-tabs.compact button { min-height: 36px; width: auto; display: block; padding: 7px 12px; border-radius: 8px; text-align: center; }
+.asset-workspace-tabs.compact button.active { box-shadow: none; }
+.asset-workspace-tabs.compact strong { font-size: 11px; }
 .asset-runtime-details { margin: 10px 22px 18px; border: 1px solid #e1e6ed; border-radius: 10px; background: #fff; overflow: hidden; }
 .asset-runtime-details > summary { padding: 8px 11px; color: #7e8999; font-size: 10px; font-weight: 800; cursor: pointer; }
 .asset-runtime-details[open] > summary { border-bottom: 1px solid #edf0f4; background: #fafbfc; }
@@ -276,8 +285,9 @@ onUnmounted(() => {
 @media (max-width: 980px) {
   .asset-user-summary { grid-template-columns: 1fr; }
   .asset-user-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .asset-workspace-tabs { grid-template-columns: 1fr; }
+  .asset-workspace-tabs:not(.compact) { grid-template-columns: 1fr; }
   .asset-workspace-tabs span { white-space: normal; }
+  .asset-workspace-tabs.compact { flex-wrap: wrap; }
   .asset-runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>
