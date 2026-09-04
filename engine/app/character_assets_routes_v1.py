@@ -41,6 +41,8 @@ router = APIRouter(prefix="/api", tags=["character-assets"])
 VIEW_SCHEMA_V2 = "character-reference-v2"
 VIEWS_V2 = ("front", "three_quarter", "side", "back")
 VIEWS_LEGACY = ("front", "left", "back", "right")
+# 兼容已有调用和历史测试。新代码必须显式使用 VIEWS_V2 或 _views_for_receipt。
+VIEWS = VIEWS_LEGACY
 ALL_VIEWS = frozenset((*VIEWS_V2, *VIEWS_LEGACY))
 
 
@@ -332,7 +334,7 @@ def run_views(task_id: str, character: dict, receipt: dict) -> None:
             )
         finish_task(
             task_id,
-            result={**receipt, "accepted": False},
+            result={**receipt, "view_schema": VIEW_SCHEMA_V2, "accepted": False},
             message="四视图候选已生成，请确认正面、45°、侧面、背面及人物一致性后采用",
         )
     except Exception as exc:
