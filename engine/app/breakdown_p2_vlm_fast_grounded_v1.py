@@ -4,11 +4,12 @@ This provider replaces the expensive/ambiguous production pattern
 ``window full-shot semantics -> text-only per-Shot E3`` with two visual passes that share one
 Qwen3-VL process/model load:
 
-1. low-cost overlapping Episode windows produce context only (Scene/anonymous continuity);
+1. low-cost overlapping Episode windows produce Scene/anonymous continuity plus temporal camera motion;
 2. exact frozen ShotRevisionItems are visually grounded from 1..3 sampled frames per Shot.
 
 The exact-Shot frames are authoritative for visible people, actions, props, framing and visual
-prose. Window context may only fill conservative Scene context. This prevents a nearby person
+prose. Window context may fill conservative Scene context and camera motion only, because motion is
+a temporal fact that static sampled images cannot reliably establish. This prevents a nearby person
 from leaking into an insert/close-up while keeping the Episode continuity needed by E4.
 
 The frozen P2 sidecar contract stays unchanged: one exact-Shot ``VLM_OUTPUT`` per frozen
@@ -195,7 +196,7 @@ def _scene_context_merge(
     grounded_semantic: Mapping[str, Any],
     scene_hint: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    """Only Scene may inherit window context; all visible facts stay exact-Shot grounded."""
+    """Inherit only Scene context and temporal camera motion; keep all other visible facts exact-Shot."""
 
     result = {
         "scene": dict(grounded_semantic.get("scene") or {}),
@@ -220,6 +221,12 @@ def _scene_context_merge(
         inherited = _clean_text(context_scene.get("environment_description"), max_len=1200)
         if inherited:
             scene["environment_description"] = inherited
+
+    shot = result["shot"]
+    current_motion = _clean_text(shot.get("camera_motion_hint"), max_len=64)
+    context_motion = _clean_text(scene_hint.get("camera_motion_hint"), max_len=64)
+    if (not current_motion or current_motion.upper() == "UNKNOWN") and context_motion:
+        shot["camera_motion_hint"] = context_motion
     return result
 
 
@@ -315,6 +322,7 @@ class Qwen3VLSemanticProvider(e2.Qwen3VLSemanticProvider):
                     "scene_continuity": continuity if continuity in _ALLOWED_SCENE_CONTINUITY else "UNCERTAIN",
                     "scene_basis": basis if basis in _ALLOWED_SCENE_BASIS else "UNCERTAIN",
                     "context_note": _clean_text(item.get("context_note"), max_len=700),
+                    "camera_motion_hint": _clean_text(item.get("camera_motion_hint"), max_len=64) or "UNKNOWN",
                     "scene": {
                         "location_hint": _clean_text(raw_scene.get("location_hint"), max_len=255),
                         "interior_exterior": str(raw_scene.get("interior_exterior") or "UNKNOWN").strip().upper(),
@@ -649,6 +657,7 @@ class Qwen3VLSemanticProvider(e2.Qwen3VLSemanticProvider):
                 "scene_continuity": str((scene_hint or {}).get("scene_continuity") or "UNCERTAIN"),
                 "scene_basis": str((scene_hint or {}).get("scene_basis") or "UNCERTAIN"),
                 "context_note": (scene_hint or {}).get("context_note"),
+                "camera_motion_hint": (scene_hint or {}).get("camera_motion_hint"),
             }
             evidence.append(p2.P2EvidenceRecord(
                 source_type="VLM_OUTPUT",
@@ -670,10 +679,11 @@ class Qwen3VLSemanticProvider(e2.Qwen3VLSemanticProvider):
                         "frame_sample_ratios": list(frame_ratios),
                         "frame_count": len(frame_ratios),
                         "visible_fact_source": "exact_frozen_shot_frames",
-                        "window_context_allowed_for": ["scene"],
+                        "window_context_allowed_for": ["scene", "shot.camera_motion_hint"],
                         "window_context_forbidden_for": [
                             "shot.visual_description", "subjects", "events", "props",
-                            "shot.shot_type_hint", "shot.camera_motion_hint", "shot.composition_hint",
+                            "shot.shot_type_hint", "shot.camera_angle_hint", "shot.composition_hint",
+                            "shot.lighting_hint",
                         ],
                     },
                 },
