@@ -1,24 +1,12 @@
 """Revision-safe single-Shot Breakdown rerun.
 
 A complete BreakdownRun is immutable Episode truth and its publish validator requires full
-ShotRevision coverage.  Re-running one Shot therefore must not create a fake/partial
-BreakdownRun.  This module executes the existing P2 providers on a narrow scope and stores a
-separate AI overlay anchored to the current complete BreakdownRun + ShotRevision.
+ShotRevision coverage. Re-running one Shot therefore stores a separate AI overlay anchored to the
+current complete BreakdownRun + ShotRevision rather than creating a fake partial Run.
 
-Execution scope:
-- ASR: only the target Shot audio window (+ small boundary padding), never the whole Episode;
-- OCR: only the exact target Shot Reference Clip;
-- VLM: target Shot plus at most one neighbouring Shot on each side for scene/continuity context;
-- only target-Shot facts are projected back to the ordinary SceneTimeline.
-
-Safety boundaries:
-- immutable BreakdownRun / ShotSemanticDraft / TimelineEvent rows are never mutated;
-- Scene segmentation and anonymous/Final Character identity are not rewritten by a single-Shot
-  rerun; those need Episode/Scene context and remain owned by the full pipeline / asset flow;
-- historical Runs never consume a current rerun because every artifact is anchored to
-  source_breakdown_run_id as well as source_shot_revision_id;
-- a new ShotRevision automatically makes all older reruns inapplicable;
-- GET paths only read persisted artifacts and never run a provider.
+ASR/OCR stay target-Shot scoped; VLM may read one neighbour on each side for Scene context while
+only target-Shot facts are projected. Immutable Breakdown evidence and Final identity/asset facts
+are never rewritten here.
 """
 from __future__ import annotations
 
@@ -112,23 +100,16 @@ def _load_full_context(draft: Mapping[str, Any], *, rerun_id: str) -> p2.P2RunCo
         if project is None or episode is None or revision is None:
             raise BreakdownShotRerunError("单镜重拉的 Project/Episode/ShotRevision 历史锚点不完整")
         current_revision = session.scalar(
-            select(ShotRevision).where(
-                ShotRevision.episode_id == episode_id,
-                ShotRevision.is_current.is_(True),
-            )
+            select(ShotRevision).where(ShotRevision.episode_id == episode_id, ShotRevision.is_current.is_(True))
         )
         if current_revision is None or current_revision.id != revision_id or not revision.is_current:
             raise BreakdownShotRerunError("当前 ShotRevision 已变化，请先刷新页面再重拉")
         items = list(session.scalars(
-            select(ShotRevisionItem)
-            .where(ShotRevisionItem.revision_id == revision_id)
-            .order_by(ShotRevisionItem.ordinal)
+            select(ShotRevisionItem).where(ShotRevisionItem.revision_id == revision_id).order_by(ShotRevisionItem.ordinal)
         ).all())
         if not items:
             raise BreakdownShotRerunError("当前 ShotRevision 没有可处理分镜")
-        preprocess = session.scalar(
-            select(studio_v2.Preprocess).where(studio_v2.Preprocess.episode_id == episode_id)
-        )
+        preprocess = session.scalar(select(studio_v2.Preprocess).where(studio_v2.Preprocess.episode_id == episode_id))
         shots = tuple(
             p2.P2ShotInput(
                 revision_item_id=item.id,
@@ -184,8 +165,6 @@ def _vlm_context_shots(
     base_timeline: Mapping[str, Any] | SceneTimelinePayloadV1,
     target: p2.P2ShotInput,
 ) -> tuple[p2.P2ShotInput, ...]:
-    """Prefer one neighbour each side inside the existing Scene, then fall back to global adjacency."""
-
     scene, _base_shot = _timeline_scene_and_shot(base_timeline, target.ordinal)
     same_scene_ordinals = [int(item["ordinal"]) for item in scene.get("shots") or []]
     selected: set[int] = {target.ordinal}
@@ -208,21 +187,14 @@ def _vlm_context_shots(
     candidates.sort(key=lambda item: item.ordinal)
     if len(candidates) <= 3:
         return tuple(candidates)
-    # Defensive cap: closest ordinals to target, then chronological order.
     candidates.sort(key=lambda item: (abs(item.ordinal - target.ordinal), item.ordinal))
     return tuple(sorted(candidates[:3], key=lambda item: item.ordinal))
 
 
-def _provider_map(
-    providers: Sequence[p2.BreakdownP2Provider] | None,
-) -> dict[str, p2.BreakdownP2Provider]:
+def _provider_map(providers: Sequence[p2.BreakdownP2Provider] | None) -> dict[str, p2.BreakdownP2Provider]:
     source: Sequence[p2.BreakdownP2Provider]
     if providers is None:
-        source = (
-            FasterWhisperASRProvider(),
-            RapidOCROCRProvider(),
-            Qwen3VLSemanticProvider(),
-        )
+        source = (FasterWhisperASRProvider(), RapidOCROCRProvider(), Qwen3VLSemanticProvider())
     else:
         source = providers
     result: dict[str, p2.BreakdownP2Provider] = {}
@@ -239,10 +211,7 @@ def _provider_map(
     return result
 
 
-def _execute_provider(
-    provider: p2.BreakdownP2Provider,
-    context: p2.P2RunContext,
-) -> p2.P2ProviderResult:
+def _execute_provider(provider: p2.BreakdownP2Provider, context: p2.P2RunContext) -> p2.P2ProviderResult:
     expected = str(provider.component).strip().upper()
     result = provider.analyze(context)
     if str(result.component).strip().upper() != expected:
@@ -250,40 +219,23 @@ def _execute_provider(
     p2.validate_provider_result(context, result)
     if result.status in {"FAILED", "NOT_CONFIGURED"}:
         detail = next((str(item).strip() for item in result.warnings if str(item).strip()), "")
-        raise BreakdownShotRerunError(
-            f"{expected} 单镜重拉失败（{result.status}）" + (f"：{detail}" if detail else "")
-        )
+        raise BreakdownShotRerunError(f"{expected} 单镜重拉失败（{result.status}）" + (f"：{detail}" if detail else ""))
     if expected == "VLM" and result.status != "READY":
         detail = next((str(item).strip() for item in result.warnings if str(item).strip()), "")
-        raise BreakdownShotRerunError(
-            f"VLM 单镜重拉要求 READY，当前为 {result.status}" + (f"：{detail}" if detail else "")
-        )
+        raise BreakdownShotRerunError(f"VLM 单镜重拉要求 READY，当前为 {result.status}" + (f"：{detail}" if detail else ""))
     if expected in {"ASR", "OCR"} and result.status not in ({"READY"} | set(_ALLOWED_DEGRADED)):
         raise BreakdownShotRerunError(f"{expected} 单镜重拉状态不可消费：{result.status}")
     return result
 
 
-def _materialize_audio_window(
-    source: Path,
-    output: Path,
-    *,
-    start_us: int,
-    end_us: int,
-) -> None:
+def _materialize_audio_window(source: Path, output: Path, *, start_us: int, end_us: int) -> None:
     if end_us <= start_us:
         raise BreakdownShotRerunError("单镜 ASR 音频范围无效")
     try:
         _run_media_command([
-            "ffmpeg",
-            "-y",
-            "-ss", f"{start_us / 1_000_000.0:.6f}",
-            "-t", f"{(end_us - start_us) / 1_000_000.0:.6f}",
-            "-i", str(source),
-            "-vn",
-            "-ac", "1",
-            "-ar", "16000",
-            "-c:a", "pcm_s16le",
-            str(output),
+            "ffmpeg", "-y", "-ss", f"{start_us / 1_000_000.0:.6f}",
+            "-t", f"{(end_us - start_us) / 1_000_000.0:.6f}", "-i", str(source),
+            "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(output),
         ], timeout=20 * 60)
     except MediaPipelineError as exc:
         raise BreakdownShotRerunError("无法生成当前分镜 ASR 音频片段") from exc
@@ -296,39 +248,23 @@ def _shift_asr_result(result: p2.P2ProviderResult, *, offset_us: int) -> p2.P2Pr
         metadata = dict(result.metadata)
         metadata["source_time_offset_us"] = int(offset_us)
         return p2.P2ProviderResult(
-            component=result.component,
-            provider=result.provider,
-            model=result.model,
-            status=result.status,
-            evidence=result.evidence,
-            metadata=metadata,
-            warnings=result.warnings,
+            component=result.component, provider=result.provider, model=result.model, status=result.status,
+            evidence=result.evidence, metadata=metadata, warnings=result.warnings,
         )
     shifted: list[p2.P2EvidenceRecord] = []
     for record in result.evidence:
         start = record.source_start_us + offset_us if record.source_start_us is not None else None
         end = record.source_end_us + offset_us if record.source_end_us is not None else None
         shifted.append(p2.P2EvidenceRecord(
-            source_type=record.source_type,
-            source_id=record.source_id,
-            source_start_us=start,
-            source_end_us=end,
-            shot_revision_item_id=record.shot_revision_item_id,
-            text=record.text,
-            language=record.language,
-            confidence=record.confidence,
-            payload=dict(record.payload),
+            source_type=record.source_type, source_id=record.source_id,
+            source_start_us=start, source_end_us=end, shot_revision_item_id=record.shot_revision_item_id,
+            text=record.text, language=record.language, confidence=record.confidence, payload=dict(record.payload),
         ))
     metadata = dict(result.metadata)
     metadata["source_time_offset_us"] = int(offset_us)
     return p2.P2ProviderResult(
-        component=result.component,
-        provider=result.provider,
-        model=result.model,
-        status=result.status,
-        evidence=tuple(shifted),
-        metadata=metadata,
-        warnings=result.warnings,
+        component=result.component, provider=result.provider, model=result.model, status=result.status,
+        evidence=tuple(shifted), metadata=metadata, warnings=result.warnings,
     )
 
 
@@ -345,11 +281,7 @@ def _clean_text(value: Any, *, max_len: int = 4000) -> str | None:
 
 
 def _best_existing_dialogue(
-    base_dialogues: Sequence[Mapping[str, Any]],
-    *,
-    start_us: int,
-    end_us: int,
-    used: set[int],
+    base_dialogues: Sequence[Mapping[str, Any]], *, start_us: int, end_us: int, used: set[int],
 ) -> Mapping[str, Any] | None:
     best_index = -1
     best_overlap = 0
@@ -382,11 +314,7 @@ def _dialogue_projection(
         return None
     if result.status == "NO_EVIDENCE":
         return []
-
-    segments = [
-        item for item in result.evidence
-        if item.source_type.strip().upper() == "ASR_SEGMENT"
-    ]
+    segments = [item for item in result.evidence if item.source_type.strip().upper() == "ASR_SEGMENT"]
     words_by_segment: dict[str, list[p2.P2EvidenceRecord]] = {}
     for word in result.evidence:
         if word.source_type.strip().upper() != "ASR_WORD":
@@ -407,14 +335,10 @@ def _dialogue_projection(
         overlap_end = min(int(segment.source_end_us), target.end_us)
         if overlap_end <= overlap_start:
             continue
-        segment_words = sorted(
-            words_by_segment.get(segment.source_id, []),
-            key=lambda item: (item.source_start_us or 0, item.source_id),
-        )
+        segment_words = sorted(words_by_segment.get(segment.source_id, []), key=lambda item: (item.source_start_us or 0, item.source_id))
         words = [
             word for word in segment_words
-            if word.source_start_us is not None
-            and word.source_end_us is not None
+            if word.source_start_us is not None and word.source_end_us is not None
             and min(int(word.source_end_us), target.end_us) > max(int(word.source_start_us), target.start_us)
         ]
         if words:
@@ -426,19 +350,13 @@ def _dialogue_projection(
                 raw_parts.append(str(payload.get("raw_word") or word.text or ""))
             content = "".join(raw_parts).strip() or " ".join(str(item.text or "").strip() for item in words).strip()
         else:
-            source_start = overlap_start
-            source_end = overlap_end
+            source_start, source_end = overlap_start, overlap_end
             content = str(segment.text or "").strip()
         if not content:
             continue
         source_start = max(target.start_us, min(target.end_us - 1, int(source_start)))
         source_end = max(source_start + 1, min(target.end_us, int(source_end)))
-        existing = _best_existing_dialogue(
-            base_dialogues,
-            start_us=source_start,
-            end_us=source_end,
-            used=used_existing,
-        )
+        existing = _best_existing_dialogue(base_dialogues, start_us=source_start, end_us=source_end, used=used_existing)
         existing_group = str(existing.get("dialogue_group_id") or "").strip() if existing else ""
         existing_speakers = existing.get("speakers") if existing else []
         speakers = [str(item) for item in existing_speakers] if isinstance(existing_speakers, list) else []
@@ -447,19 +365,13 @@ def _dialogue_projection(
             source_language = str(existing.get("source_language") or "").strip() or None
         rows.append({
             "dialogue_group_id": existing_group or f"{rerun_id}:DG:{len(rows) + 1:04d}",
-            "start_us": source_start,
-            "end_us": source_end,
-            "text": content,
-            "source_language": source_language,
-            "speakers": speakers,
+            "start_us": source_start, "end_us": source_end, "text": content,
+            "source_language": source_language, "speakers": speakers,
         })
     return rows
 
 
-def _ocr_projection(
-    target: p2.P2ShotInput,
-    result: p2.P2ProviderResult,
-) -> list[dict[str, Any]] | None:
+def _ocr_projection(target: p2.P2ShotInput, result: p2.P2ProviderResult) -> list[dict[str, Any]] | None:
     if result.status == "NOT_AVAILABLE":
         return None
     if result.status == "NO_EVIDENCE":
@@ -473,11 +385,7 @@ def _ocr_projection(
         interval = max(1, int(result.metadata.get("sample_interval_us") or 500_000))
     except (TypeError, ValueError):
         interval = 500_000
-    clusters, _warnings = fusion._ocr_clusters(
-        records,
-        {target.revision_item_id: target},
-        sample_interval_us=interval,
-    )
+    clusters, _warnings = fusion._ocr_clusters(records, {target.revision_item_id: target}, sample_interval_us=interval)
     rows: list[dict[str, Any]] = []
     for cluster in clusters:
         if not cluster.records:
@@ -487,33 +395,26 @@ def _ocr_projection(
         if first.source_start_us is None or last.source_start_us is None:
             continue
         source_start = max(target.start_us, min(target.end_us - 1, int(first.source_start_us)))
-        if len(cluster.records) == 1:
-            source_end = min(target.end_us, source_start + 1)
-        else:
-            source_end = min(target.end_us, int(last.source_start_us) + interval)
-            source_end = max(source_start + 1, source_end)
-        rows.append({
-            "start_us": source_start,
-            "end_us": source_end,
-            "text": cluster.text,
-        })
+        source_end = min(target.end_us, source_start + 1) if len(cluster.records) == 1 else min(target.end_us, int(last.source_start_us) + interval)
+        source_end = max(source_start + 1, source_end)
+        rows.append({"start_us": source_start, "end_us": source_end, "text": cluster.text})
     rows.sort(key=lambda item: (int(item["start_us"]), int(item["end_us"]), str(item["text"])))
     return rows
 
 
-def _target_vlm_semantic(
-    target: p2.P2ShotInput,
-    result: p2.P2ProviderResult,
-) -> Mapping[str, Any]:
+def _target_vlm_record(target: p2.P2ShotInput, result: p2.P2ProviderResult) -> p2.P2EvidenceRecord:
     for record in result.evidence:
-        if (
-            record.source_type.strip().upper() == "VLM_OUTPUT"
-            and record.shot_revision_item_id == target.revision_item_id
-            and isinstance(record.payload, Mapping)
-        ):
-            semantic = record.payload.get("semantic")
-            if isinstance(semantic, Mapping):
-                return semantic
+        if record.source_type.strip().upper() == "VLM_OUTPUT" and record.shot_revision_item_id == target.revision_item_id:
+            return record
+    raise BreakdownShotRerunError("VLM 已完成但没有当前 Shot 的 exact-Shot Evidence")
+
+
+def _target_vlm_semantic(target: p2.P2ShotInput, result: p2.P2ProviderResult) -> Mapping[str, Any]:
+    record = _target_vlm_record(target, result)
+    if isinstance(record.payload, Mapping):
+        semantic = record.payload.get("semantic")
+        if isinstance(semantic, Mapping):
+            return semantic
     raise BreakdownShotRerunError("VLM 已完成但没有当前 Shot 的 exact-Shot 语义")
 
 
@@ -540,6 +441,44 @@ def _performance_rows(semantic: Mapping[str, Any], base_shot: Mapping[str, Any])
     return [{"text": item, "people": list(safe_people)} for item in texts]
 
 
+def _performance_details(semantic: Mapping[str, Any]) -> dict[str, str | None] | None:
+    raw_subjects = semantic.get("subjects")
+    if not isinstance(raw_subjects, list):
+        return None
+    fields = {
+        "expression": "expression_summary",
+        "posture": "posture_summary",
+        "gaze": "gaze_summary",
+        "interaction": "interaction_summary",
+    }
+    result: dict[str, str | None] = {}
+    for target_key, source_key in fields.items():
+        values: list[str] = []
+        for raw in raw_subjects:
+            if not isinstance(raw, Mapping):
+                continue
+            value = _clean_text(raw.get(source_key), max_len=1200)
+            if value and value not in values:
+                values.append(value)
+        result[target_key] = "；".join(values) if values else None
+    return result if any(result.values()) else None
+
+
+def _continuity_from_vlm(target: p2.P2ShotInput, result: p2.P2ProviderResult, shot_semantic: Mapping[str, Any]) -> str | None:
+    direct = _clean_text(shot_semantic.get("continuity_hint"), max_len=2000)
+    if direct:
+        return direct
+    record = _target_vlm_record(target, result)
+    episode_window = record.payload.get("episode_window") if isinstance(record.payload, Mapping) else None
+    if not isinstance(episode_window, Mapping):
+        return None
+    note = _clean_text(episode_window.get("context_note"), max_len=2000)
+    if note:
+        return note
+    state = str(episode_window.get("scene_continuity") or "UNCERTAIN").strip().upper()
+    return "同场景延续" if state == "SAME" else ("新场景起点" if state == "NEW_SCENE" else None)
+
+
 def _prop_rows(semantic: Mapping[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -554,10 +493,7 @@ def _prop_rows(semantic: Mapping[str, Any]) -> list[dict[str, Any]]:
         if not label or not key or key in seen:
             continue
         seen.add(key)
-        rows.append({
-            "label": label,
-            "interaction": _clean_text(raw.get("narrative_reason"), max_len=2000),
-        })
+        rows.append({"label": label, "interaction": _clean_text(raw.get("narrative_reason"), max_len=2000)})
     return rows
 
 
@@ -570,8 +506,6 @@ def build_shot_rerun_overlay_v1(
     vlm_result: p2.P2ProviderResult,
     rerun_id: str,
 ) -> tuple[dict[str, Any], list[str]]:
-    """Pure deterministic projection from scoped provider evidence to one Shot Timeline patch."""
-
     base_scene, base_shot = _timeline_scene_and_shot(base_timeline, target.ordinal)
     semantic = _target_vlm_semantic(target, vlm_result)
     shot_semantic = semantic.get("shot") if isinstance(semantic.get("shot"), Mapping) else {}
@@ -580,20 +514,28 @@ def build_shot_rerun_overlay_v1(
     summary = _clean_text(shot_semantic.get("summary"), max_len=4000)
     visual = _clean_text(shot_semantic.get("visual_description"), max_len=8000)
     narrative = _clean_text(shot_semantic.get("narrative_function_hint"), max_len=4000)
+    continuity = _continuity_from_vlm(target, vlm_result, shot_semantic)
     if summary is not None:
         overlay["summary"] = summary
     if visual is not None:
         overlay["visual_description"] = visual
     if narrative is not None:
         overlay["narrative_function"] = narrative
+    if continuity is not None:
+        overlay["continuity"] = continuity
 
     overlay["performance"] = _performance_rows(semantic, base_shot)
+    details = _performance_details(semantic)
+    if details is not None:
+        overlay["performance_details"] = details
     overlay["props"] = _prop_rows(semantic)
     camera: dict[str, Any] = {}
     for source_key, target_key in (
         ("shot_type_hint", "shot_type"),
+        ("camera_angle_hint", "camera_angle"),
         ("composition_hint", "composition"),
         ("camera_motion_hint", "camera_motion"),
+        ("lighting_hint", "lighting"),
     ):
         value = _clean_text(shot_semantic.get(source_key), max_len=1800)
         if value is not None:
@@ -628,56 +570,35 @@ def build_shot_rerun_overlay_v1(
             f"Shot {target.ordinal:02d} 单镜重拉出现新的场景提示；"
             "单镜模式不会自动改写共享 Scene 边界，建议需要时执行整集拉片。"
         )
-
     return overlay, user_warnings
 
 
 def _record_payload(record: p2.P2EvidenceRecord) -> dict[str, Any]:
     return {
-        "source_type": record.source_type,
-        "source_id": record.source_id,
-        "source_start_us": record.source_start_us,
-        "source_end_us": record.source_end_us,
-        "shot_revision_item_id": record.shot_revision_item_id,
-        "text": record.text,
-        "language": record.language,
-        "confidence": record.confidence,
-        "payload": dict(record.payload),
+        "source_type": record.source_type, "source_id": record.source_id,
+        "source_start_us": record.source_start_us, "source_end_us": record.source_end_us,
+        "shot_revision_item_id": record.shot_revision_item_id, "text": record.text,
+        "language": record.language, "confidence": record.confidence, "payload": dict(record.payload),
     }
 
 
 def _result_payload(result: p2.P2ProviderResult) -> dict[str, Any]:
     return {
-        "component": result.component,
-        "provider": result.provider,
-        "model": result.model,
-        "status": result.status,
-        "metadata": dict(result.metadata),
-        "warnings": list(result.warnings),
+        "component": result.component, "provider": result.provider, "model": result.model,
+        "status": result.status, "metadata": dict(result.metadata), "warnings": list(result.warnings),
         "evidence": [_record_payload(item) for item in result.evidence],
     }
 
 
 def _canonical_fingerprint(payload: Mapping[str, Any]) -> str:
     canonical = {key: value for key, value in payload.items() if key != "artifact_fingerprint"}
-    encoded = json.dumps(
-        canonical,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    encoded = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
 def _artifact_dir(draft: Mapping[str, Any], shot_ordinal: int) -> Path:
     _run_id, project_id, episode_id, revision_id = _anchors(draft)
-    return (
-        studio_v2.episode_dir(project_id, episode_id)
-        / "breakdown"
-        / "shot-reruns"
-        / revision_id
-        / f"shot-{shot_ordinal:06d}"
-    )
+    return studio_v2.episode_dir(project_id, episode_id) / "breakdown" / "shot-reruns" / revision_id / f"shot-{shot_ordinal:06d}"
 
 
 def shot_rerun_current_path_v1(draft: Mapping[str, Any], shot_ordinal: int) -> Path:
@@ -695,10 +616,7 @@ def _write_atomic(path: Path, serialized: str) -> None:
         temp.unlink(missing_ok=True)
 
 
-def persist_shot_rerun_artifact_v1(
-    draft: Mapping[str, Any],
-    artifact: Mapping[str, Any],
-) -> Path:
+def persist_shot_rerun_artifact_v1(draft: Mapping[str, Any], artifact: Mapping[str, Any]) -> Path:
     shot_ordinal = int(artifact.get("shot_ordinal") or 0)
     rerun_id = str(artifact.get("rerun_id") or "").strip()
     if shot_ordinal <= 0 or not rerun_id:
@@ -709,7 +627,6 @@ def persist_shot_rerun_artifact_v1(
         serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     except (TypeError, ValueError) as exc:
         raise BreakdownShotRerunError("单镜重拉 artifact 无法安全序列化") from exc
-
     with _WRITE_LOCK:
         root = _artifact_dir(draft, shot_ordinal)
         root.mkdir(parents=True, exist_ok=True)
@@ -721,18 +638,12 @@ def persist_shot_rerun_artifact_v1(
     return archive
 
 
-def _artifact_compatible(
-    draft: Mapping[str, Any],
-    artifact: Mapping[str, Any],
-) -> bool:
+def _artifact_compatible(draft: Mapping[str, Any], artifact: Mapping[str, Any]) -> bool:
     run_id, project_id, episode_id, revision_id = _anchors(draft)
     expected = {
-        "schema_version": SHOT_RERUN_SCHEMA_VERSION,
-        "profile": SHOT_RERUN_PROFILE,
-        "source_breakdown_run_id": run_id,
-        "project_id": project_id,
-        "episode_id": episode_id,
-        "source_shot_revision_id": revision_id,
+        "schema_version": SHOT_RERUN_SCHEMA_VERSION, "profile": SHOT_RERUN_PROFILE,
+        "source_breakdown_run_id": run_id, "project_id": project_id,
+        "episode_id": episode_id, "source_shot_revision_id": revision_id,
     }
     if any(str(artifact.get(key) or "") != str(value) for key, value in expected.items()):
         return False
@@ -741,23 +652,15 @@ def _artifact_compatible(
 
 
 def apply_shot_rerun_overrides_v1(
-    draft: Mapping[str, Any],
-    timeline_payload: Mapping[str, Any] | SceneTimelinePayloadV1,
+    draft: Mapping[str, Any], timeline_payload: Mapping[str, Any] | SceneTimelinePayloadV1,
 ) -> dict[str, Any]:
-    """Pure-read projection of persisted current single-Shot AI reruns."""
-
     timeline = (
         timeline_payload.model_dump(mode="json")
         if isinstance(timeline_payload, SceneTimelinePayloadV1)
         else SceneTimelinePayloadV1.model_validate(timeline_payload).model_dump(mode="json")
     )
     _run_id, project_id, episode_id, revision_id = _anchors(draft)
-    root = (
-        studio_v2.episode_dir(project_id, episode_id)
-        / "breakdown"
-        / "shot-reruns"
-        / revision_id
-    )
+    root = studio_v2.episode_dir(project_id, episode_id) / "breakdown" / "shot-reruns" / revision_id
     if not root.is_dir():
         return timeline
 
@@ -774,16 +677,13 @@ def apply_shot_rerun_overrides_v1(
             continue
         if _artifact_compatible(draft, raw):
             artifacts.append(raw)
-
     if not artifacts and not corrupt:
         return timeline
 
     by_ordinal: dict[int, dict[str, Any]] = {}
-    scene_by_ordinal: dict[int, dict[str, Any]] = {}
     for scene in timeline["scenes"]:
         for shot in scene["shots"]:
             by_ordinal[int(shot["ordinal"])] = shot
-            scene_by_ordinal[int(shot["ordinal"])] = scene
 
     applied = 0
     warnings = list(timeline.get("warnings") or [])
@@ -802,12 +702,14 @@ def apply_shot_rerun_overrides_v1(
         if not isinstance(overlay, Mapping):
             corrupt = True
             continue
-        for key in ("summary", "visual_description", "narrative_function"):
+        for key in ("summary", "visual_description", "narrative_function", "continuity"):
             if key in overlay:
                 shot[key] = deepcopy(overlay[key])
         for key in ("performance", "dialogue", "props", "on_screen_text"):
             if key in overlay and isinstance(overlay[key], list):
                 shot[key] = deepcopy(overlay[key])
+        if isinstance(overlay.get("performance_details"), Mapping):
+            shot["performance_details"] = deepcopy(dict(overlay["performance_details"]))
         if isinstance(overlay.get("cinematography"), Mapping):
             camera = dict(shot.get("cinematography") or {})
             camera.update(deepcopy(dict(overlay["cinematography"])))
@@ -835,8 +737,6 @@ def run_shot_breakdown_rerun_v1(
     providers: Sequence[p2.BreakdownP2Provider] | None = None,
     progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
-    """Run a real, narrow P2 analysis for one Shot and persist its AI overlay artifact."""
-
     draft = get_current_breakdown(episode_id)
     if draft is None:
         raise BreakdownShotRerunError("当前剧集还没有完整整集拉片结果，请先执行整集拉片")
@@ -855,7 +755,6 @@ def run_shot_breakdown_rerun_v1(
     target_context = replace(full_context, shots=(target,))
     vlm_shots = _vlm_context_shots(full_context, base_timeline, target)
     vlm_context = replace(full_context, shots=vlm_shots)
-
     max_source_end = max((item.end_us for item in full_context.shots), default=target.end_us)
     audio_start = max(0, target.start_us - SHOT_RERUN_AUDIO_PADDING_US)
     audio_end = min(max_source_end, target.end_us + SHOT_RERUN_AUDIO_PADDING_US)
@@ -878,22 +777,13 @@ def run_shot_breakdown_rerun_v1(
         ocr_result = _execute_provider(provider_by_component["OCR"], target_context)
         _report(progress, 50.0, "breakdown_shot_ocr", "当前分镜画面文字识别完成")
 
-        _report(
-            progress,
-            53.0,
-            "breakdown_shot_vlm",
-            f"分析当前分镜，并读取 {len(vlm_shots) - 1} 个相邻镜头作为上下文",
-        )
+        _report(progress, 53.0, "breakdown_shot_vlm", f"分析当前分镜，并读取 {len(vlm_shots) - 1} 个相邻镜头作为上下文")
         vlm_result = _execute_provider(provider_by_component["VLM"], vlm_context)
         _report(progress, 88.0, "breakdown_shot_vlm", "当前分镜视觉语义识别完成")
 
     overlay, user_warnings = build_shot_rerun_overlay_v1(
-        target=target,
-        base_timeline=base_timeline,
-        asr_result=asr_result,
-        ocr_result=ocr_result,
-        vlm_result=vlm_result,
-        rerun_id=rerun_id,
+        target=target, base_timeline=base_timeline, asr_result=asr_result,
+        ocr_result=ocr_result, vlm_result=vlm_result, rerun_id=rerun_id,
     )
     _report(progress, 92.0, "breakdown_shot_fusion", "融合当前分镜 ASR / OCR / VLM 结果")
 
@@ -913,11 +803,7 @@ def run_shot_breakdown_rerun_v1(
         "audio_scope_start_us": audio_start,
         "audio_scope_end_us": audio_end,
         "created_at": studio_v2.utcnow().isoformat(),
-        "providers": {
-            "ASR": _result_payload(asr_result),
-            "OCR": _result_payload(ocr_result),
-            "VLM": _result_payload(vlm_result),
-        },
+        "providers": {"ASR": _result_payload(asr_result), "OCR": _result_payload(ocr_result), "VLM": _result_payload(vlm_result)},
         "overlay": overlay,
         "user_warnings": user_warnings,
         "artifact_fingerprint": "",
@@ -933,11 +819,7 @@ def run_shot_breakdown_rerun_v1(
         "source_shot_revision_id": revision_id,
         "context_shot_ordinals": [item.ordinal for item in vlm_shots],
         "artifact_path": str(path),
-        "provider_status": {
-            "ASR": asr_result.status,
-            "OCR": ocr_result.status,
-            "VLM": vlm_result.status,
-        },
+        "provider_status": {"ASR": asr_result.status, "OCR": ocr_result.status, "VLM": vlm_result.status},
         "warnings": user_warnings,
     }
 
