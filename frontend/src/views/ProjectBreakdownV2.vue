@@ -170,6 +170,7 @@ const selectedPeople = computed<SceneTimelinePerson[]>(() => {
 })
 
 const selectedDialogue = computed(() => selectedTimelineShot.value?.dialogue || [])
+const selectedScreenText = computed(() => selectedTimelineShot.value?.on_screen_text || [])
 const selectedProps = computed(() => {
   const shot = selectedTimelineShot.value
   if (!shot) return []
@@ -283,6 +284,13 @@ function shotSearchText(shot: Shot): string {
     context?.shot.summary || '',
     context?.shot.narrative_function || '',
     context?.shot.visual_description || '',
+    context?.shot.continuity || '',
+    context?.shot.performance_details?.expression || '',
+    context?.shot.performance_details?.posture || '',
+    context?.shot.performance_details?.gaze || '',
+    context?.shot.performance_details?.interaction || '',
+    context?.shot.cinematography.camera_angle || '',
+    context?.shot.cinematography.lighting || '',
     ...(context?.shot.performance || []).map((item) => item.text),
     ...(context?.shot.dialogue || []).map((item) => item.text),
     ...(context?.shot.props || []).map((item) => item.label),
@@ -333,43 +341,85 @@ const sceneEnvironment = computed(() => selectedScene.value?.scene_info.environm
 const peopleNames = computed(() => selectedPeople.value.map(personDisplayName))
 const performanceTexts = computed(() => selectedTimelineShot.value?.performance.map((item) => item.text.trim()).filter(Boolean) || [])
 const actionSummary = computed(() => performanceTexts.value.join('；') || selectedTimelineShot.value?.visual_description || '暂无动作描述')
-const interactionSummary = computed(() => {
-  const shot = selectedTimelineShot.value
-  if (!shot || !shot.people.length) return '未识别明确人物互动'
-  if (shot.people.length === 1) return '当前镜头以单人行为为主'
-  return `${peopleNames.value.join('、')} 同镜出现，具体互动以动作描述为准`
-})
 
 function performanceByKeywords(keywords: string[], fallback: string): string {
   const text = performanceTexts.value.find((item) => keywords.some((keyword) => item.includes(keyword)))
   return text || fallback
 }
 
-const expressionSummary = computed(() => performanceByKeywords(['表情', '笑', '惊', '哭', '怒', '愤', '紧张', '平静', '悲', '喜'], '暂无独立表情描述'))
-const postureSummary = computed(() => performanceByKeywords(['站', '坐', '躺', '蹲', '姿态', '身体', '头部', '转身'], '暂无独立姿态描述'))
-const gazeSummary = computed(() => performanceByKeywords(['视线', '看向', '注视', '望向', '眼神'], '暂无独立视线描述'))
-const contentOverview = computed(() => selectedTimelineShot.value?.summary?.trim() || selectedTimelineShot.value?.visual_description?.trim() || selectedTimelineShot.value?.narrative_function?.trim() || '暂无当前镜头内容概要')
+const expressionSummary = computed(() => selectedTimelineShot.value?.performance_details?.expression?.trim()
+  || performanceByKeywords(['表情', '笑', '惊', '哭', '怒', '愤', '紧张', '平静', '悲', '喜'], '待补充'))
+const postureSummary = computed(() => selectedTimelineShot.value?.performance_details?.posture?.trim()
+  || performanceByKeywords(['站', '坐', '躺', '蹲', '姿态', '身体', '头部', '转身'], '待补充'))
+const gazeSummary = computed(() => selectedTimelineShot.value?.performance_details?.gaze?.trim()
+  || performanceByKeywords(['视线', '看向', '注视', '望向', '眼神'], '待补充'))
+const interactionSummary = computed(() => selectedTimelineShot.value?.performance_details?.interaction?.trim() || '待补充')
+const contentOverview = computed(() => selectedTimelineShot.value?.summary?.trim() || '暂无当前镜头内容概要')
+const visualFactSummary = computed(() => selectedTimelineShot.value?.visual_description?.trim() || '暂无独立画面事实')
 const shotNarrativeSummary = computed(() => selectedTimelineShot.value?.narrative_function?.trim() || '暂无当前镜头剧情作用')
+const continuitySummary = computed(() => selectedTimelineShot.value?.continuity?.trim() || '待补充')
 const cameraShotType = computed(() => selectedTimelineShot.value?.cinematography.shot_type || selectedShot.value?.shot_type || '—')
+const cameraAngle = computed(() => selectedTimelineShot.value?.cinematography.camera_angle?.trim() || '待补充')
 const cameraComposition = computed(() => selectedTimelineShot.value?.cinematography.composition || '—')
-const cameraMotion = computed(() => selectedTimelineShot.value?.cinematography.camera_motion || selectedShot.value?.camera_motion || '—')
+const cameraMotion = computed(() => selectedTimelineShot.value?.cinematography.camera_motion || selectedShot.value?.camera_motion || '待补充')
+const lightingSummary = computed(() => selectedTimelineShot.value?.cinematography.lighting?.trim() || '待补充')
 const timeOfDay = computed(() => selectedScene.value?.scene_info.time_of_day || '—')
 const interiorExterior = computed(() => selectedScene.value?.scene_info.interior_exterior || '—')
 const dialogueSummary = computed(() => selectedDialogue.value.length
   ? selectedDialogue.value.map((item) => `${dialogueSpeaker(item)}：${item.text}`).join('；')
   : '无对白')
 const propSummary = computed(() => selectedProps.value.length ? selectedProps.value.map((item) => item.name).join('、') : '无关键道具')
+const screenTextSummary = computed(() => selectedScreenText.value.length
+  ? selectedScreenText.value.map((item) => item.text).join('；')
+  : '无画面文字')
+
+function hasText(value: string | null | undefined): boolean {
+  return Boolean(value && value.trim() && value.trim() !== 'UNKNOWN' && value.trim() !== '—')
+}
+
+const h3MissingGroups = computed(() => {
+  const shot = selectedTimelineShot.value
+  if (!shot) return [] as PendingItem[]
+  const items: PendingItem[] = []
+  if (!hasText(shot.summary) || !hasText(shot.visual_description) || !hasText(shot.narrative_function) || !hasText(shot.continuity)) {
+    items.push({ key: 'summary', label: '概要 / 画面事实 / 剧情作用 / 连续性待补充', tone: 'blue' })
+  }
+  if (shot.people.length && (
+    !performanceTexts.value.length
+    || !hasText(shot.performance_details?.expression)
+    || !hasText(shot.performance_details?.posture)
+    || !hasText(shot.performance_details?.gaze)
+    || !hasText(shot.performance_details?.interaction)
+  )) {
+    items.push({ key: 'performance', label: '人物动作 / 表情 / 姿态 / 视线 / 交互待补充', tone: 'blue' })
+  }
+  if (
+    !hasText(shot.cinematography.shot_type)
+    || !hasText(shot.cinematography.camera_angle)
+    || !hasText(shot.cinematography.composition)
+    || !hasText(shot.cinematography.camera_motion)
+  ) {
+    items.push({ key: 'camera', label: '景别 / 机位 / 构图 / 运镜待补充', tone: 'blue' })
+  }
+  if (!hasText(shot.cinematography.lighting)) {
+    items.push({ key: 'scene', label: '光线信息待补充', tone: 'blue' })
+  }
+  return items
+})
 
 const selectedPendingItems = computed<PendingItem[]>(() => {
   if (!selectedTimelineShot.value) return []
   const items: PendingItem[] = []
   if (selectedPeople.value.some((person) => !person.final_character)) items.push({ key: 'person', label: '人物身份待确认', tone: 'orange' })
-  if (selectedDialogue.value.some((dialogue) => !dialogue.speakers.length)) items.push({ key: 'dialogue', label: '对白说话人待确认', tone: 'blue' })
+  if (selectedDialogue.value.some((dialogue) => !dialogue.speakers.length)) items.push({ key: 'dialogue', label: '对白说话人待确认', tone: 'orange' })
   const status = selectedStatus.value
   if (status?.state === 'review' && status.detail && !items.some((item) => status.detail?.includes(item.key === 'person' ? '人物' : '对白'))) {
     items.push({ key: 'quality', label: status.detail, tone: 'red' })
   }
   if (status?.state === 'failed' && status.detail) items.push({ key: 'failed', label: status.detail, tone: 'red' })
+  for (const item of h3MissingGroups.value) {
+    if (!items.some((existing) => existing.key === item.key)) items.push(item)
+  }
   return items
 })
 
@@ -380,12 +430,17 @@ const h3Sections = computed(() => [
   { label: '关键道具', value: propSummary.value },
   { label: '动作', value: actionSummary.value },
   { label: '表情', value: expressionSummary.value },
+  { label: '姿态', value: postureSummary.value },
   { label: '视线', value: gazeSummary.value },
+  { label: '人物交互', value: interactionSummary.value },
   { label: '景别', value: cameraShotType.value },
-  { label: '机位', value: '未独立识别' },
+  { label: '机位', value: cameraAngle.value },
   { label: '构图', value: cameraComposition.value },
   { label: '运镜', value: cameraMotion.value },
+  { label: '光线', value: lightingSummary.value },
+  { label: '连续性', value: continuitySummary.value },
   { label: '对白', value: dialogueSummary.value },
+  { label: '画面文字', value: screenTextSummary.value },
   { label: '源镜头时长', value: selectedShot.value ? formatSecondsUs(selectedShot.value.duration_us) : '—' },
 ])
 
@@ -487,6 +542,10 @@ function manualFieldValue(key: string): string {
   return manualEditFields.value.find((field) => field.key === key)?.value || ''
 }
 
+function editableValue(value: string | null | undefined, placeholder: string): string {
+  return !value || value === placeholder || value === '待补充' || value === '—' ? '' : value
+}
+
 function openManualEditor(mode: ManualEditMode, dialogueIndex: number | null = null): void {
   const shot = selectedTimelineShot.value
   const scene = selectedScene.value
@@ -497,24 +556,37 @@ function openManualEditor(mode: ManualEditMode, dialogueIndex: number | null = n
   manualEditError.value = ''
 
   if (mode === 'summary') {
-    manualEditTitle.value = '内容概要'
-    manualEditFields.value = [{ key: 'summary', label: '内容概要', value: contentOverview.value === '暂无当前镜头内容概要' ? '' : contentOverview.value, multiline: true }]
+    manualEditTitle.value = '镜头内容'
+    manualEditFields.value = [
+      { key: 'summary', label: '内容概要', value: editableValue(shot.summary, '暂无当前镜头内容概要'), multiline: true },
+      { key: 'visual_description', label: '画面事实', value: editableValue(shot.visual_description, '暂无独立画面事实'), multiline: true },
+      { key: 'narrative_function', label: '剧情作用', value: editableValue(shot.narrative_function, '暂无当前镜头剧情作用'), multiline: true },
+      { key: 'continuity', label: '连续性', value: editableValue(shot.continuity, '待补充'), multiline: true },
+    ]
   } else if (mode === 'performance') {
     manualEditTitle.value = '动作与表演'
-    manualEditFields.value = [{ key: 'performance_text', label: '动作与表演', value: performanceTexts.value.join('；'), multiline: true }]
+    manualEditFields.value = [
+      { key: 'performance_text', label: '动作', value: performanceTexts.value.join('；'), multiline: true },
+      { key: 'expression', label: '表情', value: editableValue(shot.performance_details?.expression, '待补充'), multiline: true },
+      { key: 'posture', label: '姿态', value: editableValue(shot.performance_details?.posture, '待补充'), multiline: true },
+      { key: 'gaze', label: '视线', value: editableValue(shot.performance_details?.gaze, '待补充'), multiline: true },
+      { key: 'interaction', label: '人物 / 道具交互', value: editableValue(shot.performance_details?.interaction, '待补充'), multiline: true },
+    ]
   } else if (mode === 'camera') {
     manualEditTitle.value = '镜头语言'
     manualEditFields.value = [
-      { key: 'shot_type', label: '景别', value: cameraShotType.value === '—' ? '' : cameraShotType.value },
-      { key: 'composition', label: '构图', value: cameraComposition.value === '—' ? '' : cameraComposition.value, multiline: true },
-      { key: 'camera_motion', label: '运镜', value: cameraMotion.value === '—' ? '' : cameraMotion.value },
+      { key: 'shot_type', label: '景别', value: editableValue(cameraShotType.value, '—') },
+      { key: 'camera_angle', label: '机位 / 视角', value: editableValue(cameraAngle.value, '待补充') },
+      { key: 'composition', label: '构图', value: editableValue(cameraComposition.value, '—'), multiline: true },
+      { key: 'camera_motion', label: '运镜', value: editableValue(cameraMotion.value, '待补充') },
     ]
   } else if (mode === 'scene') {
     manualEditTitle.value = '画面信息'
     manualEditFields.value = [
-      { key: 'time_of_day', label: '时间', value: timeOfDay.value === '—' ? '' : timeOfDay.value },
-      { key: 'interior_exterior', label: '空间', value: interiorExterior.value === '—' ? '' : interiorExterior.value },
-      { key: 'environment', label: '环境 / 氛围', value: sceneEnvironment.value === '暂无环境描述' ? '' : sceneEnvironment.value, multiline: true },
+      { key: 'time_of_day', label: '时间', value: editableValue(timeOfDay.value, '—') },
+      { key: 'interior_exterior', label: '空间', value: editableValue(interiorExterior.value, '—') },
+      { key: 'lighting', label: '光线', value: editableValue(lightingSummary.value, '待补充'), multiline: true },
+      { key: 'environment', label: '环境 / 氛围', value: editableValue(scene.scene_info.environment, '暂无环境描述'), multiline: true },
     ]
   } else {
     const dialogue = dialogueIndex === null ? null : selectedDialogue.value[dialogueIndex]
@@ -541,13 +613,22 @@ async function saveManualEdit(): Promise<void> {
   const payload: SceneTimelineManualShotEdit = {}
   if (manualEditMode.value === 'summary') {
     payload.summary = manualFieldValue('summary')
+    payload.visual_description = manualFieldValue('visual_description')
+    payload.narrative_function = manualFieldValue('narrative_function')
+    payload.continuity = manualFieldValue('continuity')
   } else if (manualEditMode.value === 'performance') {
     payload.performance_text = manualFieldValue('performance_text')
+    payload.expression = manualFieldValue('expression')
+    payload.posture = manualFieldValue('posture')
+    payload.gaze = manualFieldValue('gaze')
+    payload.interaction = manualFieldValue('interaction')
   } else if (manualEditMode.value === 'camera') {
     payload.shot_type = manualFieldValue('shot_type')
+    payload.camera_angle = manualFieldValue('camera_angle')
     payload.composition = manualFieldValue('composition')
     payload.camera_motion = manualFieldValue('camera_motion')
   } else if (manualEditMode.value === 'scene') {
+    payload.lighting = manualFieldValue('lighting')
     payload.scene = {
       time_of_day: manualFieldValue('time_of_day'),
       interior_exterior: manualFieldValue('interior_exterior'),
@@ -587,6 +668,22 @@ function handlePendingItem(item: PendingItem): void {
   }
   if (item.key === 'failed') {
     void startEpisodeBreakdown(true)
+    return
+  }
+  if (item.key === 'summary') {
+    openManualEditor('summary')
+    return
+  }
+  if (item.key === 'performance') {
+    openManualEditor('performance')
+    return
+  }
+  if (item.key === 'camera') {
+    openManualEditor('camera')
+    return
+  }
+  if (item.key === 'scene') {
+    openManualEditor('scene')
     return
   }
   detailTab.value = 'shot'
@@ -967,8 +1064,13 @@ onBeforeUnmount(() => {
               <template v-if="selectedShot && selectedTimelineShot && selectedScene">
                 <template v-if="detailTab === 'shot'">
                   <section class="info-card editable-card">
-                    <div class="info-card-title"><h3>内容概要</h3><button type="button" @click="openManualEditor('summary')">✎ 编辑</button></div>
-                    <p class="summary-paragraph">{{ contentOverview }}</p>
+                    <div class="info-card-title"><h3>镜头内容</h3><button type="button" @click="openManualEditor('summary')">✎ 编辑</button></div>
+                    <dl class="field-list">
+                      <div><dt>概要</dt><dd>{{ contentOverview }}</dd></div>
+                      <div><dt>画面事实</dt><dd>{{ visualFactSummary }}</dd></div>
+                      <div><dt>剧情作用</dt><dd>{{ shotNarrativeSummary }}</dd></div>
+                      <div><dt>连续性</dt><dd>{{ continuitySummary }}</dd></div>
+                    </dl>
                   </section>
 
                   <section class="info-card editable-card">
@@ -978,12 +1080,12 @@ onBeforeUnmount(() => {
 
                   <section class="info-card editable-card">
                     <div class="info-card-title"><h3>镜头语言</h3><button type="button" @click="openManualEditor('camera')">✎ 编辑</button></div>
-                    <dl class="field-list"><div><dt>景别</dt><dd>{{ cameraShotType }}</dd></div><div><dt>机位</dt><dd>未独立识别</dd></div><div><dt>构图</dt><dd>{{ cameraComposition }}</dd></div><div><dt>运镜</dt><dd>{{ cameraMotion }}</dd></div></dl>
+                    <dl class="field-list"><div><dt>景别</dt><dd>{{ cameraShotType }}</dd></div><div><dt>机位</dt><dd>{{ cameraAngle }}</dd></div><div><dt>构图</dt><dd>{{ cameraComposition }}</dd></div><div><dt>运镜</dt><dd>{{ cameraMotion }}</dd></div></dl>
                   </section>
 
                   <section class="info-card editable-card">
-                    <div class="info-card-title"><h3>画面</h3><button type="button" @click="openManualEditor('scene')">✎ 编辑</button></div>
-                    <dl class="field-list"><div><dt>时间</dt><dd>{{ timeOfDay }}</dd></div><div><dt>空间</dt><dd>{{ interiorExterior }}</dd></div><div><dt>光线</dt><dd>暂无独立光线描述</dd></div><div><dt>氛围</dt><dd>{{ sceneEnvironment }}</dd></div></dl>
+                    <div class="info-card-title"><h3>画面环境</h3><button type="button" @click="openManualEditor('scene')">✎ 编辑</button></div>
+                    <dl class="field-list"><div><dt>时间</dt><dd>{{ timeOfDay }}</dd></div><div><dt>空间</dt><dd>{{ interiorExterior }}</dd></div><div><dt>光线</dt><dd>{{ lightingSummary }}</dd></div><div><dt>环境 / 氛围</dt><dd>{{ sceneEnvironment }}</dd></div><div><dt>画面文字</dt><dd>{{ screenTextSummary }}</dd></div></dl>
                   </section>
 
                   <section class="pending-card">
@@ -991,8 +1093,8 @@ onBeforeUnmount(() => {
                     <div v-if="selectedPendingItems.length" class="pending-grid">
                       <button v-for="item in selectedPendingItems" :key="item.key" type="button" :class="['pending-item', item.tone]" @click="handlePendingItem(item)"><i>!</i><span>{{ item.label }}</span><b>1</b></button>
                     </div>
-                    <div v-else class="pending-clear">✓ 当前分镜没有阻塞项</div>
-                    <p v-if="selectedPendingItems.length">可进入原片确认前还需处理 <b>{{ selectedPendingItems.length }}</b> 项；点击对应项可直接处理。</p>
+                    <div v-else class="pending-clear">✓ 当前分镜关键事实完整</div>
+                    <p v-if="selectedPendingItems.length">还有 <b>{{ selectedPendingItems.length }}</b> 组信息需要确认或补充；点击对应项可直接处理。</p>
                   </section>
                 </template>
 
@@ -1008,8 +1110,8 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template v-else-if="detailTab === 'assets'">
-                  <section class="info-card editable-card"><div class="info-card-title"><h3>场景</h3><button type="button" @click="goSourceConfirm">去原片确认</button></div><dl class="field-list"><div><dt>名称</dt><dd>{{ sceneName }}</dd></div><div><dt>环境</dt><dd>{{ sceneEnvironment }}</dd></div><div><dt>时间</dt><dd>{{ timeOfDay }}</dd></div></dl></section>
-                  <section class="info-card editable-card"><div class="info-card-title"><h3>道具</h3><button type="button" @click="goSourceConfirm">管理道具</button></div><div v-if="selectedProps.length" class="prop-list"><div v-for="prop in selectedProps" :key="`${prop.name}-${prop.interaction}`"><span>{{ prop.name.slice(0, 1) }}</span><p><b>{{ prop.name }}</b><small>{{ prop.interaction }}</small></p></div></div><div v-else class="tab-empty compact">当前分镜没有关键道具</div></section>
+                  <section class="info-card editable-card"><div class="info-card-title"><h3>场景</h3><button type="button" @click="goSourceConfirm">去原片确认</button></div><dl class="field-list"><div><dt>名称</dt><dd>{{ sceneName }}</dd></div><div><dt>环境</dt><dd>{{ sceneEnvironment }}</dd></div><div><dt>时间</dt><dd>{{ timeOfDay }}</dd></div><div><dt>光线</dt><dd>{{ lightingSummary }}</dd></div></dl></section>
+                  <section class="info-card editable-card"><div class="info-card-title"><h3>道具</h3><button type="button" @click="goSourceConfirm">管理道具</button></div><div v-if="selectedProps.length" class="prop-list"><div v-for="prop in selectedProps" :key="`${prop.name}-${prop.interaction}`"><span><img v-if="prop.coverUrl" :src="prop.coverUrl" alt="" /><template v-else>{{ prop.name.slice(0, 1) }}</template></span><p><b>{{ prop.name }}</b><small>{{ prop.interaction }}</small></p></div></div><div v-else class="tab-empty compact">当前分镜没有关键道具</div></section>
                 </template>
 
                 <template v-else-if="detailTab === 'dialogue'">
@@ -1022,11 +1124,12 @@ onBeforeUnmount(() => {
                     </article>
                   </section>
                   <div v-else class="tab-empty">本镜头无对白</div>
+                  <section v-if="selectedScreenText.length" class="info-card"><div class="info-card-title"><h3>画面文字（OCR）</h3></div><dl class="field-list"><div v-for="(item, index) in selectedScreenText" :key="`${item.start_us}-${index}`"><dt>{{ formatTimeUs(item.start_us) }}</dt><dd>{{ item.text }}</dd></div></dl></section>
                 </template>
 
                 <template v-else>
-                  <section class="remake-status" :class="{ ready: h3Ready }"><strong>{{ h3Ready ? '✓ H3 重拍信息完整' : '! H3 重拍信息仍有待确认项' }}</strong><span>以下内容直接由当前分镜已确认事实组合，不额外编造。</span></section>
-                  <section class="info-card remake-card"><dl class="field-list"><div v-for="item in h3Sections" :key="item.label"><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd></div><div><dt>剧情作用</dt><dd>{{ shotNarrativeSummary }}</dd></div></dl></section>
+                  <section class="remake-status" :class="{ ready: h3Ready }"><strong>{{ h3Ready ? '✓ H3 重拍信息完整' : `! H3 重拍信息还缺 ${selectedPendingItems.length} 组` }}</strong><span>只使用当前分镜已有事实与人工确认值；缺失项不会被静默编造。</span></section>
+                  <section class="info-card remake-card"><dl class="field-list"><div v-for="item in h3Sections" :key="item.label"><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd></div><div><dt>剧情作用</dt><dd>{{ shotNarrativeSummary }}</dd></div><div><dt>画面事实</dt><dd>{{ visualFactSummary }}</dd></div></dl></section>
                 </template>
               </template>
               <div v-else class="tab-empty large">当前分镜还没有可展示的拉片结果。<br />可以先确认 Reference Clip 和分镜边界，再执行整集拉片。</div>
@@ -1038,7 +1141,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="helpOpen" class="modal-backdrop" @click.self="helpOpen = false">
-      <section class="help-dialog"><header><strong>AI 拉片操作说明</strong><button type="button" @click="helpOpen = false">×</button></header><div><p>1. 选择剧集后，可查看每个分镜的 Reference Clip、时间范围和拉片结果。</p><p>2. 内容概要、动作与表演、镜头语言、画面信息和对白文本可在本页直接人工修正；人物、场景、道具和说话人进入“原片确认”统一修改。</p><p>3. “当前分镜拉片 / 重新拉片”只重跑当前 Shot：ASR / OCR 只处理当前分镜，VLM 最多读取前后相邻镜头作为上下文；不会重跑整集。</p></div></section>
+      <section class="help-dialog"><header><strong>AI 拉片操作说明</strong><button type="button" @click="helpOpen = false">×</button></header><div><p>1. 选择剧集后，可查看每个分镜的 Reference Clip、时间范围和拉片结果。</p><p>2. 镜头内容、动作与表演、镜头语言、画面信息和对白文本可在本页直接人工修正；人物、场景、道具和说话人进入“原片确认”统一修改。</p><p>3. “当前分镜拉片 / 重新拉片”只重跑当前 Shot：ASR / OCR 只处理当前分镜，VLM 最多读取前后相邻镜头作为上下文；不会重跑整集。</p><p>4. H3 重拍信息会检查画面事实、动作/表情/姿态/视线/交互、景别/机位/构图/运镜、光线和连续性；缺失项会明确显示“待补充”，不会用通用文案假装完整。</p></div></section>
     </div>
 
     <div v-if="manualEditOpen" class="breakdown-manual-editor-backdrop" @click.self="closeManualEditor">
@@ -1051,7 +1154,7 @@ onBeforeUnmount(() => {
           <div class="breakdown-manual-editor-fields">
             <label v-for="field in manualEditFields" :key="field.key" class="breakdown-manual-editor-field">
               <span>{{ field.label }}</span>
-              <textarea v-if="field.multiline" v-model="field.value" rows="5"></textarea>
+              <textarea v-if="field.multiline" v-model="field.value" rows="4"></textarea>
               <input v-else v-model="field.value" type="text" />
             </label>
           </div>
