@@ -3,7 +3,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 const props = defineProps<{ projectId: string }>()
-const emit = defineEmits<{ changed: [] }>()
+const emit = defineEmits<{
+  changed: []
+  'back-to-library': []
+  'next-stage': []
+}>()
 const router = useRouter()
 
 type Mark = {
@@ -36,6 +40,7 @@ type SourceCharacter = {
   id: string
   name: string
   cover_url?: string | null
+  confidence?: number | null
   shot_ids: string[]
   shot_count?: number
   episode_count?: number
@@ -47,52 +52,76 @@ type Workspace = {
   characters: SourceCharacter[]
 }
 
+type QueueMode = 'pending' | 'assigned' | 'all'
+
 const data = ref<Workspace | null>(null)
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
 const search = ref('')
+const candidateSearch = ref('')
+const queueMode = ref<QueueMode>('pending')
 const focusKey = ref('')
 const shotIndex = ref(0)
 const destinationCharacterId = ref('')
-const creatingNew = ref(false)
-const sourceName = ref('')
-const showLocator = ref(false)
+const createModalOpen = ref(false)
+const createName = ref('')
+const locatorOpen = ref(false)
 const mark = ref<Mark | null>(null)
 let dragStart: [number, number] | null = null
 
-const pending = computed(() => (data.value?.observations || []).filter((item) => !item.character_id))
-const completedCount = computed(() => (data.value?.observations || []).filter((item) => Boolean(item.character_id)).length)
-const filteredPending = computed(() => {
+const allObservations = computed(() => data.value?.observations || [])
+const pending = computed(() => allObservations.value.filter((item) => !item.character_id))
+const assigned = computed(() => allObservations.value.filter((item) => Boolean(item.character_id)))
+const completedCount = computed(() => assigned.value.length)
+const totalCount = computed(() => allObservations.value.length)
+const progressPercent = computed(() => totalCount.value ? Math.round(completedCount.value / totalCount.value * 100) : 100)
+const boundShotCount = computed(() => new Set((data.value?.characters || []).flatMap((item) => item.shot_ids || [])).size)
+const charactersById = computed(() => new Map((data.value?.characters || []).map((item) => [item.id, item])))
+
+const queueRows = computed(() => {
+  if (queueMode.value === 'pending') return pending.value
+  if (queueMode.value === 'assigned') return assigned.value
+  return allObservations.value
+})
+
+const filteredRows = computed(() => {
   const keyword = search.value.trim().toLowerCase()
-  if (!keyword) return pending.value
-  return pending.value.filter((item) =>
+  if (!keyword) return queueRows.value
+  return queueRows.value.filter((item) =>
     `${item.name} ${item.appearance || ''} ${item.scene} ${item.episode_title}`.toLowerCase().includes(keyword),
   )
 })
-const charactersById = computed(() => new Map((data.value?.characters || []).map((item) => [item.id, item])))
-const focused = computed(() => pending.value.find((item) => item.key === focusKey.value) || null)
+
+const focused = computed(() => allObservations.value.find((item) => item.key === focusKey.value) || null)
 const currentShot = computed(() => focused.value?.shots[shotIndex.value] || null)
-const shownMark = computed(() => {
-  if (!mark.value || !currentShot.value) return null
-  return mark.value.shot_id === currentShot.value.id ? mark.value : null
+const suggestedCharacter = computed(() => {
+  const id = focused.value?.suggested_character_id
+  return id ? charactersById.value.get(id) || null : null
 })
 const selectedCharacter = computed(() => destinationCharacterId.value
   ? charactersById.value.get(destinationCharacterId.value) || null
   : null)
-const canSave = computed(() => Boolean(
-  focused.value
-  && !busy.value
-  && (
-    (!creatingNew.value && destinationCharacterId.value)
-    || (creatingNew.value && sourceName.value.trim())
-  ),
-))
-const progressLabel = computed(() => {
-  const total = data.value?.observations.length || 0
-  if (!total) return '0 / 0'
-  return `${completedCount.value} / ${total}`
+
+const candidateCharacters = computed(() => {
+  const keyword = candidateSearch.value.trim().toLowerCase()
+  const rows = (data.value?.characters || []).filter((character) =>
+    !keyword || character.name.toLowerCase().includes(keyword),
+  )
+  const suggestedId = focused.value?.suggested_character_id || ''
+  return [...rows].sort((a, b) => {
+    if (a.id === suggestedId && b.id !== suggestedId) return -1
+    if (b.id === suggestedId && a.id !== suggestedId) return 1
+    return (b.shot_count ?? b.shot_ids.length) - (a.shot_count ?? a.shot_ids.length)
+  })
 })
+
+const shownMark = computed(() => {
+  if (!mark.value || !currentShot.value) return null
+  return mark.value.shot_id === currentShot.value.id ? mark.value : null
+})
+
+const canConfirm = computed(() => Boolean(focused.value && selectedCharacter.value && !busy.value))
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, options)
@@ -112,26 +141,21 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 function selectObservation(item: Observation): void {
   focusKey.value = item.key
   shotIndex.value = 0
-  sourceName.value = ''
-  creatingNew.value = false
-  showLocator.value = false
+  destinationCharacterId.value = item.character_id || item.suggested_character_id || ''
+  candidateSearch.value = ''
   mark.value = item.localization ? {
     shot_id: item.localization.shot_id,
     image_url: item.localization.image_url,
     box: [...item.localization.box],
   } : null
+  createModalOpen.value = false
+  locatorOpen.value = false
   dragStart = null
-
-  if (item.suggested_character_id && charactersById.value.has(item.suggested_character_id)) {
-    destinationCharacterId.value = item.suggested_character_id
-  } else {
-    destinationCharacterId.value = ''
-  }
 }
 
 function ensureFocus(): void {
-  if (focused.value) return
-  const next = filteredPending.value[0] || pending.value[0]
+  if (focused.value && queueRows.value.some((item) => item.key === focused.value?.key)) return
+  const next = filteredRows.value[0] || queueRows.value[0] || allObservations.value[0]
   if (next) selectObservation(next)
   else focusKey.value = ''
 }
@@ -149,18 +173,27 @@ async function load(): Promise<void> {
   }
 }
 
-function chooseCharacter(characterId: string): void {
-  destinationCharacterId.value = characterId
-  creatingNew.value = false
-  sourceName.value = ''
+function setQueueMode(mode: QueueMode): void {
+  queueMode.value = mode
+  const next = mode === 'pending' ? pending.value[0] : mode === 'assigned' ? assigned.value[0] : allObservations.value[0]
+  if (next) selectObservation(next)
+  else focusKey.value = ''
 }
 
-function chooseNewCharacter(): void {
-  destinationCharacterId.value = ''
-  creatingNew.value = true
-  sourceName.value = focused.value?.name && !/^人物\d*$/u.test(focused.value.name)
-    ? focused.value.name
-    : ''
+function chooseCharacter(characterId: string): void {
+  destinationCharacterId.value = characterId
+}
+
+function openCreateModal(): void {
+  const suggestedName = focused.value?.name || ''
+  createName.value = /^人物\d*$/u.test(suggestedName) ? '' : suggestedName
+  createModalOpen.value = true
+}
+
+function openLocator(): void {
+  if (!focused.value?.shots.length) return
+  locatorOpen.value = true
+  dragStart = null
 }
 
 function markStyle(value: Mark): Record<string, string> {
@@ -182,13 +215,13 @@ function point(event: PointerEvent): [number, number] {
 }
 
 function startMark(event: PointerEvent): void {
-  if (!showLocator.value || busy.value || !currentShot.value?.thumbnail_url) return
+  if (!locatorOpen.value || busy.value || !currentShot.value?.thumbnail_url) return
   dragStart = point(event)
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 
 function moveMark(event: PointerEvent): void {
-  if (!dragStart || !focused.value || !currentShot.value?.thumbnail_url) return
+  if (!dragStart || !currentShot.value?.thumbnail_url) return
   const [x, y] = point(event)
   const [startX, startY] = dragStart
   mark.value = {
@@ -207,9 +240,7 @@ function endMark(event: PointerEvent): void {
   if (!dragStart) return
   moveMark(event)
   dragStart = null
-  if (mark.value && (mark.value.box[2]! < 0.02 || mark.value.box[3]! < 0.02)) {
-    mark.value = null
-  }
+  if (mark.value && (mark.value.box[2]! < 0.02 || mark.value.box[3]! < 0.02)) mark.value = null
 }
 
 function clearMark(): void {
@@ -221,8 +252,26 @@ function changeShot(index: number): void {
   dragStart = null
 }
 
-async function saveAssignment(): Promise<void> {
-  if (!data.value || !focused.value || !canSave.value) return
+function nextPendingAfter(key: string): Observation | null {
+  const rows = pending.value
+  if (!rows.length) return null
+  const currentIndex = rows.findIndex((item) => item.key === key)
+  if (currentIndex >= 0 && rows[currentIndex + 1]) return rows[currentIndex + 1]!
+  return rows.find((item) => item.key !== key) || null
+}
+
+function skipCurrent(): void {
+  if (!focused.value) return
+  const next = nextPendingAfter(focused.value.key)
+  if (next) {
+    selectObservation(next)
+    return
+  }
+  error.value = '当前已经是最后一个待处理人物。可以先确认身份，或返回人物资产库。'
+}
+
+async function submitAssignment(characterId: string | null, name: string): Promise<void> {
+  if (!data.value || !focused.value || busy.value) return
   const savingKey = focused.value.key
   busy.value = true
   error.value = ''
@@ -234,15 +283,19 @@ async function saveAssignment(): Promise<void> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           keys: [savingKey],
-          name: creatingNew.value ? sourceName.value.trim() : '',
-          character_id: creatingNew.value ? null : destinationCharacterId.value,
+          name,
+          character_id: characterId,
           expected_revision: data.value.revision,
-          // 明确选择 Local Person 后不强制重新框人；用户主动框选时才保存定位证据。
+          // 只有多人同框时用户主动框选，普通身份确认不重复要求定位。
           localizations: mark.value ? { [savingKey]: mark.value } : null,
         }),
       },
     )
     data.value = result
+    createModalOpen.value = false
+    locatorOpen.value = false
+    mark.value = null
+    queueMode.value = 'pending'
     const next = result.observations.find((item) => !item.character_id && item.key !== savingKey)
     if (next) selectObservation(next)
     else focusKey.value = ''
@@ -251,10 +304,21 @@ async function saveAssignment(): Promise<void> {
     }))
     emit('changed')
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '人物归并失败'
+    error.value = err instanceof Error ? err.message : '人物身份确认失败'
   } finally {
     busy.value = false
   }
+}
+
+async function confirmSelected(): Promise<void> {
+  if (!selectedCharacter.value) return
+  await submitAssignment(selectedCharacter.value.id, '')
+}
+
+async function createAndConfirm(): Promise<void> {
+  const name = createName.value.trim()
+  if (!name) return
+  await submitAssignment(null, name)
 }
 
 function openBreakdown(): void {
@@ -274,84 +338,96 @@ onMounted(load)
 
 <template>
   <section class="identity-review">
-    <header class="review-header">
-      <div>
-        <small>人物归并</small>
-        <h2>只判断一件事：画面里这个人是谁？</h2>
-        <p>选择已有原片人物，或新建一个人物。普通情况不需要重新框选画面。</p>
+    <header class="review-topbar">
+      <button type="button" class="back-button" @click="emit('back-to-library')">← 返回</button>
+      <div class="topbar-title">
+        <strong>原片人物确认</strong>
+        <span>每次只判断一个人物，确认后自动进入下一条</span>
       </div>
-      <div class="review-header__status">
-        <span><b>{{ pending.length }}</b> 待处理</span>
-        <span><b>{{ progressLabel }}</b> 已完成</span>
-        <button type="button" :disabled="loading || busy" @click="load">刷新</button>
+      <div class="progress-box">
+        <span>{{ completedCount }} / {{ totalCount }}</span>
+        <div class="progress-track"><i :style="{ width: `${progressPercent}%` }" /></div>
+        <b>{{ progressPercent }}%</b>
       </div>
     </header>
 
     <div v-if="error" class="error" role="alert">{{ error }}</div>
-    <div v-if="loading && !data" class="loading">正在读取人物归并任务…</div>
+    <div v-if="loading && !data" class="loading">正在读取人物确认任务…</div>
 
-    <section v-else-if="data && !pending.length" class="all-done">
-      <span>✓</span>
-      <div>
-        <strong>人物归并已经处理完成</strong>
-        <p>当前没有需要人工确认的拉片人物观察。</p>
+    <section v-else-if="data && !pending.length && queueMode === 'pending'" class="completion-screen">
+      <div class="completion-check">✓</div>
+      <h2>人物确认完成！</h2>
+      <p>所有需要人工判断的人物都已完成归并，人物资产和分镜绑定已经更新。</p>
+
+      <div class="completion-metrics">
+        <article><strong>{{ data.characters.length }}</strong><span>原片人物</span></article>
+        <article><strong>0</strong><span>待确认</span></article>
+        <article><strong>{{ boundShotCount }}</strong><span>已绑定镜头</span></article>
+        <article><strong>100%</strong><span>确认完成</span></article>
+      </div>
+
+      <div class="completion-actions">
+        <button type="button" @click="emit('back-to-library')">查看人物资产库</button>
+        <button type="button" class="primary" @click="emit('next-stage')">继续场景 / 道具确认 →</button>
       </div>
     </section>
 
-    <div v-else-if="data" class="review-layout">
-      <aside class="review-queue">
-        <div class="queue-head">
-          <div>
-            <strong>待处理 {{ pending.length }}</strong>
-            <small>完成一个自动进入下一个</small>
+    <template v-else-if="data">
+      <nav class="queue-tabs" aria-label="人物确认筛选">
+        <button type="button" :class="{ active: queueMode === 'pending' }" @click="setQueueMode('pending')">
+          待处理 <b>{{ pending.length }}</b>
+        </button>
+        <button type="button" :class="{ active: queueMode === 'assigned' }" @click="setQueueMode('assigned')">
+          已确认 <b>{{ assigned.length }}</b>
+        </button>
+        <button type="button" :class="{ active: queueMode === 'all' }" @click="setQueueMode('all')">
+          全部 <b>{{ totalCount }}</b>
+        </button>
+      </nav>
+
+      <div class="review-layout">
+        <aside class="review-queue">
+          <div class="queue-search">
+            <input v-model="search" type="search" placeholder="搜索人物、外观或场景" aria-label="搜索人物" />
           </div>
-          <input v-model="search" type="search" placeholder="搜索人物或场景" aria-label="搜索待处理人物" />
-        </div>
 
-        <div class="queue-list">
-          <button
-            v-for="item in filteredPending"
-            :key="item.key"
-            type="button"
-            class="queue-item"
-            :class="{ active: item.key === focusKey }"
-            @click="selectObservation(item)"
-          >
-            <div class="queue-thumb">
-              <img v-if="item.shots[0]?.thumbnail_url" :src="item.shots[0].thumbnail_url" alt="人物观察缩略图" />
-              <span v-else>{{ item.name.slice(0, 1) }}</span>
-            </div>
-            <div class="queue-copy">
-              <strong>{{ item.name }}</strong>
-              <span>{{ item.episode_title }} · {{ item.scene }}</span>
-              <small>{{ item.shots.length }} 个分镜</small>
-            </div>
-            <em v-if="item.suggested_character_id">有建议</em>
-          </button>
-          <p v-if="!filteredPending.length" class="queue-empty">没有匹配的待处理人物。</p>
-        </div>
-      </aside>
-
-      <main v-if="focused" class="review-card">
-        <div class="identity-title">
-          <div>
-            <small>{{ focused.episode_title }} · {{ focused.scene }}</small>
-            <h3>{{ focused.name }}</h3>
-            <p>{{ focused.appearance || '暂无稳定外观描述，请以画面证据为准。' }}</p>
-          </div>
-          <button type="button" class="text-button" @click="openBreakdown">查看完整分镜 ↗</button>
-        </div>
-
-        <div class="decision-layout">
-          <section class="evidence-panel">
-            <div
-              class="frame-stage"
-              :class="{ locating: showLocator }"
-              @pointerdown.prevent="startMark"
-              @pointermove="moveMark"
-              @pointerup="endMark"
-              @pointercancel="dragStart = null"
+          <div class="queue-list">
+            <button
+              v-for="item in filteredRows"
+              :key="item.key"
+              type="button"
+              class="queue-item"
+              :class="{ active: item.key === focusKey }"
+              @click="selectObservation(item)"
             >
+              <div class="queue-thumb">
+                <img v-if="item.shots[0]?.thumbnail_url" :src="item.shots[0].thumbnail_url" alt="人物观察缩略图" />
+                <span v-else>{{ item.name.slice(0, 1) }}</span>
+              </div>
+              <div class="queue-copy">
+                <strong>{{ item.name }}</strong>
+                <span>{{ item.episode_title }} · {{ item.scene }}</span>
+                <small>{{ item.shots.length }} 个分镜</small>
+              </div>
+              <em v-if="item.character_id">已确认</em>
+              <em v-else-if="item.suggested_character_id" class="suggested">有推荐</em>
+              <em v-else class="pending">待确认</em>
+            </button>
+            <p v-if="!filteredRows.length" class="queue-empty">没有匹配的人物。</p>
+          </div>
+        </aside>
+
+        <main v-if="focused" class="review-main">
+          <section class="evidence-column">
+            <div class="current-context">
+              <div>
+                <small>当前镜头</small>
+                <strong>{{ focused.episode_title }} · 镜头 {{ currentShot?.ordinal || '-' }}</strong>
+              </div>
+              <span>{{ focused.scene }}</span>
+            </div>
+
+            <div class="frame-stage">
               <img
                 v-if="currentShot?.thumbnail_url"
                 :src="currentShot.thumbnail_url"
@@ -359,15 +435,10 @@ onMounted(load)
                 draggable="false"
               />
               <div v-else class="no-frame">当前分镜没有可用画面</div>
-              <div v-if="shownMark" class="person-box" :style="markStyle(shownMark)">
-                <span>人物定位</span>
-              </div>
-              <div v-if="showLocator && currentShot?.thumbnail_url" class="locator-tip">
-                在人物身上拖动框选
-              </div>
+              <div v-if="shownMark" class="person-box" :style="markStyle(shownMark)"><span>已定位人物</span></div>
             </div>
 
-            <div v-if="focused.shots.length > 1" class="shot-picker">
+            <div v-if="focused.shots.length > 1" class="shot-strip">
               <button
                 v-for="(shot, index) in focused.shots"
                 :key="shot.id"
@@ -375,49 +446,64 @@ onMounted(load)
                 :class="{ active: shotIndex === index }"
                 @click="changeShot(index)"
               >
-                镜头 {{ shot.ordinal }}
+                <img v-if="shot.thumbnail_url" :src="shot.thumbnail_url" alt="分镜缩略图" />
+                <span>镜头 {{ shot.ordinal }}</span>
               </button>
             </div>
 
-            <div class="locator-row">
+            <div class="evidence-meta">
               <div>
-                <strong>{{ shownMark ? '已记录人物位置' : '普通归并无需框人' }}</strong>
-                <span>只有同框多人、画面容易认错时才需要定位。</span>
+                <strong>{{ focused.name }}</strong>
+                <span>{{ focused.appearance || '暂无稳定外观描述，请以画面为准。' }}</span>
               </div>
-              <div>
-                <button v-if="shownMark" type="button" @click="clearMark">清除定位</button>
-                <button type="button" @click="showLocator = !showLocator">
-                  {{ showLocator ? '结束框选' : '需要框选人物' }}
+              <div class="evidence-actions">
+                <button type="button" @click="openBreakdown">查看完整分镜 ↗</button>
+                <button type="button" :class="{ marked: Boolean(mark) }" @click="openLocator">
+                  {{ mark ? '已框选人物 · 修改' : '需要框选人物' }}
                 </button>
               </div>
             </div>
+            <p class="locator-help">只有多人同框、容易认错时才需要框选。普通人物确认直接选择身份即可。</p>
           </section>
 
-          <section class="decision-panel">
+          <aside class="decision-panel">
             <div class="decision-head">
-              <small>确认身份</small>
-              <h3>这个人是谁？</h3>
-              <p>优先选择已有原片人物；确定是新角色时再创建。</p>
+              <small>确认人物身份</small>
+              <h2>这个人是谁？</h2>
+              <p>优先选择已有原片人物；确认是新角色时再创建。</p>
             </div>
 
-            <div
-              v-if="focused.suggested_character_id && charactersById.get(focused.suggested_character_id)"
-              class="suggestion"
+            <button
+              v-if="suggestedCharacter"
+              type="button"
+              class="recommended-card"
+              :class="{ selected: destinationCharacterId === suggestedCharacter.id }"
+              @click="chooseCharacter(suggestedCharacter.id)"
             >
-              <div>
-                <small>系统建议</small>
-                <strong>{{ charactersById.get(focused.suggested_character_id)!.name }}</strong>
+              <div class="candidate-cover large">
+                <img v-if="suggestedCharacter.cover_url" :src="suggestedCharacter.cover_url" :alt="`${suggestedCharacter.name} 人物参考`" />
+                <span v-else>{{ suggestedCharacter.name.slice(0, 1) }}</span>
               </div>
-              <span>多个分镜的 Final Binding 唯一一致</span>
+              <div>
+                <small>系统推荐 · 唯一匹配</small>
+                <strong>{{ suggestedCharacter.name }}</strong>
+                <span>{{ suggestedCharacter.shot_count ?? suggestedCharacter.shot_ids.length }} 个分镜 · {{ suggestedCharacter.episode_count ?? 0 }} 集</span>
+              </div>
+              <b>{{ destinationCharacterId === suggestedCharacter.id ? '✓' : '推荐' }}</b>
+            </button>
+
+            <div class="candidate-search">
+              <span>选择已有人物</span>
+              <input v-model="candidateSearch" type="search" placeholder="搜索人物" aria-label="搜索已有原片人物" />
             </div>
 
-            <div class="candidate-list">
+            <div class="candidate-grid">
               <button
-                v-for="character in data.characters"
+                v-for="character in candidateCharacters"
                 :key="character.id"
                 type="button"
-                class="candidate"
-                :class="{ selected: !creatingNew && destinationCharacterId === character.id }"
+                class="candidate-card"
+                :class="{ selected: destinationCharacterId === character.id }"
                 @click="chooseCharacter(character.id)"
               >
                 <div class="candidate-cover">
@@ -426,57 +512,107 @@ onMounted(load)
                 </div>
                 <div>
                   <strong>{{ character.name }}</strong>
-                  <small>{{ character.shot_count ?? character.shot_ids.length }} 个分镜 · {{ character.episode_count ?? 0 }} 集</small>
+                  <small>{{ character.shot_count ?? character.shot_ids.length }} 镜</small>
                 </div>
-                <span class="radio">{{ !creatingNew && destinationCharacterId === character.id ? '✓' : '' }}</span>
+                <i>{{ destinationCharacterId === character.id ? '✓' : '' }}</i>
               </button>
+            </div>
 
+            <button type="button" class="new-character-button" @click="openCreateModal">＋ 这是新人物</button>
+
+            <div v-if="focused.character_id" class="current-binding">
+              <span>当前已绑定</span>
+              <strong>{{ charactersById.get(focused.character_id)?.name || '原片人物' }}</strong>
+            </div>
+
+            <div class="decision-actions">
+              <button v-if="!focused.character_id" type="button" @click="skipCurrent">跳过</button>
               <button
                 type="button"
-                class="candidate new-character"
-                :class="{ selected: creatingNew }"
-                @click="chooseNewCharacter"
+                class="primary"
+                :disabled="!canConfirm"
+                @click="confirmSelected"
               >
-                <span class="new-icon">＋</span>
-                <div>
-                  <strong>这是一个新人物</strong>
-                  <small>创建新的原片人物资产</small>
-                </div>
-                <span class="radio">{{ creatingNew ? '✓' : '' }}</span>
+                {{ busy ? '正在保存…' : selectedCharacter ? `确认是 ${selectedCharacter.name} →` : '请选择人物' }}
               </button>
             </div>
+          </aside>
+        </main>
+      </div>
+    </template>
 
-            <label v-if="creatingNew" class="new-name">
-              <span>人物名称</span>
-              <input v-model="sourceName" maxlength="200" placeholder="例如：邻居大妈、司机、Emma" />
-            </label>
-
-            <div class="decision-result">
-              <template v-if="creatingNew">
-                <small>将创建并绑定</small>
-                <strong>{{ sourceName.trim() || '请输入新人物名称' }}</strong>
-              </template>
-              <template v-else-if="selectedCharacter">
-                <small>将归并到</small>
-                <strong>{{ selectedCharacter.name }}</strong>
-              </template>
-              <template v-else>
-                <small>尚未选择</small>
-                <strong>请选择已有人物或新建人物</strong>
-              </template>
-            </div>
-
-            <button
-              type="button"
-              class="primary-action"
-              :disabled="!canSave"
-              @click="saveAssignment"
-            >
-              {{ busy ? '正在保存…' : creatingNew ? '创建人物并确认 →' : selectedCharacter ? `确认是 ${selectedCharacter.name} →` : '请选择人物' }}
-            </button>
-          </section>
+    <div v-if="createModalOpen" class="modal-backdrop" @click.self="createModalOpen = false">
+      <section class="small-modal" role="dialog" aria-modal="true" aria-label="创建原片人物">
+        <header>
+          <div>
+            <small>创建新人物</small>
+            <h3>从当前画面创建原片人物</h3>
+          </div>
+          <button type="button" aria-label="关闭" @click="createModalOpen = false">×</button>
+        </header>
+        <div class="create-preview">
+          <img v-if="currentShot?.thumbnail_url" :src="currentShot.thumbnail_url" alt="当前人物画面" />
+          <div>
+            <strong>{{ focused?.name || '当前人物' }}</strong>
+            <span>{{ focused?.appearance || '请根据当前画面输入一个容易识别的人物名称。' }}</span>
+          </div>
         </div>
-      </main>
+        <label class="form-field">
+          <span>人物名称 *</span>
+          <input v-model="createName" maxlength="200" autofocus placeholder="例如：林夏、陈浩、邻居大妈" @keyup.enter="createAndConfirm" />
+        </label>
+        <p class="form-help">这里先建立稳定人物资产 ID，角色类型、替换人物和四视图在后续人物资产阶段处理。</p>
+        <footer>
+          <button type="button" @click="createModalOpen = false">取消</button>
+          <button type="button" class="primary" :disabled="busy || !createName.trim()" @click="createAndConfirm">
+            {{ busy ? '正在创建…' : '创建并确认' }}
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="locatorOpen" class="modal-backdrop" @click.self="locatorOpen = false">
+      <section class="locator-modal" role="dialog" aria-modal="true" aria-label="框选人物">
+        <header>
+          <div>
+            <small>多人镜头定位</small>
+            <h3>框选画面中要确认的人物</h3>
+          </div>
+          <button type="button" aria-label="关闭" @click="locatorOpen = false">×</button>
+        </header>
+
+        <div
+          class="locator-canvas"
+          @pointerdown.prevent="startMark"
+          @pointermove="moveMark"
+          @pointerup="endMark"
+          @pointercancel="dragStart = null"
+        >
+          <img v-if="currentShot?.thumbnail_url" :src="currentShot.thumbnail_url" alt="多人镜头，请框选目标人物" draggable="false" />
+          <div v-else class="no-frame">当前分镜没有可用画面</div>
+          <div v-if="shownMark" class="person-box" :style="markStyle(shownMark)"><span>确认对象</span></div>
+          <div v-if="!shownMark && currentShot?.thumbnail_url" class="drag-tip">按住鼠标拖动框选人物</div>
+        </div>
+
+        <div v-if="focused && focused.shots.length > 1" class="locator-shots">
+          <button
+            v-for="(shot, index) in focused.shots"
+            :key="shot.id"
+            type="button"
+            :class="{ active: shotIndex === index }"
+            @click="changeShot(index)"
+          >
+            镜头 {{ shot.ordinal }}
+          </button>
+        </div>
+
+        <footer>
+          <button v-if="mark" type="button" @click="clearMark">清除框选</button>
+          <span />
+          <button type="button" @click="locatorOpen = false">取消</button>
+          <button type="button" class="primary" :disabled="!mark" @click="locatorOpen = false">确认框选并继续选人物</button>
+        </footer>
+      </section>
     </div>
   </section>
 </template>
@@ -484,121 +620,248 @@ onMounted(load)
 <style scoped>
 .identity-review {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-height: 100%;
-  color: #263850;
+  color: #23344d;
 }
 
-.review-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 14px 16px;
-  border: 1px solid #dfe5ed;
-  border-radius: 12px;
-  background: #fff;
-}
-.review-header > div:first-child { min-width: 0; }
-.review-header small { color: #6f7f95; font-size: 10px; font-weight: 800; letter-spacing: .04em; }
-.review-header h2 { margin: 2px 0 4px; color: #273b58; font-size: 18px; }
-.review-header p { margin: 0; color: #76849a; font-size: 11px; line-height: 1.55; }
-.review-header__status { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.review-header__status > span { padding: 7px 9px; border-radius: 8px; background: #f4f7fb; color: #738197; font-size: 10px; }
-.review-header__status b { color: #334967; font-size: 12px; }
-
-button, input {
+button,
+input {
   box-sizing: border-box;
-  border: 1px solid #d7e0eb;
-  border-radius: 8px;
+  border: 1px solid #d9e1ec;
+  border-radius: 9px;
   background: #fff;
   color: #40516a;
   font: inherit;
   font-size: 11px;
 }
-button { padding: 8px 10px; cursor: pointer; }
-button:disabled { opacity: .52; cursor: not-allowed; }
-input { padding: 9px 10px; }
+button { padding: 8px 11px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: #adc0df; background: #f9fbff; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.primary { border-color: #1769ff; background: #1769ff; color: #fff; font-weight: 800; }
+button.primary:hover:not(:disabled) { border-color: #0d5be6; background: #0d5be6; }
+input { min-height: 36px; padding: 0 10px; outline: none; }
+input:focus { border-color: #7ba3f5; box-shadow: 0 0 0 3px rgba(23,105,255,.08); }
+
+.review-topbar {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid #e0e5ed;
+  border-radius: 11px;
+  background: #fff;
+}
+.back-button { color: #526985; }
+.topbar-title { min-width: 0; display: grid; gap: 1px; }
+.topbar-title strong { color: #263b58; font-size: 14px; }
+.topbar-title span { color: #8793a5; font-size: 9px; }
+.progress-box { display: grid; grid-template-columns: auto 150px auto; gap: 8px; align-items: center; color: #7c899b; font-size: 9px; }
+.progress-box b { color: #2e5ec0; }
+.progress-track { width: 150px; height: 6px; overflow: hidden; border-radius: 999px; background: #e9eef6; }
+.progress-track i { display: block; height: 100%; border-radius: inherit; background: #1769ff; transition: width .2s ease; }
 
 .error { margin: 0; padding: 9px 11px; border: 1px solid #efc7c7; border-radius: 8px; background: #fff3f3; color: #a93c3c; font-size: 11px; }
 .loading { padding: 28px; border: 1px dashed #dbe2eb; border-radius: 10px; background: #fff; color: #7b899b; text-align: center; }
-.all-done { min-height: 160px; display: flex; align-items: center; justify-content: center; gap: 12px; border: 1px solid #cae4d6; border-radius: 12px; background: #f3fbf7; }
-.all-done > span { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: #dff3e8; color: #2e8051; font-size: 20px; font-weight: 900; }
-.all-done strong { color: #315b45; font-size: 15px; }.all-done p { margin: 3px 0 0; color: #72907f; font-size: 11px; }
+
+.queue-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid #e0e5ed;
+  border-radius: 10px;
+  background: #fff;
+}
+.queue-tabs button { border-color: transparent; padding: 7px 12px; background: transparent; color: #728096; }
+.queue-tabs button b { margin-left: 4px; color: inherit; }
+.queue-tabs button.active { border-color: #cbdaf7; background: #eef4ff; color: #1769ff; font-weight: 800; }
 
 .review-layout {
-  min-height: 560px;
+  min-height: 610px;
   display: grid;
-  grid-template-columns: 270px minmax(0, 1fr);
+  grid-template-columns: 250px minmax(0, 1fr);
   gap: 10px;
 }
-.review-queue, .review-card { min-width: 0; border: 1px solid #dfe5ed; border-radius: 12px; background: #fff; overflow: hidden; }
+.review-queue,
+.review-main {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #e0e5ed;
+  border-radius: 12px;
+  background: #fff;
+}
 .review-queue { display: grid; grid-template-rows: auto minmax(0, 1fr); }
-.queue-head { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid #e7ebf1; background: #fbfcfe; }
-.queue-head > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.queue-head strong { color: #334966; font-size: 12px; }.queue-head small { color: #8b96a6; font-size: 9px; }
-.queue-head input { width: 100%; }
-.queue-list { min-height: 0; max-height: 680px; overflow-y: auto; padding: 7px; }
-.queue-item { width: 100%; display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-bottom: 5px; padding: 7px; border-color: transparent; text-align: left; }
-.queue-item:hover { background: #f7f9fc; }
-.queue-item.active { border-color: #8fb0f4; background: #eef4ff; box-shadow: inset 3px 0 0 #4d79db; }
-.queue-thumb { width: 48px; height: 56px; display: grid; place-items: center; overflow: hidden; border-radius: 7px; background: #edf1f6; color: #5d6f87; font-size: 17px; font-weight: 800; }
+.queue-search { padding: 9px; border-bottom: 1px solid #edf0f4; background: #fbfcfe; }
+.queue-search input { width: 100%; }
+.queue-list { min-height: 0; max-height: 690px; overflow-y: auto; padding: 6px; }
+.queue-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 5px;
+  padding: 7px;
+  border-color: transparent;
+  text-align: left;
+}
+.queue-item.active { border-color: #8fb1fa; background: #eef4ff; box-shadow: inset 3px 0 0 #1769ff; }
+.queue-thumb { width: 46px; height: 54px; display: grid; place-items: center; overflow: hidden; border-radius: 7px; background: #edf1f6; color: #5f7088; font-size: 17px; font-weight: 800; }
 .queue-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .queue-copy { min-width: 0; display: grid; gap: 2px; }
-.queue-copy strong { overflow: hidden; color: #334966; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.queue-copy span, .queue-copy small { overflow: hidden; color: #7f8b9d; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.queue-item em { padding: 3px 5px; border-radius: 5px; background: #edf4ff; color: #4d72bc; font-size: 8px; font-style: normal; white-space: nowrap; }
-.queue-empty { padding: 20px 8px; color: #8a96a6; font-size: 10px; text-align: center; }
+.queue-copy strong { overflow: hidden; color: #31465f; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.queue-copy span,
+.queue-copy small { overflow: hidden; color: #8792a2; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.queue-item em { padding: 3px 5px; border-radius: 5px; background: #edf8f1; color: #4b865e; font-size: 8px; font-style: normal; white-space: nowrap; }
+.queue-item em.suggested { background: #edf4ff; color: #5277bd; }
+.queue-item em.pending { background: #fff3e1; color: #a56f1f; }
+.queue-empty { padding: 20px 8px; color: #8b96a5; font-size: 10px; text-align: center; }
 
-.review-card { padding: 14px; overflow: visible; }
-.identity-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
-.identity-title > div { min-width: 0; }.identity-title small { color: #8490a2; font-size: 9px; }.identity-title h3 { margin: 3px 0 2px; color: #283e5d; font-size: 18px; }.identity-title p { margin: 0; color: #6f7f94; font-size: 11px; }
-.text-button { border-color: transparent; color: #5471a1; background: transparent; }
+.review-main { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(330px, .65fr); }
+.evidence-column { min-width: 0; padding: 12px; border-right: 1px solid #e7ebf1; }
+.current-context { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+.current-context > div { display: grid; gap: 2px; }
+.current-context small { color: #8a96a7; font-size: 8px; }
+.current-context strong { color: #30465f; font-size: 12px; }
+.current-context > span { color: #7f8b9b; font-size: 9px; }
+.frame-stage,
+.locator-canvas { position: relative; overflow: hidden; display: grid; place-items: center; background: #111b29; user-select: none; }
+.frame-stage { min-height: 390px; max-height: 520px; border-radius: 10px; }
+.frame-stage > img,
+.locator-canvas > img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.no-frame { color: #b7c1ce; font-size: 11px; }
+.person-box { position: absolute; border: 2px solid #1769ff; box-shadow: 0 0 0 9999px rgba(8,18,34,.08); pointer-events: none; }
+.person-box span { position: absolute; top: -24px; left: -2px; padding: 4px 6px; border-radius: 5px; background: #1769ff; color: #fff; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.shot-strip { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; padding-bottom: 2px; }
+.shot-strip button { min-width: 72px; display: grid; gap: 3px; padding: 4px; }
+.shot-strip button.active { border-color: #1769ff; background: #eef4ff; }
+.shot-strip img { width: 64px; height: 42px; border-radius: 5px; object-fit: cover; background: #edf1f6; }
+.shot-strip span { color: #6f7d90; font-size: 8px; }
+.evidence-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.evidence-meta > div:first-child { min-width: 0; display: grid; gap: 2px; }
+.evidence-meta strong { color: #30465f; font-size: 12px; }
+.evidence-meta span { overflow: hidden; color: #7d899a; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.evidence-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.evidence-actions button.marked { border-color: #7fa6f4; background: #eef4ff; color: #3767c5; }
+.locator-help { margin: 7px 0 0; color: #929cab; font-size: 8px; }
 
-.decision-layout { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(330px, .88fr); gap: 14px; align-items: start; }
-.evidence-panel, .decision-panel { min-width: 0; }
-.frame-stage { position: relative; min-height: 360px; max-height: 520px; display: grid; place-items: center; overflow: hidden; border-radius: 10px; background: #101923; user-select: none; }
-.frame-stage.locating { cursor: crosshair; box-shadow: 0 0 0 2px #6f9bf4 inset; touch-action: none; }
-.frame-stage > img { width: 100%; height: 100%; max-height: 520px; object-fit: contain; pointer-events: none; }
-.no-frame { color: #aeb8c6; font-size: 11px; }
-.person-box { position: absolute; border: 2px solid #6da1ff; border-radius: 4px; box-shadow: 0 0 0 9999px rgba(15, 25, 38, .18); pointer-events: none; }
-.person-box span { position: absolute; left: 0; top: -24px; padding: 3px 6px; border-radius: 4px; background: #3e73d9; color: #fff; font-size: 9px; white-space: nowrap; }
-.locator-tip { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); padding: 6px 10px; border-radius: 999px; background: rgba(21, 37, 58, .84); color: #fff; font-size: 10px; pointer-events: none; }
-.shot-picker { display: flex; gap: 5px; overflow-x: auto; padding-top: 7px; }
-.shot-picker button { white-space: nowrap; }.shot-picker button.active { border-color: #7295db; background: #edf4ff; color: #4269b5; }
-.locator-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding: 10px 11px; border-radius: 9px; background: #f6f8fb; }
-.locator-row > div:first-child { display: grid; gap: 2px; }.locator-row strong { color: #465a75; font-size: 10px; }.locator-row span { color: #8793a4; font-size: 9px; }.locator-row > div:last-child { display: flex; gap: 5px; }
+.decision-panel { min-width: 0; display: flex; flex-direction: column; padding: 14px; }
+.decision-head small { color: #1769ff; font-size: 9px; font-weight: 850; }
+.decision-head h2 { margin: 3px 0 4px; color: #243a57; font-size: 19px; }
+.decision-head p { margin: 0; color: #7c899b; font-size: 10px; line-height: 1.5; }
+.recommended-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 8px;
+  border-color: #a9c2f3;
+  background: #f5f8ff;
+  text-align: left;
+}
+.recommended-card.selected { border-color: #1769ff; box-shadow: 0 0 0 2px rgba(23,105,255,.08); }
+.recommended-card > div:nth-child(2) { min-width: 0; display: grid; gap: 2px; }
+.recommended-card small { color: #1769ff; font-size: 8px; font-weight: 850; }
+.recommended-card strong { color: #294565; font-size: 12px; }
+.recommended-card span { color: #7d899b; font-size: 8px; }
+.recommended-card b { color: #1769ff; font-size: 9px; }
+.candidate-cover { width: 44px; height: 48px; display: grid; place-items: center; overflow: hidden; border-radius: 7px; background: #edf1f6; color: #62738b; font-size: 16px; font-weight: 800; }
+.candidate-cover.large { width: 58px; height: 64px; }
+.candidate-cover img { width: 100%; height: 100%; object-fit: cover; }
+.candidate-search { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; margin-top: 12px; }
+.candidate-search > span { color: #566982; font-size: 9px; font-weight: 800; }
+.candidate-search input { width: 100%; min-height: 32px; }
+.candidate-grid { min-height: 0; max-height: 290px; overflow-y: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.candidate-card { min-width: 0; display: grid; grid-template-columns: 44px minmax(0, 1fr) 18px; gap: 7px; align-items: center; padding: 6px; text-align: left; }
+.candidate-card.selected { border-color: #1769ff; background: #eef4ff; }
+.candidate-card > div:nth-child(2) { min-width: 0; display: grid; gap: 2px; }
+.candidate-card strong { overflow: hidden; color: #344a64; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.candidate-card small { color: #8994a4; font-size: 8px; }
+.candidate-card i { display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid #d7dfeb; border-radius: 50%; color: #1769ff; font-size: 9px; font-style: normal; font-weight: 900; }
+.candidate-card.selected i { border-color: #1769ff; background: #1769ff; color: #fff; }
+.new-character-button { width: 100%; margin-top: 8px; border-style: dashed; border-color: #9bb9f2; color: #1769ff; font-weight: 800; }
+.current-binding { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 7px 9px; border-radius: 7px; background: #f4f7fb; color: #738096; font-size: 9px; }
+.current-binding strong { color: #3f5571; }
+.decision-actions { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; margin-top: auto; padding-top: 12px; }
+.decision-actions .primary { min-height: 40px; }
 
-.decision-panel { display: grid; gap: 10px; align-content: start; padding: 13px; border: 1px solid #e1e7ef; border-radius: 10px; background: #fbfcfe; }
-.decision-head small { color: #6c7d95; font-size: 9px; font-weight: 800; }.decision-head h3 { margin: 2px 0 3px; color: #2d425f; font-size: 17px; }.decision-head p { margin: 0; color: #7f8b9c; font-size: 10px; line-height: 1.5; }
-.suggestion { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 9px; border: 1px solid #cbdcfb; border-radius: 8px; background: #f1f6ff; }
-.suggestion > div { display: grid; gap: 1px; }.suggestion small { color: #7188ad; font-size: 8px; }.suggestion strong { color: #3b5f9e; font-size: 11px; }.suggestion > span { color: #7589a9; font-size: 8px; text-align: right; }
-.candidate-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; max-height: 330px; overflow-y: auto; padding-right: 2px; }
-.candidate { min-width: 0; display: grid; grid-template-columns: 42px minmax(0, 1fr) 20px; gap: 7px; align-items: center; padding: 7px; border-color: #dfe5ed; text-align: left; }
-.candidate:hover { border-color: #b9c9e2; background: #fff; }.candidate.selected { border-color: #78a0ee; background: #edf4ff; box-shadow: inset 0 0 0 1px #78a0ee; }
-.candidate-cover { width: 42px; height: 48px; display: grid; place-items: center; overflow: hidden; border-radius: 7px; background: #edf1f5; color: #61728a; font-size: 16px; font-weight: 800; }.candidate-cover img { width: 100%; height: 100%; object-fit: cover; }
-.candidate > div:nth-child(2) { min-width: 0; display: grid; gap: 2px; }.candidate strong { overflow: hidden; color: #344a68; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.candidate small { overflow: hidden; color: #8490a1; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-.candidate .radio { width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid #cbd5e2; border-radius: 50%; color: #356bc8; font-size: 10px; }
-.new-character { grid-column: 1 / -1; }.new-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 7px; background: #eef2f7; color: #65758b; font-size: 20px; }
-.new-name { display: grid; gap: 4px; }.new-name span { color: #687990; font-size: 9px; font-weight: 750; }.new-name input { width: 100%; }
-.decision-result { display: grid; gap: 2px; padding: 9px 10px; border-radius: 8px; background: #fff; }.decision-result small { color: #8a95a5; font-size: 8px; }.decision-result strong { color: #354b69; font-size: 11px; }
-.primary-action { min-height: 42px; border-color: #3f71dc; background: #3f71dc; color: #fff; font-size: 11px; font-weight: 850; }
+.completion-screen {
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px;
+  border: 1px solid #dfe6ef;
+  border-radius: 14px;
+  background: #fff;
+  text-align: center;
+}
+.completion-check { width: 58px; height: 58px; display: grid; place-items: center; border-radius: 50%; background: #2fc36b; color: #fff; font-size: 30px; font-weight: 900; box-shadow: 0 10px 24px rgba(47,195,107,.2); }
+.completion-screen h2 { margin: 16px 0 6px; color: #253b57; font-size: 22px; }
+.completion-screen > p { margin: 0; color: #7d899a; font-size: 11px; }
+.completion-metrics { width: min(680px, 100%); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 24px; }
+.completion-metrics article { display: grid; gap: 3px; padding: 14px; border: 1px solid #e1e6ed; border-radius: 10px; background: #f9fbfd; }
+.completion-metrics strong { color: #29425f; font-size: 22px; }
+.completion-metrics article:nth-child(2) strong { color: #d94b4b; }
+.completion-metrics span { color: #8793a3; font-size: 9px; }
+.completion-actions { display: flex; gap: 8px; margin-top: 20px; }
+.completion-actions button { min-width: 150px; min-height: 40px; }
 
-@media (max-width: 1100px) {
-  .review-layout { grid-template-columns: 230px minmax(0, 1fr); }
-  .decision-layout { grid-template-columns: 1fr; }
-  .frame-stage { min-height: 300px; }
-  .candidate-list { max-height: none; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 1800; display: grid; place-items: center; padding: 24px; background: rgba(20,31,48,.52); backdrop-filter: blur(2px); }
+.small-modal,
+.locator-modal { overflow: hidden; border: 1px solid #dfe5ed; border-radius: 14px; background: #fff; box-shadow: 0 24px 70px rgba(17,31,52,.3); }
+.small-modal { width: min(520px, calc(100vw - 48px)); }
+.locator-modal { width: min(920px, calc(100vw - 48px)); }
+.small-modal > header,
+.locator-modal > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 15px; border-bottom: 1px solid #e7ebf0; }
+.small-modal > header > div,
+.locator-modal > header > div { display: grid; gap: 2px; }
+.small-modal header small,
+.locator-modal header small { color: #1769ff; font-size: 8px; font-weight: 850; }
+.small-modal header h3,
+.locator-modal header h3 { margin: 0; color: #2a405c; font-size: 15px; }
+.small-modal > header > button,
+.locator-modal > header > button { width: 32px; height: 32px; padding: 0; font-size: 18px; }
+.create-preview { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; align-items: center; padding: 15px; }
+.create-preview img { width: 110px; height: 94px; border-radius: 9px; object-fit: cover; background: #edf1f6; }
+.create-preview > div { min-width: 0; display: grid; gap: 4px; }
+.create-preview strong { color: #344a64; font-size: 13px; }
+.create-preview span { color: #7d899b; font-size: 9px; line-height: 1.5; }
+.form-field { display: grid; gap: 5px; padding: 0 15px; }
+.form-field span { color: #566982; font-size: 9px; font-weight: 800; }
+.form-field input { width: 100%; }
+.form-help { margin: 8px 15px 0; color: #909aaa; font-size: 8px; line-height: 1.5; }
+.small-modal > footer { display: flex; justify-content: flex-end; gap: 7px; margin-top: 14px; padding: 12px 15px; border-top: 1px solid #edf0f4; background: #fafbfc; }
+.locator-canvas { height: min(62vh, 620px); margin: 12px; border-radius: 10px; cursor: crosshair; }
+.drag-tip { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); padding: 6px 9px; border-radius: 7px; background: rgba(21,35,55,.82); color: #fff; font-size: 9px; pointer-events: none; }
+.locator-shots { display: flex; gap: 5px; padding: 0 12px 10px; overflow-x: auto; }
+.locator-shots button.active { border-color: #1769ff; background: #eef4ff; color: #1769ff; }
+.locator-modal > footer { display: grid; grid-template-columns: auto 1fr auto auto; gap: 7px; padding: 11px 12px; border-top: 1px solid #e7ebf0; background: #fafbfc; }
+
+@media (max-width: 1050px) {
+  .review-layout { grid-template-columns: 220px minmax(0, 1fr); }
+  .review-main { grid-template-columns: 1fr; overflow-y: auto; }
+  .evidence-column { border-right: 0; border-bottom: 1px solid #e7ebf1; }
+  .decision-panel { min-height: 500px; }
+  .candidate-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: none; }
 }
 
 @media (max-width: 760px) {
-  .review-header { align-items: flex-start; flex-direction: column; }
-  .review-header__status { width: 100%; flex-wrap: wrap; }
+  .review-topbar { grid-template-columns: auto 1fr; }
+  .progress-box { grid-column: 1 / -1; grid-template-columns: auto 1fr auto; }
+  .progress-track { width: 100%; }
   .review-layout { grid-template-columns: 1fr; }
   .review-queue { max-height: 260px; }
-  .queue-list { max-height: 200px; }
-  .candidate-list { grid-template-columns: 1fr; }
-  .new-character { grid-column: auto; }
-  .locator-row { align-items: flex-start; flex-direction: column; }
+  .review-main { grid-template-columns: 1fr; }
+  .frame-stage { min-height: 280px; }
+  .candidate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .completion-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .completion-actions { flex-direction: column; width: 100%; }
 }
 </style>
