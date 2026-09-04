@@ -170,14 +170,15 @@ def selected_four_view_references(character: Mapping[str, Any]) -> list[Path] | 
             found = True
             if task.status != "READY" or not receipt.get("accepted"):
                 continue
-            from engine.app.character_assets_routes_v1 import require_current, signature, version_root, VIEWS
+            from engine.app.character_assets_routes_v1 import _views_for_receipt, require_current, signature, version_root
             try:
                 current = require_current(target_id)
             except Exception:
                 return []
             if signature(current) != receipt.get("fingerprint"):
                 continue
-            paths = [version_root(task.project_id, task.id) / f"{view}.jpg" for view in VIEWS]
+            views = _views_for_receipt(receipt)
+            paths = [version_root(task.project_id, task.id) / f"{view}.jpg" for view in views]
             if all(p.is_file() and p.stat().st_size for p in paths):
                 return paths
     return [] if found else None
