@@ -36,6 +36,13 @@ export interface SceneTimelinePerformance {
   people: string[]
 }
 
+export interface SceneTimelinePerformanceDetails {
+  expression: string | null
+  posture: string | null
+  gaze: string | null
+  interaction: string | null
+}
+
 export interface SceneTimelineDialogue {
   start_us: number
   end_us: number
@@ -58,6 +65,10 @@ export interface SceneTimelineCinematography {
   shot_type: string | null
   composition: string | null
   camera_motion: string | null
+  /** H3 directing fact; optional so historical scene-timeline-v1 payloads remain valid. */
+  camera_angle?: string | null
+  /** H3 lighting fact; optional so historical scene-timeline-v1 payloads remain valid. */
+  lighting?: string | null
 }
 
 export interface SceneTimelineShot {
@@ -74,9 +85,13 @@ export interface SceneTimelineShot {
   visual_description: string | null
   people: string[]
   performance: SceneTimelinePerformance[]
+  /** Structured H3 performance facts; optional for historical payloads. */
+  performance_details?: SceneTimelinePerformanceDetails | null
   dialogue: SceneTimelineDialogue[]
   props: SceneTimelineProp[]
   cinematography: SceneTimelineCinematography
+  /** Conservative source-shot continuity fact; optional for historical payloads. */
+  continuity?: string | null
   on_screen_text: SceneTimelineOnScreenText[]
   /** P6 display-only Final Prop bindings; independent from G2 `props` observations. */
   final_props?: FinalPropDisplay[]
