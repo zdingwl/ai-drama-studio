@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """Local-index Scene-segment Window Context contract for Fast Grounded Breakdown.
 
-Segment v3 removed the token-heavy per-Shot scene objects, but its model contract still asked Qwen
-for Episode-global Shot ordinals. Real Window-only acceptance proved that ordinal interpretation is
-not reliable enough: every Window returned a small JSON object, yet segment ranges could fall
-outside the frozen target ordinals.
+The model sees only 1-based positions inside the current Window (1..N). This adapter maps those
+local indexes back to the frozen Shot ordinals/revision_item_id values. The continuous-video pass
+also owns conservative per-Shot camera-motion extraction because temporal motion cannot be
+established from static Exact-Shot frame samples.
 
-v4 removes Episode identifiers from the model contract completely. Qwen sees only 1-based positions
-inside the current Window (1..N). This adapter deterministically maps those local indexes back to the
-frozen Shot ordinals/revision_item_id values before Exact-Shot grounding and E6 consume the result.
-The continuous-video pass also owns conservative per-Shot camera-motion extraction because motion
-cannot be established from the static Exact-Shot frame samples. Exact-Shot visible truth and all
-downstream safety rules remain unchanged.
+Camera motion is useful H3 data but is not allowed to make the entire Breakdown fail. If the model
+omits or partially returns motion hints, missing positions degrade to ``UNKNOWN`` while malformed
+explicit indexes/duplicates still fail closed.
 """
 from __future__ import annotations
 
@@ -69,7 +66,7 @@ def _segment_prompt(source_language: str, window: Mapping[str, Any]) -> str:
 6. 匿名人物只记录稳定外观与出现位置，不猜姓名/Character ID；动作、表情、姿态、说话、屏幕位置不是身份依据。
 7. subject_continuity_hints 最多6项，只保留跨>=2个 Shot 的主要重复人物；appearance_summary<=24字。
 8. prop_continuity_hints 最多3项，只保留跨>=2个 Shot 的剧情相关重复道具。
-9. shot_motion_hints 必须覆盖 1..{shot_count} 每个 Shot；只根据该 Shot 在连续视频中的真实画面运动判断。可写“静止、推近、拉远、左摇、右摇、上摇、下摇、左移、右移、跟拍、手持晃动、复合运动、UNKNOWN”等简短事实；切镜本身不是运镜。不确定写 UNKNOWN。
+9. shot_motion_hints 尽量覆盖 1..{shot_count} 每个 Shot；只根据该 Shot 在连续视频中的真实画面运动判断。可写“静止、推近、拉远、左摇、右摇、上摇、下摇、左移、右移、跟拍、手持晃动、复合运动、UNKNOWN”等简短事实；切镜本身不是运镜。不确定写 UNKNOWN。
 10. 不从前后 Shot 把某个运镜复制给当前 Shot；一个 index 只对应自己的时间范围。
 11. window_summary<=24字；location_hint<=16字。不要对白/OCR文字。
 12. Scene 段最多6项；能合并就合并。
@@ -168,22 +165,25 @@ def _prop_hints(raw: Any, shots: tuple[Mapping[str, Any], ...]) -> list[dict[str
 
 
 def _motion_hints(raw: Any, shots: tuple[Mapping[str, Any], ...]) -> dict[int, str]:
-    """Normalize local-index camera motion and require exact Window coverage."""
+    """Normalize local-index camera motion without making optional H3 data a pipeline hard gate."""
 
+    result = {index: "UNKNOWN" for index in range(1, len(shots) + 1)}
+    if raw is None:
+        return result
     if not isinstance(raw, list):
         raise ValueError("segment-index shot_motion_hints must be a list")
-    by_index: dict[int, str] = {}
+
+    seen: set[int] = set()
     for item in raw:
         if not isinstance(item, Mapping):
             continue
         index = fast._safe_int(item.get("index"))
-        if index < 1 or index > len(shots) or index in by_index:
+        if index < 1 or index > len(shots) or index in seen:
             raise ValueError("segment-index shot_motion_hints has invalid/duplicate index")
+        seen.add(index)
         motion = " ".join(str(item.get("camera_motion") or "UNKNOWN").strip().split())[:64]
-        by_index[index] = motion or "UNKNOWN"
-    if set(by_index) != set(range(1, len(shots) + 1)):
-        raise ValueError("segment-index shot_motion_hints must cover every Window position exactly once")
-    return by_index
+        result[index] = motion or "UNKNOWN"
+    return result
 
 
 def expand_segments(value: Mapping[str, Any], window: Mapping[str, Any]) -> dict[str, Any]:
