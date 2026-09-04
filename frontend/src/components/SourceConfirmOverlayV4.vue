@@ -15,12 +15,21 @@ const props = defineProps<{ projectId: string }>()
 const route = useRoute()
 const router = useRouter()
 
+type ReviewTab = 'people' | 'shots'
+
 const project = ref<Project | null>(null)
 const flow = ref<ProjectFlowState | null>(null)
 const issues = ref<ReviewIssue[]>([])
 const loading = ref(true)
 const error = ref('')
-const reviewTab = ref('people')
+const focusEpisodeId = computed(() => typeof route.query.episode === 'string' ? route.query.episode : '')
+const focusShotOrdinal = computed<number | null>(() => {
+  const value = Number(route.query.shot || 0)
+  return Number.isInteger(value) && value > 0 ? value : null
+})
+const reviewTab = ref<ReviewTab>(
+  String(route.query.confirm_tab || '') === 'shots' || focusShotOrdinal.value !== null ? 'shots' : 'people',
+)
 
 const sourceIssueTypes = new Set(['CHARACTER_IDENTITY', 'ASSET_BINDING', 'SPEAKER'])
 function stage(key: string): ProjectFlowStage | null { return flow.value?.stages.find((item) => item.stage_key === key) || null }
@@ -91,7 +100,7 @@ onBeforeUnmount(() => {
         <div>
           <small>03 · 原片确认</small>
           <strong>原片审核工作区</strong>
-          <span>先核对人物关键帧分组，再确认场景、道具和说话人。</span>
+          <span>按依赖顺序处理：人物身份 → 场景 / 道具 → 对白说话人；人物未确认时，对白不会允许确认。</span>
         </div>
         <div class="head-actions">
           <span v-if="!loading" :class="['pending-chip', { ready: sourceReady }]">{{ sourceReady ? '已完成' : '待确认' }}</span>
@@ -102,13 +111,15 @@ onBeforeUnmount(() => {
       <div v-if="error" class="confirm-error">{{ error }}</div>
 
       <main class="confirm-body">
-        <nav class="review-tabs"><button :class="{selected:reviewTab==='people'}" @click="reviewTab='people'">人物关键帧审核</button><button :class="{selected:reviewTab==='shots'}" @click="reviewTab='shots'">分镜 / 场景 / 说话人</button></nav>
+        <nav class="review-tabs"><button :class="{selected:reviewTab==='people'}" @click="reviewTab='people'">人物关键帧审核</button><button :class="{selected:reviewTab==='shots'}" @click="reviewTab='shots'">逐镜头确认（人物 → 场景 / 道具 → 对白）</button></nav>
         <div v-if="loading && !project" class="confirm-loading">正在读取原片确认状态…</div>
         <PersonKeyframeReviewV1 v-else-if="project && reviewTab==='people'" :project-id="project.id" @changed="onWorkspaceChanged" />
         <SourceShotReviewWorkspaceV2
           v-else-if="project"
           :project-id="project.id"
           :episodes="project.episodes"
+          :focus-episode-id="focusEpisodeId"
+          :focus-shot-ordinal="focusShotOrdinal"
           @changed="onWorkspaceChanged"
           @completed="onWorkspaceCompleted"
         />
