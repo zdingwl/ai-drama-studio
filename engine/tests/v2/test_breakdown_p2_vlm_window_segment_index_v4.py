@@ -50,8 +50,55 @@ def test_local_index_segment_maps_back_to_frozen_shots() -> None:
     ]
     assert [item["ordinal"] for item in hints] == [13, 14, 16, 20]
     assert all(item["scene_continuity"] == "SAME" for item in hints)
+    assert all(item["camera_motion_hint"] == "UNKNOWN" for item in hints)
     assert result["subject_continuity_hints"][0]["shot_ordinals"] == [13, 16, 20]
     assert result["prop_continuity_hints"][0]["shot_ordinals"] == [14, 20]
+
+
+def test_video_motion_maps_local_indexes_to_frozen_shots_and_partial_output_falls_back() -> None:
+    value = {
+        "window_summary": "走廊连续镜头",
+        "scene_segments": [{
+            "start_index": 1,
+            "end_index": 4,
+            "boundary_basis": "WINDOW_START",
+        }],
+        "subject_continuity_hints": [],
+        "prop_continuity_hints": [],
+        # Deliberately partial: temporal motion is valuable but must not hard-fail the whole run.
+        "shot_motion_hints": [
+            {"index": 1, "camera_motion": "静止"},
+            {"index": 3, "camera_motion": "右移"},
+        ],
+    }
+
+    result = segment.expand_segments(value, window())
+    by_ordinal = {item["ordinal"]: item for item in result["shot_scene_hints"]}
+    assert by_ordinal[13]["camera_motion_hint"] == "静止"
+    assert by_ordinal[14]["camera_motion_hint"] == "UNKNOWN"
+    assert by_ordinal[16]["camera_motion_hint"] == "右移"
+    assert by_ordinal[20]["camera_motion_hint"] == "UNKNOWN"
+
+
+def test_duplicate_or_out_of_range_motion_index_still_fails_closed() -> None:
+    base = {
+        "scene_segments": [{"start_index": 1, "end_index": 4, "boundary_basis": "WINDOW_START"}],
+        "subject_continuity_hints": [],
+        "prop_continuity_hints": [],
+    }
+    with pytest.raises(ValueError, match="invalid/duplicate index"):
+        segment.expand_segments(
+            {**base, "shot_motion_hints": [
+                {"index": 1, "camera_motion": "静止"},
+                {"index": 1, "camera_motion": "推近"},
+            ]},
+            window(),
+        )
+    with pytest.raises(ValueError, match="invalid/duplicate index"):
+        segment.expand_segments(
+            {**base, "shot_motion_hints": [{"index": 5, "camera_motion": "推近"}]},
+            window(),
+        )
 
 
 def test_direct_local_segment_boundary_becomes_real_e6_cut() -> None:
@@ -154,4 +201,5 @@ def test_prompt_exposes_only_local_indexes_not_episode_ids() -> None:
     assert "index=1" in prompt
     assert "1..4" in prompt
     assert '"end_index":4' in prompt
+    assert '"shot_motion_hints"' in prompt
     assert "不要输出 Episode 全局 Shot 编号" in prompt
