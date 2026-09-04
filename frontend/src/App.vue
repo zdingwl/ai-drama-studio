@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
-import SourceConfirmOverlayV3 from './components/SourceConfirmOverlayV3.vue'
+import SourceConfirmOverlayV4 from './components/SourceConfirmOverlayV4.vue'
 import './styles/character-confirm-flow-v1.css'
 import './styles/character-confirm-image-fix-v1.css'
 import './styles/character-confirm-locator-image-fix-v1.css'
@@ -36,5 +36,5 @@ onUnmounted(() => {
 
 <template>
   <RouterView :key="workspaceKey" />
-  <SourceConfirmOverlayV3 v-if="sourceConfirmProjectId" :project-id="sourceConfirmProjectId" />
+  <SourceConfirmOverlayV4 v-if="sourceConfirmProjectId" :project-id="sourceConfirmProjectId" />
 </template>
