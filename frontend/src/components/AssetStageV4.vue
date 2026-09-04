@@ -213,6 +213,7 @@ onUnmounted(() => {
     <CharacterPersonGalleryV10
       v-else-if="workspaceMode === 'people'"
       :project-id="props.projectId"
+      @next-stage="selectWorkspaceMode('matrix')"
     />
     <AssetReviewMatrixV4
       v-else
