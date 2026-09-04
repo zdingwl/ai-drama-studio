@@ -7,6 +7,7 @@ This layer is intentionally thin:
 - accepted Narrative overlays are materialized explicitly into the Episode workspace and revalidated
   against Run / ShotRevision / Scene source fingerprints every time they are consumed;
 - explicit single-Shot AI reruns are projected after the full-Run baseline but before user edits;
+- cross-Shot dialogue groups are fail-closed before a scoped rerun can corrupt utterance grouping;
 - explicit user corrections are projected last from a ShotRevision-scoped manual artifact;
 - primary user payloads remain exactly ``scene-timeline-v1`` and never expose support Fxxxx,
   Evidence IDs, LocalSubject IDs, provider/model diagnostics or raw validator output.
@@ -32,6 +33,7 @@ from engine.app.breakdown_scene_narrative_validator_v1 import (
 )
 from engine.app.breakdown_scene_timeline_assembler_v1 import assemble_scene_timeline_v1
 from engine.app.breakdown_scene_timeline_contract_v1 import SceneTimelinePayloadV1
+from engine.app.breakdown_shot_rerun_dialogue_guard_v1 import guard_cross_shot_dialogue_rerun_v1
 from engine.app.breakdown_shot_rerun_v1 import apply_shot_rerun_overrides_v1
 
 
@@ -187,14 +189,15 @@ def _with_current_overlays(
     source_timeline: Mapping[str, Any],
     display_timeline: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Apply current AI reruns first, then explicit user corrections as the final authority."""
+    """Apply scoped AI, protect cross-Shot dialogue, then apply explicit user corrections last."""
 
     if _run_payload(draft).get("is_current") is not True:
         return SceneTimelinePayloadV1.model_validate(display_timeline).model_dump(mode="json")
     rerun = apply_shot_rerun_overrides_v1(draft, display_timeline)
+    guarded = guard_cross_shot_dialogue_rerun_v1(source_timeline, rerun)
     return apply_manual_overrides_v1(
         draft,
-        rerun,
+        guarded,
         source_timeline_payload=source_timeline,
     )
 
