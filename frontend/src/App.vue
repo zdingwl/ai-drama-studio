@@ -6,9 +6,11 @@ import SourceConfirmOverlayV1 from './components/SourceConfirmOverlayV1.vue'
 import './styles/character-confirm-flow-v1.css'
 import './styles/character-confirm-image-fix-v1.css'
 import './styles/character-confirm-locator-image-fix-v1.css'
+import { installCharacterLocatorViewportV1 } from './utils/characterLocatorViewportV1'
 
 const route = useRoute()
 const workspaceKey = ref(0)
+let cleanupLocatorViewport: (() => void) | null = null
 
 const sourceConfirmProjectId = computed(() => {
   if (route.name !== 'breakdown' || String(route.query.mode || '') !== 'confirm') return ''
@@ -20,8 +22,16 @@ function handleTaskFinished() {
   workspaceKey.value += 1
 }
 
-onMounted(() => window.addEventListener('studio-task-finished', handleTaskFinished))
-onUnmounted(() => window.removeEventListener('studio-task-finished', handleTaskFinished))
+onMounted(() => {
+  window.addEventListener('studio-task-finished', handleTaskFinished)
+  cleanupLocatorViewport = installCharacterLocatorViewportV1()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('studio-task-finished', handleTaskFinished)
+  cleanupLocatorViewport?.()
+  cleanupLocatorViewport = null
+})
 </script>
 
 <template>
