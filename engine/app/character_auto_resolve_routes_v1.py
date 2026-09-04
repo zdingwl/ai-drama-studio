@@ -44,8 +44,16 @@ def auto_resolve_source_people(project_id: str, payload: AutoResolveRequest):
         vlm_observations = workspace["observations"]
 
     # 第二层可能加载本地 4B VLM，绝不能在这段时间持有 LOCK。
-    vlm_plan = build_vlm_adjudication_plan(project_id, vlm_observations)
+    # 配置错误 / runtime 缺失不能让已经完成的第一层写入变成前端 500；直接安全退回人工确认。
+    vlm_error: str | None = None
+    try:
+        vlm_plan = build_vlm_adjudication_plan(project_id, vlm_observations)
+    except (ValueError, OSError) as exc:
+        vlm_plan = {}
+        vlm_error = f"Qwen3-VL 多人裁决暂不可用：{type(exc).__name__}"
+
     vlm_write = {"changed": False, "auto_bound_count": 0}
+    vlm_stale = False
     if any(proposal.get("decision") == "AUTO" for proposal in vlm_plan.values()):
         with LOCK:
             try:
@@ -55,10 +63,14 @@ def auto_resolve_source_people(project_id: str, payload: AutoResolveRequest):
                     vlm_plan,
                     expected_revision=vlm_expected_revision,
                 )
-            except ValueError as exc:
-                raise HTTPException(409, str(exc)) from exc
-            if vlm_write["changed"]:
+            except ValueError:
+                # 用户可能在 Qwen 推理期间已经人工修改。保留用户新事实，本次模型结果直接失效，不覆盖、不报 500。
+                vlm_stale = True
+                vlm_plan = {}
                 workspace = inventory(project_id)
+            else:
+                if vlm_write["changed"]:
+                    workspace = inventory(project_id)
 
     # 返回值只保留最终仍未解决的 Review proposal。自动完成的 LocalSubject 已经从 pending 消失。
     final_pending_keys = {
@@ -85,6 +97,8 @@ def auto_resolve_source_people(project_id: str, payload: AutoResolveRequest):
         "deterministic_auto_bound_count": int(deterministic["auto_bound_count"]),
         "vlm_auto_bound_count": int(vlm_write["auto_bound_count"]),
         "vlm_adjudication_count": len(vlm_plan),
+        "vlm_stale": vlm_stale,
+        "vlm_error": vlm_error,
         "review_count": len(review_rows),
         "review_proposals": review_rows,
         "workspace": workspace,
