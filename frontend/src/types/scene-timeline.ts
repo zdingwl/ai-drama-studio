@@ -6,6 +6,7 @@ export interface SceneTimelineSceneInfo {
 }
 
 export interface FinalCharacterDisplay {
+  cover_box?: number[] | null
   id: string
   name: string
   cover_url: string | null
@@ -73,6 +74,8 @@ export interface SceneTimelineCinematography {
 
 export interface SceneTimelineShot {
   presence_review_id?: string
+  /** Current formal ShotCharacterBinding projection for per-shot display. */
+  final_characters?: FinalCharacterDisplay[]
   ordinal: number
   start_us: number
   end_us: number

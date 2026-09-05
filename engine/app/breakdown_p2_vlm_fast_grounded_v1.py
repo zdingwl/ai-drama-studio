@@ -66,16 +66,16 @@ class GroundingFramePlan:
 def frame_sample_ratios(duration_us: int) -> tuple[float, ...]:
     """Small deterministic visual sample for one exact Shot.
 
-    Very short inserts only need the middle frame. Medium shots get two separated observations;
-    longer shots get three. The goal is visual grounding, not replaying the whole clip through VLM.
+    短插入保留中帧；其余加入靠近起止的样本，降低人物进入/离开被漏掉的概率。
+    采样不能证明整个镜头绝无人出现，仍允许人工补录。
     """
 
     seconds = max(0.0, float(duration_us) / 1_000_000.0)
     if seconds < 1.2:
         return (0.50,)
     if seconds <= 3.0:
-        return (0.25, 0.75)
-    return (0.15, 0.50, 0.85)
+        return (0.05, 0.50, 0.95)
+    return (0.05, 0.25, 0.50, 0.75, 0.95)
 
 
 def _clean_text(value: Any, *, max_len: int) -> str | None:
@@ -389,6 +389,36 @@ class Qwen3VLSemanticProvider(e2.Qwen3VLSemanticProvider):
             rows.append({"ratio": float(ratio), "path": str(frame_path)})
         return rows
 
+    @staticmethod
+    def _attach_person_detections(frames: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        """在宿主 CPU 上检测人物框，供已加载的 Qwen 做按需局部复核。"""
+        import cv2
+        from engine.app.source_presence_audit_v1 import detector
+
+        detect = detector().detect
+        result: list[dict[str, Any]] = []
+        for raw in frames:
+            row = dict(raw)
+            path = Path(str(row.get("path") or ""))
+            frame = cv2.imread(str(path))
+            if frame is None:
+                raise RuntimeError(f"exact-Shot 人物检测帧读取失败：{path.name}")
+            height, width = frame.shape[:2]
+            detections = []
+            for (x, y, box_width, box_height), score in detect(frame):
+                detections.append({
+                    "box": [
+                        max(0.0, float(x) / width),
+                        max(0.0, float(y) / height),
+                        min(1.0, float(box_width) / width),
+                        min(1.0, float(box_height) / height),
+                    ],
+                    "score": float(score),
+                })
+            row["person_detections"] = detections
+            result.append(row)
+        return result
+
     def _run_unified_subprocess(
         self,
         config: legacy.VLMRuntimeConfig,
@@ -409,12 +439,15 @@ class Qwen3VLSemanticProvider(e2.Qwen3VLSemanticProvider):
 
             grounding_payloads: list[dict[str, Any]] = []
             for shot in self._unique_shots(windows):
+                frames = self._attach_person_detections(
+                    self._materialize_grounding_frames(shot, frame_dir)
+                )
                 grounding_payloads.append({
                     "revision_item_id": shot.revision_item_id,
                     "ordinal": shot.ordinal,
                     "source_start_us": shot.start_us,
                     "source_end_us": shot.end_us,
-                    "frames": self._materialize_grounding_frames(shot, frame_dir),
+                    "frames": frames,
                 })
 
             manifest_path = root / "manifest.json"
@@ -685,6 +718,12 @@ class Qwen3VLSemanticProvider(e2.Qwen3VLSemanticProvider):
                             "shot.shot_type_hint", "shot.camera_angle_hint", "shot.composition_hint",
                             "shot.lighting_hint",
                         ],
+                        "presence_recheck": (
+                            dict(record.get("presence_recheck"))
+                            if isinstance(record, Mapping)
+                            and isinstance(record.get("presence_recheck"), Mapping)
+                            else None
+                        ),
                     },
                 },
             ))

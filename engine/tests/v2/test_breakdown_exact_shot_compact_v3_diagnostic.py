@@ -8,5 +8,5 @@ def test_compact_v3_diagnostic_routes_to_timed_v5_candidate() -> None:
     assert diagnostic.CANDIDATE_RUNNER.name == "run_breakdown_vlm_fast_grounded_qwen3_timed_v5.py"
     assert config.runner_script.name == "run_breakdown_vlm_fast_grounded_qwen3_timed_v5.py"
     assert compact.EXACT_SHOT_PROMPT_PROFILE == (
-        "breakdown-p2-vlm-exact-shot-compact-reconstruction-zh-v3"
+        "breakdown-p2-vlm-exact-shot-detector-recheck-zh-v5"
     )

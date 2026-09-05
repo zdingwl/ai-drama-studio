@@ -49,6 +49,8 @@ def supplement(project_id, shot_id, character_id, mark, expected_revision, *, is
         region = next((r for r in review['ai_suggestion']['candidates'] if r['id'] == candidate_id), None) if review else None
         if issue_id and not region:
             raise ValueError('漏人核对证据已更新，请重新打开')
+        if region and decision == 'NOT_PERSON' and not region.get('box'):
+            raise ValueError('人数结构变化需要人物核对，不能作为检测误报关闭')
         if decision not in ('BIND', 'NOT_PERSON') or (decision == 'NOT_PERSON' and (not region or len(reason.strip()) < 2)):
             raise ValueError('请提交明确的人物绑定或带原因的检测误报修正')
         candidate = next((c for c in current['candidates'] if c['id'] == character_id), None)
@@ -58,6 +60,8 @@ def supplement(project_id, shot_id, character_id, mark, expected_revision, *, is
         row = {'shots': [{'id': shot_id, 'thumbnail_url': image_url}]}
         if decision == 'BIND' and (not people._valid_localization(row, mark) or mark.get('source') != 'MANUAL_BOX'):
             raise ValueError('请在当前版本原图框出漏掉的人物')
+        if region and decision == 'BIND' and region.get('box') and audit.iou(region['box'], mark['box']) < .2:
+            raise ValueError('框选偏离待核对区域，请框选该区域中的人物')
         evidence = {k: current[k] for k in ('episode_id', 'ordinal', 'scene_ordinal', 'run_id', 'shot_revision_id')}
         if candidate:
             evidence.update(shot_id=shot_id, ref=candidate['ref'], localization=mark)
@@ -65,6 +69,8 @@ def supplement(project_id, shot_id, character_id, mark, expected_revision, *, is
                 evidence.update(presence_issue_id=issue_id, presence_candidate_id=candidate_id)
         with get_session() as session:
             review_row = session.get(ReviewIssue, issue_id) if region else None
+            if region and (not review_row or review_row.status != 'OPEN'):
+                raise ValueError('该审核已更新，请重新打开')
             decisions = json.loads(review_row.editable_payload_json or '{}') if review_row else {}
             if region and candidate_id in decisions:
                 raise ValueError('该区域已经核对，请刷新，不能覆盖已有决定')
@@ -87,7 +93,8 @@ def supplement(project_id, shot_id, character_id, mark, expected_revision, *, is
             binding = session.scalar(select(ShotCharacterBinding).where(ShotCharacterBinding.project_id == project_id, ShotCharacterBinding.shot_id == shot_id, ShotCharacterBinding.character_id == character_id))
             if evidence in existing and binding and not region:
                 return current
-            meta[KEY] = [e for e in existing if e.get('shot_id') != shot_id] + [evidence]
+            # 每个精确帧保留独立确认记录，不能用后一帧覆盖前一帧人工证据。
+            meta[KEY] = existing if evidence in existing else existing + [evidence]
             character.metadata_json = json.dumps(meta, ensure_ascii=False)
             if not binding:
                 session.add(ShotCharacterBinding(id=new_id('SHOTCHAR'), project_id=project_id, shot_id=shot_id, character_id=character_id, source='MANUAL'))

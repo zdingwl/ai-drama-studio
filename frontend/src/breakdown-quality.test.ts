@@ -55,6 +55,16 @@ describe('evaluateBreakdownShotQuality', () => {
 })
 
 describe('formal source identity checks', () => {
+  it('accepts one current formal Shot binding for a one-person shot', () => {
+    expect(hasUnconfirmedSourcePeople(makeShot({
+      people: ['P1'],
+      final_characters: [{ id: 'C1', name: '徐然', cover_url: '/shot.jpg' }],
+    }), [{ ref: 'P1', display_name: '人物1', appearance: null, final_character: null }])).toBe(false)
+  })
+
+  it('keeps a presence review pending even when existing people are bound', () => {
+    expect(hasUnconfirmedSourcePeople(makeShot({ presence_review_id: 'REVIEW_1' }), [{ ref: 'P1', display_name: '人物1', appearance: null, final_character: { id: 'C1', name: '角色', cover_url: null } }])).toBe(true)
+  })
   it('blocks missing and historical identity overlays', () => {
     expect(hasUnconfirmedSourcePeople(makeShot(), [])).toBe(true)
     expect(hasUnconfirmedSourcePeople(makeShot(), [{ ref: 'P1', display_name: '人物1', appearance: null }])).toBe(true)

@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from engine.app import studio_v2 as studio
 from engine.app.review_issue_v1 import ReviewIssue, serialize_review_issue
-from engine.app.person_presence_geometry_v1 import frame_boxes, valid_box
+from engine.person_presence_geometry_v1 import frame_boxes, valid_box
 
 ISSUE_TYPE = "PERSON_PRESENCE"
 PROFILE = "person-presence-coverage-v1"
@@ -36,6 +36,11 @@ def uncovered_regions(detections, subjects, frame_index, *, review_all=False):
     """同帧一对一位置匹配；人数相同不代表覆盖正确，不跨帧/按姓名合并。"""
     locations = [(index, loc['box']) for index, person in enumerate(subjects)
                  for loc in frame_boxes(person.get('frame_boxes')) if loc['frame'] == frame_index]
+    # 单人物镜头中，VLM 已确认整段只有一个主体，人体检测也只找到一个人时，
+    # 某个采样帧缺少定位框只是定位证据不完整，不能据此声称“漏了一个人”。
+    # 若该帧已有 VLM 定位但与检测框明显冲突，仍按下面的一对一位置匹配进入核对。
+    if not review_all and len(subjects) == 1 and len(detections) == 1 and not locations:
+        return []
     pairs = sorted(((iou(det['box'], box), d, s) for d, det in enumerate(detections)
                     for s, (_, box) in enumerate(locations)), reverse=True)
     matched_d, matched_s = set(), set()
@@ -124,20 +129,49 @@ def inspect_shot(project_id, target, payload, *, previous_count=None, detect=Non
 
 def publish(project_id, episode_id, run_id, revision_id, audits):
     """一个镜头一个根问题；重复发布不清除决定，新证据不继承旧确认。"""
-    with studio.get_session() as session:
+    from engine.app.source_person_assets_v1 import LOCK
+    from engine.app.breakdown_serializer_v1 import get_current_breakdown
+    from engine.app.breakdown_shot_rerun_v1 import _anchors
+    with LOCK, studio.get_session() as session:
+        draft = get_current_breakdown(episode_id)
+        if not draft or _anchors(draft) != (run_id, project_id, episode_id, revision_id):
+            raise ValueError('分析期间原片版本已变化，旧出镜检查不能发布')
         for audit in audits:
             if not audit['needs_review']:
+                # 同一当前版本重新检查已经通过时，关闭此前由旧检查逻辑产生的误报。
+                for old in session.scalars(select(ReviewIssue).where(
+                    ReviewIssue.project_id == project_id,
+                    ReviewIssue.shot_id == audit['shot_id'],
+                    ReviewIssue.issue_type == ISSUE_TYPE,
+                    ReviewIssue.status == 'OPEN',
+                )):
+                    previous = json.loads(old.ai_suggestion_json or '{}')
+                    if previous.get('run_id') == run_id and previous.get('shot_revision_id') == revision_id:
+                        old.status = 'RESOLVED'
+                        old.resolution_json = json.dumps({
+                            'automated_recheck': 'PASS',
+                            'profile': audit.get('profile', PROFILE),
+                        }, ensure_ascii=False)
+                        old.resolved_at = studio.utcnow()
+                        old.updated_at = old.resolved_at
                 continue
             payload = {**audit, 'run_id': run_id, 'shot_revision_id': revision_id}
             fingerprint = digest(payload)
             key = f'presence:{run_id}:{audit["shot_id"]}:{fingerprint[:20]}'
             if session.scalar(select(ReviewIssue).where(ReviewIssue.project_id == project_id, ReviewIssue.source_key == key)):
                 continue
-            # 同版本重跑产生不同证据时，旧问题保留历史但不再计入当前队列。
-            for old in session.scalars(select(ReviewIssue).where(ReviewIssue.project_id == project_id, ReviewIssue.shot_id == audit['shot_id'], ReviewIssue.issue_type == ISSUE_TYPE, ReviewIssue.status == 'OPEN')):
-                old.status = 'RESOLVED'
-                old.resolution_json = json.dumps({'superseded_by': key})
-                old.resolved_at = studio.utcnow()
+            # 新检查不能关闭仍未决定的旧区域；按区域 ID 合并为同镜头根问题。
+            old = session.scalar(select(ReviewIssue).where(ReviewIssue.project_id == project_id, ReviewIssue.shot_id == audit['shot_id'], ReviewIssue.issue_type == ISSUE_TYPE, ReviewIssue.status == 'OPEN'))
+            if old:
+                previous = json.loads(old.ai_suggestion_json or '{}')
+                if previous.get('run_id') == run_id and previous.get('shot_revision_id') == revision_id:
+                    merged = {r['id']: r for r in previous.get('candidates', [])}
+                    merged.update({r['id']: r for r in payload['candidates']})
+                    payload['candidates'] = list(merged.values())
+                    payload['fingerprint'] = digest(payload)
+                    old.ai_suggestion_json = json.dumps(payload, ensure_ascii=False)
+                    old.updated_at = studio.utcnow()
+                    continue
             payload['fingerprint'] = fingerprint
             session.add(ReviewIssue(id=studio.new_id('REVIEW'), project_id=project_id, episode_id=episode_id,
                 shot_id=audit['shot_id'], source_key=key, issue_type=ISSUE_TYPE, severity='BLOCKING', status='OPEN',

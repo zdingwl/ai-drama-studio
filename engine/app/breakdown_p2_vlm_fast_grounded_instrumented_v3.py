@@ -20,7 +20,7 @@ from engine.app import breakdown_p2_vlm_v1 as legacy
 
 PERFORMANCE_PROFILE = v2.PERFORMANCE_PROFILE
 WINDOW_PROMPT_PROFILE = v2.WINDOW_PROMPT_PROFILE
-EXACT_SHOT_PROMPT_PROFILE = "breakdown-p2-vlm-exact-shot-compact-reconstruction-zh-v3"
+EXACT_SHOT_PROMPT_PROFILE = "breakdown-p2-vlm-exact-shot-detector-recheck-zh-v5"
 
 
 class Qwen3VLSemanticProvider(v2.Qwen3VLSemanticProvider):

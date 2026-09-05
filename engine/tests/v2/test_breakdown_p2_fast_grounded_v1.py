@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 from engine.app import breakdown_p2_sidecar_v1 as p2
 from engine.app import breakdown_p2_vlm_fast_grounded_v1 as fast
 from engine.app import breakdown_p2_vlm_runtime_v1 as runtime
@@ -43,8 +46,31 @@ def semantic(*, summary: str, subjects: list[dict], props: list[dict]) -> dict:
 
 def test_frame_sample_ratios_keep_short_shots_cheap() -> None:
     assert fast.frame_sample_ratios(800_000) == (0.50,)
-    assert fast.frame_sample_ratios(2_000_000) == (0.25, 0.75)
-    assert fast.frame_sample_ratios(5_000_000) == (0.15, 0.50, 0.85)
+    assert fast.frame_sample_ratios(2_000_000) == (0.05, 0.50, 0.95)
+    assert fast.frame_sample_ratios(5_000_000) == (0.05, 0.25, 0.50, 0.75, 0.95)
+
+
+def test_host_attaches_normalized_person_detections(monkeypatch, tmp_path: Path) -> None:
+    from engine.app import source_presence_audit_v1 as audit
+
+    image = np.zeros((100, 200, 3), dtype=np.uint8)
+    path = tmp_path / "frame.jpg"
+    assert cv2.imwrite(str(path), image)
+
+    class FakeDetector:
+        @staticmethod
+        def detect(_frame):
+            return [((20, 10, 80, 70), .875)]
+
+    monkeypatch.setattr(audit, "detector", lambda: FakeDetector())
+    rows = fast.Qwen3VLSemanticProvider._attach_person_detections([
+        {"ratio": .5, "path": str(path)}
+    ])
+
+    assert rows[0]["person_detections"] == [{
+        "box": [.1, .1, .4, .7],
+        "score": .875,
+    }]
 
 
 def test_scene_context_merge_never_imports_neighbor_people_or_props() -> None:
@@ -139,6 +165,12 @@ def test_provider_uses_window_only_for_scene_and_exact_shot_for_visible_truth() 
                 "kind": "shot_grounding",
                 "revision_item_id": "ITEM_1",
                 "status": "READY",
+                "presence_recheck": {
+                    "profile": "breakdown-p2-vlm-detector-local-recheck-zh-v1",
+                    "status": "NOT_NEEDED",
+                    "candidate_count": 0,
+                    "added_subject_count": 0,
+                },
                 "semantic": semantic(
                     summary="蓝色玫瑰插在玻璃花瓶中",
                     subjects=[],
@@ -178,6 +210,7 @@ def test_provider_uses_window_only_for_scene_and_exact_shot_for_visible_truth() 
     assert first.payload["semantic"]["subjects"] == []
     assert first.payload["semantic"]["props"][0]["label"] == "蓝色玫瑰"
     assert first.payload["exact_shot_grounding"]["visual_truth_policy"] == fast.VISUAL_TRUTH_POLICY
+    assert first.payload["exact_shot_grounding"]["presence_recheck"]["status"] == "NOT_NEEDED"
     assert result.metadata["model_load_policy"] == "one-run-one-vlm-process-one-model-load"
 
 

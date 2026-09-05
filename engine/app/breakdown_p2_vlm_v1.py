@@ -35,7 +35,7 @@ DEFAULT_MAX_PIXELS = 524_288
 VLM_TIMEOUT_SECONDS = 4 * 60 * 60
 
 _ALLOWED_INTERIOR_EXTERIOR = frozenset({"INT", "EXT", "MIXED", "UNKNOWN"})
-_ALLOWED_VISIBILITY = frozenset({"FULL", "PARTIAL", "OCCLUDED", "UNKNOWN"})
+_ALLOWED_VISIBILITY = frozenset({"FULL", "PARTIAL", "OCCLUDED", "BACK_VIEW", "UNKNOWN"})
 _ALLOWED_SPEAKING_STATE = frozenset({"LIKELY_SPEAKING", "NOT_SPEAKING", "UNKNOWN"})
 _ALLOWED_EVENT_TYPES = frozenset({"VISUAL", "ACTION"})
 _ALLOWED_PROP_IMPORTANCE = frozenset({"LOW", "MEDIUM", "HIGH"})
@@ -345,7 +345,7 @@ class Qwen3VLSemanticProvider:
             item["speaking_state"] = self._enum(
                 raw.get("speaking_state"), _ALLOWED_SPEAKING_STATE, "UNKNOWN"
             )
-            from engine.app.person_presence_geometry_v1 import frame_boxes
+            from engine.person_presence_geometry_v1 import frame_boxes
             if raw.get('frame_boxes') is not None:
                 item['frame_boxes'] = frame_boxes(raw['frame_boxes'])
             normalized.append(item)

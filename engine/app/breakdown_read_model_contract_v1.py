@@ -36,6 +36,7 @@ class FinalCharacterDisplayV1(_StrictReadModel):
     id: str = Field(min_length=1)
     name: str = Field(min_length=1)
     cover_url: str | None = None
+    cover_box: list[float] | None = Field(default=None, min_length=4, max_length=4)
 
 
 class FinalSceneDisplayV1(_StrictReadModel):
@@ -141,6 +142,7 @@ class BreakdownReadModelV1(_StrictReadModel):
     speaker_overrides: dict[str, str] = Field(default_factory=dict)
     manual_presence: dict[str, list[str]] = Field(default_factory=dict)
     presence_review: dict[str, str] = Field(default_factory=dict)
+    shot_characters: dict[str, list[FinalCharacterDisplayV1]] = Field(default_factory=dict)
 
 
 __all__ = [

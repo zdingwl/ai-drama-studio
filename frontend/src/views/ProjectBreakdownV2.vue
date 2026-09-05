@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import ShotFramePreviewV4 from '../components/ShotFramePreviewV4.vue'
 import MissingPersonReview from '../components/MissingPersonReview.vue'
+import PersonEvidenceImageV1 from '../components/PersonEvidenceImageV1.vue'
 import PerformanceSuggestion from '../components/PerformanceSuggestion.vue'
 import { breakdownApi } from '../api/breakdown'
 import { startQuietPolling } from '../utils/quietPolling'
@@ -181,9 +182,14 @@ const selectedPeople = computed<SceneTimelinePerson[]>(() => {
   const scene = selectedScene.value
   const shot = selectedTimelineShot.value
   if (!scene || !shot) return []
-  return shot.people
+  const people = shot.people
     .map((ref) => scene.people.find((person) => person.ref === ref) || null)
     .filter((person): person is SceneTimelinePerson => Boolean(person))
+  if (people.length === 1 && shot.final_characters?.length === 1) {
+    const character = shot.final_characters[0]
+    return [{ ...people[0], display_name: character.name, final_character: character }]
+  }
+  return people
 })
 
 const selectedDialogue = computed(() => selectedTimelineShot.value?.dialogue || [])
@@ -284,10 +290,12 @@ function contextForShot(shot: Shot): TimelineShotContext | null {
 function shotSummary(shot: Shot): string {
   const context = contextForShot(shot)
   if (!context) return shot.short_description || '等待拉片'
-  const names = context.shot.people
-    .map((ref) => context.scene.people.find((item) => item.ref === ref))
-    .filter((item): item is SceneTimelinePerson => Boolean(item))
-    .map(personDisplayName)
+  const names = context.shot.people.length === 1 && context.shot.final_characters?.length === 1
+    ? [context.shot.final_characters[0].name]
+    : context.shot.people
+      .map((ref) => context.scene.people.find((item) => item.ref === ref))
+      .filter((item): item is SceneTimelinePerson => Boolean(item))
+      .map(personDisplayName)
   const personText = names.length ? names.slice(0, 2).join('、') : '无人物'
   const sceneText = context.scene.final_scene?.name || context.scene.title || context.scene.scene_info.location || '未识别场景'
   const dialogueText = context.shot.dialogue.length ? `${context.shot.dialogue.length}句对白` : '无对白'
@@ -375,7 +383,8 @@ const propSummary = computed(() => selectedProps.value.length ? selectedProps.va
 const selectedPendingItems = computed<PendingItem[]>(() => {
   if (!selectedTimelineShot.value) return []
   const items: PendingItem[] = []
-  if (selectedPeople.value.some((person) => !person.final_character)) items.push({ key: 'person', label: '人物身份待确认', tone: 'orange' })
+  if (selectedShot.value && timelineShotMap.value.get(selectedShot.value.ordinal)?.shot.presence_review_id) items.push({ key: 'person', label: '疑似漏人，核对出镜人物', tone: 'orange' })
+  else if (selectedPeople.value.some((person) => !person.final_character)) items.push({ key: 'person', label: '人物身份待确认', tone: 'orange' })
   if (selectedDialogue.value.some((dialogue) => !dialogue.speakers.length)) items.push({ key: 'dialogue', label: '对白说话人待确认', tone: 'blue' })
   const status = selectedStatus.value
   if ((status?.state === 'review' || status?.state === 'incomplete') && status.detail && !items.some((item) => status.detail?.includes(item.key === 'person' ? '人物' : '对白'))) {
@@ -660,6 +669,11 @@ async function saveManualEdit(): Promise<void> {
 
 function handlePendingItem(item: PendingItem): void {
   if (item.key === 'person') {
+    if (selectedShot.value && timelineShotMap.value.get(selectedShot.value.ordinal)?.shot.presence_review_id) {
+      detailTab.value = 'people'
+      presenceEditorShot.value = selectedShot.value.id
+      return
+    }
     goSourceConfirm()
     return
   }
@@ -1159,7 +1173,7 @@ onBeforeUnmount(() => {
                   <MissingPersonReview v-if="selectedShot && presenceEditorShot === selectedShot.id" :key="presenceEditorShot" :project-id="projectId" :shot-id="presenceEditorShot" @close="presenceEditorShot = ''" @saved="onPresenceSaved" />
                   <section v-if="selectedPeople.length" class="person-list">
                     <article v-for="person in selectedPeople" :key="person.ref" class="person-card">
-                      <span class="person-avatar"><img v-if="person.final_character?.cover_url" :src="person.final_character.cover_url" alt="" /><b v-else>{{ personDisplayName(person).slice(0, 1) }}</b></span>
+                      <span class="person-avatar"><PersonEvidenceImageV1 v-if="person.final_character?.cover_url" :src="person.final_character.cover_url" :box="person.final_character.cover_box" :alt="personDisplayName(person)" /><b v-else>{{ personDisplayName(person).slice(0, 1) }}</b></span>
                       <div class="person-copy"><div><strong>{{ personDisplayName(person) }}</strong><em :class="{ pending: !person.final_character }">{{ person.final_character ? '✓ 已绑定正式人物' : '! 待确认人物' }}</em></div><p>{{ person.appearance || '暂无人物外观补充描述' }}</p><button type="button" @click="goSourceConfirm">修改人物</button></div>
                     </article>
                   </section>

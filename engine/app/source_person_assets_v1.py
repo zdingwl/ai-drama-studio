@@ -446,6 +446,19 @@ def apply_person_mapping(episode_id: str, result: dict[str, Any]) -> dict[str, A
             select(Character).where(Character.project_id == episode.project_id)
         ).all())
         revision = _current_revision(session, episode.project_id)
+        covers = {}
+        for character in characters:
+            meta = _json(character.metadata_json)
+            if meta.get('cover_url'):
+                covers[character.id] = {'cover_url': meta['cover_url']}
+                continue
+            bound = set(session.scalars(select(ShotCharacterBinding.shot_id).where(ShotCharacterBinding.character_id == character.id)).all())
+            for mapping in meta.get(MAPPING_KEY, []):
+                source = next((item for item in rows if item['key'] == mapping.get('key') and item['anchor'] == mapping.get('anchor')), None)
+                mark = mapping.get('localization')
+                if source and not source.get('identity_issue') and {s['id'] for s in source['shots']} <= bound and _valid_localization(source, mark):
+                    covers[character.id] = {'cover_url': mark['image_url'], 'cover_box': mark['box']}
+                    break
         changed = False
         for scene in result["identity"]["scenes"]:
             for person in scene["people"]:
@@ -477,6 +490,7 @@ def apply_person_mapping(episode_id: str, result: dict[str, Any]) -> dict[str, A
                                 "id": character.id,
                                 "name": character.name,
                                 "cover_url": meta.get("cover_url"),
+                                **covers.get(character.id, {}),
                             })
                 if len(matches) == 1:
                     person["character"] = matches[0]
@@ -490,3 +504,51 @@ def apply_person_mapping(episode_id: str, result: dict[str, Any]) -> dict[str, A
             overlay["unresolved_count"] = len(people) - overlay["resolved_count"]
             overlay["warnings"] = ["仍有原片人物待确认"] if overlay["unresolved_count"] else []
     return result
+
+
+def shot_character_displays(episode_id: str, result: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """按当前 Shot 正式绑定投影人物；只用于逐镜头展示，不替代 Scene-local 身份归并。"""
+
+    if not result or not result["timeline"].get("is_current"):
+        return {}
+    timeline = result["timeline"]
+    frames = {
+        shot["ordinal"]: shot.get("thumbnail_url")
+        for scene in timeline["scenes"]
+        for shot in scene["shots"]
+    }
+    with get_session() as session:
+        shots = list(session.scalars(select(Shot).where(Shot.episode_id == episode_id)).all())
+        ordinal_by_id = {shot.id: shot.ordinal for shot in shots}
+        rows = session.execute(
+            select(ShotCharacterBinding, Character)
+            .join(Character, Character.id == ShotCharacterBinding.character_id)
+            .where(ShotCharacterBinding.shot_id.in_(tuple(ordinal_by_id)))
+        ).all() if ordinal_by_id else []
+        output: dict[str, list[dict[str, Any]]] = {}
+        for binding, character in rows:
+            ordinal = ordinal_by_id[binding.shot_id]
+            meta = _json(character.metadata_json)
+            display: dict[str, Any] = {
+                "id": character.id,
+                "name": character.name,
+                "cover_url": meta.get("cover_url"),
+                "cover_box": None,
+            }
+            if not display["cover_url"]:
+                for mapping in meta.get(MAPPING_KEY, []):
+                    mark = mapping.get("localization")
+                    if (
+                        isinstance(mark, dict)
+                        and mark.get("shot_id") == binding.shot_id
+                        and mark.get("image_url") == frames.get(ordinal)
+                        and _valid_localization({"shots": [{"id": binding.shot_id, "thumbnail_url": frames.get(ordinal)}]}, mark)
+                    ):
+                        display["cover_url"] = mark["image_url"]
+                        display["cover_box"] = mark["box"]
+                        break
+            output.setdefault(str(ordinal), []).append(display)
+    return {
+        ordinal: sorted({row["id"]: row for row in displays}.values(), key=lambda row: (row["name"], row["id"]))
+        for ordinal, displays in output.items()
+    }
