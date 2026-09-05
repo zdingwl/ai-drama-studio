@@ -133,6 +133,11 @@ def _selected_shot_quality(
             "subject_count": len(subject_rows),
             "subjects": subject_rows,
             "props": prop_labels,
+            "presence_recheck": (
+                dict(row.get("presence_recheck"))
+                if isinstance(row.get("presence_recheck"), Mapping)
+                else None
+            ),
         })
     return sorted(result, key=lambda item: int(item["shot_ordinal"]))
 
@@ -183,7 +188,9 @@ def diagnose(run_id: str, batch_numbers: Sequence[int]) -> dict[str, Any]:
             ordinals: list[int] = []
             frame_count = 0
             for shot in batch:
-                frames = provider._materialize_grounding_frames(shot, frame_dir)
+                frames = provider._attach_person_detections(
+                    provider._materialize_grounding_frames(shot, frame_dir)
+                )
                 ordinals.append(int(shot.ordinal))
                 frame_count += len(frames)
                 grounding_payloads.append({
@@ -349,6 +356,15 @@ def _summary(payload: Mapping[str, Any]) -> str:
                 f"Shot {row.get('shot_ordinal')}: subjects={row.get('subject_count')} | props={prop_text} | "
                 f"summary={row.get('summary')}"
             )
+            recheck = row.get("presence_recheck")
+            if isinstance(recheck, Mapping):
+                lines.append(
+                    "  presence recheck: {status} | candidates={candidates} | added={added}".format(
+                        status=recheck.get("status"),
+                        candidates=recheck.get("candidate_count"),
+                        added=recheck.get("added_subject_count"),
+                    )
+                )
             if subject_text != "-":
                 lines.append(f"  people: {subject_text}")
     return "\n".join(lines)

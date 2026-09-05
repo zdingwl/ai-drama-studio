@@ -383,7 +383,7 @@ __all__ = [
 
 
 def load_episode_breakdown_read_model_v1(episode_id: str):
-    from engine.app.source_person_assets_v1 import apply_person_mapping
+    from engine.app.source_person_assets_v1 import apply_person_mapping, shot_character_displays
     from engine.app.source_dialogue_speaker_override_v1 import load_episode_source_dialogue_speaker_overrides_v1, source_dialogue_signature_v1
     result = apply_person_mapping(episode_id, _load_episode_breakdown_read_model_v1(episode_id))
     if not result:
@@ -411,4 +411,5 @@ def load_episode_breakdown_read_model_v1(episode_id: str):
     from engine.app.source_presence_audit_v1 import pending
     result['presence_review'] = {str(row['ai_suggestion']['ordinal']): row['id'] for row in
         pending(episode_id, timeline['source_breakdown_run_id'], timeline['source_shot_revision_id'])}
+    result['shot_characters'] = shot_character_displays(episode_id, result)
     return result

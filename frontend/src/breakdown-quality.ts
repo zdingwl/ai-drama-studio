@@ -63,6 +63,7 @@ export function evaluateBreakdownShotQuality(shot: SceneTimelineShot): Breakdown
 /** Anonymous observations and missing speaker references are never formal identities. */
 export function hasUnconfirmedSourcePeople(shot: SceneTimelineShot, people: SceneTimelinePerson[]): boolean {
   if (shot.presence_review_id) return true
+  if (shot.people.length === 1 && shot.final_characters?.length === 1) return false
   const refs = new Set([...shot.people, ...shot.dialogue.flatMap((item) => item.speakers)])
   return [...refs].some((ref) => !people.find((person) => person.ref === ref)?.final_character)
 }

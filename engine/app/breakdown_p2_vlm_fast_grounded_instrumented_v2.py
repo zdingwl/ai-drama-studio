@@ -111,7 +111,9 @@ class Qwen3VLSemanticProvider(fast.Qwen3VLSemanticProvider):
             total_frame_count = 0
             for shot in self._unique_shots(windows):
                 started = time.perf_counter()
-                frames = self._materialize_grounding_frames(shot, frame_dir)
+                frames = self._attach_person_detections(
+                    self._materialize_grounding_frames(shot, frame_dir)
+                )
                 total_frame_count += len(frames)
                 grounding_payloads.append({
                     "revision_item_id": shot.revision_item_id,

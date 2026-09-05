@@ -264,6 +264,7 @@ def main() -> int:
                         "revision_item_id": item_id,
                         "status": "READY",
                         "semantic": result.get("semantic"),
+                        "presence_recheck": result.get("presence_recheck"),
                     })
             except Exception as exc:
                 _sync_cuda()

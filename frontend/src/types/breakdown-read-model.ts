@@ -46,6 +46,7 @@ export interface BreakdownReadModelPayload {
   speaker_overrides?: Record<string, string>
   manual_presence?: Record<string, string[]>
   presence_review?: Record<string, string>
+  shot_characters?: Record<string, FinalCharacterDisplay[]>
   schema_version: 'breakdown-read-model-v1'
   timeline: SceneTimelinePayload
   identity: BreakdownReadIdentityOverlay

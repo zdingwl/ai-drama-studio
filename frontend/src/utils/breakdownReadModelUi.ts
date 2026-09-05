@@ -207,7 +207,7 @@ export function projectBreakdownReadModelForOrdinaryUi(
   const timeline = { ...base, scenes: base.scenes.map(scene => ({ ...scene, shots: scene.shots.map(shot => ({ ...shot, people: [...new Set([...shot.people, ...(payload.manual_presence?.[String(shot.ordinal)] || []).filter(ref => scene.people.some(person => person.ref === ref))])] })) })) }
   const withIdentity = projectIdentity(timeline, payload)
   const result = projectFinalAssets(withIdentity, payload.assets)
-  return { ...result, scenes: result.scenes.map(scene => ({ ...scene, shots: scene.shots.map(shot => ({ ...shot, presence_review_id: payload.presence_review?.[String(shot.ordinal)], dialogue: shot.dialogue.map((dialogue, index) => {
+  return { ...result, scenes: result.scenes.map(scene => ({ ...scene, shots: scene.shots.map(shot => ({ ...shot, presence_review_id: payload.presence_review?.[String(shot.ordinal)], final_characters: (payload.shot_characters?.[String(shot.ordinal)] || []).filter((character, index, all) => Boolean(character.id && character.name) && all.findIndex(item => item.id === character.id) === index).map(character => ({ ...character })), dialogue: shot.dialogue.map((dialogue, index) => {
     const key = `${result.episode_id}:${result.source_shot_revision_id}:H${shot.ordinal}:D${index + 1}`
     const ref = payload.speaker_overrides?.[key]
     return ref && scene.people.some(person => person.ref === ref && person.final_character) ? { ...dialogue, speakers: [ref] } : dialogue
