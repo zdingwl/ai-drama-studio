@@ -92,7 +92,16 @@ YOUTU_REID_SPEC = ModelSpec(
     ),
 )
 
-MODEL_SPECS = (YUNET_SPEC, SFACE_SPEC, YOLOX_SPEC, YOUTU_REID_SPEC)
+HUMANSEG_SPEC = ModelSpec(
+    logical_id="person_segmentation.pphumanseg.2023mar",
+    filename="human_segmentation_pphumanseg_2023mar.onnx",
+    size_bytes=6_163_938,
+    sha256="552d8a984054e59b5d773d24b9b12022b22046ceb2bbc4c9aaeaceb36a9ddf24",
+    download_url=("https://media.githubusercontent.com/media/opencv/opencv_zoo/"
+                  f"{MODEL_SOURCE_COMMIT}/models/human_segmentation_pphumanseg/human_segmentation_pphumanseg_2023mar.onnx"),
+)
+
+MODEL_SPECS = (YUNET_SPEC, SFACE_SPEC, YOLOX_SPEC, YOUTU_REID_SPEC, HUMANSEG_SPEC)
 
 
 def model_dir() -> Path:
@@ -171,10 +180,12 @@ def model_status() -> dict[str, object]:
     }
 
 
-def require_models() -> dict[str, Path]:
+def require_models(*, include_segmentation: bool = False) -> dict[str, Path]:
     root = model_dir()
     result: dict[str, Path] = {}
     for spec in MODEL_SPECS:
+        if spec is HUMANSEG_SPEC and not include_segmentation:
+            continue
         path = root / spec.filename
         try:
             _verify(path, spec)

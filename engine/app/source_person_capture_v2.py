@@ -32,13 +32,32 @@ class SourcePersonImage(studio.Base):
     evidence_json: Mapped[str] = mapped_column(Text)
 
 
+class SourcePersonCaptureState(studio.Base):
+    __tablename__ = "v2_source_person_capture_states"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    observation_key: Mapped[str] = mapped_column(String(255), index=True)
+    shot_id: Mapped[str] = mapped_column(String(80))
+    anchor: Mapped[str] = mapped_column(String(64))
+    image_ids_json: Mapped[str] = mapped_column(Text)
+
+
+def _states(session, keys):
+    return {(r.observation_key, r.shot_id): (r.anchor, set(json.loads(r.image_ids_json)))
+            for r in session.scalars(select(SourcePersonCaptureState).where(SourcePersonCaptureState.observation_key.in_(keys)))}
+
+
+def _active(states, image_id, key, shot_id, anchor):
+    state = states.get((key, shot_id))
+    return state is None or (state[0] == anchor and image_id in state[1])
+
+
 def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True,
                       default=lambda item: item.tolist() if hasattr(item, "tolist") else str(item))
 
 
-def isolate(frame, box):
-    """真实 GrabCut 前景 mask；空/极小前景失败，不伪造成功的抠图。"""
+def isolate(frame, box, *, segmenter, other_boxes=()):
+    """人体语义分割限制到当前检测框，排除其他人物区域；不以矩形裁图冒充抠图。"""
     import cv2
     import numpy as np
     h, w = frame.shape[:2]
@@ -50,13 +69,18 @@ def isolate(frame, box):
     margin = max(4, round(max(bw, bh) * .08))
     left, top, right, bottom = max(0, x-margin), max(0, y-margin), min(w, x+bw+margin), min(h, y+bh+margin)
     crop = frame[top:bottom, left:right].copy()
-    # 添加确定背景边，画面贴边人物仍可处理；mask 只用于展示，身份特征保持原像素输入。
-    padded = cv2.copyMakeBorder(crop, 2, 2, 2, 2, cv2.BORDER_CONSTANT)
-    mask = np.zeros(padded.shape[:2], np.uint8)
-    rect = (x-left+2, y-top+2, bw, bh)
-    cv2.grabCut(padded, mask, rect, np.zeros((1, 65)), np.zeros((1, 65)), 4, cv2.GC_INIT_WITH_RECT)
-    alpha = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)[2:-2, 2:-2]
-    if np.count_nonzero(alpha) < bw * bh * .08:
+    blob = cv2.dnn.blobFromImage(crop, 1/127.5, (192, 192), (127.5,127.5,127.5), swapRB=True)
+    segmenter.setInput(blob)
+    logits = segmenter.forward()[0]
+    foreground = cv2.resize(logits[1] - logits[0], (right-left, bottom-top)) > 0
+    allowed = np.zeros(foreground.shape, np.uint8)
+    allowed[y-top:y-top+bh, x-left:x-left+bw] = 1
+    for ox, oy, ow, oh in other_boxes:
+        a, b, c, d = max(left, ox), max(top, oy), min(right, ox+ow), min(bottom, oy+oh)
+        if c > a and d > b:
+            allowed[b-top:d-top, a-left:c-left] = 0
+    alpha = (foreground & allowed.astype(bool)).astype(np.uint8) * 255
+    if np.count_nonzero(alpha) < bw * bh * .08 or np.count_nonzero(alpha) > bw * bh * .98:
         raise ValueError("人物前景分割失败，请人工核对")
     rgba = cv2.cvtColor(crop, cv2.COLOR_BGR2BGRA)
     rgba[:, :, 3] = alpha
@@ -77,6 +101,7 @@ def valid_mark(row, mark):
     with studio.get_session() as session:
         image = session.get(SourcePersonImage, str(mark.get("evidence_id") or ""))
         return bool(image and image.observation_key == row["key"] and image.anchor == row["anchor"]
+                    and _active(_states(session, [row["key"]]), image.id, row["key"], image.shot_id, row["anchor"])
                     and image.shot_id == mark.get("shot_id") and mark.get("image_url") == image_url(image.id)
                     and mark.get("box") == [0, 0, 1, 1]
                     and image.shot_id in {s["id"] for s in row["shots"]})
@@ -89,12 +114,13 @@ def decorate(rows, characters):
     current = {r["key"]: r for r in rows}
     best, by_character = {}, {}
     with studio.get_session() as session:
+        states = _states(session, current)
         records = session.execute(select(SourcePersonImage.id, SourcePersonImage.observation_key,
                                         SourcePersonImage.anchor, SourcePersonImage.shot_id, SourcePersonImage.evidence_json)
                                   .where(SourcePersonImage.observation_key.in_(current))).all()
         for image_id, key, anchor, shot_id, raw in records:
             row = current[key]
-            if anchor != row["anchor"] or shot_id not in {s["id"] for s in row["shots"]}:
+            if anchor != row["anchor"] or shot_id not in {s["id"] for s in row["shots"]} or not _active(states, image_id, key, shot_id, anchor):
                 continue
             quality = float(json.loads(raw).get("display_quality") or 0)
             item = (quality, image_id, shot_id)
@@ -135,11 +161,12 @@ def capture(episode_id, *, shot_ordinal=None, progress=None, rerun_artifact=None
     """仅提取所请求 Shot；跨镜归并复用数据库现有特征，不重跑其他镜头模型。"""
     import cv2
     from engine.app.breakdown_serializer_v1 import get_current_breakdown
-    from engine.app.breakdown_p2_sidecar_v1 import load_p2_run_context
-    from engine.app.breakdown_p2_fusion_v1 import load_fusion_inputs
+    from engine.app.breakdown_shot_rerun_v1 import _load_full_context
+    from engine.app.breakdown_p2_fusion_v1 import _load_one_component
+    from engine.app.breakdown_models_v1 import BreakdownRun
     from engine.app.source_person_assets_v1 import LOCK, inventory
     from engine.app.source_presence_audit_v1 import detector, iou
-    from engine.app.character_visual_v5 import Observation, _YoutuReIDOrt, _read_frame, _clarity_score, _representative_quality
+    from engine.app.character_visual_v5 import Observation, _YoutuReIDOrt, _read_frame, _clarity_score, _representative_quality, _body_completeness
     from engine.app.content_models_v2 import require_models
     from engine.app.character_observation_v9 import annotate_person_instances
     from engine.app.character_person_features_v9 import extract_person_features, attach_person_features
@@ -150,13 +177,15 @@ def capture(episode_id, *, shot_ordinal=None, progress=None, rerun_artifact=None
     draft = get_current_breakdown(episode_id)
     if not draft:
         raise ValueError("请先完成原片内容分析")
-    context = load_p2_run_context(draft["run"]["id"])
+    context = _load_full_context(draft, rerun_id=draft["run"]["id"])
     workspace = inventory(context.project_id)
     expected = workspace["revision"]
     rows = {r["key"]: r for r in workspace["observations"]}
     source_keys = _sources(draft)
-    bundle = load_fusion_inputs(context.run_id)
-    payloads = {r.shot_revision_item_id: r.payload for r in bundle.components["VLM"].result.evidence if r.source_type == "VLM_OUTPUT"}
+    with studio.get_session() as session:
+        statuses = json.loads(session.get(BreakdownRun, context.run_id).component_status_json)
+    vlm = _load_one_component(context, statuses["VLM"], "VLM")
+    payloads = {r.shot_revision_item_id: r.payload for r in vlm.result.evidence if r.source_type == "VLM_OUTPUT"}
     if rerun_artifact:
         rerun = json.loads(Path(rerun_artifact).read_text(encoding="utf-8"))
         if rerun.get("source_breakdown_run_id") != context.run_id or rerun.get("source_shot_revision_id") != context.source_shot_revision_id:
@@ -172,13 +201,24 @@ def capture(episode_id, *, shot_ordinal=None, progress=None, rerun_artifact=None
             # 单镜重拉的 label 不是稳定身份。未能逐项保持外观与 label 时交原片结构核对。
             signature = lambda subjects: sorted((str(s.get("label")), str(s.get("appearance_summary"))) for s in subjects)
             if signature(old_subjects) != signature(new_subjects):
+                affected = next((s for s in context.shots if s.revision_item_id == revision_item), None)
+                if affected:
+                    with LOCK, studio.get_session() as session:
+                        for row in rows.values():
+                            if row["episode_id"] != episode_id or affected.original_shot_id not in {s["id"] for s in row["shots"]}:
+                                continue
+                            state_id = hashlib.sha256(f'{row["key"]}:{affected.original_shot_id}'.encode()).hexdigest()
+                            session.merge(SourcePersonCaptureState(id=state_id, observation_key=row["key"],
+                                          shot_id=affected.original_shot_id, anchor=row["anchor"], image_ids_json="[]"))
+                        session.commit()
                 return {"auto_merged_observations": 0, "image_count": 0,
                         "warnings": ["单镜人物观察发生变化，需核对人物结构后再归并；未沿用旧 label 自动绑定"]}
             payloads[revision_item] = new
     targets = [s for s in context.shots if shot_ordinal is None or s.ordinal == shot_ordinal]
     if not targets:
         raise ValueError("请求的分镜不存在")
-    models = require_models()
+    models = require_models(include_segmentation=True)
+    segmenter = cv2.dnn.readNet(str(models["person_segmentation.pphumanseg.2023mar"]))
     reid = _YoutuReIDOrt(models["person_reid.youtu.2021nov"])
     detect = detector().detect
     face_detector = cv2.FaceDetectorYN.create(str(models["face_detection.yunet.2023mar"]), "", (320, 320), score_threshold=.8)
@@ -210,22 +250,24 @@ def capture(episode_id, *, shot_ordinal=None, progress=None, rerun_artifact=None
                 if not row or row.get("identity_issue"):
                     continue
                 boxes = [b["box"] for b in frame_boxes(subject.get("frame_boxes")) if b["frame"] == frame_index]
+                single = len(subjects) == 1 and len(detections) == 1 and not boxes
                 matches = [(i, b, score) for i, (b, score) in enumerate(detections)
-                           if len(boxes) == 1 and iou([b[0]/w,b[1]/h,b[2]/w,b[3]/h], boxes[0]) >= .60]
+                           if single or (len(boxes) == 1 and iou([b[0]/w,b[1]/h,b[2]/w,b[3]/h], boxes[0]) >= .60)]
                 if len(matches) != 1 or matches[0][0] in used:
                     continue
                 i, box, score = matches[0]
                 # 检查一个检测框是否同时被多个 VLM 主体引用，阻止多人观察误映射。
                 owners = sum(any(b["frame"] == frame_index and iou([box[0]/w,box[1]/h,box[2]/w,box[3]/h], b["box"]) >= .60
                                  for b in frame_boxes(s.get("frame_boxes"))) for s in subjects)
-                if owners != 1:
+                if not single and owners != 1:
                     continue
                 used.add(i)
                 obs = Observation(shot.original_shot_id, episode_id, int(episode["sort_order"]), shot.ordinal,
                                   shot.start_us+local_us, local_us, tuple(box), None, shot.reference_clip_path,
                                   float(score), None, reid.infer(frame, box), None, False, "yolox-exact-vlm",
                                   frame_width=w, frame_height=h, clarity_score=_clarity_score(frame, box),
-                                  body_completeness=1.0, other_person_boxes=[b for j,(b,_) in enumerate(detections) if j != i])
+                                  body_completeness=_body_completeness(box, w, h),
+                                  other_person_boxes=[b for j,(b,_) in enumerate(detections) if j != i])
                 obs.source_observation_key = key
                 matching_faces = [f for f in ([] if face_rows is None else face_rows)
                                   if box[0] <= f[0]+f[2]/2 <= box[0]+box[2] and box[1] <= f[1]+f[3]/2 <= box[1]+box[3]]
@@ -250,14 +292,14 @@ def capture(episode_id, *, shot_ordinal=None, progress=None, rerun_artifact=None
                 attach_v10_policy(obs)
                 row = rows[obs.source_observation_key]
                 try:
-                    image, mask = isolate(frame, obs.person_bbox)
+                    image, mask = isolate(frame, obs.person_bbox, segmenter=segmenter, other_boxes=others)
                 except (ValueError, cv2.error):
                     warnings.append(f"分镜 {shot.ordinal} 人物前景提取失败，保留人工核对")
                     continue
                 data = dict(observation={k:v for k,v in vars(obs).items() if k != "person_feature_bundle"},
                             bundle=asdict(obs.person_feature_bundle), display_quality=_representative_quality(obs),
                             source_time_us=obs.source_time_us, profile=PROFILE)
-                identity = hashlib.sha256((row["anchor"] + obs.instance_id).encode()).hexdigest()
+                identity = hashlib.sha256((row["anchor"] + obs.instance_id + hashlib.sha256(image).hexdigest()).encode()).hexdigest()
                 pending.append(dict(id=identity, project_id=context.project_id, episode_id=episode_id,
                                     shot_id=obs.shot_id, observation_key=row["key"], anchor=row["anchor"],
                                     image=image, mask=mask, evidence_json=_json(data)))
@@ -268,6 +310,20 @@ def capture(episode_id, *, shot_ordinal=None, progress=None, rerun_artifact=None
             for item in pending:
                 if session.get(SourcePersonImage, item["id"]) is None:
                     session.add(SourcePersonImage(**item))
+            for row in rows.values():
+                for shot in targets:
+                    if row["episode_id"] != episode_id or shot.original_shot_id not in {s["id"] for s in row["shots"]}:
+                        continue
+                    state_id = hashlib.sha256(f'{row["key"]}:{shot.original_shot_id}'.encode()).hexdigest()
+                    state = session.get(SourcePersonCaptureState, state_id)
+                    if state is None:
+                        state = SourcePersonCaptureState(id=state_id, observation_key=row["key"], shot_id=shot.original_shot_id)
+                        session.add(state)
+                    state.anchor = row["anchor"]
+                    ids = [p["id"] for p in pending if p["observation_key"] == row["key"] and p["shot_id"] == shot.original_shot_id]
+                    state.image_ids_json = json.dumps(ids)
+                    if not ids:
+                        warnings.append(f'分镜 {shot.ordinal} 有人物尚未获得可靠独立图，需要核对位置')
             session.commit()
     result = auto_merge(context.project_id)
     return {**result, "image_count": len(pending), "warnings": sorted(set(warnings))}
@@ -297,9 +353,10 @@ def auto_merge(project_id):
         rows = {r["key"]: r for r in workspace["observations"] if not r.get("identity_issue")}
         tracks, observations = {}, {}
         with studio.get_session() as session:
-            for key, anchor, raw in session.execute(select(SourcePersonImage.observation_key, SourcePersonImage.anchor,
+            states = _states(session, rows)
+            for image_id, key, anchor, shot_id, raw in session.execute(select(SourcePersonImage.id, SourcePersonImage.observation_key, SourcePersonImage.anchor, SourcePersonImage.shot_id,
                                                            SourcePersonImage.evidence_json).where(SourcePersonImage.project_id == project_id)):
-                if key not in rows or anchor != rows[key]["anchor"]:
+                if key not in rows or anchor != rows[key]["anchor"] or not _active(states, image_id, key, shot_id, anchor):
                     continue
                 obs = _restore(raw)
                 bucket = (key, obs.shot_id)

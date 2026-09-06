@@ -10,11 +10,13 @@ and never start providers, mutate Draft rows or write acceptance artifacts.
 from __future__ import annotations
 
 from threading import Lock
-from typing import Any
+from typing import Any, Annotated
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Header
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+from engine.app.studio_v2 import Base
 
 from engine.app.breakdown_g1_acceptance_diagnostics_v1 import build_g1_acceptance_snapshot
 from engine.app.breakdown_g1_acceptance_summary_v1 import build_g1_console_summary
@@ -99,6 +101,40 @@ class P2AcceptanceRequest(BaseModel):
 class PerformanceCommand(BaseModel):
     input_fingerprint: str = Field(min_length=1, max_length=128)
     workflow_revision: str = Field(min_length=1, max_length=128)
+
+
+class BreakdownCommandReceipt(Base):
+    __tablename__ = "v2_breakdown_command_receipts"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(64), index=True)
+    command_json: Mapped[str] = mapped_column(Text)
+
+
+def _command_context(project_id: str, episode_id: str | None = None, shot_ordinal: int | None = None) -> dict:
+    from engine.app.project_flow_state_v1 import get_project_flow_state_v1
+    from engine.app.source_person_assets_v1 import digest
+    state = get_project_flow_state_v1(project_id)
+    episodes = [e for e in state["episodes"] if episode_id is None or e["episode_id"] == episode_id]
+    if episode_id and not episodes:
+        raise HTTPException(404, "剧集不属于当前项目")
+    scope = {"project_id":project_id,"episode_id":episode_id,"shot_ordinal":shot_ordinal}
+    return {"workflow_revision":state["revision"],
+            "input_fingerprint":digest({"scope":scope,"episodes":episodes,"profile":"breakdown-people-subtitle-v2"})}
+
+
+@router.get("/episodes/{episode_id}/breakdown-command-context")
+def api_breakdown_command_context(episode_id: str, shot_ordinal: int | None = None):
+    episode = get_episode(episode_id)
+    if not episode:
+        raise HTTPException(404, "剧集不存在")
+    return _command_context(episode["project_id"], episode_id, shot_ordinal)
+
+
+@router.get("/projects/{project_id}/breakdown-command-context")
+def api_batch_command_context(project_id: str):
+    if not get_project(project_id):
+        raise HTTPException(404, "项目不存在")
+    return _command_context(project_id)
 
 
 class PerformanceAdoption(BaseModel):
@@ -240,12 +276,34 @@ def _enqueue(
     runner: Any,
     runner_args: tuple[Any, ...],
     total_items: int | None,
+    command: PerformanceCommand | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
+    import json
+    from engine.app.source_person_assets_v1 import digest
+    from engine.app.task_progress_v2 import get_task, serialize_task
+    if command is None or not idempotency_key:
+        raise HTTPException(428, "请刷新页面后提交带版本与请求标识的拉片命令")
+    ordinal = runner_args[1] if task_type == BREAKDOWN_SHOT_TASK_TYPE else None
+    receipt_id = digest([project_id, idempotency_key])
+    expected = {**command.model_dump(), "episode_id":episode_id,"shot_ordinal":ordinal,"task_type":task_type}
     with _P2_ENQUEUE_LOCK:
+        with get_session() as session:
+            receipt = session.get(BreakdownCommandReceipt,receipt_id)
+            if receipt:
+                if json.loads(receipt.command_json) != expected:
+                    raise HTTPException(409,"同一请求标识不能用于不同拉片输入")
+                return get_task(receipt.task_id)
+        current = _command_context(project_id,episode_id,ordinal)
+        if current != command.model_dump():
+            raise HTTPException(409,"工作流或分镜版本已变化，请刷新后重试")
         # Exact duplicate clicks remain idempotent. For Shot tasks the title contains the Shot ordinal,
         # therefore Shot 03 cannot be mistaken for an active Shot 04 command.
         existing = _active_task(project_id, task_type, episode_id, title=title)
         if existing is not None:
+            with get_session() as session:
+                session.add(BreakdownCommandReceipt(id=receipt_id,task_id=existing["id"],command_json=json.dumps(expected)))
+                session.commit()
             return existing
         # Episode/batch/single-Shot P2 jobs must never run concurrently on the same local GPU/runtime.
         if _has_any_active_p2_task():
@@ -253,15 +311,15 @@ def _enqueue(
                 status_code=409,
                 detail="当前已有 AI 拉片任务正在执行；P2 本地重任务固定 concurrency=1",
             )
-        task = create_task(
-            project_id=project_id,
-            episode_id=episode_id,
-            task_type=task_type,
-            title=title,
-            progress_mode="determinate",
-            total_items=total_items,
-            deduplicate_active=False,
-        )
+        # 任务与持久收据原子写入；任务结束后网络重放仍返回原任务。
+        with get_session() as session:
+            record = BackgroundTaskRecord(id="BD_"+receipt_id[:60],project_id=project_id,episode_id=episode_id,
+                task_type=task_type,title=title,progress_mode="determinate",progress_percent=0,
+                total_items=total_items,status="QUEUED",result_json=json.dumps({"command":expected}))
+            session.add(record)
+            session.add(BreakdownCommandReceipt(id=receipt_id,task_id=record.id,command_json=json.dumps(expected)))
+            session.commit()
+            task = serialize_task(record)
     background.add_task(runner, task["id"], *runner_args)
     return task
 
@@ -352,7 +410,7 @@ def run_shot_breakdown_task(task_id: str, episode_id: str, shot_ordinal: int) ->
             update_task(
                 task_id,
                 progress_mode="determinate",
-                progress_percent=percent,
+                progress_percent=percent * .75,
                 stage_key=stage,
                 stage_label=_stage_label(stage),
                 current_item=shot_label,
@@ -368,7 +426,7 @@ def run_shot_breakdown_task(task_id: str, episode_id: str, shot_ordinal: int) ->
         )
         from engine.app.source_person_capture_v2 import capture
         people = capture(episode_id, shot_ordinal=shot_ordinal, rerun_artifact=result["artifact_path"],
-                         progress=lambda current,total,message: update_task(task_id, stage_key="breakdown_people",
+                         progress=lambda current,total,message: update_task(task_id, progress_percent=75+24*current/max(1,total), stage_key="breakdown_people",
                                                                           stage_label="人物提取与自动归并", message=message))
         result["people"] = people
         result["warnings"] = list(result.get("warnings") or []) + list(people.get("warnings") or [])
@@ -420,10 +478,14 @@ def run_batch_breakdown_task(task_id: str, project_id: str) -> None:
                 )
 
             try:
-                run = run_episode_breakdown_p2(episode["id"], progress=report)
-                if run.status == "READY_WITH_WARNINGS":
+                run = run_episode_breakdown_p2(episode["id"], progress=lambda percent,stage,message: report(percent*.75,stage,message))
+                from engine.app.source_person_capture_v2 import capture
+                people = capture(episode["id"], progress=lambda current,total,message: report(
+                    75+24*current/max(1,total), "breakdown_people", message))
+                if run.status == "READY_WITH_WARNINGS" or people.get("warnings"):
                     warned += 1
-                results.append({"episode_id": episode["id"], "run_id": run.id, "status": run.status})
+                results.append({"episode_id": episode["id"], "run_id": run.id,
+                                "status": "READY_WITH_WARNINGS" if people.get("warnings") else run.status, "people": people})
             except Exception as exc:
                 failures += 1
                 results.append({"episode_id": episode["id"], "status": "FAILED", "error": str(exc)})
@@ -506,7 +568,8 @@ def api_get_run_g1_diagnostics(run_id: str) -> dict[str, Any]:
 
 
 @router.post("/episodes/{episode_id}/tasks/breakdown", status_code=202)
-def api_start_episode_breakdown(episode_id: str, background: BackgroundTasks) -> dict[str, Any]:
+def api_start_episode_breakdown(episode_id: str, background: BackgroundTasks, payload: PerformanceCommand | None = None,
+                               idempotency_key: Annotated[str | None, Header(max_length=200)] = None) -> dict[str, Any]:
     """后台执行单集完整 P2：ASR -> OCR -> VLM -> Fusion -> publish。"""
 
     episode = get_episode(episode_id)
@@ -521,6 +584,7 @@ def api_start_episode_breakdown(episode_id: str, background: BackgroundTasks) ->
         runner=run_episode_breakdown_task,
         runner_args=(episode_id,),
         total_items=1,
+        command=payload, idempotency_key=idempotency_key,
     )
 
 
@@ -529,6 +593,8 @@ def api_start_shot_breakdown(
     episode_id: str,
     shot_ordinal: int,
     background: BackgroundTasks,
+    payload: PerformanceCommand | None = None,
+    idempotency_key: Annotated[str | None, Header(max_length=200)] = None,
 ) -> dict[str, Any]:
     """真正只重跑一个 Shot；VLM 最多读取相邻 Shot 做上下文，不重跑整集。"""
 
@@ -552,11 +618,13 @@ def api_start_shot_breakdown(
         runner=run_shot_breakdown_task,
         runner_args=(episode_id, shot_ordinal),
         total_items=1,
+        command=payload, idempotency_key=idempotency_key,
     )
 
 
 @router.post("/projects/{project_id}/tasks/breakdown-batch", status_code=202)
-def api_start_batch_breakdown(project_id: str, background: BackgroundTasks) -> dict[str, Any]:
+def api_start_batch_breakdown(project_id: str, background: BackgroundTasks, payload: PerformanceCommand | None = None,
+                             idempotency_key: Annotated[str | None, Header(max_length=200)] = None) -> dict[str, Any]:
     """严格按 Episode.sort_order 顺序执行完整 P2；绝不并行轰炸模型/GPU。"""
 
     if get_project(project_id) is None:
@@ -573,6 +641,7 @@ def api_start_batch_breakdown(project_id: str, background: BackgroundTasks) -> d
         runner=run_batch_breakdown_task,
         runner_args=(project_id,),
         total_items=len(episodes),
+        command=payload, idempotency_key=idempotency_key,
     )
 
 

@@ -1180,7 +1180,7 @@ onBeforeUnmount(() => {
                 <template v-else-if="detailTab === 'people'">
                   <SourcePeoplePanelV2 :project-id="projectId" :episode-id="selectedEpisodeId" :shot-id="selectedShot.id"
                     :refresh-token="String(flowState?.revision || '')" :disabled="editingBlocked" @saved="onPresenceSaved"
-                    @locate="key => { const person = selectedPeople.find(p => key.endsWith(':' + p.ref)); person ? confirmShotPerson(person) : goSourceConfirm() }" />
+                    @locate="(key, ordinal) => router.push({ name: 'source-confirm', params: { projectId }, query: { episode: selectedEpisodeId, shot: String(ordinal), confirm_tab: 'shots', person: key } })" />
                   <section v-if="selectedShot" class="info-card">
                     <p>画面里还有列表未包含的人，或有待核对的检测区域？请在这里核对出镜情况。</p>
                     <button type="button" class="button secondary" :disabled="editingBlocked" @click="presenceEditorShot = selectedShot.id">核对出镜区域 / 补充遗漏</button>

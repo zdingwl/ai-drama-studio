@@ -80,15 +80,18 @@ def reconcile(asr: P2ProviderResult, ocr: P2ProviderResult) -> P2ProviderResult:
             continue
         overlaps = [(i, c) for i, c in enumerate(candidates)
                     if min(c["end_us"], record.source_end_us) > max(c["start_us"], record.source_start_us)]
-        if len(overlaps) != 1:
+        if not overlaps:
             records.append(record)
             continue
         index, candidate = overlaps[0]
+        if len(overlaps) > 1:
+            candidate = {**candidate, "text": " ".join(c["text"] for _, c in overlaps),
+                         "evidence_ids": [eid for _, c in overlaps for eid in c["evidence_ids"]]}
         # 一条字幕同时覆盖多个 ASR 句子时，不把整句复制给每个片段。
         owners = [s for s in segments if s.source_start_us is not None and s.source_end_us is not None
                   and min(candidate["end_us"], s.source_end_us) > max(candidate["start_us"], s.source_start_us)]
         similarity = SequenceMatcher(None, _text(record.text), _text(candidate["text"])).ratio()
-        supported = (len(owners) == 1 and .65 <= similarity < 1 and len(_text(record.text)) >= 4
+        supported = (len(overlaps) == 1 and len(owners) == 1 and .65 <= similarity < 1 and len(_text(record.text)) >= 4
                      and record.confidence is not None and record.confidence < .85)
         if similarity == 1:
             used.add(index)
@@ -96,10 +99,11 @@ def reconcile(asr: P2ProviderResult, ocr: P2ProviderResult) -> P2ProviderResult:
             continue
         decision = dict(profile=PROFILE, status="CORRECTED" if supported else "REVIEW",
                         utterance_id=record.source_id, asr_text=record.text,
+                        requires_full_text=len(owners) != 1,
                         subtitle_text=candidate["text"], evidence_ids=candidate["evidence_ids"],
                         start_us=record.source_start_us, end_us=record.source_end_us)
         decisions.append(decision)
-        used.add(index)
+        used.update(i for i, _ in overlaps)
         if supported:
             corrected_ids.add(record.source_id)
             records.append(replace(record, text=candidate["text"], payload={**record.payload, "dialogue_correction": decision}))
@@ -114,7 +118,7 @@ def reconcile(asr: P2ProviderResult, ocr: P2ProviderResult) -> P2ProviderResult:
     return replace(asr, evidence=tuple(records), metadata={**asr.metadata, "dialogue_reconciliation": decisions})
 
 
-def publish_reviews(project_id, episode_id, run_id, revision_id, decisions, *, scope=None):
+def publish_reviews(project_id, episode_id, run_id, revision_id, decisions, *, scope=None, scope_range=None):
     """显式 Worker 发布，一个完整台词冲突只建一个正式决定。"""
     import hashlib
     import json
@@ -122,12 +126,24 @@ def publish_reviews(project_id, episode_id, run_id, revision_id, decisions, *, s
     from engine.app import studio_v2 as studio
     from engine.app.review_issue_v1 import ReviewIssue
     with studio.get_session() as session:
+        for previous in session.scalars(select(ReviewIssue).where(ReviewIssue.episode_id == episode_id,
+                                                                 ReviewIssue.issue_type == "SOURCE_DIALOGUE")):
+            old = json.loads(previous.ai_suggestion_json or "{}")
+            replaced = (scope is not None and (old.get("scope") == scope or
+                        (scope_range and min(old.get("end_us", 0), scope_range[1]) > max(old.get("start_us", 0), scope_range[0]))))
+            if old.get("run_id") != run_id or old.get("shot_revision_id") != revision_id or replaced:
+                previous.status = "SUPERSEDED"
+                previous.updated_at = studio.utcnow()
         for decision in decisions:
             if decision["status"] != "REVIEW":
                 continue
             payload = {**decision, "run_id": run_id, "shot_revision_id": revision_id, "scope": scope}
             key = "dialogue:" + hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-            if session.scalar(select(ReviewIssue.id).where(ReviewIssue.project_id == project_id, ReviewIssue.source_key == key)):
+            existing = session.scalar(select(ReviewIssue).where(ReviewIssue.project_id == project_id, ReviewIssue.source_key == key))
+            if existing:
+                # 同一不可变输入重试复用原决定；新证据形成新 key。
+                if existing.status == "SUPERSEDED":
+                    existing.status = "RESOLVED" if session.get(SourceDialogueTextDecision, existing.id) else "OPEN"
                 continue
             session.add(ReviewIssue(id=studio.new_id("REVIEW"), project_id=project_id, episode_id=episode_id,
                                     source_key=key, issue_type="SOURCE_DIALOGUE", severity="BLOCKING", status="OPEN",
@@ -146,7 +162,7 @@ def reviews(episode_id, run_id, revision_id):
     with get_session() as session:
         for issue in session.scalars(select(ReviewIssue).where(ReviewIssue.episode_id == episode_id, ReviewIssue.issue_type == "SOURCE_DIALOGUE")):
             data = json.loads(issue.ai_suggestion_json or "{}")
-            if data.get("run_id") != run_id or data.get("shot_revision_id") != revision_id:
+            if issue.status == "SUPERSEDED" or data.get("run_id") != run_id or data.get("shot_revision_id") != revision_id:
                 continue
             formal = session.get(SourceDialogueTextDecision, issue.id)
             result.append({**data, "id": issue.id, "status": issue.status,
@@ -169,16 +185,16 @@ def apply_reviews(draft, timeline):
         text = item["decision"]["text"]
         for scene in output["scenes"]:
             for shot in scene["shots"]:
-                matches = [d for d in shot["dialogue"] if d.get("dialogue_group_id") in {
-                    item.get("utterance_id"), f'{run["id"]}:{item.get("utterance_id")}',
-                    f'{run["id"]}:ASR:{item.get("utterance_id")}'}]
+                matches = [d for d in shot["dialogue"] if d.get("dialogue_group_id") == item.get("utterance_id")]
                 if item.get("utterance_id"):
                     for dialogue in matches:
                         dialogue["text"] = text
                 else:
                     start, end = max(shot["start_us"], item["start_us"]), min(shot["end_us"], item["end_us"])
                     if end > start:
-                        shot["dialogue"].append(dict(dialogue_group_id=f'SUBTITLE:{item["id"]}', start_us=start,
+                        group_id = f'SUBTITLE:{item["id"]}'
+                        shot["dialogue"] = [d for d in shot["dialogue"] if d.get("dialogue_group_id") != group_id]
+                        shot["dialogue"].append(dict(dialogue_group_id=group_id, start_us=start,
                                                      end_us=end, text=text, speakers=[], source_language=None))
                         shot["dialogue"].sort(key=lambda d: (d["start_us"], d["end_us"]))
     return output
@@ -199,6 +215,8 @@ def decide(episode_id, review_id, revision, choice, text=None):
         if not item or item["revision"] != revision or item["status"] != "OPEN":
             raise ValueError("对白已更新或已确认，请刷新")
         if choice == "SUBTITLE":
+            if item.get("requires_full_text"):
+                raise ValueError("字幕仅覆盖部分完整对白，请编辑确认整句台词")
             selected = item.get("subtitle_text")
         elif choice == "ASR":
             selected = item.get("asr_text")
@@ -212,6 +230,14 @@ def decide(episode_id, review_id, revision, choice, text=None):
             raise ValueError("对白不能为空或超过 4000 字")
         if item["end_us"] <= item["start_us"]:
             raise ValueError("对白时间无效")
+        from engine.app.breakdown_scene_timeline_result_v1 import build_scene_timeline_result_v1
+        timeline = build_scene_timeline_result_v1(draft)
+        shots = [shot for scene in timeline["scenes"] for shot in scene["shots"]]
+        if item.get("utterance_id"):
+            if not any(d.get("dialogue_group_id") == item["utterance_id"] for shot in shots for d in shot["dialogue"]):
+                raise ValueError("源对白对应关系已变化，需重新拉片后核对")
+        elif not any(min(shot["end_us"], item["end_us"]) > max(shot["start_us"], item["start_us"]) for shot in shots):
+            raise ValueError("字幕不属于当前分镜版本")
         decision = dict(text=selected, choice=choice, source_revision=revision, decided_at=studio.utcnow().isoformat())
         with studio.get_session() as session:
             # 主键防止并发重复保存；业务修订与 Review 状态在同一事务提交。

@@ -21,7 +21,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from engine.app.asset_workspace_v3 import ShotCharacterBinding, _current_revision, _manual_revision
+from engine.app.asset_workspace_v3 import ShotCharacterBinding, _current_revision, _manual_revision, _create_revision
 from engine.app.breakdown_scene_timeline_result_v1 import build_scene_timeline_result_v1
 from engine.app.breakdown_serializer_v1 import get_current_breakdown
 from engine.app.studio_v2 import Character, Episode, Shot, get_session, new_id
@@ -388,7 +388,7 @@ def assign(
                 for binding in session.scalars(
                     select(ShotCharacterBinding).where(ShotCharacterBinding.character_id == character.id)
                 ).all():
-                    if binding.source == "MANUAL_PERSON" and binding.shot_id in removed_shots - remaining_shots:
+                    if binding.source in {"MANUAL_PERSON", "AUTO_PERSON"} and binding.shot_id in removed_shots - remaining_shots:
                         session.delete(binding)
                 meta[MAPPING_KEY] = kept
                 character.metadata_json = json.dumps(meta, ensure_ascii=False)
@@ -407,7 +407,7 @@ def assign(
                 for row in chosen
             ])
             meta[MAPPING_KEY] = mappings
-            meta["status"] = decision_source
+            meta["status"] = "MANUAL" if target.status == "MANUAL" else decision_source
             target.metadata_json = json.dumps(meta, ensure_ascii=False)
             if target.status != "MANUAL":
                 target.status = decision_source
@@ -421,9 +421,16 @@ def assign(
                     project_id=project_id,
                     shot_id=shot_id,
                     character_id=target.id,
-                    source="MANUAL_PERSON",
+                    source="AUTO_PERSON" if decision_source == "AUTO" else "MANUAL_PERSON",
                 ))
-            _manual_revision(session, project_id, f"确认并归并 {len(chosen)} 组原片人物：{target.name}")
+            if decision_source == "AUTO":
+                previous = _current_revision(session, project_id)
+                _create_revision(session, project_id=project_id, kind="AUTO",
+                                 note=f"V10.1 自动归并 {len(chosen)} 组原片人物：{target.name}",
+                                 source_run_id=None,
+                                 source_revision_id=previous.id if previous else None)
+            else:
+                _manual_revision(session, project_id, f"确认并归并 {len(chosen)} 组原片人物：{target.name}")
             session.commit()
         return inventory(project_id)
 
@@ -494,11 +501,13 @@ def apply_person_mapping(episode_id: str, result: dict[str, Any]) -> dict[str, A
                             })
                 if len(matches) == 1:
                     person["character"] = matches[0]
+                    row["character_id"] = matches[0]["id"]
                     person["display_name"] = matches[0]["name"]
                     changed = True
         if changed:
             overlay = result["identity"]
             people = [person for scene in overlay["scenes"] for person in scene["people"]]
+            decorate(rows, [person["character"] for person in people if person["character"]])
             overlay["asset_revision_id"] = revision.id if revision else None
             overlay["resolved_count"] = sum(person["character"] is not None for person in people)
             overlay["unresolved_count"] = len(people) - overlay["resolved_count"]
@@ -548,6 +557,15 @@ def shot_character_displays(episode_id: str, result: dict[str, Any]) -> dict[str
                         display["cover_box"] = mark["box"]
                         break
             output.setdefault(str(ordinal), []).append(display)
+    # 所有镜头中同一个正式人物复用当前人物代表图。
+    identity_covers = {person["character"]["id"]: person["character"] for scene in result.get("identity", {}).get("scenes", [])
+                       for person in scene.get("people", []) if person.get("character")}
+    for displays in output.values():
+        for display in displays:
+            representative = identity_covers.get(display["id"])
+            if representative and representative.get("cover_url"):
+                display["cover_url"] = representative["cover_url"]
+                display["cover_box"] = representative.get("cover_box")
     return {
         ordinal: sorted({row["id"]: row for row in displays}.values(), key=lambda row: (row["name"], row["id"]))
         for ordinal, displays in output.items()

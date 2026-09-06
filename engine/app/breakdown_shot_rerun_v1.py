@@ -309,6 +309,7 @@ def _dialogue_projection(
     result: p2.P2ProviderResult,
     *,
     rerun_id: str,
+    source_groups: dict[str, str] | None = None,
 ) -> list[dict[str, Any]] | None:
     if result.status == "NOT_AVAILABLE":
         return None
@@ -368,6 +369,8 @@ def _dialogue_projection(
             "start_us": source_start, "end_us": source_end, "text": content,
             "source_language": source_language, "speakers": speakers,
         })
+        if source_groups is not None:
+            source_groups[segment.source_id] = rows[-1]["dialogue_group_id"]
     return rows
 
 
@@ -818,8 +821,27 @@ def run_shot_breakdown_rerun_v1(
     path = persist_shot_rerun_artifact_v1(draft, artifact)
     presence_audit.publish(project_id, episode_id, run_id, revision_id, [audit])
     from engine.app.source_dialogue_reconcile_v1 import reconcile, publish_reviews
+    corrected = reconcile(asr_result, ocr_result)
+    source_groups: dict[str, str] = {}
+    _dialogue_projection(target, base_shot, corrected, rerun_id=rerun_id, source_groups=source_groups)
+    decisions = corrected.metadata.get("dialogue_reconciliation", [])
+    for decision in decisions:
+        if decision.get("utterance_id") in source_groups:
+            decision["utterance_id"] = source_groups[decision["utterance_id"]]
+            projections = [d for scene in base_timeline["scenes"] for shot in scene["shots"]
+                           for d in shot["dialogue"] if d.get("dialogue_group_id") == decision["utterance_id"]]
+            if len(projections) > 1:
+                # 单镜的音频窗口未必含整句；不能用局部字幕静默替换跨镜完整台词。
+                decision["requires_full_text"] = True
+                decision["status"] = "REVIEW"
+                decision["start_us"] = min(d["start_us"] for d in projections)
+                decision["end_us"] = max(d["end_us"] for d in projections)
+                texts = list(dict.fromkeys(d["text"] for d in sorted(projections,key=lambda d:d["start_us"])))
+                decision["asr_text"] = "".join(texts)
+        # 音频上下文包含相邻分镜，只发布当前分镜对应的决定。
     publish_reviews(project_id, episode_id, run_id, revision_id,
-                    reconcile(asr_result, ocr_result).metadata.get("dialogue_reconciliation", []), scope=target.ordinal)
+                    [d for d in decisions if min(d["end_us"], target.end_us) > max(d["start_us"], target.start_us)],
+                    scope=target.ordinal, scope_range=(target.start_us, target.end_us))
     artifact["artifact_fingerprint"] = _canonical_fingerprint(artifact)
     _report(progress, 100.0, "breakdown_shot_ready", f"Shot {shot_ordinal:02d} 单镜拉片完成")
     return {

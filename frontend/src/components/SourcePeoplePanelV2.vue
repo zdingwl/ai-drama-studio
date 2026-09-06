@@ -9,7 +9,7 @@ type Observation = { key: string; episode_id: string; name: string; appearance?:
   shots: {id: string; ordinal: number}[] }
 type Workspace = { revision: string; observations: Observation[]; characters: Person[] }
 const props = defineProps<{ projectId: string; episodeId: string; shotId: string; refreshToken?: string; disabled?: boolean }>()
-const emit = defineEmits<{ saved: []; locate: [key: string] }>()
+const emit = defineEmits<{ saved: []; locate: [key: string, shotOrdinal: number] }>()
 const workspace = ref<Workspace | null>(null)
 const selected = ref<string[]>([])
 const allEpisode = ref(false)
@@ -51,16 +51,19 @@ watch(() => [props.shotId, allEpisode.value], () => { selected.value = []; targe
 async function merge() {
   if (!workspace.value || locked.value || !selected.value.length) return
   busy.value = true; error.value = ''
+  const token = serial
   const localizations = Object.fromEntries(workspace.value.observations.filter(r => selected.value.includes(r.key))
     .map(r => [r.key, r.extracted_localization]))
   try {
-    workspace.value = await request(`/api/projects/${encodeURIComponent(props.projectId)}/character-assets/assign`, {
+    const result = await request(`/api/projects/${encodeURIComponent(props.projectId)}/character-assets/assign`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keys: selected.value, name: name.value.trim(), character_id: target.value || null,
         expected_revision: workspace.value.revision, localizations }),
     })
+    if (token !== serial) return
+    workspace.value = result
     selected.value = []; target.value = ''; name.value = ''; emit('saved')
-  } catch (e) { error.value = String(e instanceof Error ? e.message : e) }
+  } catch (e) { if (token === serial) error.value = String(e instanceof Error ? e.message : e) }
   finally { busy.value = false }
 }
 </script>
@@ -88,7 +91,7 @@ async function merge() {
         <div><strong>{{ row.name }}</strong><p>{{ row.appearance || '外观信息待补全' }}</p>
           <small>分镜 {{ row.shots.map(s => String(s.ordinal).padStart(2, '0')).join('、') }}</small>
           <p v-if="row.identity_issue" class="people-error">{{ row.identity_issue }}</p>
-          <button v-if="!row.extracted_localization" type="button" :disabled="locked" @click.prevent="emit('locate', row.key)">核对人物位置</button></div>
+          <button v-if="!row.extracted_localization" type="button" :disabled="locked" @click.prevent="emit('locate', row.key, row.shots[0]?.ordinal || 1)">核对人物位置</button></div>
       </label>
     </div>
     <form v-if="selected.length" class="merge-controls" @submit.prevent="merge">

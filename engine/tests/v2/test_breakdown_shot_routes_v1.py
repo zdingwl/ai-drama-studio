@@ -19,14 +19,20 @@ def test_shot_runner_uses_real_task_signatures_and_reaches_scoped_worker(monkeyp
     def worker(episode_id, ordinal, *, progress):
         called.append((episode_id, ordinal))
         progress(10, 'breakdown_shot_prepare', '准备完成')
-        return {'warnings': []}
+        return {'warnings': [], 'artifact_path': 'shot-rerun.json'}
     monkeypatch.setattr(routes, 'run_shot_breakdown_rerun_v1', worker)
+    from engine.app import source_person_capture_v2
+    capture = create_autospec(source_person_capture_v2.capture, return_value={'image_count': 2, 'warnings': []})
+    monkeypatch.setattr(source_person_capture_v2, 'capture', capture)
     routes.run_shot_breakdown_task('TASK_TEST', 'EPISODE_TEST', 2)
     assert called == [('EPISODE_TEST', 2)]
     start.assert_called_once()
     update.assert_any_call('TASK_TEST', current_item='Shot 02', current_index=1, total_items=1)
     finish.assert_called_once()
     fail.assert_not_called()
+    assert capture.call_args.args == ('EPISODE_TEST',)
+    assert capture.call_args.kwargs['shot_ordinal'] == 2
+    assert capture.call_args.kwargs['rerun_artifact'] == 'shot-rerun.json'
 
 
 def _task(*, title: str, status: str = "PROCESSING") -> dict[str, object]:

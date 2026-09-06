@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, model_serializer
 
 from engine.app.breakdown_scene_timeline_contract_v1 import SceneTimelinePayloadV1
 
@@ -37,6 +37,13 @@ class FinalCharacterDisplayV1(_StrictReadModel):
     name: str = Field(min_length=1)
     cover_url: str | None = None
     cover_box: list[float] | None = Field(default=None, min_length=4, max_length=4)
+
+    @model_serializer(mode="wrap")
+    def _legacy_compatible_cover(self, handler):
+        value = handler(self)
+        if self.cover_box is None:
+            value.pop("cover_box", None)
+        return value
 
 
 class FinalSceneDisplayV1(_StrictReadModel):
