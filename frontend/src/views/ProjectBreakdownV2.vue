@@ -4,7 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 
 import ShotFramePreviewV4 from '../components/ShotFramePreviewV4.vue'
 import MissingPersonReview from '../components/MissingPersonReview.vue'
-import PersonEvidenceImageV1 from '../components/PersonEvidenceImageV1.vue'
+import SourcePeoplePanelV2 from '../components/SourcePeoplePanelV2.vue'
+import SourceDialogueEvidenceV2 from '../components/SourceDialogueEvidenceV2.vue'
 import PerformanceSuggestion from '../components/PerformanceSuggestion.vue'
 import { breakdownApi } from '../api/breakdown'
 import { startQuietPolling } from '../utils/quietPolling'
@@ -484,6 +485,7 @@ function shotReference(shot: Shot | null): string | null {
 
 function selectShot(shot: Shot, openPendingConfirm = false): void {
   selectedShotId.value = shot.id
+  presenceEditorShot.value = ''
   const index = filteredShots.value.findIndex((item) => item.id === shot.id)
   if (index >= 0) currentPage.value = Math.floor(index / PAGE_SIZE) + 1
   detailTab.value = 'shot'
@@ -503,6 +505,14 @@ function selectStage(item: StageDisplay): void {
   if (item.number === 3) handleSourceNextAction()
   if (item.number === 4) void router.push({ name: 'remake', params: { projectId: projectId.value } })
   if (item.number === 5) void router.push({ name: 'output', params: { projectId: projectId.value } })
+}
+
+function confirmShotPerson(person: SceneTimelinePerson): void {
+  if (!selectedScene.value || !selectedShot.value) return
+  void router.push({ name: 'source-confirm', params: { projectId: projectId.value }, query: {
+    episode: selectedEpisodeId.value, shot: String(selectedShot.value.ordinal), confirm_tab: 'shots',
+    person: `${selectedEpisodeId.value}:${selectedScene.value.ordinal}:${person.ref}`,
+  } })
 }
 
 function goSourceConfirm(): void {
@@ -671,7 +681,7 @@ function handlePendingItem(item: PendingItem): void {
   if (item.key === 'person') {
     if (selectedShot.value && timelineShotMap.value.get(selectedShot.value.ordinal)?.shot.presence_review_id) {
       detailTab.value = 'people'
-      presenceEditorShot.value = selectedShot.value.id
+      presenceEditorShot.value = selectedPeople.value.some(person => !person.final_character) ? '' : selectedShot.value.id
       return
     }
     goSourceConfirm()
@@ -1168,16 +1178,14 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template v-else-if="detailTab === 'people'">
-                  <section class="tab-heading-row"><div><strong>当前分镜人物</strong><span>{{ selectedPeople.length }} 人</span></div><button type="button" @click="goSourceConfirm">管理本集人物</button></section>
-                  <button v-if="selectedShot" type="button" class="button secondary" :disabled="editingBlocked" @click="presenceEditorShot = selectedShot.id">漏了一个人？补充出镜人物</button>
-                  <MissingPersonReview v-if="selectedShot && presenceEditorShot === selectedShot.id" :key="presenceEditorShot" :project-id="projectId" :shot-id="presenceEditorShot" @close="presenceEditorShot = ''" @saved="onPresenceSaved" />
-                  <section v-if="selectedPeople.length" class="person-list">
-                    <article v-for="person in selectedPeople" :key="person.ref" class="person-card">
-                      <span class="person-avatar"><PersonEvidenceImageV1 v-if="person.final_character?.cover_url" :src="person.final_character.cover_url" :box="person.final_character.cover_box" :alt="personDisplayName(person)" /><b v-else>{{ personDisplayName(person).slice(0, 1) }}</b></span>
-                      <div class="person-copy"><div><strong>{{ personDisplayName(person) }}</strong><em :class="{ pending: !person.final_character }">{{ person.final_character ? '✓ 已绑定正式人物' : '! 待确认人物' }}</em></div><p>{{ person.appearance || '暂无人物外观补充描述' }}</p><button type="button" @click="goSourceConfirm">修改人物</button></div>
-                    </article>
+                  <SourcePeoplePanelV2 :project-id="projectId" :episode-id="selectedEpisodeId" :shot-id="selectedShot.id"
+                    :refresh-token="String(flowState?.revision || '')" :disabled="editingBlocked" @saved="onPresenceSaved"
+                    @locate="key => { const person = selectedPeople.find(p => key.endsWith(':' + p.ref)); person ? confirmShotPerson(person) : goSourceConfirm() }" />
+                  <section v-if="selectedShot" class="info-card">
+                    <p>画面里还有列表未包含的人，或有待核对的检测区域？请在这里核对出镜情况。</p>
+                    <button type="button" class="button secondary" :disabled="editingBlocked" @click="presenceEditorShot = selectedShot.id">核对出镜区域 / 补充遗漏</button>
                   </section>
-                  <div v-else class="tab-empty">当前分镜没有识别到人物</div>
+                  <MissingPersonReview v-if="selectedShot && presenceEditorShot === selectedShot.id" :key="presenceEditorShot" :project-id="projectId" :shot-id="presenceEditorShot" @close="presenceEditorShot = ''" @saved="onPresenceSaved" />
                 </template>
 
                 <template v-else-if="detailTab === 'assets'">
@@ -1186,6 +1194,8 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template v-else-if="detailTab === 'dialogue'">
+                  <SourceDialogueEvidenceV2 :episode-id="selectedEpisodeId" :start-us="selectedShot.start_us" :end-us="selectedShot.end_us"
+                    :refresh-token="String(flowState?.revision || '')" :disabled="editingBlocked" @saved="onPresenceSaved" />
                   <section v-if="selectedDialogue.length" class="dialogue-list">
                     <article v-for="(dialogue, index) in selectedDialogue" :key="`${dialogue.start_us}-${dialogue.end_us}-${index}`">
                       <header><span>对白 {{ String(index + 1).padStart(2, '0') }}</span><button type="button" :disabled="editingBlocked" @click="openManualEditor('dialogue', index)">✎ 编辑文本</button></header>

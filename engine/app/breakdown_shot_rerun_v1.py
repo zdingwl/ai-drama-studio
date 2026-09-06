@@ -543,7 +543,9 @@ def build_shot_rerun_overlay_v1(
     if camera:
         overlay["cinematography"] = camera
 
-    dialogue = _dialogue_projection(target, base_shot, asr_result, rerun_id=rerun_id)
+    from engine.app.source_dialogue_reconcile_v1 import reconcile
+    corrected_asr = reconcile(asr_result, ocr_result)
+    dialogue = _dialogue_projection(target, base_shot, corrected_asr, rerun_id=rerun_id)
     if dialogue is not None:
         overlay["dialogue"] = dialogue
     screen_text = _ocr_projection(target, ocr_result)
@@ -815,6 +817,9 @@ def run_shot_breakdown_rerun_v1(
     }
     path = persist_shot_rerun_artifact_v1(draft, artifact)
     presence_audit.publish(project_id, episode_id, run_id, revision_id, [audit])
+    from engine.app.source_dialogue_reconcile_v1 import reconcile, publish_reviews
+    publish_reviews(project_id, episode_id, run_id, revision_id,
+                    reconcile(asr_result, ocr_result).metadata.get("dialogue_reconciliation", []), scope=target.ordinal)
     artifact["artifact_fingerprint"] = _canonical_fingerprint(artifact)
     _report(progress, 100.0, "breakdown_shot_ready", f"Shot {shot_ordinal:02d} 单镜拉片完成")
     return {

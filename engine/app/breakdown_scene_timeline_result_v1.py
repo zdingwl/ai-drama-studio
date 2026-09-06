@@ -195,11 +195,13 @@ def _with_current_overlays(
         return SceneTimelinePayloadV1.model_validate(display_timeline).model_dump(mode="json")
     rerun = apply_shot_rerun_overrides_v1(draft, display_timeline)
     guarded = guard_cross_shot_dialogue_rerun_v1(source_timeline, rerun)
-    return apply_manual_overrides_v1(
+    edited = apply_manual_overrides_v1(
         draft,
         guarded,
         source_timeline_payload=source_timeline,
     )
+    from engine.app.source_dialogue_reconcile_v1 import apply_reviews
+    return apply_reviews(draft, edited)
 
 
 def build_scene_timeline_result_v1(draft: Mapping[str, Any]) -> dict[str, Any]:

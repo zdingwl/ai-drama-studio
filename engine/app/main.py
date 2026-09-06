@@ -15,6 +15,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from engine.app.character_assets_routes_v1 import router as character_assets_router
+from engine.app.source_person_capture_v2 import SourcePersonImage  # noqa: F401 - 注册人物证据表
+from engine.app.source_dialogue_reconcile_v1 import SourceDialogueTextDecision  # noqa: F401
 from engine.app.character_auto_resolve_routes_v1 import router as character_auto_resolve_router
 from engine.app.asset_batch_routes_v4 import router as asset_batch_router
 from engine.app.asset_routes_v3 import router as asset_router

@@ -22,11 +22,13 @@ import type { ReviewIssue } from '../types/remake'
 const props = withDefaults(defineProps<{
   projectId: string
   episodes: Episode[]
+  focusPersonKey?: string
   focusEpisodeId?: string
   focusShotOrdinal?: number | null
   sourceReady?: boolean
   blockingReason?: string
 }>(), {
+  focusPersonKey: '',
   focusEpisodeId: '',
   focusShotOrdinal: null,
   sourceReady: false,
@@ -175,7 +177,7 @@ function representativeShotId(item: CharacterObservation): string {
   return proposal?.localization?.shot_id || proposal?.localizations?.[0]?.shot_id || item.localization?.shot_id || item.shots[0]?.id || ''
 }
 function observationsForShot(shotId: string): CharacterObservation[] {
-  return unresolvedObservations.value.filter((item) => representativeShotId(item) === shotId)
+  return unresolvedObservations.value.filter((item) => representativeShotId(item) === shotId || (item.key === props.focusPersonKey && item.shots.some(shot => shot.id === shotId)))
 }
 function speakerSuggestion(issue: ReviewIssue): SpeakerSuggestion | null {
   if (issue.issue_type !== 'SPEAKER' || !isRecord(issue.ai_suggestion)) return null
@@ -267,7 +269,8 @@ function chooseSpeaker(issueId: string, personKey: string): void { speakerChoice
 function initSelectedShot(entry: ReviewEntry | null): void {
   if (!entry) return
   selectedShotId.value = entry.shot.id
-  activePersonKey.value = observationsForShot(entry.shot.id)[0]?.key || ''
+  supplementShotId.value = ''
+  activePersonKey.value = observationsForShot(entry.shot.id).find(item => item.key === props.focusPersonKey)?.key || observationsForShot(entry.shot.id)[0]?.key || ''
   const binding = bindingsFor(entry.shot.id)
   draftCharacterIds.value = [...binding.character_ids]
   draftSceneId.value = binding.scene_id
@@ -430,8 +433,6 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
           </section>
 
           <section class="facts-panel">
-            <button type="button" class="ghost" @click="supplementShotId = selectedEntry.shot.id">漏了一个人？补充本镜头出镜人物</button>
-            <MissingPersonReview v-if="supplementShotId === selectedEntry.shot.id || presenceIssuesForShot(selectedEntry.shot.id).length" :key="selectedEntry.shot.id" :project-id="projectId" :shot-id="selectedEntry.shot.id" @close="supplementShotId = ''" @saved="presenceSaved" />
             <section v-if="selectedObservations.length" class="fact-card person-card">
               <header><div><small>1 · 人物身份</small><strong>先确认这个镜头里的人是谁</strong></div><span>{{ selectedObservations.length }} 项</span></header>
               <article v-for="observation in selectedObservations" :key="observation.key" class="person-row">
@@ -460,6 +461,9 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
                 <small v-if="!observation.identity_issue && !personMarks[observation.key]" style="color:#63748b">只有画面中仅有此人时才直接确认；有其他人时，请先在左侧框出目标。</small>
               </article>
             </section>
+
+            <button type="button" class="ghost" @click="supplementShotId = selectedEntry.shot.id">核对其他出镜区域 / 补充遗漏{{ presenceIssuesForShot(selectedEntry.shot.id).length ? '（有待核对区域）' : '' }}</button>
+            <MissingPersonReview v-if="supplementShotId === selectedEntry.shot.id" :key="selectedEntry.shot.id" :project-id="projectId" :shot-id="selectedEntry.shot.id" @close="supplementShotId = ''" @saved="presenceSaved" />
 
             <section v-if="selectedHasAssetIssue" class="fact-card asset-card">
               <header><div><small>2 · 场景 / 道具</small><strong>确认这个镜头真正出现的资产</strong></div><button type="button" class="ghost" @click="fillAiSuggestion">采用 AI 建议到表单</button></header>

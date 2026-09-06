@@ -41,7 +41,7 @@ function up(event: PointerEvent) {
   <section class="localization">
     <header><strong>确认画面人物：{{ label }}</strong><span>{{ !allowSingle ? '请框出漏掉的人物，框外画面只作参考。' : singlePerson ? '已人工确认画面只有此人，直接确认右侧身份即可。' : '单人画面无需画框；多人画面请拖动框出需要确认的人。' }}</span></header>
     <div class="frame-area">
-      <div v-if="imageUrl" class="frame" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="start = null; draft = null">
+      <div v-if="imageUrl" class="frame" @pointerdown.prevent="down" @pointermove="move" @pointerup.prevent="up" @pointercancel="start = null; draft = null">
         <img :src="imageUrl" alt="框选待确认人物的原始关键帧" draggable="false" @load="loaded = true" @error="loaded = false" />
         <div v-if="box && loaded && !singlePerson" class="box" :style="{ left: `${box[0]! * 100}%`, top: `${box[1]! * 100}%`, width: `${box[2]! * 100}%`, height: `${box[3]! * 100}%` }"><span>待确认人物</span></div>
       </div>

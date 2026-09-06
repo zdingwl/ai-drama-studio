@@ -25,6 +25,7 @@ from engine.app.asset_workspace_v3 import ShotCharacterBinding, _current_revisio
 from engine.app.breakdown_scene_timeline_result_v1 import build_scene_timeline_result_v1
 from engine.app.breakdown_serializer_v1 import get_current_breakdown
 from engine.app.studio_v2 import Character, Episode, Shot, get_session, new_id
+from engine.app.source_person_capture_v2 import SourcePersonImage, decorate  # 注册证据表；GET 只读
 
 LOCK = RLock()
 MAPPING_KEY = "source_person_mappings_v1"
@@ -218,16 +219,7 @@ def inventory(project_id: str) -> dict[str, Any]:
                         if mapping.get("key") == row["key"] and mapping.get("anchor") == row["anchor"]
                     )
                     mark = mapping.get("localization")
-                    row["localization"] = (
-                        mark
-                        if isinstance(mark, dict)
-                        and any(
-                            shot["id"] == mark.get("shot_id")
-                            and shot["thumbnail_url"] == mark.get("image_url")
-                            for shot in row["shots"]
-                        )
-                        else None
-                    )
+                    row["localization"] = mark if _valid_localization(row, mark) else None
                 else:
                     suggestion = _binding_intersection_suggestion(row_shot_ids, character_ids_by_shot)
                     if suggestion:
@@ -247,6 +239,7 @@ def inventory(project_id: str) -> dict[str, Any]:
                 character["cover_box"] = mark["box"]
                 break
 
+    decorate(rows, character_rows)
     public_characters = [
         {key: value for key, value in character.items() if key != "metadata"}
         for character in character_rows
@@ -273,6 +266,9 @@ def inventory(project_id: str) -> dict[str, Any]:
 def _valid_localization(row: dict[str, Any], mark: Any) -> bool:
     if not isinstance(mark, dict):
         return False
+    if mark.get("source") == "source-person-isolation-v2":
+        from engine.app.source_person_capture_v2 import valid_mark
+        return valid_mark(row, mark)
     shot = next((shot for shot in row["shots"] if shot["id"] == mark.get("shot_id")), None)
     box = mark.get("box", [])
     return bool(
@@ -302,6 +298,8 @@ def assign(
     character_id: str | None,
     expected_revision: str,
     localizations: dict[str, Any] | None = None,
+    *,
+    decision_source: str = "MANUAL",
 ) -> dict[str, Any]:
     """显式把若干人物观察归并到一个 Final Character。
 
@@ -362,7 +360,7 @@ def assign(
                     id=new_id("CHAR"),
                     project_id=project_id,
                     name=name.strip(),
-                    status="MANUAL",
+                    status=decision_source,
                     metadata_json="{}",
                 )
                 session.add(target)
@@ -404,13 +402,15 @@ def assign(
                     "anchor": row["anchor"],
                     "shot_ids": [shot["id"] for shot in row["shots"]],
                     "localization": normalized_localizations.get(row["key"]),
+                    "decision_source": decision_source,
                 }
                 for row in chosen
             ])
             meta[MAPPING_KEY] = mappings
-            meta["status"] = "MANUAL"
+            meta["status"] = decision_source
             target.metadata_json = json.dumps(meta, ensure_ascii=False)
-            target.status = "MANUAL"
+            if target.status != "MANUAL":
+                target.status = decision_source
 
             bound = set(session.scalars(
                 select(ShotCharacterBinding.shot_id).where(ShotCharacterBinding.character_id == target.id)

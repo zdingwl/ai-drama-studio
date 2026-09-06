@@ -253,6 +253,17 @@ def assign_people(project_id: str, payload: Assignment):
         raise HTTPException(409, str(exc)) from exc
 
 
+@router.get("/source-person-images/{image_id}")
+def get_source_person_image(image_id: str):
+    from fastapi.responses import Response
+    from engine.app.source_person_capture_v2 import SourcePersonImage
+    with get_session() as session:
+        record = session.get(SourcePersonImage, image_id)
+        if record is None:
+            raise HTTPException(404, "人物展示图不存在")
+        return Response(record.image, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+
+
 @router.get("/projects/{project_id}/character-assets/review-plan")
 def get_person_review_plan(project_id: str):
     """只读候选分组与定位证据，不持久化自动身份，不运行模型。"""

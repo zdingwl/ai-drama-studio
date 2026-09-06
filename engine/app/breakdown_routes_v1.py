@@ -45,6 +45,31 @@ from engine.app.task_progress_v2 import (
 
 router = APIRouter(prefix="/api", tags=["breakdown"])
 
+
+class DialogueEvidenceDecision(BaseModel):
+    revision: str
+    choice: str
+    text: str | None = None
+
+
+@router.get("/episodes/{episode_id}/dialogue-evidence")
+def get_dialogue_evidence(episode_id: str):
+    from engine.app.source_dialogue_reconcile_v1 import reviews
+    draft = get_current_breakdown(episode_id)
+    if not draft:
+        return []
+    run = draft["run"]
+    return reviews(episode_id, run["id"], run["source_shot_revision_id"])
+
+
+@router.post("/episodes/{episode_id}/dialogue-evidence/{review_id}/decide")
+def decide_dialogue_evidence(episode_id: str, review_id: str, payload: DialogueEvidenceDecision):
+    from engine.app.source_dialogue_reconcile_v1 import decide
+    try:
+        return decide(episode_id, review_id, payload.revision, payload.choice, payload.text)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
 BREAKDOWN_TASK_TYPE = "EPISODE_BREAKDOWN_P2"
 BREAKDOWN_BATCH_TASK_TYPE = "BATCH_BREAKDOWN_P2"
 BREAKDOWN_SHOT_TASK_TYPE = "SHOT_BREAKDOWN_P2"
@@ -283,7 +308,7 @@ def run_episode_breakdown_task(task_id: str, episode_id: str) -> None:
             update_task(
                 task_id,
                 progress_mode="determinate",
-                progress_percent=percent,
+                progress_percent=percent * .75,
                 stage_key=stage,
                 stage_label=_stage_label(stage),
                 current_item=episode["title"],
@@ -293,11 +318,15 @@ def run_episode_breakdown_task(task_id: str, episode_id: str) -> None:
             )
 
         run = run_episode_breakdown_p2(episode_id, progress=report)
+        from engine.app.source_person_capture_v2 import capture
+        people = capture(episode_id, progress=lambda current,total,message: update_task(
+            task_id, progress_percent=75+24*current/max(1,total), stage_key="breakdown_people",
+            stage_label="人物提取与自动归并", message=message))
         finish_task(
             task_id,
-            result={"run_id": run.id, "episode_id": episode_id, "status": run.status},
-            message="匿名结构化 AI 拉片完成",
-            status="READY_WITH_WARNINGS" if run.status == "READY_WITH_WARNINGS" else "READY",
+            result={"run_id": run.id, "episode_id": episode_id, "status": run.status, "people": people},
+            message="镜头内容与人物整理已处理，未确认身份请人工归并",
+            status="READY_WITH_WARNINGS" if run.status == "READY_WITH_WARNINGS" or people.get("warnings") else "READY",
         )
     except Exception as exc:
         fail_task(task_id, exc)
@@ -337,6 +366,12 @@ def run_shot_breakdown_task(task_id: str, episode_id: str, shot_ordinal: int) ->
             shot_ordinal,
             progress=report,
         )
+        from engine.app.source_person_capture_v2 import capture
+        people = capture(episode_id, shot_ordinal=shot_ordinal, rerun_artifact=result["artifact_path"],
+                         progress=lambda current,total,message: update_task(task_id, stage_key="breakdown_people",
+                                                                          stage_label="人物提取与自动归并", message=message))
+        result["people"] = people
+        result["warnings"] = list(result.get("warnings") or []) + list(people.get("warnings") or [])
         finish_task(
             task_id,
             result=result,

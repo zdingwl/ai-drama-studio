@@ -60,7 +60,7 @@ async function refresh(): Promise<void> {
 }
 
 function close(): void {
-  const { mode: _mode, confirm_tab: _confirmTab, asset_tab: _assetTab, ...query } = route.query
+  const { mode: _mode, confirm_tab: _confirmTab, asset_tab: _assetTab, person: _person, ...query } = route.query
   void router.replace({ name: 'breakdown', params: { projectId: props.projectId }, query })
 }
 function enterRemake(): void { if (sourceReady.value) void router.push({ name: 'remake', params: { projectId: props.projectId } }) }
@@ -122,6 +122,7 @@ onBeforeUnmount(() => {
           :episodes="project.episodes"
           :focus-episode-id="focusEpisodeId"
           :focus-shot-ordinal="focusShotOrdinal"
+          :focus-person-key="typeof route.query.person === 'string' ? route.query.person : ''"
           :source-ready="sourceReady"
           :blocking-reason="blockingReason"
           @changed="onWorkspaceChanged"

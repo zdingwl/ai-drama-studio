@@ -20,6 +20,10 @@ def context(project_id, shot_id):
         episode = session.get(Episode, episode_id)
         if not episode or episode.project_id != project_id:
             raise ValueError('镜头不属于当前项目的有效人物审核范围')
+        bound_character_ids = set(session.scalars(select(ShotCharacterBinding.character_id).where(
+            ShotCharacterBinding.project_id == project_id,
+            ShotCharacterBinding.shot_id == shot_id,
+        )).all())
     draft = people.get_current_breakdown(episode_id)
     timeline = people.build_scene_timeline_result_v1(draft) if draft else None
     if not timeline or not timeline.get('is_current'):
@@ -33,10 +37,15 @@ def context(project_id, shot_id):
         if row['episode_id'] == episode_id and row['scene_ordinal'] == scene['ordinal'] and row.get('character_id') and not row.get('identity_issue'):
             candidates.setdefault(row['character_id'], row['ref'])
     reviews = [r for r in audit.pending(episode_id, timeline['source_breakdown_run_id'], timeline['source_shot_revision_id']) if r['shot_id'] == shot_id]
+    selectable_ids = set(candidates) | bound_character_ids
     return dict(revision=workspace['revision'], shot_id=shot_id, episode_id=episode_id, ordinal=ordinal,
                 scene_ordinal=scene['ordinal'], run_id=timeline['source_breakdown_run_id'],
                 shot_revision_id=timeline['source_shot_revision_id'], image_url=frame.get('thumbnail_url'),
-                candidates=[{**c, 'ref': candidates[c['id']]} for c in workspace['characters'] if c['id'] in candidates],
+                candidates=[{
+                    **c,
+                    'ref': candidates.get(c['id']),
+                    'basis': 'SCENE_MAPPING' if c['id'] in candidates else 'SHOT_BINDING',
+                } for c in workspace['characters'] if c['id'] in selectable_ids],
                 reviews=reviews)
 
 

@@ -196,12 +196,12 @@
 .range-selection i:last-child { right: -3px; }
 .workbench-empty { min-height: 600px; display: flex; align-items: center; justify-content: center; color: #8b97a8; }
 
-.detail-panel { display: flex; flex-direction: column; min-height: 0; }
+.detail-panel { display: flex; flex-direction: column; min-height: 0; align-self: start; }
 .detail-tabs { min-height: 48px; padding: 0 8px; display: grid; grid-template-columns: repeat(5,1fr); border-bottom: 1px solid #e6ebf2; }
 .detail-tabs button { min-width: 0; padding: 0 4px; position: relative; border: 0; background: transparent; color: #596a82; cursor: pointer; font-size: 11px; white-space: nowrap; }
 .detail-tabs button.active { color: #1769ff; font-weight: 700; }
 .detail-tabs button.active::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 2px; background: #1769ff; }
-.detail-scroll { max-height: 760px; flex: 1; min-height: 0; padding: 10px; overflow: auto; background: #fbfcfe; }
+.detail-scroll { max-height: 760px; flex: 0 1 auto; min-height: 0; padding: 10px; overflow: auto; background: #fbfcfe; }
 .info-card { margin-bottom: 9px; padding: 13px 13px 12px; border: 1px solid #e1e7f0; border-radius: 8px; background: #fff; }
 .info-card-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .info-card h3 { margin: 0; color: #27364e; font-size: 12px; }

@@ -363,6 +363,8 @@ def _rewrite_dialogue_events(
                 "continues_to_next_shot": event.source_end_us < int(segment.source_end_us),
                 "word_ids": [item.source_id for item in overlap_words],
             })
+            if segment.payload.get("dialogue_correction"):
+                metadata["dialogue_correction"] = dict(segment.payload["dialogue_correction"])
             event.metadata_json = _json_text(metadata)
 
             for word in overlap_words:

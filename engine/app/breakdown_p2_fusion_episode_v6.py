@@ -320,6 +320,12 @@ def fuse_breakdown_run(run_id: str) -> BreakdownRun:
 
     try:
         source_bundle = legacy.load_fusion_inputs(run_id)
+        # 原始 sidecar 不变；全文和跨 Shot 投影共同消费一次带 OCR 来源的派生结果。
+        from dataclasses import replace
+        from engine.app.source_dialogue_reconcile_v1 import reconcile
+        components = dict(source_bundle.components)
+        components["ASR"] = replace(components["ASR"], result=reconcile(components["ASR"].result, components["OCR"].result))
+        source_bundle = replace(source_bundle, components=components)
         projection_bundle = e1._episode_projection_bundle(source_bundle)
         window_summaries = e4._window_summaries(source_bundle)
         shots_by_id = {shot.revision_item_id: shot for shot in source_bundle.context.shots}
@@ -407,10 +413,15 @@ def fuse_breakdown_run(run_id: str) -> BreakdownRun:
                 legacy._appearance_key = original_appearance_key
                 e1._continuity_plan_details = original_plan_details
 
-        return breakdown_service_v1.publish_breakdown_run(
+        published = breakdown_service_v1.publish_breakdown_run(
             run_id,
             warnings=warnings or None,
         )
+        from engine.app.source_dialogue_reconcile_v1 import publish_reviews
+        publish_reviews(source_bundle.context.project_id, source_bundle.context.episode_id, run_id,
+                        source_bundle.context.source_shot_revision_id,
+                        source_bundle.components["ASR"].result.metadata.get("dialogue_reconciliation", []))
+        return published
     except Exception as exc:
         legacy._safe_fail_run(run_id, exc)
         raise

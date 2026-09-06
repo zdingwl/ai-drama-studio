@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { groupPersonObservations, validPersonMark, type PersonObservation } from './personReviewGroups'
+import { defaultPresenceRegionId, groupPersonObservations, validPersonMark, type PersonObservation } from './personReviewGroups'
 const row: PersonObservation = { key:'a', anchor:'v1', name:'人物', appearance:'女', episode_id:'e', episode_title:'EP01', character_id:null, suggested_character_id:'c', shots:[{id:'s',ordinal:1,thumbnail_url:'/frame'}] }
 describe('person review groups', () => {
+  it('does not guess the first region when several detections need review', () => {
+    expect(defaultPresenceRegionId([])).toBe('')
+    expect(defaultPresenceRegionId([{ id: 'only' }])).toBe('only')
+    expect(defaultPresenceRegionId([{ id: 'first' }, { id: 'second' }])).toBe('')
+  })
   it('keeps candidate suggestions separate from formal identities', () => {
     const result = groupPersonObservations([row,{...row,key:'b',character_id:'c'}],[{id:'c',name:'角色'}],{}, {})
     expect(result.map(g=>g.id)).toEqual(['candidate:c','formal:c'])

@@ -121,6 +121,29 @@ def test_current_recheck_pass_closes_old_presence_false_positive(monkeypatch, tm
         assert json.loads(stored.resolution_json)['automated_recheck'] == 'PASS'
 
 
+def test_current_shot_formal_binding_is_selectable_without_scene_mapping(monkeypatch, tmp_path):
+    project, character, issue, _ = seed_review(monkeypatch, tmp_path)
+    with get_session() as session:
+        stored = session.get(people.Character, character)
+        metadata = json.loads(stored.metadata_json or '{}')
+        metadata[people.MAPPING_KEY] = []
+        stored.metadata_json = json.dumps(metadata, ensure_ascii=False)
+        session.commit()
+
+    ctx = correction.context(project, 'SHOT_1')
+    candidate = next(row for row in ctx['candidates'] if row['id'] == character)
+    assert candidate['ref'] is None
+    assert candidate['basis'] == 'SHOT_BINDING'
+    region = issue['ai_suggestion']['candidates'][0]
+    saved = correction.supplement(project, 'SHOT_1', character, {
+        'shot_id': 'SHOT_1',
+        'image_url': region['image_url'],
+        'box': region['box'],
+        'source': 'MANUAL_BOX',
+    }, ctx['revision'], issue_id=issue['id'], candidate_id=region['id'])
+    assert any(row['id'] == character for row in saved['candidates'])
+
+
 def test_snapshot_blocks_unresolved_presence():
     from engine.tests.v2.test_source_drama_snapshot_v1 import _read_model, _episode_snapshot
     from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError

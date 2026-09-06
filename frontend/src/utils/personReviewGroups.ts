@@ -7,6 +7,13 @@ export type PersonObservation = {
   shots: { id: string; ordinal: number; thumbnail_url: string | null }[]
 }
 export type PersonGroup = { id: string; name: string; characterId: string; rows: PersonObservation[] }
+export type PresenceRegion = { id: string }
+
+export function defaultPresenceRegionId(regions: PresenceRegion[]): string {
+  // 多个检测区域没有可靠优先级；数组首项不代表真正漏掉的人。
+  return regions.length === 1 ? regions[0]!.id : ''
+}
+
 export function groupPersonObservations(
   rows: PersonObservation[], characters: { id: string; name: string }[],
   moves: Record<string, string>, proposals: Record<string, { character_id?: string | null }>,

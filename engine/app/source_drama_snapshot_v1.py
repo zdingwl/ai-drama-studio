@@ -455,6 +455,10 @@ def load_episode_source_drama_snapshot_v1(episode_id: str, *, infer_speakers: bo
     if read_model_raw is None:
         return None
     read_model = BreakdownReadModelV1.model_validate(read_model_raw)
+    from engine.app.source_dialogue_reconcile_v1 import reviews
+    if any(r["status"] == "OPEN" for r in reviews(episode_id, read_model.timeline.source_breakdown_run_id,
+                                                 read_model.timeline.source_shot_revision_id)):
+        raise SourceDramaSnapshotError("源对白与字幕差异尚未确认，不能固化原片事实")
     speaker_overrides = load_episode_source_dialogue_speaker_overrides_v1(episode_id)
 
     with get_session() as session:
