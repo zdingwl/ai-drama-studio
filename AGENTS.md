@@ -319,3 +319,21 @@ backup/pre-h3-remake-restructure-2026-09-01
 代码和文档默认修改 `main`，除非用户明确指定其他分支。
 
 每次涉及数据契约、用户流程或完成条件的代码修改，都应同步检查 `docs/00/01/02/03` 是否需要更新。
+
+## 15. 软件工程技能体系
+
+本仓库的软件工程技能手册位于：
+
+```text
+AI_SKILLS.md
+.agents/skills/*/SKILL.md
+```
+
+凡涉及代码、配置、数据库、API、测试、前端、模型链、CI、依赖、性能、迁移或交付的任务：
+
+1. 在读完本文件第 1 节要求的正式文档和当前代码后，加载 `.agents/skills/repository-development/SKILL.md`；
+2. 再按 `AI_SKILLS.md` 的技能路由表选择当前任务需要的专业技能，不机械执行全部技能；
+3. `AI_SKILLS.md` 只负责软件工程执行方法，**不能覆盖本文件、根 `SKILL.md` 或 `docs/00/01/02/03` 的业务硬规则**；
+4. 中大型改动必须做 Codebase Analysis 和 Implementation Planning；Bug 必须先 Systematic Debugging；完成前必须 Verification Before Completion；
+5. 仓库自动测试、本地模型真实运行、真实项目端到端和用户看听验收继续分开记录；
+6. 默认安全交付到 `main`，禁止 force push；工作期间远端 `main` 前进时必须重新同步，不能覆盖用户最新提交。
