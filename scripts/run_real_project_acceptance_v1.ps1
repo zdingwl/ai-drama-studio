@@ -1,6 +1,9 @@
 param(
     [string]$ProjectId = '',
     [string]$BaseUrl = 'http://127.0.0.1:8000',
+    [string]$Qwen38Python = '',
+    [string]$Qwen38ModelPath = '',
+    # Deprecated compatibility parameters. The source visual provider is no longer an HTTP VLM.
     [string]$VlmBaseUrl = '',
     [string]$VlmModel = '',
     [switch]$Run,
@@ -19,6 +22,10 @@ $Python = if (Test-Path -LiteralPath $VenvPython) { $VenvPython } else { 'python
 
 if (-not (Test-Path -LiteralPath $Script)) {
     throw "Acceptance runner not found: $Script"
+}
+
+if ($VlmBaseUrl -or $VlmModel) {
+    Write-Host '[AI Drama Studio] -VlmBaseUrl/-VlmModel are deprecated and ignored. Source visual now uses local Qwen3.8-27B.' -ForegroundColor Yellow
 }
 
 if (-not $ProjectId.Trim()) {
@@ -56,20 +63,43 @@ $Arguments = @(
     '--poll-seconds', [string]$PollSeconds,
     '--timeout-seconds', [string]$TimeoutSeconds
 )
-
-if ($VlmBaseUrl) { $Arguments += @('--vlm-base-url', $VlmBaseUrl) }
-if ($VlmModel) { $Arguments += @('--vlm-model', $VlmModel) }
 if ($Run) { $Arguments += '--run' }
 if ($Json) { $Arguments += '--json' }
 
-Write-Host '[AI Drama Studio] Real-project acceptance'
-Write-Host "  Project: $ProjectId"
-Write-Host "  Backend: $BaseUrl"
-Write-Host "  Mode:    $(if ($Run) { 'RUN existing production workflow' } else { 'READ-ONLY status check' })"
-Write-Host ''
+$PreviousQwenPython = $env:AI_DRAMA_P2_VLM_PYTHON
+$PreviousQwenModel = $env:AI_DRAMA_P2_VLM_MODEL_PATH
+try {
+    if ($Qwen38Python) {
+        $env:AI_DRAMA_P2_VLM_PYTHON = $Qwen38Python
+    }
+    if ($Qwen38ModelPath) {
+        $env:AI_DRAMA_P2_VLM_MODEL_PATH = $Qwen38ModelPath
+    }
 
-& $Python @Arguments
-$RunnerExitCode = $LASTEXITCODE
+    Write-Host '[AI Drama Studio] Real-project acceptance'
+    Write-Host "  Project:      $ProjectId"
+    Write-Host "  Backend:      $BaseUrl"
+    Write-Host '  Source visual: Qwen3.8-27B local provider'
+    Write-Host "  Mode:         $(if ($Run) { 'RUN existing production workflow' } else { 'READ-ONLY status check' })"
+    Write-Host ''
+
+    & $Python @Arguments
+    $RunnerExitCode = $LASTEXITCODE
+}
+finally {
+    if ($null -eq $PreviousQwenPython) {
+        Remove-Item Env:AI_DRAMA_P2_VLM_PYTHON -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:AI_DRAMA_P2_VLM_PYTHON = $PreviousQwenPython
+    }
+    if ($null -eq $PreviousQwenModel) {
+        Remove-Item Env:AI_DRAMA_P2_VLM_MODEL_PATH -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:AI_DRAMA_P2_VLM_MODEL_PATH = $PreviousQwenModel
+    }
+}
 
 # Exit code 2 is a deliberate business gate, not an execution failure. Print enough source
 # truth to continue E2E debugging without asking the user to manually query several APIs.
