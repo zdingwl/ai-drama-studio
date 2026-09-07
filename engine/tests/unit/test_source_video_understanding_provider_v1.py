@@ -125,8 +125,8 @@ def test_qwen38_runtime_entry_uses_current_multimodal_auto_model_loader() -> Non
         encoding="utf-8"
     )
 
-    assert "AutoModelForMultimodalLM" in source
-    assert "Qwen3VLForConditionalGeneration" not in source
+    assert "from transformers import AutoModelForMultimodalLM, AutoProcessor" in source
+    assert "from transformers import AutoProcessor, Qwen3VLForConditionalGeneration" not in source
     assert SOURCE_VIDEO_PROVIDER_PROFILE == "source-video-understanding-qwen38-v1"
     assert QWEN38_PROVIDER_NAME == "qwen38-video-understanding"
     assert CANONICAL_DIALOGUE_POLICY == "asr-ocr-owned-visual-provider-cannot-overwrite-v1"
