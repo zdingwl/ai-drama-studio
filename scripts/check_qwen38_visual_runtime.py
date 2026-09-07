@@ -11,7 +11,6 @@ import argparse
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +71,40 @@ def _run_json(command: list[str], *, timeout: float = 30.0) -> tuple[dict[str, A
     return payload if isinstance(payload, dict) else None, None
 
 
+def _checkpoint_config_status(model_path: Path) -> tuple[bool, str]:
+    """Recognize the official Qwen3.8-27B HF layout without inventing a qwen3_8 model_type.
+
+    Qwen3.8 is implemented on the Qwen3.5 Transformers architecture, so the official config
+    currently identifies itself as qwen3_5 / Qwen3_5ForConditionalGeneration. The host-owned
+    model profile and checkpoint directory select Qwen3.8; this check verifies that the local
+    config is a multimodal Qwen3.5-family checkpoint with video support rather than expecting a
+    nonexistent qwen3_8 architecture tag.
+    """
+
+    config_path = model_path / "config.json"
+    if not config_path.is_file():
+        return False, str(config_path)
+    try:
+        loaded = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, str(exc)
+    if not isinstance(loaded, dict):
+        return False, "config.json is not a JSON object"
+
+    model_type = str(loaded.get("model_type") or "")
+    architectures = [str(value) for value in (loaded.get("architectures") or [])]
+    architecture_ok = model_type == "qwen3_5" and "Qwen3_5ForConditionalGeneration" in architectures
+    multimodal_ok = bool(loaded.get("vision_config")) and loaded.get("language_model_only") is False
+    video_ok = loaded.get("video_token_id") is not None
+    profile_path_ok = "qwen3.8-27b" in model_path.name.lower()
+    ready = architecture_ok and multimodal_ok and video_ok and profile_path_ok
+    detail = (
+        f"model_type={model_type or '-'}; architectures={architectures or '-'}; "
+        f"multimodal={multimodal_ok}; video={video_ok}; directory={model_path.name}"
+    )
+    return ready, detail
+
+
 def collect_readiness(
     *,
     python_exe: Path,
@@ -87,22 +120,7 @@ def collect_readiness(
     python_ok = python_exe.is_file()
     checks.append(_check("python", python_ok, str(python_exe)))
 
-    config_path = model_path / "config.json"
-    config: dict[str, Any] = {}
-    config_ok = False
-    config_detail = str(config_path)
-    if config_path.is_file():
-        try:
-            loaded = json.loads(config_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                config = loaded
-                model_type = str(config.get("model_type") or "")
-                architectures = [str(value) for value in (config.get("architectures") or [])]
-                signature = " ".join([model_type, *architectures]).lower().replace("-", "_")
-                config_ok = "qwen3" in signature and ("3_8" in signature or "38" in signature)
-                config_detail = f"model_type={model_type or '-'}; architectures={architectures or '-'}"
-        except (OSError, json.JSONDecodeError) as exc:
-            config_detail = str(exc)
+    config_ok, config_detail = _checkpoint_config_status(model_path)
     checks.append(_check("checkpoint_config", config_ok, config_detail))
 
     weight_files = list(model_path.glob("*.safetensors")) if model_path.is_dir() else []
