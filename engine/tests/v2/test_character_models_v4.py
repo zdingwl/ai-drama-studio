@@ -17,7 +17,7 @@ def test_require_models_fails_hard_when_character_v10_model_is_missing(monkeypat
 
 
 def test_model_status_exposes_v10_models_runtime_tracking_and_final_gate(monkeypatch, tmp_path: Path) -> None:
-    """职责：前端必须能看到 Person/ReID、可选 Face、MOT 与 V10 Final Gate。"""
+    """职责：前端必须能看到 Person/ReID、可选 Face、HumanSeg、MOT 与 V10 Final Gate。"""
 
     monkeypatch.setattr(content_models_v2, "model_dir", lambda: tmp_path)
     status = content_models_v2.model_status()
@@ -28,6 +28,7 @@ def test_model_status_exposes_v10_models_runtime_tracking_and_final_gate(monkeyp
         "face_recognition.sface.2021dec",
         "person_detection.yolox.2022nov",
         "person_reid.youtu.2021nov",
+        "person_segmentation.pphumanseg.2023mar",
     }
     assert status["ready"] is False
     assert status["profile"] == "character-v10-capture-first-model-classification"
