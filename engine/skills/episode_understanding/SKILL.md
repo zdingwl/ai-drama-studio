@@ -2,8 +2,8 @@
 
 - **Skill ID:** `episode_understanding`
 - **Version:** `1.0.0`
-- **Status:** `CONTRACT_ONLY`
-- **Runtime Model / Provider:** long-context reasoning model explicitly configured for source-drama understanding
+- **Status:** `RUNTIME_READY`
+- **Runtime Model / Provider:** 项目现有 `local_qwen_text_v1`，优先复用已配置 OpenAI-compatible Qwen 服务，失败时回退已验收的本地 Qwen3-VL subprocess/checkpoint
 
 ## Purpose
 
@@ -42,6 +42,10 @@
 - 用目标国家偏好反向污染原片理解。
 - 将 unresolved source conflict 自动判定为已解决。
 
+## Runtime Binding V1
+
+`engine.app.source_story_skills_v1.compile_episode_understanding_v1` 只接收当前 `SourceDramaSnapshot` 投影出的 `shot_facts`、完整 SourceDialogueUtterance 和正式 source refs。模型只能输出剧情结构 inference layer；所有引用必须解析到当前 Episode，Scene Block 必须按顺序覆盖全部当前 Shot，Shot Function 必须给每个当前 Shot 恰好一项。未知 ref、漏 Shot、重复/乱序 Shot 都直接拒绝，不写回 source truth。
+
 ## Output Contract
 
 ```json
@@ -72,6 +76,8 @@
 - `facts` 不得包含没有 provenance 的新增事实。
 - 每条 inference 必须至少有 supporting fact ref 或被标记为 unresolved。
 - remake invariant 必须能回指 source fact / beat / information-flow / emotion evidence。
+- Scene Block 必须按当前时间顺序覆盖每个 Shot 恰好一次。
+- Shot Function 必须覆盖每个当前 Shot 恰好一次。
 - 存在阻塞性 source review case 时不得宣称整集 source truth 已冻结。
 
 ## Completion Criteria
