@@ -1,20 +1,26 @@
 """Public read facade for ProjectFlowState V1.
 
 The first ProjectFlowState composer intentionally keeps existing target-dialogue text and
-TTS facts separate.  Workflow V2, however, defines Validity for the *stage output consumed
-by the next stage*.  Therefore target text without current TTS audio is not yet a complete
-stage output: it is NOT_BUILT (actionable), not a BLOCKED_DEPENDENCY.
+TTS facts separate. Workflow V2 defines Validity for the *stage output consumed by the next
+stage*. Therefore target text without current TTS audio is not yet a complete stage output:
+it is NOT_BUILT (actionable), not a BLOCKED_DEPENDENCY.
 
-Keep this normalization side-effect free.  It exists as a small compatibility layer while
-ProjectFlowState replaces the older page-specific state models.
+The current product rule is also fully automatic by default: an OPEN ReviewIssue is an
+optional correction signal, not a consumability gate. The legacy composer still records
+review counts and a few historical BLOCKED_REVIEW states, so this read facade removes only
+those review-only gates while preserving technical/runtime/staleness/QC gates.
+
+Keep this normalization side-effect free with respect to persisted business data. No model,
+Task, ReviewIssue or artifact is created from GET/read paths.
 """
 from __future__ import annotations
 
 from copy import deepcopy
 from typing import Any, Mapping
 
+from engine.app import project_flow_state_v1 as _composer
 from engine.app.project_flow_state_contract_v1 import ProjectFlowStateV1
-from engine.app.project_flow_state_v1 import get_project_flow_state_v1
+from engine.app.source_drama_snapshot_auto_v2 import load_project_source_drama_snapshot_auto_v2
 
 
 def _overall_status(first: Mapping[str, Any] | None, active_command: Mapping[str, Any] | None) -> str:
@@ -66,6 +72,9 @@ def _next_action(
     execution = str(first.get("execution") or "")
     reason = str(first.get("reason") or "当前阶段尚未完成")
     if readiness == "BLOCKED_REVIEW":
+        # Compatibility only. The current public read path relaxes review-only gates before
+        # reaching this function, but historical callers of normalize_project_flow_state_v1
+        # may still provide an old BLOCKED_REVIEW payload.
         return {
             "action_key": "OPEN_REVIEW_CENTER",
             "kind": "NAVIGATE",
@@ -120,6 +129,47 @@ def _next_action(
     }
 
 
+def _optional_correction_message(count: int) -> str:
+    return f"当前结果可继续；另有 {count} 项可选纠错，不影响自动流程。"
+
+
+def relax_optional_review_gates_v2(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove only legacy human-review gates from one composed flow-state snapshot.
+
+    A stage is relaxed only when the legacy composer says the data itself is CURRENT and the
+    sole readiness state is BLOCKED_REVIEW. Missing/stale artifacts, runtime failures,
+    dependencies, H3 machine-QC/selection and postproduction output requirements are left
+    untouched.
+    """
+
+    state = deepcopy(dict(payload))
+    stages = [deepcopy(dict(item)) for item in state.get("stages") or [] if isinstance(item, Mapping)]
+    for stage in stages:
+        if stage.get("validity") != "CURRENT" or stage.get("readiness") != "BLOCKED_REVIEW":
+            continue
+        count = max(0, int(stage.get("open_review_cases") or 0))
+        stage["readiness"] = "READY"
+        stage["consumable"] = True
+        stage["reason_code"] = "READY_WITH_OPTIONAL_CORRECTIONS" if count else "READY"
+        stage["reason"] = _optional_correction_message(count) if count else "当前版本可继续自动流程。"
+        warnings = [str(item) for item in stage.get("warnings") or [] if str(item).strip()]
+        if count:
+            message = _optional_correction_message(count)
+            if message not in warnings:
+                warnings.append(message)
+        stage["warnings"] = warnings
+    state["stages"] = stages
+
+    review_summary = state.get("review_summary")
+    if isinstance(review_summary, Mapping):
+        summary = deepcopy(dict(review_summary))
+        # OPEN items remain visible as optional corrections. They no longer count as flow
+        # blockers; true blockers are represented by stage dependency/runtime/QC state.
+        summary["blocking_count"] = 0
+        state["review_summary"] = summary
+    return state
+
+
 def normalize_project_flow_state_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Normalize current composer output to the public Workflow V2 semantics."""
 
@@ -142,7 +192,17 @@ def normalize_project_flow_state_v1(payload: Mapping[str, Any]) -> dict[str, Any
 
 
 def get_project_flow_state_read_v1(project_id: str) -> dict[str, Any]:
-    return normalize_project_flow_state_v1(get_project_flow_state_v1(project_id))
+    # The legacy composer owns a module-local binding to the old Snapshot loader. Rebind it
+    # once to the Auto V2 loader before composition so ProjectFlowState consumes the same
+    # SourceDramaSnapshot semantics as the formal product routes. Assigning the same callable
+    # is deterministic and does not mutate persisted data or invoke inference.
+    _composer.load_project_source_drama_snapshot_v1 = load_project_source_drama_snapshot_auto_v2
+    composed = _composer.get_project_flow_state_v1(project_id)
+    return normalize_project_flow_state_v1(relax_optional_review_gates_v2(composed))
 
 
-__all__ = ["get_project_flow_state_read_v1", "normalize_project_flow_state_v1"]
+__all__ = [
+    "get_project_flow_state_read_v1",
+    "normalize_project_flow_state_v1",
+    "relax_optional_review_gates_v2",
+]
