@@ -8,6 +8,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from engine.app.breakdown_read_model_contract_v1 import BreakdownReadModelV1
+from engine.app.breakdown_read_model_v1 import load_episode_breakdown_read_model_v1
 from engine.app.character_review_issue_sync_v1 import resolve_legacy_character_evidence_issues
 from engine.app.review_issue_v1 import (
     ReviewIssue,
@@ -15,12 +17,20 @@ from engine.app.review_issue_v1 import (
     serialize_review_issue,
     set_review_issue_status,
 )
-from engine.app.source_dialogue_speaker_override_v1 import upsert_source_dialogue_speaker_override_v1
+from engine.app.shot_revision_v2 import ShotRevisionItem
+from engine.app.source_dialogue_speaker_override_v1 import (
+    load_episode_source_dialogue_speaker_overrides_v1,
+    upsert_source_dialogue_speaker_override_v1,
+)
 from engine.app.source_drama_review_issue_sync_v1 import SPEAKER_PREFIX, sync_source_drama_speaker_issues
-from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError, load_project_source_drama_snapshot_v1
-from engine.app.studio_v2 import get_session
-from engine.app.studio_v2 import Episode, Project
-from engine.app.source_drama_snapshot_v1 import load_episode_source_drama_snapshot_v1, compose_project_source_drama_snapshot_v1
+from engine.app.source_drama_snapshot_v1 import (
+    SourceDramaSnapshotError,
+    compose_episode_source_drama_snapshot_v1,
+    compose_project_source_drama_snapshot_v1,
+    load_episode_source_drama_snapshot_v1,
+    load_project_source_drama_snapshot_v1,
+)
+from engine.app.studio_v2 import Episode, Project, get_session
 from engine.app.target_dialogue_auto_review_guard_v1 import cleanup_incomplete_auto_dialogue_reviews_v1
 
 router = APIRouter(prefix="/api", tags=["review-issues"])
@@ -35,18 +45,71 @@ class SpeakerReviewResolutionPatch(BaseModel):
     person_key: str = Field(min_length=1, max_length=220)
 
 
+_PENDING_PRESENCE_REVIEW_MESSAGE = "个镜头的出镜人物覆盖尚未核对，不能固化原片事实"
+
+
 def _episode_review_snapshot(project_id: str, episode_id: str) -> dict:
-    # 审核专用的单集上下文，绝不作为全项目正式就绪快照发布。
+    """Build review-only source context without weakening the formal SourceDramaSnapshot gate.
+
+    Speaker review is intentionally allowed shot-by-shot while another shot in the same episode
+    still has a PERSON_PRESENCE task. The public SourceDramaSnapshot must remain fail-closed, so
+    only this explicit review path composes a temporary copy with the pending-presence gate
+    removed. All other source-truth gates remain strict.
+    """
+
     with get_session() as session:
         episode = session.get(Episode, episode_id)
         project = session.get(Project, project_id)
         if project is None or episode is None or episode.project_id != project_id:
             raise LookupError('剧集不属于当前项目')
-        name, language = project.name, project.source_language
-    snapshot = load_episode_source_drama_snapshot_v1(episode_id, infer_speakers=False)
+        project_name = project.name
+        source_language = project.source_language
+        episode_title = episode.title
+        episode_order = episode.sort_order
+
+    try:
+        snapshot = load_episode_source_drama_snapshot_v1(episode_id, infer_speakers=False)
+    except SourceDramaSnapshotError as exc:
+        # The formal snapshot correctly blocks while any presence task is still open. That gate
+        # must not make an already-confirmed shot's speaker editor unusable, so recover only this
+        # one known review-time condition. Dialogue reconciliation and every other gate still
+        # fail closed through the strict loader above.
+        if _PENDING_PRESENCE_REVIEW_MESSAGE not in str(exc):
+            raise
+        read_model_raw = load_episode_breakdown_read_model_v1(episode_id)
+        if read_model_raw is None:
+            raise SourceDramaSnapshotError('当前剧集没有有效拉片结果，请先完成本集拉片') from exc
+        read_model = BreakdownReadModelV1.model_validate(read_model_raw)
+        if not read_model.presence_review:
+            raise
+        review_read_model = read_model.model_copy(deep=True, update={"presence_review": {}})
+        speaker_overrides = load_episode_source_dialogue_speaker_overrides_v1(episode_id)
+        with get_session() as session:
+            items = list(session.scalars(
+                select(ShotRevisionItem)
+                .where(ShotRevisionItem.revision_id == read_model.timeline.source_shot_revision_id)
+                .order_by(ShotRevisionItem.ordinal)
+            ).all())
+        snapshot = compose_episode_source_drama_snapshot_v1(
+            review_read_model,
+            project_id=project_id,
+            episode_id=episode_id,
+            episode_title=episode_title,
+            episode_order=episode_order,
+            source_language=source_language,
+            revision_items_by_ordinal={item.ordinal: item for item in items},
+            speaker_overrides=speaker_overrides,
+            infer_speakers=False,
+        )
+
     if snapshot is None:
         raise SourceDramaSnapshotError('当前剧集没有有效拉片结果，请先完成本集拉片')
-    return compose_project_source_drama_snapshot_v1(project_id=project_id, project_name=name, source_language=language, episodes=[snapshot])
+    return compose_project_source_drama_snapshot_v1(
+        project_id=project_id,
+        project_name=project_name,
+        source_language=source_language,
+        episodes=[snapshot],
+    )
 
 
 @router.post('/projects/{project_id}/episodes/{episode_id}/speaker-reviews/prepare')
