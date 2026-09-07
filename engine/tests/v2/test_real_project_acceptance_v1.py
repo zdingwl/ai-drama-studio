@@ -128,15 +128,15 @@ def test_runtime_blockers_require_the_complete_local_acceptance_stack() -> None:
             "backend",
             "h3_fl2va",
             "h3_ref2va",
-            "qwen3_vl",
+            "qwen38_visual",
             "qwen3_tts",
             "latentsync",
             "audio_separator",
         )
     }
     assert runtime_blockers(ready) == []
-    ready["audio_separator"] = {"ready": False}
-    assert runtime_blockers(ready) == ["audio_separator"]
+    ready["qwen38_visual"] = {"ready": False, "error": "checkpoint missing"}
+    assert runtime_blockers(ready) == ["qwen38_visual"]
 
 
 def test_main_run_mode_defers_downstream_runtime_blockers_to_the_production_stage(monkeypatch) -> None:
@@ -145,7 +145,7 @@ def test_main_run_mode_defers_downstream_runtime_blockers_to_the_production_stag
         "backend": {"ready": True},
         "h3_fl2va": {"ready": False},
         "h3_ref2va": {"ready": False},
-        "qwen3_vl": {"ready": True},
+        "qwen38_visual": {"ready": True, "provider": "qwen38-video-understanding"},
         "qwen3_tts": {"ready": True},
         "latentsync": {"ready": False},
         "audio_separator": {"ready": False},
@@ -157,7 +157,7 @@ def test_main_run_mode_defers_downstream_runtime_blockers_to_the_production_stag
     monkeypatch.setattr(
         acceptance_runner,
         "collect_runtime_status",
-        lambda _client, *, vlm_base_url, vlm_model: runtimes,
+        lambda _client: runtimes,
     )
     monkeypatch.setattr(acceptance_runner, "collect_project_state", lambda _client, _project_id: state)
 
