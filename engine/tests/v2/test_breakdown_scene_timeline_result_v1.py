@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from engine.app import breakdown_scene_timeline_result_v1 as result
+from engine.app import source_dialogue_reconcile_v1 as dialogue_reconcile
 from engine.app.breakdown_scene_grounding_v1 import build_scene_grounding_packet_v1
 from engine.app.breakdown_scene_narrative_validator_v1 import validate_scene_narrative_v1
 
@@ -92,6 +93,13 @@ def _valid_overlay(timeline: dict[str, Any]) -> dict[str, Any]:
 
 def _patch_timeline(monkeypatch: pytest.MonkeyPatch, timeline: dict[str, Any]) -> None:
     monkeypatch.setattr(result, "assemble_scene_timeline_v1", lambda _draft: deepcopy(timeline))
+    # These tests own the Narrative/result resolver boundary. Review storage has its own
+    # contract tests and must not make this isolated suite depend on a materialized DB table.
+    monkeypatch.setattr(
+        dialogue_reconcile,
+        "apply_reviews",
+        lambda _draft, payload: deepcopy(payload),
+    )
 
 
 def _patch_artifact_path(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
