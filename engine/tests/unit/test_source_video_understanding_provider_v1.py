@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import json
 from pathlib import Path
 
 from engine.app import breakdown_p2_pipeline_v1 as pipeline
@@ -48,6 +50,10 @@ def test_qwen38_is_business_source_video_provider_with_dedicated_runner() -> Non
     assert provider.component == "VLM"
     assert provider.model_name == DEFAULT_QWEN38_MODEL
     assert provider.runner_script.name == "run_breakdown_vlm_fast_grounded_qwen38.py"
+    assert "Qwen38Visual" in str(provider.python_executable)
+    assert "Qwen38Visual" in str(provider.model_path)
+    assert "TransVLM" not in str(provider.python_executable)
+    assert "TransVLM" not in str(provider.model_path)
 
 
 def test_default_p2_pipeline_uses_qwen38_visual_provider() -> None:
@@ -56,6 +62,7 @@ def test_default_p2_pipeline_uses_qwen38_visual_provider() -> None:
 
     assert isinstance(visual, Qwen38VideoUnderstandingProvider)
     assert visual.model_name == DEFAULT_QWEN38_MODEL
+    assert "Qwen38Visual" in str(visual.python_executable)
 
 
 def test_visual_semantic_whitelist_drops_dialogue_and_target_fields() -> None:
@@ -127,6 +134,45 @@ def test_qwen38_runtime_entry_uses_current_multimodal_auto_model_loader() -> Non
 
     assert "from transformers import AutoModelForMultimodalLM, AutoProcessor" in source
     assert "from transformers import AutoProcessor, Qwen3VLForConditionalGeneration" not in source
+    assert "dtype=dtype" in source
     assert SOURCE_VIDEO_PROVIDER_PROFILE == "source-video-understanding-qwen38-v1"
     assert QWEN38_PROVIDER_NAME == "qwen38-video-understanding"
     assert CANONICAL_DIALOGUE_POLICY == "asr-ocr-owned-visual-provider-cannot-overwrite-v1"
+
+
+def test_qwen38_runtime_checker_accepts_official_qwen35_architecture_tag(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    checker_path = repo_root / "scripts" / "check_qwen38_visual_runtime.py"
+    spec = importlib.util.spec_from_file_location("qwen38_runtime_checker_test", checker_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    model_dir = tmp_path / "Qwen3.8-27B"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(json.dumps({
+        "model_type": "qwen3_5",
+        "architectures": ["Qwen3_5ForConditionalGeneration"],
+        "language_model_only": False,
+        "vision_config": {"hidden_size": 1024},
+        "video_token_id": 248056,
+    }), encoding="utf-8")
+
+    ready, detail = module._checkpoint_config_status(model_dir)
+    assert ready is True
+    assert "model_type=qwen3_5" in detail
+
+
+def test_qwen38_setup_and_acceptance_tools_do_not_default_to_old_http_vlm() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    setup = (repo_root / "scripts" / "setup_breakdown_vlm_runtime.ps1").read_text(encoding="utf-8")
+    stack = (repo_root / "scripts" / "check_local_remake_runtime_stack.py").read_text(encoding="utf-8")
+    acceptance = (repo_root / "scripts" / "run_real_project_acceptance_v1.py").read_text(encoding="utf-8")
+
+    assert "Qwen/Qwen3.8-27B" in setup
+    assert "Qwen3-VL-4B-Instruct" not in setup
+    assert ".runtime\\Qwen38Visual" in setup
+    assert '"qwen38_visual"' in stack
+    assert '"qwen3_vl"' not in stack
+    assert '"qwen38_visual"' in acceptance
+    assert '"qwen3_vl"' not in acceptance
