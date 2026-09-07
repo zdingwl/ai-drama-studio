@@ -2,8 +2,8 @@
 
 - **Skill ID:** `screenplay_reconstruction`
 - **Version:** `1.0.0`
-- **Status:** `CONTRACT_ONLY`
-- **Runtime Model / Provider:** long-context text reasoning model explicitly configured for source screenplay reconstruction
+- **Status:** `RUNTIME_READY`
+- **Runtime Model / Provider:** V1 使用确定性 source-truth projector；不再调用第二个生成模型改写事实/对白
 
 ## Purpose
 
@@ -39,6 +39,10 @@
 - 用目标地区文化、目标人物名称提前改写原剧。
 - 绕过 unresolved source conflict 或未确认 speaker。
 
+## Runtime Binding V1
+
+`engine.app.source_story_skills_v1.reconstruct_source_screenplay_v1` 采用确定性投影：动作只来自当前 Shot 的 `visual_description/performance`，对白只遍历 canonical `SourceDialogueUtterance`，并通过 emitted set 和最终全集合校验保证每条完整 SourceDialogue 恰好输出一次。`episode_understanding` 只提供 Story Beat 引用，不允许模型 inference 变成新动作或新对白。
+
 ## Output Contract
 
 ```json
@@ -66,6 +70,7 @@
 - 每条正式对白必须映射到当前完整 SourceDialogueUtterance。
 - 每个正式人物必须映射到当前 Final Character/VO。
 - 新增 action/event 若无 source ref 直接拒绝或降级为 unresolved。
+- 一条 canonical SourceDialogueUtterance 必须在整份剧本中恰好出现一次。
 - 阻塞性 source review 未清零时，不得把 reconstruction 标成 LOCKED。
 - 输入 revision/fingerprint 变化后旧 reconstruction 必须 stale。
 
