@@ -1,5 +1,8 @@
 param(
     [string]$BaseUrl = 'http://127.0.0.1:8000',
+    [string]$Qwen38Python = '',
+    [string]$Qwen38ModelPath = '',
+    # Deprecated compatibility parameters. Source visual no longer uses an HTTP VLM service.
     [string]$VlmBaseUrl = '',
     [string]$VlmModel = '',
     [double]$TimeoutSeconds = 5.0,
@@ -18,20 +21,48 @@ if (-not (Test-Path -LiteralPath $CheckScript)) {
     throw "Runtime stack checker not found: $CheckScript"
 }
 
+if ($VlmBaseUrl -or $VlmModel) {
+    Write-Host '[AI Drama Studio] -VlmBaseUrl/-VlmModel are deprecated and ignored. Source visual now uses local Qwen3.8-27B.' -ForegroundColor Yellow
+}
+
 $Arguments = @(
     $CheckScript,
     '--base-url', $BaseUrl,
     '--timeout', [string]$TimeoutSeconds
 )
-
-if ($VlmBaseUrl) { $Arguments += @('--vlm-base-url', $VlmBaseUrl) }
-if ($VlmModel) { $Arguments += @('--vlm-model', $VlmModel) }
 if ($Json) { $Arguments += '--json' }
 
-Write-Host '[AI Drama Studio] Localized Remake runtime stack check'
-Write-Host "  Backend: $BaseUrl"
-if ($VlmBaseUrl) { Write-Host "  VLM:     $VlmBaseUrl" }
-Write-Host ''
+$PreviousQwenPython = $env:AI_DRAMA_P2_VLM_PYTHON
+$PreviousQwenModel = $env:AI_DRAMA_P2_VLM_MODEL_PATH
+try {
+    if ($Qwen38Python) {
+        $env:AI_DRAMA_P2_VLM_PYTHON = $Qwen38Python
+    }
+    if ($Qwen38ModelPath) {
+        $env:AI_DRAMA_P2_VLM_MODEL_PATH = $Qwen38ModelPath
+    }
 
-& $Python @Arguments
-exit $LASTEXITCODE
+    Write-Host '[AI Drama Studio] Localized Remake runtime stack check'
+    Write-Host "  Backend:       $BaseUrl"
+    Write-Host '  Source visual: Qwen3.8-27B local provider'
+    Write-Host ''
+
+    & $Python @Arguments
+    $RunnerExitCode = $LASTEXITCODE
+}
+finally {
+    if ($null -eq $PreviousQwenPython) {
+        Remove-Item Env:AI_DRAMA_P2_VLM_PYTHON -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:AI_DRAMA_P2_VLM_PYTHON = $PreviousQwenPython
+    }
+    if ($null -eq $PreviousQwenModel) {
+        Remove-Item Env:AI_DRAMA_P2_VLM_MODEL_PATH -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:AI_DRAMA_P2_VLM_MODEL_PATH = $PreviousQwenModel
+    }
+}
+
+exit $RunnerExitCode
