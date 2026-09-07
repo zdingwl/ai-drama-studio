@@ -5,10 +5,15 @@ Qwen3.8 is a native image/video multimodal model, but its current Transformers a
 loaded through ``AutoModelForMultimodalLM`` rather than the historical
 ``Qwen3VLForConditionalGeneration`` class. This entry keeps the already accepted Window-v4 +
 Exact-Shot compact-v3 prompts, frame sampling, timing instrumentation and JSON contracts intact;
-only the model-loading seam changes.
+only the model-loading/chat-template seams change.
+
+The provider requires deterministic compact JSON rather than free-form reasoning. Qwen3.8 enables
+thinking by default, so this dedicated runner forces non-thinking chat templates before reusing the
+accepted visual prompt adapters. Canonical source dialogue ownership remains outside this runner.
 """
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 import sys
 
@@ -36,6 +41,11 @@ def _load_qwen38_model(model_path: Path, device: str):
         model = model.to("cpu")
     model.eval()
     processor = AutoProcessor.from_pretrained(str(model_path), local_files_only=True)
+    processor.apply_chat_template = partial(
+        processor.apply_chat_template,
+        enable_thinking=False,
+        preserve_thinking=False,
+    )
     return model, processor
 
 
