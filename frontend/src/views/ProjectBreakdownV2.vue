@@ -510,7 +510,7 @@ function selectStage(item: StageDisplay): void {
 function confirmShotPerson(person: SceneTimelinePerson): void {
   if (!selectedScene.value || !selectedShot.value) return
   void router.push({ name: 'source-confirm', params: { projectId: projectId.value }, query: {
-    episode: selectedEpisodeId.value, shot: String(selectedShot.value.ordinal), confirm_tab: 'shots',
+    episode: selectedEpisodeId.value, shot: String(selectedShot.value.ordinal), confirm_tab: 'people',
     person: `${selectedEpisodeId.value}:${selectedScene.value.ordinal}:${person.ref}`,
   } })
 }
@@ -532,30 +532,14 @@ function handleSourceNextAction(): void {
   else actionMessage.value = '当前镜头没有可处理的审核项，请从待确认或内容待补全列表选择具体镜头。'
 }
 
-async function openSpeakerReview(): Promise<void> {
+function openSpeakerReview(dialogueStartUs?: number): void {
   detailTab.value = 'dialogue'
   const shot = selectedShot.value
   if (!shot) return
-  try {
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectId.value)}/episodes/${encodeURIComponent(selectedEpisodeId.value)}/speaker-reviews/prepare`, { method: 'POST' })
-    if (!response.ok) {
-      const body = await response.json() as { detail?: string }
-      throw new Error(body.detail || '说话人审核准备失败')
-    }
-    const issues = await response.json() as Awaited<ReturnType<typeof remakeApi.listReviewIssues>>
-    if (selectedShot.value?.id !== shot.id) return
-    const available = issues.some(issue => {
-      const suggestion = issue.ai_suggestion as { shot_id?: string } | null
-      return issue.issue_type === 'SPEAKER' && (issue.shot_id === shot.id || suggestion?.shot_id === shot.id)
-    })
-    if (!available) {
-      actionError.value = '当前对白缺少说话人，但后端没有对应的说话人审核任务。已定位到对白栏；暂不能提交说话人，不会打开空审核弹窗。'
-      return
-    }
-    goSourceConfirm()
-  } catch (error) {
-    actionError.value = error instanceof Error ? error.message : '说话人审核任务读取失败'
-  }
+  void router.push({ name: 'source-confirm', params: { projectId: projectId.value }, query: {
+    episode: selectedEpisodeId.value, shot: String(shot.ordinal), confirm_tab: 'dialogue',
+    ...(typeof dialogueStartUs === 'number' ? { dialogue_start: String(dialogueStartUs) } : {}),
+  } })
 }
 
 function manualFieldValue(key: string): string {
@@ -1178,9 +1162,10 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template v-else-if="detailTab === 'people'">
+                  <button type="button" class="button secondary" @click="goSourceConfirm">本集人物连续确认 →</button>
                   <SourcePeoplePanelV2 :project-id="projectId" :episode-id="selectedEpisodeId" :shot-id="selectedShot.id"
                     :refresh-token="String(flowState?.revision || '')" :disabled="editingBlocked" @saved="onPresenceSaved"
-                    @locate="(key, ordinal) => router.push({ name: 'source-confirm', params: { projectId }, query: { episode: selectedEpisodeId, shot: String(ordinal), confirm_tab: 'shots', person: key } })" />
+                    @locate="(key, ordinal) => router.push({ name: 'source-confirm', params: { projectId }, query: { episode: selectedEpisodeId, shot: String(ordinal), confirm_tab: 'people', person: key } })" />
                   <section v-if="selectedShot" class="info-card">
                     <p>画面里还有列表未包含的人，或有待核对的检测区域？请在这里核对出镜情况。</p>
                     <button type="button" class="button secondary" :disabled="editingBlocked" @click="presenceEditorShot = selectedShot.id">核对出镜区域 / 补充遗漏</button>
@@ -1194,6 +1179,7 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template v-else-if="detailTab === 'dialogue'">
+                  <button type="button" class="button secondary" @click="openSpeakerReview()">本集对白连续确认 →</button>
                   <SourceDialogueEvidenceV2 :episode-id="selectedEpisodeId" :start-us="selectedShot.start_us" :end-us="selectedShot.end_us"
                     :refresh-token="String(flowState?.revision || '')" :disabled="editingBlocked" @saved="onPresenceSaved" />
                   <section v-if="selectedDialogue.length" class="dialogue-list">
@@ -1201,7 +1187,7 @@ onBeforeUnmount(() => {
                       <header><span>对白 {{ String(index + 1).padStart(2, '0') }}</span><button type="button" :disabled="editingBlocked" @click="openManualEditor('dialogue', index)">✎ 编辑文本</button></header>
                       <div class="dialogue-speaker"><span>说话人</span><strong>{{ dialogueSpeaker(dialogue) }}</strong></div>
                       <p>{{ dialogue.text }}</p>
-                      <footer><span>{{ formatTimeUs(dialogue.start_us) }} → {{ formatTimeUs(dialogue.end_us) }}</span><em>{{ dialogue.speakers.length ? '已绑定说话人' : '需要确认说话人' }}</em><button v-if="!dialogue.speakers.length" type="button" @click="openSpeakerReview">确认说话人</button></footer>
+                      <footer><span>{{ formatTimeUs(dialogue.start_us) }} → {{ formatTimeUs(dialogue.end_us) }}</span><em>{{ dialogue.speakers.length ? '已绑定说话人' : '需要确认说话人' }}</em><button v-if="!dialogue.speakers.length" type="button" @click="openSpeakerReview(dialogue.start_us)">确认说话人</button></footer>
                     </article>
                   </section>
                   <div v-else class="tab-empty">本镜头无对白</div>

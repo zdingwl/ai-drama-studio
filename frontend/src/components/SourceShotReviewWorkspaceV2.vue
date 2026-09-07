@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 
+import { nextReviewKey, uniqueReviewItems, type ReviewQueueItem } from '../utils/continuousReviewQueue'
 import { api } from '../api/client'
 import { remakeApi } from '../api/remake'
 import { resolveSourcePersonChoiceV1 } from '../utils/sourcePersonChoiceV1'
@@ -21,6 +22,8 @@ import type { ReviewIssue } from '../types/remake'
 
 const props = withDefaults(defineProps<{
   projectId: string
+  reviewKind?: 'shots' | 'people' | 'speakers'
+  focusDialogueStartUs?: number | null
   episodes: Episode[]
   focusPersonKey?: string
   focusEpisodeId?: string
@@ -28,13 +31,15 @@ const props = withDefaults(defineProps<{
   sourceReady?: boolean
   blockingReason?: string
 }>(), {
+  reviewKind: 'shots',
+  focusDialogueStartUs: null,
   focusPersonKey: '',
   focusEpisodeId: '',
   focusShotOrdinal: null,
   sourceReady: false,
   blockingReason: '',
 })
-const emit = defineEmits<{ changed: []; completed: [] }>()
+const emit = defineEmits<{ changed: []; completed: []; busy: [boolean]; people: [] }>()
 
 type Mark = {
   shot_id: string
@@ -115,9 +120,14 @@ const reviewProposals = ref<Record<string, AutoProposal>>({})
 const issues = ref<ReviewIssue[]>([])
 const entries = ref<ReviewEntry[]>([])
 const loading = ref(true)
+const readFailed = ref(false)
 const saving = ref(false)
 const error = ref('')
 const selectedShotId = ref('')
+const activeQueueKey = ref('')
+const editorBody = ref<HTMLElement | null>(null)
+const continuous = computed(() => props.reviewKind !== 'shots')
+const savedCount = ref(0)
 const search = ref('')
 const draftCharacterIds = ref<string[]>([])
 const draftSceneId = ref<string | null>(null)
@@ -179,8 +189,8 @@ function representativeShotId(item: CharacterObservation): string {
 function observationsForShot(shotId: string): CharacterObservation[] {
   return unresolvedObservations.value.filter((item) => representativeShotId(item) === shotId || (item.key === props.focusPersonKey && item.shots.some(shot => shot.id === shotId)))
 }
-function speakerSuggestion(issue: ReviewIssue): SpeakerSuggestion | null {
-  if (issue.issue_type !== 'SPEAKER' || !isRecord(issue.ai_suggestion)) return null
+function speakerSuggestion(issue: ReviewIssue | undefined): SpeakerSuggestion | null {
+  if (!issue || issue.issue_type !== 'SPEAKER' || !isRecord(issue.ai_suggestion)) return null
   const value = issue.ai_suggestion
   if (typeof value.dialogue_key !== 'string' || typeof value.source_text !== 'string') return null
   return value as unknown as SpeakerSuggestion
@@ -203,7 +213,27 @@ function compareReviewEntries(a: ReviewEntry, b: ReviewEntry): number {
   if (startOrder !== 0) return startOrder
   return String(a.shot.id).localeCompare(String(b.shot.id))
 }
-const pendingEntries = computed(() => entries.value.filter(shotNeedsReview).sort(compareReviewEntries))
+const pendingEntries = computed(() => entries.value.filter(entry => (!continuous.value || !props.focusEpisodeId || entry.episode.id === props.focusEpisodeId) && shotNeedsReview(entry)).sort(compareReviewEntries))
+const reviewQueue = computed<ReviewQueueItem[]>(() => uniqueReviewItems(pendingEntries.value.flatMap<ReviewQueueItem>(entry => {
+  if (props.reviewKind === 'people') return observationsForShot(entry.shot.id).map(person => {
+    const focusedShot = person.key === props.focusPersonKey ? entries.value.find(row => row.episode.id === person.episode_id && row.shot.ordinal === props.focusShotOrdinal && person.shots.some(shot => shot.id === row.shot.id)) : null
+    return { key: person.key, personKey: person.key, shotId: focusedShot?.shot.id || entry.shot.id }
+  })
+  if (props.reviewKind === 'speakers') return speakerIssuesForShot(entry.shot.id).map(issue => ({ key: issue.id, issueId: issue.id, shotId: entry.shot.id }))
+  return []
+})))
+const activeQueueItem = computed(() => reviewQueue.value.find(item => item.key === activeQueueKey.value) || reviewQueue.value[0])
+function selectQueueItem(key: string): void {
+  if (saving.value || loading.value || readFailed.value) return
+  activeQueueKey.value = key
+  const item = reviewQueue.value.find(row => row.key === key)
+  initSelectedShot(pendingEntries.value.find(entry => entry.shot.id === item?.shotId) || null)
+  error.value = ''
+  void nextTick(() => editorBody.value?.scrollTo({ top: 0 }))
+}
+function nextQueueItem(): void {
+  selectQueueItem(nextReviewKey(reviewQueue.value.map(item => item.key), activeQueueItem.value?.key || '', reviewQueue.value.map(item => item.key)))
+}
 function focusedPendingEntry(): ReviewEntry | null {
   const ordinal = Number(props.focusShotOrdinal || 0)
   if (!Number.isInteger(ordinal) || ordinal <= 0) return null
@@ -221,11 +251,11 @@ const visibleEntries = computed(() => {
     return `${entry.episode.title} ${entry.shot.ordinal} ${entry.shot.short_description || ''} ${observationText} ${speakerText}`.toLowerCase().includes(keyword)
   })
 })
-const selectedEntry = computed(() => pendingEntries.value.find((entry) => entry.shot.id === selectedShotId.value) || pendingEntries.value[0] || null)
-const selectedObservations = computed(() => selectedEntry.value ? observationsForShot(selectedEntry.value.shot.id) : [])
-const selectedSpeakerIssues = computed(() => selectedEntry.value ? speakerIssuesForShot(selectedEntry.value.shot.id) : [])
+const selectedEntry = computed(() => pendingEntries.value.find((entry) => entry.shot.id === (continuous.value ? activeQueueItem.value?.shotId : selectedShotId.value)) || (!continuous.value ? pendingEntries.value[0] : null) || null)
+const selectedObservations = computed(() => selectedEntry.value ? observationsForShot(selectedEntry.value.shot.id).filter(item => !continuous.value || (props.reviewKind === 'people' && item.key === activeQueueItem.value?.personKey)) : [])
+const selectedSpeakerIssues = computed(() => selectedEntry.value ? speakerIssuesForShot(selectedEntry.value.shot.id).filter(issue => !continuous.value || (props.reviewKind === 'speakers' && issue.id === activeQueueItem.value?.issueId)) : [])
 const selectedHasAssetIssue = computed(() => Boolean(selectedEntry.value && assetNeedsReview(selectedEntry.value.shot)))
-const selectedHasPendingPeople = computed(() => selectedObservations.value.length > 0 || Boolean(selectedEntry.value && presenceIssuesForShot(selectedEntry.value.shot.id).length))
+const selectedHasPendingPeople = computed(() => Boolean(selectedEntry.value && (unresolvedObservations.value.some(item => item.shots.some(shot => shot.id === selectedEntry.value?.shot.id)) || presenceIssuesForShot(selectedEntry.value.shot.id).length)))
 const finalCharacters = computed<SourceCharacter[]>(() => characterWorkspace.value?.characters.length
   ? characterWorkspace.value.characters
   : (assetWorkspace.value?.characters || []).map((item) => ({ id: item.id, name: item.name, cover_url: item.cover_url, confidence: item.confidence, shot_ids: item.shot_ids, shot_count: item.shot_count })))
@@ -320,14 +350,25 @@ async function load(runAuto = false): Promise<void> {
     entries.value = props.episodes.flatMap((episode, index) => (shotGroups[index] || []).map((shot) => ({ episode, shot })))
     issues.value = nextIssues
     await loadCharacterWorkspace(runAuto)
+    if (continuous.value && !activeQueueKey.value) {
+      const focused = reviewQueue.value.find(item => props.focusPersonKey && item.personKey === props.focusPersonKey)
+        || reviewQueue.value.find(item => {
+          const entry = entries.value.find(entry => entry.shot.id === item.shotId)
+          const issue = issues.value.find(issue => issue.id === item.issueId)
+          return entry?.shot.ordinal === props.focusShotOrdinal && (props.focusDialogueStartUs === null || speakerSuggestion(issue)?.dialogue_start_us === props.focusDialogueStartUs)
+        })
+      activeQueueKey.value = focused?.key || reviewQueue.value[0]?.key || ''
+    }
     initSelectedShot(
-      pendingEntries.value.find((entry) => entry.shot.id === selectedShotId.value)
+      (continuous.value ? selectedEntry.value : null)
+      || pendingEntries.value.find((entry) => entry.shot.id === selectedShotId.value)
       || focusedPendingEntry()
       || pendingEntries.value[0]
       || null,
     )
+    readFailed.value = false
     if (!pendingEntries.value.length) emit('completed')
-  } catch (err) { error.value = err instanceof Error ? err.message : '原片待确认分镜读取失败' } finally { loading.value = false }
+  } catch (err) { readFailed.value = true; error.value = err instanceof Error ? err.message : '原片待确认分镜读取失败' } finally { loading.value = false }
 }
 async function saveAssetBinding(): Promise<void> {
   const entry = selectedEntry.value
@@ -339,21 +380,24 @@ async function saveAssetBinding(): Promise<void> {
   } catch (err) { error.value = err instanceof Error ? err.message : '镜头资产保存失败' } finally { saving.value = false }
 }
 async function assignObservation(observation: CharacterObservation, confirmSinglePerson = false): Promise<void> {
-  if (!characterWorkspace.value || saving.value) return
+  if (!characterWorkspace.value || saving.value || loading.value || readFailed.value) return
   if (observation.identity_issue) { error.value = observation.identity_issue; return }
   const localization = personConfirmationMark(observationFrame(observation), personMarks.value[observation.key], confirmSinglePerson)
   if (!localization) { error.value = '请先在多人画面中框出此人，或使用单人确认。'; return }
   const characterId = selectedPersonId(observation)
   const createName = (newPersonName.value[observation.key] || '').trim()
   if (!characterId && !createName) { error.value = '请选择已有正式人物，或输入新人物名称。'; return }
-  saving.value = true; error.value = ''
+  const queueBefore = reviewQueue.value.map(item => item.key)
+  const savedKey = activeQueueItem.value?.key || ''
+  const previousShotId = selectedEntry.value?.shot.id || ''
+  saving.value = true; emit('busy', true); error.value = ''
   try {
     characterWorkspace.value = await request<CharacterWorkspace>(`/api/projects/${encodeURIComponent(props.projectId)}/character-assets/assign`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: [observation.key], name: characterId ? '' : createName, character_id: characterId || null, expected_revision: characterWorkspace.value.revision, localizations: localization ? { [observation.key]: localization } : null }),
     })
     const nextProposals = { ...reviewProposals.value }; delete nextProposals[observation.key]; reviewProposals.value = nextProposals
-    await afterChange(selectedEntry.value?.shot.id || '')
-  } catch (err) { error.value = err instanceof Error ? err.message : '人物身份保存失败' } finally { saving.value = false }
+    await afterChange(previousShotId, queueBefore, savedKey)
+  } catch (err) { error.value = err instanceof Error ? err.message : '人物身份保存失败' } finally { saving.value = false; emit('busy', false) }
 }
 function candidatePeople(issue: ReviewIssue): SpeakerCandidate[] { return speakerSuggestion(issue)?.candidate_people?.filter((item) => item?.person_key) || [] }
 function confirmedCandidatePeople(issue: ReviewIssue): SpeakerCandidate[] {
@@ -367,6 +411,7 @@ function speakerDependsOnPendingPeople(issue: ReviewIssue): boolean {
 }
 function speakerPersonTitle(person: SpeakerCandidate): string { return person.character_name || person.display_name || '未命名人物' }
 async function saveSpeaker(issue: ReviewIssue): Promise<void> {
+  if (loading.value || readFailed.value) return
   if (speakerDependsOnPendingPeople(issue)) {
     error.value = '请先确认当前镜头人物身份，再确认对白说话人。'
     return
@@ -374,9 +419,12 @@ async function saveSpeaker(issue: ReviewIssue): Promise<void> {
   const personKey = speakerChoice.value[issue.id] || ''
   const selectedPerson = confirmedCandidatePeople(issue).find((person) => person.person_key === personKey)
   if (!personKey || !selectedPerson || saving.value) { error.value = '请选择已经绑定正式人物的说话人。'; return }
-  saving.value = true; error.value = ''
-  try { await remakeApi.resolveSpeakerReviewIssue(issue.id, personKey); await afterChange(selectedEntry.value?.shot.id || '') }
-  catch (err) { error.value = err instanceof Error ? err.message : '对白说话人保存失败' } finally { saving.value = false }
+  const queueBefore = reviewQueue.value.map(item => item.key)
+  const savedKey = activeQueueItem.value?.key || ''
+  const previousShotId = selectedEntry.value?.shot.id || ''
+  saving.value = true; emit('busy', true); error.value = ''
+  try { await remakeApi.resolveSpeakerReviewIssue(issue.id, personKey); await afterChange(previousShotId, queueBefore, savedKey) }
+  catch (err) { error.value = err instanceof Error ? err.message : '对白说话人保存失败' } finally { saving.value = false; emit('busy', false) }
 }
 function toggleDraftCharacter(id: string): void { draftCharacterIds.value = draftCharacterIds.value.includes(id) ? draftCharacterIds.value.filter((item) => item !== id) : [...draftCharacterIds.value, id] }
 function toggleDraftProp(id: string): void { draftPropIds.value = draftPropIds.value.includes(id) ? draftPropIds.value.filter((item) => item !== id) : [...draftPropIds.value, id] }
@@ -388,10 +436,19 @@ function fillAiSuggestion(): void {
   draftPropIds.value = Array.from(new Set(evidence.props.map((item) => item.final_asset_id).filter((id): id is string => Boolean(id))))
 }
 function evidenceLabel(items: AssetEvidenceItem[]): string { return items.length ? items.map((item) => `${item.label}${item.confidence === null ? '' : ` ${Math.round(item.confidence * 100)}%`}`).join('、') : '无建议' }
-async function afterChange(previousShotId: string): Promise<void> {
+async function afterChange(previousShotId: string, before: string[] = [], savedKey = ''): Promise<void> {
   window.dispatchEvent(new CustomEvent('studio-project-truth-changed', { detail: { project_id: props.projectId } }))
   emit('changed')
   await load(false)
+  if (error.value) return
+  if (continuous.value) {
+    savedCount.value += 1
+    activeQueueKey.value = nextReviewKey(before, savedKey, reviewQueue.value.map(item => item.key))
+    initSelectedShot(selectedEntry.value)
+    await nextTick()
+    editorBody.value?.scrollTo({ top: 0 })
+    return
+  }
   if (!pendingEntries.value.length) { emit('completed'); return }
   initSelectedShot(pendingEntries.value.find((entry) => entry.shot.id === previousShotId) || pendingEntries.value[0] || null)
 }
@@ -405,13 +462,14 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
 </script>
 
 <template>
-  <section class="source-shot-review-v2">
-    <div v-if="error" class="review-error">{{ error }}</div>
-    <div v-if="loading && !assetWorkspace" class="review-loading">正在整理真正需要你确认的分镜…</div>
-    <section v-else-if="!pendingEntries.length" class="review-complete"><div class="check">{{ sourceReady && !error ? '✓' : 'i' }}</div><strong>{{ sourceReady && !error ? '原片确认完成' : '当前审核队列为空，原片尚未就绪' }}</strong><span>{{ sourceReady && !error ? '原片资产与快照均已满足下游条件。' : blockingReason || '请返回拉片检查内容完整性及上游状态；没有审核任务不代表全部完成。' }}</span></section>
+  <section :class="['source-shot-review-v2', { continuous }]">
+    <header v-if="continuous" class="queue-progress"><div><strong>{{ reviewKind === 'people' ? '人物连续确认' : '说话人连续确认' }}</strong><span aria-live="polite">本次已确认 {{ savedCount }} 项 · 还剩 {{ reviewQueue.length }} 项</span><small>保存成功后自动展示下一项；暂看下一项不会确认或忽略当前问题。</small></div><button type="button" class="ghost" :disabled="saving || loading || readFailed || reviewQueue.length < 2" @click="nextQueueItem">暂看下一项 →</button></header>
+    <div v-if="error" class="review-error" role="alert">{{ error }} <button :disabled="saving || loading" @click="load(false)">重新读取</button></div>
+    <div v-if="loading && !characterWorkspace" class="review-loading">正在整理真正需要你确认的分镜…</div>
+    <section v-else-if="continuous ? !reviewQueue.length : !pendingEntries.length" class="review-complete"><div class="check">{{ sourceReady && !error ? '✓' : 'i' }}</div><strong>{{ sourceReady && !error ? '原片确认完成' : continuous ? (error ? '审核数据读取失败，暂不能判断剩余项' : '本类当前没有待确认项') : '当前审核队列为空，原片尚未就绪' }}</strong><span>{{ sourceReady && !error ? '原片资产与快照均已满足下游条件。' : blockingReason || '请返回拉片检查内容完整性及上游状态；没有审核任务不代表全部完成。' }}</span></section>
 
     <div v-else class="review-shell">
-      <aside class="shot-queue">
+      <aside v-if="!continuous" class="shot-queue">
         <header><div><strong>待确认分镜</strong><span>{{ pendingEntries.length }} 个</span></div><input v-model="search" type="search" placeholder="搜索分镜 / 人物 / 台词" /></header>
         <div class="shot-list">
           <button v-for="entry in visibleEntries" :key="entry.shot.id" type="button" :class="['shot-row', { active: selectedEntry?.shot.id === entry.shot.id }]" @click="selectShot(entry)">
@@ -422,8 +480,8 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
       </aside>
 
       <main v-if="selectedEntry" class="shot-editor">
-        <header class="editor-head"><div><small>当前分镜</small><strong>第{{ String(selectedEntry.episode.sort_order).padStart(2, '0') }}集 · 镜头 {{ String(selectedEntry.shot.ordinal).padStart(2, '0') }}</strong><span>{{ formatTime(selectedEntry.shot.start_us) }} – {{ formatTime(selectedEntry.shot.end_us) }}</span></div><div class="editor-progress">按顺序处理：人物 → 场景 / 道具 → 对白</div></header>
-        <div class="editor-body">
+        <header class="editor-head"><div><small>当前分镜</small><strong>第{{ String(selectedEntry.episode.sort_order).padStart(2, '0') }}集 · 镜头 {{ String(selectedEntry.shot.ordinal).padStart(2, '0') }}</strong><span>{{ formatTime(selectedEntry.shot.start_us) }} – {{ formatTime(selectedEntry.shot.end_us) }}</span></div><div class="editor-progress">{{ continuous ? '无需逐镜检查，确认后自动继续' : '按顺序处理：人物 → 场景 / 道具 → 对白' }}</div></header>
+        <div ref="editorBody" class="editor-body" :inert="saving || loading || readFailed">
           <section class="preview-panel">
             <PersonLocalizationReview v-if="activePerson" :key="`${selectedEntry.shot.id}:${activePerson.key}:${observationFrame(activePerson)?.thumbnail_url}`" :image-url="observationFrame(activePerson)?.thumbnail_url || ''" :shot-id="selectedEntry.shot.id" :label="`${activePerson.name} · ${activePerson.appearance || '请核对人物位置'}`" :model-value="personMarks[activePerson.key]" :disabled="saving || Boolean(activePerson.identity_issue)" @update:model-value="updatePersonMark(activePerson.key, $event)" />
             <video v-else-if="selectedEntry.shot.reference_url" :src="selectedEntry.shot.reference_url" :poster="selectedEntry.shot.thumbnail_url || undefined" controls preload="metadata" />
@@ -434,9 +492,9 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
 
           <section class="facts-panel">
             <section v-if="selectedObservations.length" class="fact-card person-card">
-              <header><div><small>1 · 人物身份</small><strong>先确认这个镜头里的人是谁</strong></div><span>{{ selectedObservations.length }} 项</span></header>
+              <header><div><small>1 · 人物身份</small><strong>确认这个人是谁</strong></div><span>{{ selectedObservations.length }} 项</span></header>
               <article v-for="observation in selectedObservations" :key="observation.key" class="person-row">
-                <div class="person-info"><strong>{{ observation.name }}</strong><span>{{ observation.appearance || '暂无稳定外观描述' }}</span><button type="button" class="ghost" @click="activePersonKey = observation.key">{{ activePerson?.key === observation.key ? '正在左侧核对' : '在左侧核对此人' }} · {{ personMarks[observation.key]?.source === 'MANUAL_SINGLE_PERSON' ? '单人，无需框选' : personMarks[observation.key] ? '已框选，可调整' : '待核对画面' }}</button></div>
+                <div class="person-info"><strong>{{ observation.name }}</strong><small>确认后绑定此观察关联的 {{ observation.shots.length }} 个分镜</small><span>{{ observation.appearance || '暂无稳定外观描述' }}</span><button type="button" class="ghost" @click="activePersonKey = observation.key">{{ activePerson?.key === observation.key ? '正在左侧核对' : '在左侧核对此人' }} · {{ personMarks[observation.key]?.source === 'MANUAL_SINGLE_PERSON' ? '单人，无需框选' : personMarks[observation.key] ? '已框选，可调整' : '待核对画面' }}</button></div>
 
                 <div v-if="observation.identity_issue" class="review-error" role="alert">
                   <strong>原片人物识别需修正</strong>
@@ -456,16 +514,16 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
                 <div v-if="!observation.identity_issue" class="new-person-divider"><span>找不到这个人？</span></div>
                 <div v-if="!observation.identity_issue" class="new-person">
                   <input :value="newPersonName[observation.key] || ''" type="text" placeholder="这是新人物：输入人物名称" @input="setNewPersonName(observation.key, ($event.target as HTMLInputElement).value)" />
-                  <button type="button" :disabled="saving || !observationFrame(observation)?.thumbnail_url || (!selectedPersonId(observation) && !(newPersonName[observation.key] || '').trim())" @click="assignObservation(observation, !personMarks[observation.key])">{{ saving ? '保存中…' : personMarks[observation.key] ? '确认人物' : '单人画面，确认人物' }}</button>
+                  <button type="button" :disabled="saving || !observationFrame(observation)?.thumbnail_url || (!selectedPersonId(observation) && !(newPersonName[observation.key] || '').trim())" @click="assignObservation(observation, !personMarks[observation.key])">{{ saving ? '保存中…' : personMarks[observation.key] ? (continuous ? '确认人物并继续 →' : '确认人物') : (continuous ? '单人画面，确认并继续 →' : '单人画面，确认人物') }}</button>
                 </div>
                 <small v-if="!observation.identity_issue && !personMarks[observation.key]" style="color:#63748b">只有画面中仅有此人时才直接确认；有其他人时，请先在左侧框出目标。</small>
               </article>
             </section>
 
-            <button type="button" class="ghost" @click="supplementShotId = selectedEntry.shot.id">核对其他出镜区域 / 补充遗漏{{ presenceIssuesForShot(selectedEntry.shot.id).length ? '（有待核对区域）' : '' }}</button>
+            <button v-if="!continuous" type="button" class="ghost" @click="supplementShotId = selectedEntry.shot.id">核对其他出镜区域 / 补充遗漏{{ presenceIssuesForShot(selectedEntry.shot.id).length ? '（有待核对区域）' : '' }}</button>
             <MissingPersonReview v-if="supplementShotId === selectedEntry.shot.id" :key="selectedEntry.shot.id" :project-id="projectId" :shot-id="selectedEntry.shot.id" @close="supplementShotId = ''" @saved="presenceSaved" />
 
-            <section v-if="selectedHasAssetIssue" class="fact-card asset-card">
+            <section v-if="!continuous && selectedHasAssetIssue" class="fact-card asset-card">
               <header><div><small>2 · 场景 / 道具</small><strong>确认这个镜头真正出现的资产</strong></div><button type="button" class="ghost" @click="fillAiSuggestion">采用 AI 建议到表单</button></header>
               <div class="field-block"><label>人物 Final Binding</label><div class="option-grid visual-binding"><button v-for="item in assetWorkspace?.characters || []" :key="item.id" type="button" :class="{ selected: draftCharacterIds.includes(item.id) }" @click="toggleDraftCharacter(item.id)"><img v-if="item.cover_url" :src="item.cover_url" alt="" /><span>{{ item.name }}</span></button></div></div>
               <div class="field-block two-col"><div><label>场景</label><select v-model="draftSceneId"><option :value="null">未绑定场景</option><option v-for="item in assetWorkspace?.scenes || []" :key="item.id" :value="item.id">{{ item.name }}</option></select></div><div><label>关键道具</label><div class="option-grid compact"><button v-for="item in assetWorkspace?.props || []" :key="item.id" type="button" :class="{ selected: draftPropIds.includes(item.id) }" @click="toggleDraftProp(item.id)">{{ item.name }}</button></div></div></div>
@@ -480,12 +538,12 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
                   <div class="dialogue-copy"><strong>“{{ speakerSuggestion(issue)?.source_text || '（无文本）' }}”</strong><span>{{ formatTime(speakerSuggestion(issue)?.dialogue_start_us) }} – {{ formatTime(speakerSuggestion(issue)?.dialogue_end_us) }}</span></div>
                   <div v-if="speakerDependsOnPendingPeople(issue)" class="speaker-lock">
                     <strong>先确认人物，才能确认对白</strong>
-                    <span>当前镜头仍有人物身份未确定。确认人物后，这条对白会自动解锁并只显示已绑定的正式人物。</span>
+                    <span>当前镜头仍有人物身份或出镜区域未确定，请先处理人物审核。</span><button type="button" class="ghost" @click="emit('people')">去确认人物 / 出镜区域</button>
                   </div>
                   <template v-else>
                     <div class="speaker-options" aria-label="说话人候选范围"><button type="button" :disabled="saving" :class="{selected:!offscreenSpeaker[issue.id]}" @click="setSpeakerMode(issue.id, false)">当前镜头人物</button><button type="button" :disabled="saving" :class="{selected:offscreenSpeaker[issue.id]}" @click="setSpeakerMode(issue.id, true)">画外说话人</button></div>
                     <div class="speaker-options"><button v-for="person in confirmedCandidatePeople(issue)" :key="person.person_key" type="button" :class="{ selected: speakerChoice[issue.id] === person.person_key }" @click="chooseSpeaker(issue.id, person.person_key)"><img v-if="person.cover_url" :src="person.cover_url" alt="" /><span>{{ speakerPersonTitle(person) }}</span></button></div>
-                    <div class="save-line"><span v-if="!confirmedCandidatePeople(issue).length">{{ offscreenSpeaker[issue.id] ? '当前场景没有其他已确认人物可选，请先补齐人物身份。' : '当前镜头没有可选的绑定人物；声音来自画外时，请选择“画外说话人”。' }}</span><span v-else>{{ offscreenSpeaker[issue.id] ? '画外候选：当前场景其他已确认人物。此选择不添加镜头出镜绑定。' : '仅显示当前镜头绑定人物，同一正式身份只显示一次。' }}</span><button type="button" class="primary" :disabled="saving || !confirmedCandidatePeople(issue).some((person) => person.person_key === speakerChoice[issue.id])" @click="saveSpeaker(issue)">确认说话人</button></div>
+                    <div class="save-line"><span v-if="!confirmedCandidatePeople(issue).length">{{ offscreenSpeaker[issue.id] ? '当前场景没有其他已确认人物可选，请先补齐人物身份。' : '当前镜头没有可选的绑定人物；声音来自画外时，请选择“画外说话人”。' }}</span><span v-else>{{ offscreenSpeaker[issue.id] ? '画外候选：当前场景其他已确认人物。此选择不添加镜头出镜绑定。' : '仅显示当前镜头绑定人物，同一正式身份只显示一次。' }}</span><button type="button" class="primary" :disabled="saving || !confirmedCandidatePeople(issue).some((person) => person.person_key === speakerChoice[issue.id])" @click="saveSpeaker(issue)">{{ saving ? '保存中…' : continuous ? '确认说话人并继续 →' : '确认说话人' }}</button></div>
                   </template>
                 </div>
               </article>
@@ -498,5 +556,9 @@ onUnmounted(() => window.removeEventListener('studio-project-truth-changed', onT
 </template>
 
 <style scoped>
+.continuous .editor-head{min-height:38px;padding:6px 14px}.continuous .editor-head small{display:none}.continuous .person-info>button,.continuous .new-person-divider{display:none}.continuous .person-row{gap:8px}.continuous :deep(.character-grid){grid-template-columns:repeat(auto-fill,minmax(165px,1fr));max-height:154px}.continuous :deep(.character-option){grid-template-columns:48px minmax(0,1fr);grid-template-rows:64px;align-items:center;gap:8px}.continuous :deep(.character-image){height:64px;width:48px}.continuous :deep(.character-copy strong){font-size:12px}.continuous :deep(.character-option em){position:static;grid-column:1 / -1}.continuous :deep(.frame img){max-height:36vh}.continuous .preview-panel{min-height:0}
+
+.continuous{display:flex;flex-direction:column;gap:8px}.continuous .review-shell{flex:1;min-height:0;grid-template-columns:minmax(0,1fr)}.queue-progress{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 16px;background:white;border-radius:9px}.queue-progress>div{display:grid;gap:4px}.queue-progress span{font-size:12px;color:#42638b}.queue-progress small{font-size:11px;color:#738398}.continuous .editor-body{grid-template-columns:minmax(0,44%) minmax(0,56%)}.continuous .facts-panel{min-width:0}.continuous .review-complete{flex:1}.continuous .dialogue-copy{flex-wrap:wrap}.continuous .person-info strong{font-size:15px}.continuous .person-info span{font-size:12px}.continuous .person-info small{font-size:11px}.continuous .primary,.continuous .new-person button{font-size:12px;min-height:40px}@media(max-width:900px){.continuous .editor-body{grid-template-columns:minmax(0,1fr)}.continuous .preview-panel{position:static}.queue-progress{flex-wrap:wrap}}
+
 .source-shot-review-v2{height:100%;min-height:0;color:#273b58}.review-error{margin:0 0 8px;padding:9px 12px;border:1px solid #efcaca;border-radius:8px;background:#fff2f2;color:#a34848;font-size:11px}.review-loading,.review-complete{height:100%;min-height:360px;display:grid;place-items:center;align-content:center;gap:8px;background:#fff}.review-complete .check{width:52px;height:52px;display:grid;place-items:center;border-radius:50%;background:#eaf8ef;color:#29a85d;font-size:26px;font-weight:900}.review-complete strong{font-size:18px}.review-complete span{color:#7c899b;font-size:11px}.review-shell{height:100%;min-height:0;display:grid;grid-template-columns:300px minmax(0,1fr);background:#f5f7fa}.shot-queue{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);border-right:1px solid #e1e6ed;background:#fff}.shot-queue>header{display:grid;gap:9px;padding:13px;border-bottom:1px solid #e8ecf1}.shot-queue>header>div{display:flex;justify-content:space-between;align-items:center}.shot-queue strong{font-size:13px}.shot-queue header span{padding:3px 7px;border-radius:99px;background:#fff1d8;color:#986519;font-size:9px;font-weight:800}.shot-queue input{height:34px;border:1px solid #dbe2eb;border-radius:8px;padding:0 10px;font-size:10px;outline:none}.shot-list{min-height:0;overflow:auto;padding:8px}.shot-row{width:100%;display:grid;grid-template-columns:70px minmax(0,1fr);gap:9px;margin-bottom:7px;padding:7px;border:1px solid transparent;border-radius:9px;background:#fff;text-align:left;cursor:pointer}.shot-row:hover{background:#f7f9fc}.shot-row.active{border-color:#8caff0;background:#f1f6ff}.thumb{height:76px;overflow:hidden;display:grid;place-items:center;border-radius:7px;background:#111a27;color:#7e8997;font-size:9px}.thumb img{width:100%;height:100%;object-fit:cover}.copy{min-width:0;display:grid;align-content:center;gap:3px}.copy strong{font-size:10px;color:#344b69}.copy>span{overflow:hidden;color:#7d899a;font-size:9px;text-overflow:ellipsis;white-space:nowrap}.badges{display:flex;gap:4px;flex-wrap:wrap}.badges i{padding:2px 5px;border-radius:99px;background:#eef3fa;color:#58739a;font-size:8px;font-style:normal}.shot-editor{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden}.editor-head{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 15px;border-bottom:1px solid #e2e7ee;background:#fff}.editor-head>div:first-child{display:grid;gap:1px}.editor-head small{font-size:8px;color:#8b97a8}.editor-head strong{font-size:13px}.editor-head span,.editor-progress{font-size:9px;color:#7d899b}.editor-progress{padding:5px 8px;border-radius:99px;background:#edf4ff;color:#5072a5}.editor-body{min-height:0;overflow:auto;display:grid;grid-template-columns:minmax(360px,46%) minmax(480px,54%);gap:12px;padding:12px}.preview-panel{position:sticky;top:0;align-self:start;min-height:320px;display:grid;place-items:center;overflow:hidden;border-radius:11px;background:#101824}.preview-panel video,.preview-panel img{display:block;width:100%;max-height:calc(100vh - 220px);object-fit:contain;background:#101824}.no-preview{color:#7e8998;font-size:10px}.facts-panel{display:grid;align-content:start;gap:10px}.fact-card{overflow:hidden;border:1px solid #dfe5ed;border-radius:11px;background:#fff}.fact-card>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-bottom:1px solid #ebeff4}.fact-card>header>div{display:grid;gap:2px}.fact-card header small{font-size:8px;color:#8492a5}.fact-card header strong{font-size:12px}.fact-card header>span{font-size:9px;color:#7a899c}.person-row,.speaker-row{display:grid;gap:10px;padding:11px 12px;border-bottom:1px solid #eef1f5}.person-row:last-child,.speaker-row:last-child{border-bottom:0}.person-info{display:grid;gap:2px}.person-info strong{font-size:11px}.person-info span{color:#7d8999;font-size:9px;line-height:1.5}.person-info small{color:#3f77c8;font-size:8px}.new-person-divider{display:flex;align-items:center;gap:8px;color:#8a96a6;font-size:8px}.new-person-divider:before,.new-person-divider:after{content:"";height:1px;flex:1;background:#e8ecf1}.new-person{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.new-person input,.field-block select{width:100%;height:34px;box-sizing:border-box;border:1px solid #d9e1eb;border-radius:7px;padding:0 9px;background:#fff;color:#40516b;font-size:10px}.new-person button,.ghost,.primary{min-height:34px;border-radius:7px;padding:0 11px;font-size:9px;font-weight:800;cursor:pointer}.new-person button{border:1px solid #a9bfe3;background:#f7faff;color:#496b9f}.new-person button:disabled,.primary:disabled{opacity:.45;cursor:not-allowed}.asset-card{padding-bottom:11px}.asset-card>header{margin-bottom:10px}.ghost{border:1px solid #d5dfec;background:#fff;color:#5b6f8d}.field-block{display:grid;gap:6px;padding:0 12px 10px}.field-block>label,.field-block>div>label{color:#65748a;font-size:9px;font-weight:800}.two-col{grid-template-columns:1fr 1fr;gap:10px}.two-col>div{display:grid;gap:6px}.option-grid{display:flex;flex-wrap:wrap;gap:5px}.option-grid button{min-height:29px;border:1px solid #dbe2eb;border-radius:7px;padding:0 8px;background:#fff;color:#596a80;font-size:9px;cursor:pointer}.option-grid button.selected{border-color:#5d89dc;background:#edf4ff;color:#315d9f}.visual-binding button{display:grid;grid-template-columns:28px auto;gap:6px;align-items:center;padding:4px 8px 4px 4px}.visual-binding img{width:28px;height:34px;border-radius:5px;object-fit:cover}.ai-details{margin:0 12px 10px;border:1px solid #e3e8ef;border-radius:7px;background:#fafbfd}.ai-details summary{padding:7px 9px;color:#6e7e93;font-size:9px;cursor:pointer}.ai-details p{margin:0;padding:3px 9px;color:#78879a;font-size:8px}.save-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 12px}.save-line>span{color:#8491a2;font-size:8px}.primary{border:0;background:#1769ff;color:#fff}.speaker-content{display:grid;gap:10px}.dialogue-copy{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.dialogue-copy strong{font-size:12px;line-height:1.45}.dialogue-copy span{flex:none;color:#8995a5;font-size:8px}.speaker-lock{display:grid;gap:4px;padding:10px 12px;border:1px solid #f0d7a3;border-radius:8px;background:#fff8e8}.speaker-lock strong{color:#8a5c14;font-size:10px}.speaker-lock span{color:#927441;font-size:9px;line-height:1.55}.speaker-options{display:flex;flex-wrap:wrap;gap:6px}.speaker-options button{display:grid;grid-template-columns:30px auto;gap:6px;align-items:center;border:1px solid #dce3ec;border-radius:8px;padding:5px 8px 5px 5px;background:#fff;color:#40536e;font-size:9px;cursor:pointer}.speaker-options button.selected{border-color:#5c87d9;background:#eef4ff}.speaker-options img{width:30px;height:38px;border-radius:6px;object-fit:cover}@media(max-width:1000px){.review-shell{grid-template-columns:240px minmax(0,1fr)}.editor-body{grid-template-columns:1fr}.preview-panel{position:static;min-height:260px}.two-col{grid-template-columns:1fr}}@media(max-width:760px){.review-shell{grid-template-columns:1fr;grid-template-rows:210px minmax(0,1fr)}.shot-queue{border-right:0;border-bottom:1px solid #e1e6ed}.shot-list{display:flex;overflow:auto}.shot-row{min-width:230px}.editor-body{padding:8px}.new-person,.two-col{grid-template-columns:1fr}.save-line,.dialogue-copy{align-items:stretch;flex-direction:column}}
 </style>
