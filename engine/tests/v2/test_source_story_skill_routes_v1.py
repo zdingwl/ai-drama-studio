@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from engine.app import source_drama_snapshot_routes_v1 as routes
+from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError
 from engine.app.source_story_skills_v1 import SourceStorySkillError
 
 
@@ -15,7 +16,10 @@ def test_source_screenplay_compile_route_is_post_only_and_read_route_is_get_only
 
 
 def test_source_screenplay_compile_requires_current_snapshot(monkeypatch) -> None:
-    monkeypatch.setattr(routes, "load_episode_source_drama_snapshot_v1", lambda _episode_id: None)
+    def missing(_episode_id: str):
+        raise SourceDramaSnapshotError("当前 Episode 尚未形成可消费的 SourceDramaSnapshot")
+
+    monkeypatch.setattr(routes, "_load_current_snapshot", missing)
 
     with pytest.raises(HTTPException) as exc_info:
         routes.api_compile_episode_source_screenplay("EP_1")
@@ -28,7 +32,7 @@ def test_source_screenplay_compile_persists_only_after_successful_compile(monkey
     snapshot = {"episode_id": "EP_1", "source_fingerprint": "a" * 64}
     compiled = {"episode_id": "EP_1", "status": "READY"}
     calls: list[tuple[str, object]] = []
-    monkeypatch.setattr(routes, "load_episode_source_drama_snapshot_v1", lambda _episode_id: snapshot)
+    monkeypatch.setattr(routes, "_load_current_snapshot", lambda _episode_id: snapshot)
 
     def compile_stub(payload):
         calls.append(("compile", payload))
@@ -50,7 +54,7 @@ def test_source_screenplay_compile_persists_only_after_successful_compile(monkey
 def test_source_screenplay_get_never_compiles(monkeypatch) -> None:
     snapshot = {"episode_id": "EP_1", "source_fingerprint": "a" * 64}
     read_payload = {"state": "MISSING", "episode_id": "EP_1"}
-    monkeypatch.setattr(routes, "load_episode_source_drama_snapshot_v1", lambda _episode_id: snapshot)
+    monkeypatch.setattr(routes, "_load_current_snapshot", lambda _episode_id: snapshot)
     monkeypatch.setattr(routes, "read_source_screenplay_v1", lambda payload: read_payload)
 
     def forbidden_compile(_payload):
@@ -64,7 +68,7 @@ def test_source_screenplay_get_never_compiles(monkeypatch) -> None:
 def test_source_story_validation_failure_is_runtime_error_not_source_write(monkeypatch) -> None:
     monkeypatch.setattr(
         routes,
-        "load_episode_source_drama_snapshot_v1",
+        "_load_current_snapshot",
         lambda _episode_id: {"episode_id": "EP_1"},
     )
 
