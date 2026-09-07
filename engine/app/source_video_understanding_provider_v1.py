@@ -28,6 +28,7 @@ SOURCE_VIDEO_PROVIDER_PROFILE = "source-video-understanding-qwen38-v1"
 QWEN38_PROVIDER_NAME = "qwen38-video-understanding"
 DEFAULT_QWEN38_MODEL = "Qwen/Qwen3.8-27B"
 CANONICAL_DIALOGUE_POLICY = "asr-ocr-owned-visual-provider-cannot-overwrite-v1"
+QWEN38_REASONING_POLICY = "non-thinking-structured-visual-json-v1"
 
 
 @runtime_checkable
@@ -83,7 +84,8 @@ class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
     The underlying Fast Grounded implementation keeps exact frozen Shot frames authoritative and
     uses Episode windows only for conservative scene/continuity context. Its semantic normalizer
     is deliberately whitelist-only, so dialogue/source_text fields returned by the model are
-    discarded before a ``VLM_OUTPUT`` can be persisted.
+    discarded before a ``VLM_OUTPUT`` can be persisted. The dedicated Qwen3.8 runner also disables
+    default model thinking because this Provider requires compact structured visual JSON.
     """
 
     component = "VLM"
@@ -156,6 +158,7 @@ class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
             ),
             "source_shot_revision_id": context.source_shot_revision_id,
             "canonical_dialogue_policy": CANONICAL_DIALOGUE_POLICY,
+            "reasoning_policy": QWEN38_REASONING_POLICY,
         })
         return p2.P2ProviderResult(
             component=result.component,
@@ -172,6 +175,7 @@ __all__ = [
     "CANONICAL_DIALOGUE_POLICY",
     "DEFAULT_QWEN38_MODEL",
     "QWEN38_PROVIDER_NAME",
+    "QWEN38_REASONING_POLICY",
     "Qwen38VideoUnderstandingProvider",
     "SOURCE_VIDEO_PROVIDER_PROFILE",
     "SourceVideoUnderstandingProvider",
