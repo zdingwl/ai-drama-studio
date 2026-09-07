@@ -23,11 +23,18 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def runtime_root() -> Path:
+    configured = os.getenv("AI_DRAMA_QWEN38_RUNTIME_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return repo_root() / ".runtime" / "Qwen38Visual"
+
+
 def default_python() -> Path:
     configured = os.getenv("AI_DRAMA_P2_VLM_PYTHON", "").strip()
     if configured:
         return Path(configured).expanduser()
-    base = repo_root() / ".runtime" / "TransVLM" / "inference" / ".venv"
+    base = runtime_root() / ".venv"
     return base / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
@@ -35,7 +42,7 @@ def default_model_path() -> Path:
     configured = os.getenv("AI_DRAMA_P2_VLM_MODEL_PATH", "").strip()
     if configured:
         return Path(configured).expanduser()
-    return repo_root() / ".runtime" / "TransVLM" / "inference" / "pretrained" / "Qwen3.8-27B"
+    return runtime_root() / "pretrained" / "Qwen3.8-27B"
 
 
 def default_runner() -> Path:
@@ -72,14 +79,7 @@ def _run_json(command: list[str], *, timeout: float = 30.0) -> tuple[dict[str, A
 
 
 def _checkpoint_config_status(model_path: Path) -> tuple[bool, str]:
-    """Recognize the official Qwen3.8-27B HF layout without inventing a qwen3_8 model_type.
-
-    Qwen3.8 is implemented on the Qwen3.5 Transformers architecture, so the official config
-    currently identifies itself as qwen3_5 / Qwen3_5ForConditionalGeneration. The host-owned
-    model profile and checkpoint directory select Qwen3.8; this check verifies that the local
-    config is a multimodal Qwen3.5-family checkpoint with video support rather than expecting a
-    nonexistent qwen3_8 architecture tag.
-    """
+    """Recognize the official Qwen3.8-27B HF layout without inventing qwen3_8 model_type."""
 
     config_path = model_path / "config.json"
     if not config_path.is_file():
@@ -210,6 +210,7 @@ def collect_readiness(
         "ready": ready,
         "provider": PROVIDER,
         "model_profile": MODEL_PROFILE,
+        "runtime_root": str(runtime_root()),
         "python": str(python_exe),
         "model_path": str(model_path),
         "runner": str(runner),
