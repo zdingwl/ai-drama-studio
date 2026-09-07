@@ -10,6 +10,7 @@ from engine.app.source_video_understanding_provider_v1 import (
     CANONICAL_DIALOGUE_POLICY,
     DEFAULT_QWEN38_MODEL,
     QWEN38_PROVIDER_NAME,
+    QWEN38_REASONING_POLICY,
     Qwen38VideoUnderstandingProvider,
     SOURCE_VIDEO_PROVIDER_PROFILE,
     SourceVideoUnderstandingProvider,
@@ -135,8 +136,11 @@ def test_qwen38_runtime_entry_uses_current_multimodal_auto_model_loader() -> Non
     assert "from transformers import AutoModelForMultimodalLM, AutoProcessor" in source
     assert "from transformers import AutoProcessor, Qwen3VLForConditionalGeneration" not in source
     assert "dtype=dtype" in source
+    assert "enable_thinking=False" in source
+    assert "preserve_thinking=False" in source
     assert SOURCE_VIDEO_PROVIDER_PROFILE == "source-video-understanding-qwen38-v1"
     assert QWEN38_PROVIDER_NAME == "qwen38-video-understanding"
+    assert QWEN38_REASONING_POLICY == "non-thinking-structured-visual-json-v1"
     assert CANONICAL_DIALOGUE_POLICY == "asr-ocr-owned-visual-provider-cannot-overwrite-v1"
 
 
