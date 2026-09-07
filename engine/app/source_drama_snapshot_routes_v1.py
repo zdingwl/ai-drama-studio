@@ -1,4 +1,4 @@
-"""Product-facing SourceDramaSnapshot reads plus explicit source-screenplay commands."""
+"""Product-facing source truth reads plus explicit heavy-inference commands."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
@@ -7,6 +7,14 @@ from engine.app.breakdown_read_model_v1 import BreakdownReadModelError
 from engine.app.breakdown_scene_timeline_assembler_v1 import SceneTimelineAssemblyError
 from engine.app.breakdown_scene_timeline_result_v1 import SceneTimelineResultError
 from engine.app.local_qwen_text_v1 import LocalQwenTextError
+from engine.app.source_dialogue_attribution_v1 import (
+    DOrcaAttributionArtifactV1,
+    DOrcaAttributionReadV1,
+    DOrcaDialogueAttributionError,
+    compile_dorca_dialogue_attribution_v1,
+    persist_dorca_dialogue_attribution_v1,
+    read_dorca_dialogue_attribution_v1,
+)
 from engine.app.source_drama_snapshot_contract_v1 import (
     SourceDramaEpisodeSnapshotV1,
     SourceDramaProjectSnapshotV1,
@@ -33,7 +41,7 @@ def _unavailable(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail=str(exc))
     return HTTPException(
         status_code=409,
-        detail="SourceDramaSnapshot 当前不可用，请先完成自动理解并处理阻塞性的镜头/资产问题。",
+        detail="SourceDramaSnapshot 当前不可用，请先完成原片自动理解或修复技术/结构问题。",
     )
 
 
@@ -81,6 +89,46 @@ def api_get_project_source_drama_snapshot(project_id: str):
 
 
 @router.get(
+    "/episodes/{episode_id}/source-dialogue-attribution",
+    response_model=DOrcaAttributionReadV1,
+)
+def api_get_episode_source_dialogue_attribution(episode_id: str):
+    """Read the materialized D-ORCA artifact. Never starts model inference."""
+
+    try:
+        return read_dorca_dialogue_attribution_v1(episode_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (DOrcaDialogueAttributionError, BreakdownReadModelError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="当前 D-ORCA 说话人归属结果不可读取；没有启动任何模型。",
+        ) from exc
+
+
+@router.post(
+    "/episodes/{episode_id}/source-dialogue-attribution/compile",
+    response_model=DOrcaAttributionArtifactV1,
+)
+def api_compile_episode_source_dialogue_attribution(episode_id: str):
+    """Explicitly run D-ORCA and materialize current audio-visual speaker evidence."""
+
+    try:
+        artifact = compile_dorca_dialogue_attribution_v1(episode_id)
+        persist_dorca_dialogue_attribution_v1(artifact)
+        return artifact
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (BreakdownReadModelError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="当前原片版本不能运行 D-ORCA。") from exc
+    except DOrcaDialogueAttributionError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"D-ORCA Runtime 当前不可用或输出无效：{exc}",
+        ) from exc
+
+
+@router.get(
     "/episodes/{episode_id}/source-screenplay",
     response_model=SourceScreenplayReadV1,
 )
@@ -101,7 +149,7 @@ def api_get_episode_source_screenplay(episode_id: str):
     ) as exc:
         raise HTTPException(
             status_code=409,
-            detail="原片事实尚未冻结，当前不能读取原片还原剧本。",
+            detail="原片事实尚未形成当前版本，暂时不能读取原片还原剧本。",
         ) from exc
     except SourceStorySkillError as exc:
         raise HTTPException(
@@ -138,7 +186,7 @@ def api_compile_episode_source_screenplay(episode_id: str):
     ) as exc:
         raise HTTPException(
             status_code=409,
-            detail="原片事实尚未冻结，当前不能生成原剧本。请先处理阻塞性的原片问题。",
+            detail="原片事实尚未形成当前版本，暂时不能生成原剧本。",
         ) from exc
     except (LocalQwenTextError, SourceStorySkillError) as exc:
         raise HTTPException(
@@ -148,7 +196,9 @@ def api_compile_episode_source_screenplay(episode_id: str):
 
 
 __all__ = [
+    "api_compile_episode_source_dialogue_attribution",
     "api_compile_episode_source_screenplay",
+    "api_get_episode_source_dialogue_attribution",
     "api_get_episode_source_drama_snapshot",
     "api_get_episode_source_screenplay",
     "api_get_project_source_drama_snapshot",
