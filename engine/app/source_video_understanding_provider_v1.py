@@ -1,7 +1,7 @@
 """Workflow V2 source-video understanding Provider boundary.
 
 Module 3 business code depends on ``SourceVideoUnderstandingProvider`` rather than a concrete
-model class.  The current production implementation is Qwen3.8-27B, while the accepted Breakdown
+model class. The current production implementation is Qwen3.8-27B, while the accepted Breakdown
 Fast Grounded visual pipeline remains the evidence/runtime implementation underneath.
 
 Hard boundaries:
@@ -47,7 +47,7 @@ def source_video_input_fingerprint(
     model_name: str,
     provider_profile: str = SOURCE_VIDEO_PROVIDER_PROFILE,
 ) -> str:
-    """Fingerprint the immutable source anchors and model profile consumed by visual inference."""
+    """Fingerprint immutable source anchors and model profile consumed by visual inference."""
 
     payload = {
         "schema_version": "source-video-understanding-input-v1",
@@ -75,8 +75,13 @@ def source_video_input_fingerprint(
 class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
     """Current module-3 main visual provider backed by local Qwen3.8-27B.
 
+    Qwen3.8 owns a dedicated isolated runtime under ``.runtime/Qwen38Visual``. It intentionally
+    does not reuse the TransVLM virtualenv because TransVLM has its own Qwen3-VL/custom-flow model
+    dependency surface. Both runtimes may still share host FFmpeg binaries through the inherited
+    runtime contract.
+
     The underlying Fast Grounded implementation keeps exact frozen Shot frames authoritative and
-    uses Episode windows only for conservative scene/continuity context.  Its semantic normalizer
+    uses Episode windows only for conservative scene/continuity context. Its semantic normalizer
     is deliberately whitelist-only, so dialogue/source_text fields returned by the model are
     discarded before a ``VLM_OUTPUT`` can be persisted.
     """
@@ -88,10 +93,16 @@ class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
         *args: object,
         model_name: str | None = None,
         model_path: str | None = None,
+        python_executable: str | None = None,
         **kwargs: object,
     ) -> None:
         repo_root = Path(__file__).resolve().parents[2]
-        inference_root = repo_root / ".runtime" / "TransVLM" / "inference"
+        runtime_root = repo_root / ".runtime" / "Qwen38Visual"
+        default_python = (
+            runtime_root / ".venv" / "Scripts" / "python.exe"
+            if os.name == "nt"
+            else runtime_root / ".venv" / "bin" / "python"
+        )
         resolved_model = (
             model_name
             or os.getenv("AI_DRAMA_P2_VLM_MODEL")
@@ -100,7 +111,12 @@ class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
         resolved_path = Path(
             model_path
             or os.getenv("AI_DRAMA_P2_VLM_MODEL_PATH")
-            or str(inference_root / "pretrained" / "Qwen3.8-27B")
+            or str(runtime_root / "pretrained" / "Qwen3.8-27B")
+        ).expanduser()
+        resolved_python = Path(
+            python_executable
+            or os.getenv("AI_DRAMA_P2_VLM_PYTHON")
+            or str(default_python)
         ).expanduser()
         if not kwargs.get("runner_script"):
             kwargs["runner_script"] = str(
@@ -110,6 +126,7 @@ class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
             *args,
             model_name=resolved_model,
             model_path=str(resolved_path),
+            python_executable=str(resolved_python),
             **kwargs,
         )
 
