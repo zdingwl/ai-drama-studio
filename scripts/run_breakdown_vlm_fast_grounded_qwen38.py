@@ -3,7 +3,7 @@
 
 Qwen3.8 is a native image/video multimodal model, but its current Transformers architecture is
 loaded through ``AutoModelForMultimodalLM`` rather than the historical
-``Qwen3VLForConditionalGeneration`` class.  This entry keeps the already accepted Window-v4 +
+``Qwen3VLForConditionalGeneration`` class. This entry keeps the already accepted Window-v4 +
 Exact-Shot compact-v3 prompts, frame sampling, timing instrumentation and JSON contracts intact;
 only the model-loading seam changes.
 """
@@ -28,7 +28,7 @@ def _load_qwen38_model(model_path: Path, device: str):
     )
     model = AutoModelForMultimodalLM.from_pretrained(
         str(model_path),
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map="auto" if device == "cuda" else None,
         local_files_only=True,
     )
