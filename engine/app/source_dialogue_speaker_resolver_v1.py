@@ -1,9 +1,13 @@
-"""Conservative automatic speaker resolution for source dialogue.
+"""Automatic speaker resolution for source dialogue.
 
-This module is intentionally pure and product-facing: raw ASR/VLM uncertainty stays
-internal unless source facts still cannot identify one source character after safe,
-deterministic context checks.  It never invents a new person and never changes source
-text/timing.
+Resolution priority after the 2026-09-07 architecture change:
+1. a current explicit human SourceDialogueSpeakerOverride;
+2. a current materialized D-ORCA audio-visual attribution;
+3. existing explicit source SPEAKER evidence;
+4. deterministic scene/performance/dialogue-continuity fallback.
+
+No model is ever invoked here. D-ORCA inference is an explicit POST/task elsewhere; this
+resolver only reads a versioned artifact. Canonical source text/timing are never changed.
 """
 from __future__ import annotations
 
@@ -48,6 +52,87 @@ def _performance_people(performance: Sequence[Mapping[str, Any]]) -> tuple[str, 
             continue
         values.extend(str(value) for value in (item.get("people") or []))
     return _dedupe(values)
+
+
+def _episode_and_revision(dialogues: Sequence[Mapping[str, Any]]) -> tuple[str | None, str | None]:
+    for dialogue in dialogues:
+        key = str(dialogue.get("dialogue_key") or "").strip()
+        parts = key.split(":")
+        if len(parts) >= 3 and parts[0] and parts[1]:
+            return parts[0], parts[1]
+    return None, None
+
+
+def _manual_override_keys(dialogues: Sequence[Mapping[str, Any]]) -> set[str]:
+    """Identify current human decisions so model evidence can never overwrite them."""
+
+    episode_id, _revision = _episode_and_revision(dialogues)
+    if not episode_id:
+        return set()
+    try:
+        from engine.app.source_dialogue_speaker_override_v1 import (
+            load_episode_source_dialogue_speaker_overrides_v1,
+            source_dialogue_signature_v1,
+        )
+        overrides = load_episode_source_dialogue_speaker_overrides_v1(episode_id)
+    except Exception:
+        # The resolver is also used by pure unit tests / migration tools where a DB may not
+        # exist. Missing optional human-overlay storage must not disable normal resolution.
+        return set()
+    return {
+        str(dialogue.get("dialogue_key"))
+        for dialogue in dialogues
+        if (
+            isinstance(overrides.get(str(dialogue.get("dialogue_key") or "")), Mapping)
+            and str(overrides[str(dialogue.get("dialogue_key"))].get("dialogue_signature") or "")
+            == source_dialogue_signature_v1(dialogue)
+        )
+    }
+
+
+def _load_current_dorca_attributions(
+    dialogues: Sequence[Mapping[str, Any]],
+) -> Mapping[str, Mapping[str, Any]]:
+    episode_id, revision_id = _episode_and_revision(dialogues)
+    if not episode_id or not revision_id:
+        return {}
+    try:
+        from engine.app.source_dialogue_attribution_v1 import load_current_dorca_attribution_index_v1
+        return load_current_dorca_attribution_index_v1(
+            episode_id,
+            source_shot_revision_id=revision_id,
+        )
+    except Exception:
+        # Artifact absence/corruption is not a content blocker. Existing deterministic
+        # resolution remains the safe fallback; runtime failures are surfaced by the
+        # explicit D-ORCA command itself.
+        return {}
+
+
+def _dorca_resolution(
+    dialogue: Mapping[str, Any],
+    *,
+    attribution: Mapping[str, Any] | None,
+    people_by_key: Mapping[str, Mapping[str, Any]],
+) -> SourceSpeakerResolutionV1 | None:
+    if not isinstance(attribution, Mapping):
+        return None
+    speaker_ref = str(attribution.get("speaker_ref") or "").strip()
+    if not speaker_ref:
+        return None
+    candidates = [
+        key
+        for key, person in people_by_key.items()
+        if str(person.get("scene_person_ref") or "").strip() == speaker_ref
+    ]
+    if len(candidates) != 1:
+        return None
+    return SourceSpeakerResolutionV1(
+        (candidates[0],),
+        "RESOLVED",
+        "dorca-audiovisual",
+        "D-ORCA 音视频联合判断当前对白说话人",
+    )
 
 
 def _direct_resolution(
@@ -123,7 +208,7 @@ def _direct_resolution(
         (),
         "AMBIGUOUS",
         "missing-speaker",
-        "对白已识别，但现有源事实还不能安全确定唯一说话人",
+        "对白已识别，但当前证据不能唯一确定说话人；流程可继续并保留自动纠错空间",
     )
 
 
@@ -140,12 +225,13 @@ def resolve_shot_dialogue_speakers_v1(
     scene_people: Sequence[Mapping[str, Any]],
     shot_people: Sequence[Any],
     performance: Sequence[Mapping[str, Any]],
+    dialogue_attributions: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[SourceSpeakerResolutionV1]:
-    """Resolve all dialogue speakers in one Shot without model calls.
+    """Resolve all dialogue speakers without invoking a model.
 
-    The resolver only uses already accepted source facts: explicit speaker refs, Final
-    Character identity, Shot/Scene people, performance references and short-range dialogue
-    continuity. Ambiguous multi-speaker evidence is preserved instead of guessed.
+    ``dialogue_attributions`` is injectable for tests/migrations. When omitted, the current
+    materialized D-ORCA artifact is read by Episode/ShotRevision anchors derived from the
+    dialogue keys. Missing/stale attribution simply falls through to existing rules.
     """
 
     people_by_key = {
@@ -156,20 +242,42 @@ def resolve_shot_dialogue_speakers_v1(
     scene_keys = _dedupe(tuple(people_by_key))
     shot_keys = tuple(key for key in _dedupe(shot_people) if key in people_by_key)
     performance_keys = _performance_people(performance)
+    attributions = dialogue_attributions if dialogue_attributions is not None else _load_current_dorca_attributions(dialogues)
+    manual_keys = _manual_override_keys(dialogues) if dialogue_attributions is None else set()
 
-    resolutions = [
-        _direct_resolution(
+    resolutions: list[SourceSpeakerResolutionV1] = []
+    for dialogue in dialogues:
+        dialogue_key = str(dialogue.get("dialogue_key") or "")
+        explicit = tuple(key for key in _dedupe(dialogue.get("speakers") or []) if key in people_by_key)
+        if dialogue_key in manual_keys and len(explicit) == 1:
+            resolutions.append(SourceSpeakerResolutionV1(
+                explicit,
+                "RESOLVED",
+                "manual-override",
+                "用户已保存当前版本的正式说话人修正",
+            ))
+            continue
+
+        group_id = str(dialogue.get("dialogue_group_id") or "")
+        dorca = _dorca_resolution(
+            dialogue,
+            attribution=attributions.get(group_id),
+            people_by_key=people_by_key,
+        )
+        if dorca is not None:
+            resolutions.append(dorca)
+            continue
+
+        resolutions.append(_direct_resolution(
             dialogue,
             people_by_key=people_by_key,
             scene_people=scene_keys,
             shot_people=shot_keys,
             performance_people=performance_keys,
-        )
-        for dialogue in dialogues
-    ]
+        ))
 
     # A missing speaker between two nearby lines spoken by the same resolved person can be
-    # recovered safely. Do not use continuity to override explicit multi-speaker evidence.
+    # recovered as a last fallback. Never override D-ORCA, manual or explicit decisions.
     for index, resolution in enumerate(tuple(resolutions)):
         if resolution.status == "RESOLVED" or resolution.speaker_keys:
             continue
