@@ -31,19 +31,19 @@ RUNTIME_SKILLS: Final[dict[tuple[str, str], RuntimeSkillContract]] = {
     ("shot_facts", "1.0.0"): RuntimeSkillContract(
         skill_id="shot_facts",
         version="1.0.0",
-        status=CONTRACT_ONLY,
+        status=RUNTIME_READY,
         contract_path="engine/skills/shot_facts/SKILL.md",
     ),
     ("episode_understanding", "1.0.0"): RuntimeSkillContract(
         skill_id="episode_understanding",
         version="1.0.0",
-        status=CONTRACT_ONLY,
+        status=RUNTIME_READY,
         contract_path="engine/skills/episode_understanding/SKILL.md",
     ),
     ("screenplay_reconstruction", "1.0.0"): RuntimeSkillContract(
         skill_id="screenplay_reconstruction",
         version="1.0.0",
-        status=CONTRACT_ONLY,
+        status=RUNTIME_READY,
         contract_path="engine/skills/screenplay_reconstruction/SKILL.md",
     ),
     ("country_adaptation", "1.0.0"): RuntimeSkillContract(
@@ -97,9 +97,9 @@ def validate_runtime_skill_ref(
 ) -> RuntimeSkillContract:
     """Validate a pinned skill reference and optionally enforce live readiness.
 
-    ``require_runtime_ready=True`` is the integration gate Providers should use
-    before dispatching live model inference. It intentionally rejects every v1
-    contract in the current baseline because they are ``CONTRACT_ONLY``.
+    Providers/skill orchestrators use ``require_runtime_ready=True`` immediately
+    before dispatch. Contract-only future Skills therefore remain impossible to
+    invoke accidentally even though their versioned contracts already exist.
     """
 
     contract = get_runtime_skill(skill_id, version)
