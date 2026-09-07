@@ -48,12 +48,21 @@ PROJECT_PAYLOAD = {
 
 
 def test_episode_snapshot_route_returns_current_snapshot(monkeypatch) -> None:
-    monkeypatch.setattr(routes, "load_episode_source_drama_snapshot_v1", lambda _episode_id: EPISODE_PAYLOAD)
-    assert routes.api_get_episode_source_drama_snapshot("EP_1") == EPISODE_PAYLOAD
+    monkeypatch.setattr(
+        routes,
+        "load_episode_source_drama_snapshot_auto_v2",
+        lambda _episode_id: EPISODE_PAYLOAD,
+    )
+    payload = routes.api_get_episode_source_drama_snapshot("EP_1")
+    assert payload.model_dump(mode="json") == EPISODE_PAYLOAD
 
 
 def test_episode_snapshot_route_fails_closed_when_not_ready(monkeypatch) -> None:
-    monkeypatch.setattr(routes, "load_episode_source_drama_snapshot_v1", lambda _episode_id: None)
+    monkeypatch.setattr(
+        routes,
+        "load_episode_source_drama_snapshot_auto_v2",
+        lambda _episode_id: None,
+    )
     with pytest.raises(HTTPException) as exc_info:
         routes.api_get_episode_source_drama_snapshot("EP_1")
     assert exc_info.value.status_code == 409
@@ -61,7 +70,11 @@ def test_episode_snapshot_route_fails_closed_when_not_ready(monkeypatch) -> None
 
 
 def test_project_snapshot_route_returns_current_snapshot(monkeypatch) -> None:
-    monkeypatch.setattr(routes, "load_project_source_drama_snapshot_v1", lambda _project_id: PROJECT_PAYLOAD)
+    monkeypatch.setattr(
+        routes,
+        "load_project_source_drama_snapshot_auto_v2",
+        lambda _project_id: PROJECT_PAYLOAD,
+    )
     assert routes.api_get_project_source_drama_snapshot("PROJECT_1") == PROJECT_PAYLOAD
 
 
@@ -69,7 +82,7 @@ def test_snapshot_route_hides_internal_composition_detail(monkeypatch) -> None:
     def unsafe(_project_id: str):
         raise SourceDramaSnapshotError("SECRET P5/P6 internal mismatch")
 
-    monkeypatch.setattr(routes, "load_project_source_drama_snapshot_v1", unsafe)
+    monkeypatch.setattr(routes, "load_project_source_drama_snapshot_auto_v2", unsafe)
     with pytest.raises(HTTPException) as exc_info:
         routes.api_get_project_source_drama_snapshot("PROJECT_1")
 
