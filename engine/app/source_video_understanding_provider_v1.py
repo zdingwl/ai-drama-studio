@@ -102,6 +102,10 @@ class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
             or os.getenv("AI_DRAMA_P2_VLM_MODEL_PATH")
             or str(inference_root / "pretrained" / "Qwen3.8-27B")
         ).expanduser()
+        if not kwargs.get("runner_script"):
+            kwargs["runner_script"] = str(
+                repo_root / "scripts" / "run_breakdown_vlm_fast_grounded_qwen38.py"
+            )
         super().__init__(
             *args,
             model_name=resolved_model,
