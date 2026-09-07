@@ -2,8 +2,8 @@
 
 - **Skill ID:** `shot_facts`
 - **Version:** `1.0.0`
-- **Status:** `CONTRACT_ONLY`
-- **Runtime Model / Provider:** Qwen3-VL semantic provider or an explicitly configured equivalent
+- **Status:** `RUNTIME_READY`
+- **Runtime Model / Provider:** 当前通过 `SourceDramaSnapshot` 投影复用已完成的 Qwen3-VL Grounded Breakdown / ASR-OCR / 正式资产链；本 Skill 不重复调用 VLM
 
 ## Purpose
 
@@ -40,6 +40,10 @@
 - 重跑或修改 ASR/OCR。
 - 读取历史失效 ShotRevision 并与当前版本混用。
 - 因为模型无法判断而自动降低人物合并阈值。
+
+## Runtime Binding V1
+
+当前正式接线不重新观看视频，也不重复运行 Qwen3-VL。`engine.app.source_story_skills_v1.compile_shot_facts_v1` 只把当前可消费的 `SourceDramaSnapshot` 中已经 Grounded、融合、人工修订和正式绑定后的 Shot 事实投影成 Skill Contract。这样避免第二次模型推理把已冻结事实改漂。
 
 ## Output Contract
 
