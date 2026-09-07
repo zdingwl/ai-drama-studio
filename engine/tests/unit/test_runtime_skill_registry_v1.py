@@ -6,6 +6,7 @@ import pytest
 
 from engine.skills.registry import (
     CONTRACT_ONLY,
+    RUNTIME_READY,
     RuntimeSkillNotReadyError,
     UnknownRuntimeSkillError,
     get_runtime_skill,
@@ -23,6 +24,11 @@ EXPECTED_SKILLS = {
     "qwen3_tts",
     "video_qc",
 }
+RUNTIME_READY_SKILLS = {
+    "shot_facts",
+    "episode_understanding",
+    "screenplay_reconstruction",
+}
 
 
 def test_registry_contains_exact_v1_contract_baseline() -> None:
@@ -30,10 +36,15 @@ def test_registry_contains_exact_v1_contract_baseline() -> None:
 
     assert {contract.skill_id for contract in contracts} == EXPECTED_SKILLS
     assert {contract.version for contract in contracts} == {"1.0.0"}
-    assert {contract.status for contract in contracts} == {CONTRACT_ONLY}
+    assert {
+        contract.skill_id for contract in contracts if contract.status == RUNTIME_READY
+    } == RUNTIME_READY_SKILLS
+    assert {
+        contract.skill_id for contract in contracts if contract.status == CONTRACT_ONLY
+    } == EXPECTED_SKILLS - RUNTIME_READY_SKILLS
 
 
-def test_every_registered_contract_file_exists() -> None:
+def test_every_registered_contract_file_exists_and_matches_registry_status() -> None:
     repo_root = Path(__file__).resolve().parents[3]
 
     for contract in list_runtime_skills():
@@ -42,20 +53,24 @@ def test_every_registered_contract_file_exists() -> None:
         text = contract_file.read_text(encoding="utf-8")
         assert f"**Skill ID:** `{contract.skill_id}`" in text
         assert f"**Version:** `{contract.version}`" in text
-        assert "**Status:** `CONTRACT_ONLY`" in text
+        assert f"**Status:** `{contract.status}`" in text
 
 
-def test_exact_contract_reference_can_be_validated_without_dispatch() -> None:
-    contract = validate_runtime_skill_ref("shot_facts", "1.0.0")
+def test_runtime_ready_source_skill_can_enter_dispatch_gate() -> None:
+    contract = validate_runtime_skill_ref(
+        "shot_facts",
+        "1.0.0",
+        require_runtime_ready=True,
+    )
 
     assert contract == get_runtime_skill("shot_facts", "1.0.0")
-    assert contract.is_runtime_ready is False
+    assert contract.is_runtime_ready is True
 
 
-def test_live_inference_gate_rejects_contract_only_skill() -> None:
+def test_future_contract_only_skill_still_cannot_enter_live_inference() -> None:
     with pytest.raises(RuntimeSkillNotReadyError, match="not ready for live inference"):
         validate_runtime_skill_ref(
-            "shot_facts",
+            "country_adaptation",
             "1.0.0",
             require_runtime_ready=True,
         )
