@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from scripts.check_local_remake_runtime_stack import (
+    RUNTIME_ORDER,
     blockers,
     normalize_backend,
     normalize_h3,
-    normalize_vlm_models,
     normalize_worker,
     stack_result,
 )
@@ -15,7 +15,7 @@ def _ready_stack():
         "backend": {"ready": True},
         "h3_fl2va": {"ready": True},
         "h3_ref2va": {"ready": True},
-        "qwen3_vl": {"ready": True},
+        "qwen38_visual": {"ready": True, "provider": "qwen38-video-understanding"},
         "qwen3_tts": {"ready": True},
         "latentsync": {"ready": True},
         "audio_separator": {"ready": True},
@@ -39,15 +39,19 @@ def test_normalizers_preserve_runtime_truth() -> None:
     assert worker["reachable"] is True
 
 
-def test_vlm_model_list_mismatch_is_diagnostic_not_false_blocker() -> None:
-    result = normalize_vlm_models(
-        {"data": [{"id": "C:/models/Qwen3-VL-4B-Instruct"}]},
-        base_url="http://127.0.0.1:8001/v1",
-        model="Qwen3-VL-4B-Instruct",
-    )
-    assert result["ready"] is True
-    assert result["model_list_match"] is False
-    assert result["available_models"] == ["C:/models/Qwen3-VL-4B-Instruct"]
+def test_runtime_inventory_uses_local_qwen38_visual_not_legacy_http_vlm() -> None:
+    assert "qwen38_visual" in RUNTIME_ORDER
+    assert "qwen3_vl" not in RUNTIME_ORDER
+
+    values = _ready_stack()
+    values["qwen38_visual"] = {
+        "ready": False,
+        "provider": "qwen38-video-understanding",
+        "acceptance_scope": "RUNTIME_READINESS_ONLY",
+        "error": "checkpoint missing",
+    }
+    assert blockers(values) == ["qwen38_visual"]
+    assert stack_result(values)["status"] == "BLOCKED"
 
 
 def test_complete_stack_requires_every_real_acceptance_runtime() -> None:
@@ -64,7 +68,9 @@ def test_complete_stack_requires_every_real_acceptance_runtime() -> None:
     assert result["ready"] is False
 
 
-def test_backend_non_ok_and_unconfigured_vlm_cannot_pass() -> None:
+def test_backend_non_ok_and_missing_qwen38_readiness_cannot_pass() -> None:
     assert normalize_backend({"status": "starting"})["ready"] is False
-    vlm = normalize_vlm_models({}, base_url="", model="")
-    assert vlm["ready"] is False
+    values = _ready_stack()
+    values["backend"] = {"ready": False}
+    values["qwen38_visual"] = {"ready": False, "error": "runtime not installed"}
+    assert blockers(values) == ["backend", "qwen38_visual"]
