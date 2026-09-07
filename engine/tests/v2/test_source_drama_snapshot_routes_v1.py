@@ -24,8 +24,10 @@ EPISODE_PAYLOAD = {
     "resolved_character_count": 0,
     "unresolved_person_count": 0,
     "source_dialogue_count": 0,
+    "source_dialogue_projection_count": 0,
     "source_on_screen_text_count": 0,
     "warnings": [],
+    "source_dialogue_utterances": [],
     "scenes": [],
 }
 
@@ -41,6 +43,7 @@ PROJECT_PAYLOAD = {
     "shot_count": 0,
     "resolved_character_count": 0,
     "source_dialogue_count": 0,
+    "source_dialogue_projection_count": 0,
     "warnings": [],
     "characters": [],
     "episodes": [EPISODE_PAYLOAD],
