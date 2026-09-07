@@ -19,6 +19,10 @@ TargetDialogue count, so retained historical rows can never masquerade as curren
 All current target dialogue audio must be READY before the generation/postproduction chain
 can be accepted.
 
+The source visual runtime gate is the local Qwen3.8-27B Provider readiness checker. It is not an
+OpenAI-compatible HTTP service. Runtime readiness still does not prove a real Episode inference;
+that remains part of the real project run and final manual acceptance.
+
 Default mode is read-only. Pass ``--run`` to start missing production tasks sequentially.
 The final successful state is only ``READY_FOR_MANUAL_ACCEPTANCE``: a human still has to
 watch/listen to the exported episode and accept identity, scene, action/camera, dialogue,
@@ -28,7 +32,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+from pathlib import Path
+import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -90,76 +96,56 @@ class HttpClient:
         return self.request("POST", path, payload)
 
 
-def _probe_openai_vlm(base_url: str, model: str, timeout: float = 5.0) -> dict[str, Any]:
-    """Prove the configured OpenAI-compatible VLM endpoint is reachable.
-
-    Model lists are informational only. Some local servers expose a canonical model path while
-    accepting the configured alias used by production requests, so an exact `/models` ID mismatch
-    must not create a false runtime blocker.
-    """
-
-    base = base_url.strip().rstrip("/")
-    clean_model = model.strip()
-    if not base:
-        return {
-            "ready": False,
-            "reachable": False,
-            "base_url": None,
-            "model": clean_model or None,
-            "error": "AI_DRAMA_VLM_BASE_URL 未配置",
-        }
-    if not clean_model:
-        return {
-            "ready": False,
-            "reachable": False,
-            "base_url": base,
-            "model": None,
-            "error": "AI_DRAMA_VLM_MODEL 未配置",
-        }
-    url = f"{base}/models"
-    headers = {"Authorization": f"Bearer {os.getenv('AI_DRAMA_VLM_API_KEY', 'EMPTY').strip() or 'EMPTY'}"}
-    request = urllib.request.Request(url, headers=headers, method="GET")
+def _probe_qwen38_visual(timeout: float = 45.0) -> dict[str, Any]:
+    checker = Path(__file__).with_name("check_qwen38_visual_runtime.py")
+    if not checker.is_file():
+        return {"ready": False, "error": f"missing Qwen3.8 readiness checker: {checker}"}
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8")
+        completed = subprocess.run(
+            [sys.executable, str(checker), "--json"],
+            capture_output=True,
+            text=True,
+            timeout=max(5.0, timeout),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ready": False, "error": str(exc)}
+
+    raw = (completed.stdout or "").strip()
+    try:
         payload = json.loads(raw)
-        ids = {
-            str(item.get("id") or "")
-            for item in (payload.get("data") or [])
-            if isinstance(item, dict)
-        } if isinstance(payload, dict) else set()
-        available = sorted(value for value in ids if value)
-        return {
-            "ready": True,
-            "reachable": True,
-            "base_url": base,
-            "model": clean_model,
-            "available_models": available,
-            "model_list_match": not available or clean_model in ids,
-            "error": None,
-        }
-    except Exception as exc:
+    except json.JSONDecodeError:
         return {
             "ready": False,
-            "reachable": False,
-            "base_url": base,
-            "model": clean_model,
-            "error": str(exc),
+            "error": (completed.stderr or raw or "Qwen3.8 readiness checker returned invalid JSON")[-1200:],
         }
+    if not isinstance(payload, dict):
+        return {"ready": False, "error": "Qwen3.8 readiness checker returned non-object JSON"}
+    if completed.returncode not in {0, 3}:
+        payload["ready"] = False
+        payload["error"] = payload.get("error") or f"readiness checker exited {completed.returncode}"
+    if not payload.get("ready") and not payload.get("error"):
+        failed = [
+            str(item.get("name") or "unknown")
+            for item in payload.get("checks") or []
+            if isinstance(item, dict) and not item.get("ready")
+        ]
+        payload["error"] = "failed checks: " + ", ".join(failed)
+    return payload
 
 
-def collect_runtime_status(client: HttpClient, *, vlm_base_url: str, vlm_model: str) -> dict[str, dict[str, Any]]:
+def collect_runtime_status(client: HttpClient) -> dict[str, dict[str, Any]]:
     health = client.get("/api/health")
     h3 = client.get("/api/h3/runtime")
     tts = client.get("/api/tts/runtime-status")
     lip = client.get("/api/lip-sync/runtime")
     background = client.get("/api/background-audio/runtime")
-    vlm = _probe_openai_vlm(vlm_base_url, vlm_model)
+    qwen38 = _probe_qwen38_visual()
     return {
         "backend": {"ready": bool(isinstance(health, dict) and health.get("status") == "ok"), "raw": health},
         "h3_fl2va": {**(h3.get("fl2va") or {}), "ready": bool((h3.get("fl2va") or {}).get("ready"))},
         "h3_ref2va": {**(h3.get("ref2va") or {}), "ready": bool((h3.get("ref2va") or {}).get("ready"))},
-        "qwen3_vl": vlm,
+        "qwen38_visual": qwen38,
         "qwen3_tts": {**tts, "ready": bool(tts.get("ready"))},
         "latentsync": {**lip, "ready": bool(lip.get("ready"))},
         "audio_separator": {**background, "ready": bool(background.get("ready"))},
@@ -174,7 +160,7 @@ def runtime_blockers(runtimes: dict[str, dict[str, Any]]) -> list[str]:
         "backend",
         "h3_fl2va",
         "h3_ref2va",
-        "qwen3_vl",
+        "qwen38_visual",
         "qwen3_tts",
         "latentsync",
         "audio_separator",
@@ -455,7 +441,7 @@ def print_report(*, runtimes: dict[str, dict[str, Any]], summary: dict[str, Any]
         ("Backend", "backend"),
         ("H3 FL2VA", "h3_fl2va"),
         ("H3 Ref2VA", "h3_ref2va"),
-        ("Qwen3-VL", "qwen3_vl"),
+        ("Qwen3.8 Visual", "qwen38_visual"),
         ("Qwen3-TTS", "qwen3_tts"),
         ("LatentSync", "latentsync"),
         ("AudioSeparator", "audio_separator"),
@@ -500,8 +486,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run/check the current real-project localized-remake acceptance chain")
     parser.add_argument("--project-id", required=True)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--vlm-base-url", default=os.getenv("AI_DRAMA_VLM_BASE_URL", "http://127.0.0.1:8001/v1"))
-    parser.add_argument("--vlm-model", default=os.getenv("AI_DRAMA_VLM_MODEL", "Qwen3-VL-4B-Instruct"))
+    # Deprecated no-op flags retained so old local command history does not fail at argument parse.
+    parser.add_argument("--vlm-base-url", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--vlm-model", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--run", action="store_true", help="resume missing existing production tasks; default is read-only")
     parser.add_argument("--poll-seconds", type=float, default=3.0)
     parser.add_argument("--timeout-seconds", type=float, default=6 * 60 * 60)
@@ -510,7 +497,7 @@ def main() -> int:
 
     client = HttpClient(args.base_url)
     try:
-        runtimes = collect_runtime_status(client, vlm_base_url=args.vlm_base_url, vlm_model=args.vlm_model)
+        runtimes = collect_runtime_status(client)
         blockers = runtime_blockers(runtimes)
         initial_state = collect_project_state(client, args.project_id)
         if args.run:
