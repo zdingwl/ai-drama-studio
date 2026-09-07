@@ -15,15 +15,15 @@ from engine.app.source_dialogue_attribution_v1 import (
     persist_dorca_dialogue_attribution_v1,
     read_dorca_dialogue_attribution_v1,
 )
+from engine.app.source_drama_snapshot_auto_v2 import (
+    load_episode_source_drama_snapshot_auto_v2,
+    load_project_source_drama_snapshot_auto_v2,
+)
 from engine.app.source_drama_snapshot_contract_v1 import (
     SourceDramaEpisodeSnapshotV1,
     SourceDramaProjectSnapshotV1,
 )
-from engine.app.source_drama_snapshot_v1 import (
-    SourceDramaSnapshotError,
-    load_episode_source_drama_snapshot_v1,
-    load_project_source_drama_snapshot_v1,
-)
+from engine.app.source_drama_snapshot_v1 import SourceDramaSnapshotError
 from engine.app.source_screenplay_runtime_v2 import (
     SourceScreenplayReadV1,
     compile_source_screenplay_v2,
@@ -46,10 +46,10 @@ def _unavailable(exc: Exception) -> HTTPException:
 
 
 def _load_current_snapshot(episode_id: str) -> SourceDramaEpisodeSnapshotV1:
-    snapshot = load_episode_source_drama_snapshot_v1(episode_id)
+    snapshot = load_episode_source_drama_snapshot_auto_v2(episode_id)
     if snapshot is None:
         raise SourceDramaSnapshotError("当前 Episode 尚未形成可消费的 SourceDramaSnapshot")
-    return snapshot
+    return SourceDramaEpisodeSnapshotV1.model_validate(snapshot)
 
 
 @router.get(
@@ -76,7 +76,7 @@ def api_get_episode_source_drama_snapshot(episode_id: str):
 )
 def api_get_project_source_drama_snapshot(project_id: str):
     try:
-        return load_project_source_drama_snapshot_v1(project_id)
+        return load_project_source_drama_snapshot_auto_v2(project_id)
     except (
         LookupError,
         SourceDramaSnapshotError,
