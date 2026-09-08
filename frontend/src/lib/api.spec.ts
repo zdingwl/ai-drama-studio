@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiConnectionError, ApiError, ApiProtocolError, apiRequest } from './api'
+import { ApiConnectionError, apiRequest } from './api'
 
 function jsonResponse(data: unknown, status = 200): Response {
   return {
@@ -26,7 +26,7 @@ describe('apiRequest', () => {
       ),
     )
 
-    await expect(apiRequest('/projects/missing')).rejects.toMatchObject<ApiError>({
+    await expect(apiRequest('/projects/missing')).rejects.toMatchObject({
       name: 'ApiError',
       status: 404,
       code: 'PROJECT_NOT_FOUND',
@@ -44,11 +44,11 @@ describe('apiRequest', () => {
           json: async () => {
             throw new SyntaxError("Unexpected token '<'")
           },
-        }) as Response,
+        }) as unknown as Response,
       ),
     )
 
-    await expect(apiRequest('/projects')).rejects.toMatchObject<ApiProtocolError>({
+    await expect(apiRequest('/projects')).rejects.toMatchObject({
       name: 'ApiProtocolError',
       status: 200,
       message: '后端接口返回了非 JSON 内容。请检查前端 API 地址或代理配置。',
