@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 
 import scripts.run_real_project_acceptance_v1 as acceptance_runner
@@ -59,6 +60,12 @@ def _state(*, issues=None, segments=2, selected=2, post_succeeded=2, outputs_suc
             "waiting_count": 0,
         },
     }
+
+
+def test_windows_powershell_wrapper_is_ascii_only() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    payload = (repo_root / "scripts" / "run_real_project_acceptance_v1.ps1").read_bytes()
+    assert all(byte < 128 for byte in payload)
 
 
 def test_acceptance_requires_full_selected_postproduction_and_episode_output_coverage() -> None:
