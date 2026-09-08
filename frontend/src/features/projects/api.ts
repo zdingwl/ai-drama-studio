@@ -3,6 +3,7 @@ import { apiRequest } from '@/lib/api'
 import type {
   EpisodeRead,
   EpisodeShotBoundaryRead,
+  EpisodeSourceEvidenceRead,
   ProjectCreatePayload,
   ProjectExecutionPlan,
   ProjectRead,
@@ -44,6 +45,23 @@ export function startEpisodeShotBoundary(
   idempotencyKey: string,
 ): Promise<TaskRead> {
   return apiRequest<TaskRead>(`/projects/${projectId}/episodes/${episodeId}/commands/shot-boundary`, {
+    method: 'POST',
+    headers: {
+      'Idempotency-Key': idempotencyKey,
+    },
+  })
+}
+
+export function getEpisodeSourceEvidence(projectId: string, episodeId: string): Promise<EpisodeSourceEvidenceRead> {
+  return apiRequest<EpisodeSourceEvidenceRead>(`/projects/${projectId}/episodes/${episodeId}/source-evidence`)
+}
+
+export function startEpisodeSourceEvidence(
+  projectId: string,
+  episodeId: string,
+  idempotencyKey: string,
+): Promise<TaskRead> {
+  return apiRequest<TaskRead>(`/projects/${projectId}/episodes/${episodeId}/commands/source-evidence`, {
     method: 'POST',
     headers: {
       'Idempotency-Key': idempotencyKey,
