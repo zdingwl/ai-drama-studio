@@ -15,6 +15,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+# Keep this wrapper ASCII-only. Windows PowerShell 5.1 may decode UTF-8 files without a BOM
+# through the active ANSI code page, which can corrupt quoted strings on non-English systems.
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $Script = Join-Path $PSScriptRoot 'run_real_project_acceptance_v1.py'
 $VenvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
@@ -33,7 +35,7 @@ if (-not $ProjectId.Trim()) {
         $Projects = @(Invoke-RestMethod -Method Get -Uri "$($BaseUrl.TrimEnd('/'))/api/projects" -TimeoutSec 15)
     }
     catch {
-        throw "无法连接本地后端 $BaseUrl，不能自动选择真实项目。请先启动后端。原始错误：$($_.Exception.Message)"
+        throw "Cannot reach local backend $BaseUrl to auto-select a project. Start the backend first. Error: $($_.Exception.Message)"
     }
 
     $Candidates = @($Projects | Where-Object {
@@ -42,17 +44,17 @@ if (-not $ProjectId.Trim()) {
 
     if ($Candidates.Count -eq 1) {
         $ProjectId = [string]$Candidates[0].id
-        Write-Host "[AI Drama Studio] 自动选择唯一有视频的项目：$($Candidates[0].name) ($ProjectId)"
+        Write-Host "[AI Drama Studio] Auto-selected the only project with imported video: $($Candidates[0].name) ($ProjectId)"
     }
     elseif ($Candidates.Count -eq 0) {
-        throw '当前本地后端没有可验收的项目（至少需要一个已导入视频的项目）。'
+        throw 'No acceptance-ready project was found. At least one project with an imported Episode is required.'
     }
     else {
-        Write-Host '[AI Drama Studio] 检测到多个有视频的项目，请明确选择一个：'
+        Write-Host '[AI Drama Studio] Multiple projects with imported video were found. Select one explicitly:'
         foreach ($Project in $Candidates) {
             Write-Host "  $($Project.name)  $($Project.id)"
         }
-        throw '存在多个真实项目。请重新运行并传入 -ProjectId <项目ID>，避免误跑其他项目。'
+        throw 'Multiple real projects exist. Re-run with -ProjectId <PROJECT_ID> to avoid running the wrong project.'
     }
 }
 
@@ -77,10 +79,10 @@ try {
     }
 
     Write-Host '[AI Drama Studio] Real-project acceptance'
-    Write-Host "  Project:      $ProjectId"
-    Write-Host "  Backend:      $BaseUrl"
+    Write-Host "  Project:       $ProjectId"
+    Write-Host "  Backend:       $BaseUrl"
     Write-Host '  Source visual: Qwen3.8-27B local provider'
-    Write-Host "  Mode:         $(if ($Run) { 'RUN existing production workflow' } else { 'READ-ONLY status check' })"
+    Write-Host "  Mode:          $(if ($Run) { 'RUN existing production workflow' } else { 'READ-ONLY status check' })"
     Write-Host ''
 
     & $Python @Arguments
@@ -101,15 +103,15 @@ finally {
     }
 }
 
-# Exit code 2 is a deliberate business gate, not an execution failure. Print enough source
-# truth to continue E2E debugging without asking the user to manually query several APIs.
+# Exit code 2 is a deliberate business gate, not a wrapper execution failure. Print enough
+# source truth to continue E2E debugging without manually querying several APIs.
 if ($RunnerExitCode -eq 2) {
     Write-Host ''
-    Write-Host '[AI Drama Studio] 当前真实业务阻塞（OPEN ReviewIssue）'
+    Write-Host '[AI Drama Studio] Current business gate: OPEN ReviewIssue'
     try {
         $Issues = @(Invoke-RestMethod -Method Get -Uri "$($BaseUrl.TrimEnd('/'))/api/projects/$ProjectId/review-issues?status=OPEN" -TimeoutSec 15)
         if ($Issues.Count -eq 0) {
-            Write-Host '  Runner 检测到待确认，但刷新后队列已为空；可直接重新运行本命令。'
+            Write-Host '  The runner reported an open review gate, but the refreshed queue is now empty. Re-run the same command.'
         }
         else {
             $Index = 0
@@ -118,18 +120,18 @@ if ($RunnerExitCode -eq 2) {
                 $LocationParts = @()
                 if ($Issue.episode_id) { $LocationParts += "episode=$($Issue.episode_id)" }
                 if ($Issue.shot_id) { $LocationParts += "shot=$($Issue.shot_id)" }
-                $Location = if ($LocationParts.Count) { $LocationParts -join ' · ' } else { 'project-level' }
+                $Location = if ($LocationParts.Count) { $LocationParts -join ' / ' } else { 'project-level' }
                 Write-Host "  [$Index] $($Issue.issue_type) / $($Issue.severity)"
                 Write-Host "      $($Issue.reason)"
                 Write-Host "      $Location"
             }
         }
         Write-Host ''
-        Write-Host "  原片确认：$($BaseUrl.TrimEnd('/').Replace(':8000', ':5173'))/projects/$ProjectId/source-confirm"
-        Write-Host "  视频重做：$($BaseUrl.TrimEnd('/').Replace(':8000', ':5173'))/projects/$ProjectId/remake"
+        Write-Host "  Source confirm: $($BaseUrl.TrimEnd('/').Replace(':8000', ':5173'))/projects/$ProjectId/source-confirm"
+        Write-Host "  Remake:         $($BaseUrl.TrimEnd('/').Replace(':8000', ':5173'))/projects/$ProjectId/remake"
     }
     catch {
-        Write-Host "  读取 ReviewIssue 详情失败：$($_.Exception.Message)"
+        Write-Host "  Failed to read ReviewIssue details: $($_.Exception.Message)"
     }
 }
 
