@@ -1,12 +1,16 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from app.artifacts.service import get_artifact_graph, get_current_artifact_types
-from app.artifacts.schemas import ArtifactGraphRead
+from app.artifacts.schemas import ArtifactGraphRead, ArtifactNodeRead
+from app.artifacts.service import get_artifact_graph, list_artifacts
 from app.db.session import get_db
 from app.projects.schemas import ProjectCreate, ProjectRead, ProjectUpdate
 from app.projects.service import create_project, get_project, list_projects, update_project
-from app.skills.plan import ProjectExecutionPlan, compile_execution_plan
+from app.skills.plan import (
+    ProjectExecutionPlan,
+    compile_and_persist_execution_plan,
+    get_current_execution_plan,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -37,9 +41,17 @@ def update_project_route(
 
 @router.get("/{project_id}/plan", response_model=ProjectExecutionPlan)
 def get_project_plan_route(project_id: str, db: Session = Depends(get_db)) -> ProjectExecutionPlan:
-    project = get_project(db, project_id)
-    artifacts = get_current_artifact_types(db, project_id)
-    return compile_execution_plan(project, artifacts)
+    return get_current_execution_plan(db, project_id)
+
+
+@router.post("/{project_id}/commands/compile-plan", response_model=ProjectExecutionPlan)
+def compile_project_plan_route(project_id: str, db: Session = Depends(get_db)) -> ProjectExecutionPlan:
+    return compile_and_persist_execution_plan(db, project_id)
+
+
+@router.get("/{project_id}/artifacts", response_model=list[ArtifactNodeRead])
+def list_project_artifacts_route(project_id: str, db: Session = Depends(get_db)) -> list[ArtifactNodeRead]:
+    return [ArtifactNodeRead.model_validate(item) for item in list_artifacts(db, project_id)]
 
 
 @router.get("/{project_id}/artifact-graph", response_model=ArtifactGraphRead)
