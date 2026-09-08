@@ -6,13 +6,18 @@ AI 短剧生产工作台，当前处于 V3 从零重建阶段。
 
 1. `docs/00_V3产品与系统详细规划.md`
 2. `docs/01_V3开发阶段与验收清单.md`
-3. `AGENTS.md`
+3. `docs/02_V3当前开发状态.md`
+4. `AGENTS.md`
 
 ## 当前阶段
 
-P1：新工程骨架。
+```text
+P0 仓库重建基线      ✅ 完成
+P1 新工程骨架        ✅ 完成
+P2 六类项目与工作流  ▶ 下一阶段
+```
 
-当前仓库已经包含全新的 FastAPI 后端、Vue 3 前端和基础 CI，不依赖旧仓库业务模块。P2 才开始实现六类 Project 和真实工作流。
+P1 已建立全新的 FastAPI 后端、Vue 3 前端和 GitHub Actions CI，不依赖旧仓库业务模块。P2 开始实现 Project、六种 `project_type` 和由后端驱动的独立工作流图。
 
 ## 后端启动
 
@@ -75,4 +80,4 @@ npm test
 npm run build
 ```
 
-CI 会在 `main` push 与 Pull Request 时运行同样的基础验收。
+最新 P1 代码已通过 GitHub Actions V3 CI。当前验收记录见 `docs/02_V3当前开发状态.md`。
