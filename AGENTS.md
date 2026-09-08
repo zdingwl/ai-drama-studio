@@ -253,12 +253,14 @@ P0 仓库重建                ✅
 P1 新工程骨架              ✅
 P2 Project + Skill Kernel  ✅
 P3 SourceAsset + 输入系统  ✅
-P4 Task / ProviderJob      当前阶段
+P4 Task / ProviderJob      ✅
+P5 视频技术预处理          ✅
+P6 ASR / OCR               下一阶段，尚未开始
 ```
 
-P4 先建立显式 Command、Task、queue/worker、heartbeat/checkpoint/retry/cancel/resume，以及“外部 / 计费 Provider 请求前必须先持久化 ProviderJob”的硬约束。
+P5 已完成真实 Episode Shot Boundary、thumbnail、Reference Clip、Task 执行和 `SHOT_ANCHORS` Artifact，并保持 GET read-only、CURRENT/STALE、revision / fingerprint 等约束。
 
-P4 完成前不要接真实 ASR / OCR / Step 3.7 Flash / H3 Provider 请求，避免后续出现无法追踪、无法恢复或绕过 ProviderJob 的模型调用。
+P6 开始前继续遵守：不得因为 P5 已有 Shot 时间锚点就提前做对白识别、OCR、剧情理解或 Step 3.7 Flash 调用。P6 只在其独立阶段开发 ASR / OCR / Source Dialogue；P7 才进入整集理解。
 
 ---
 
