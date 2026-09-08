@@ -1,0 +1,30 @@
+{
+  "id": "project.redraw",
+  "name": "重绘短剧",
+  "version": "1.0.0",
+  "category": "project",
+  "description": "保留原剧情、剪辑与表演结构，重点重新设计并生成视觉。",
+  "project_type": "REDRAW",
+  "when_to_use": ["已有原视频，希望换演员、时代、服装、场景或视觉风格"],
+  "when_not_to_use": ["只需要翻译配音", "希望重新编写故事"],
+  "required_inputs": ["SOURCE_VIDEO"],
+  "readable_artifacts": ["SOURCE_VIDEO", "SHOT_ANCHORS", "SOURCE_DIALOGUE", "SOURCE_BIBLE", "SOURCE_SHOT_FACTS", "SOURCE_VIDEO_SNAPSHOT", "ADAPTATION_PLAN", "TARGET_BIBLE", "TARGET_ASSETS", "TIMING_PLAN", "TARGET_STORYBOARD", "GENERATION_SEGMENTS", "GENERATION_SELECTION"],
+  "required_capabilities": ["SOURCE_VIDEO_INGEST", "MEDIA_PREFLIGHT", "SHOT_BOUNDARY", "SOURCE_DIALOGUE_EVIDENCE", "EPISODE_UNDERSTANDING", "SHOT_BREAKDOWN", "SOURCE_SNAPSHOT", "LOCALIZATION", "TARGET_BIBLE", "TARGET_ASSETS", "STORYBOARD", "TIMING", "VIDEO_GENERATION", "QC_SELECTION", "POST_PRODUCTION"],
+  "subskills": ["source-video-understanding", "shot-breakdown", "target-world-design", "storyboard-directing", "video-generation-qc", "post-production"],
+  "manual_path": "redraw/SKILL.md",
+  "steps": [
+    {"id":"source_input","phase":"输入","title":"导入原片","description":"登记需要重绘的 Episode。","capabilities":["SOURCE_VIDEO_INGEST"],"requires":[],"produces":["SOURCE_VIDEO"]},
+    {"id":"source_understand","phase":"理解","title":"原片结构理解","description":"建立镜头锚点、对白证据并理解人物、场景和镜头结构。","capabilities":["MEDIA_PREFLIGHT","SHOT_BOUNDARY","SOURCE_DIALOGUE_EVIDENCE","EPISODE_UNDERSTANDING","SHOT_BREAKDOWN"],"requires":["SOURCE_VIDEO"],"produces":["SHOT_ANCHORS","SOURCE_DIALOGUE","SOURCE_BIBLE","SOURCE_SHOT_FACTS"]},
+    {"id":"source_finalize","phase":"理解","title":"原片分析定稿","description":"形成可供重绘使用的正式原片事实。","capabilities":["SOURCE_SNAPSHOT"],"requires":["SOURCE_BIBLE","SOURCE_SHOT_FACTS"],"produces":["SOURCE_VIDEO_SNAPSHOT"]},
+    {"id":"visual_plan","phase":"目标版本","title":"视觉重绘方案","description":"确定目标人物、场景、时代和视觉风格。","capabilities":["LOCALIZATION","TARGET_BIBLE","TARGET_ASSETS"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":["ADAPTATION_PLAN","TARGET_BIBLE","TARGET_ASSETS"]},
+    {"id":"storyboard","phase":"分镜","title":"重绘分镜","description":"保持原剪辑和表演关系，生成目标视觉分镜。","capabilities":["STORYBOARD","TIMING"],"requires":["SOURCE_VIDEO_SNAPSHOT","TARGET_ASSETS"],"produces":["TIMING_PLAN","TARGET_STORYBOARD","GENERATION_SEGMENTS"]},
+    {"id":"generate","phase":"生成","title":"重绘生成与质检","description":"逐段重绘并选择正式结果。","capabilities":["VIDEO_GENERATION","QC_SELECTION"],"requires":["GENERATION_SEGMENTS"],"produces":["GENERATED_VIDEO","GENERATION_SELECTION"]},
+    {"id":"post","phase":"成片","title":"音频与后期","description":"按项目音频策略挂回或重建音频并输出成片。","capabilities":["POST_PRODUCTION"],"requires":["GENERATION_SELECTION"],"produces":["FINAL_OUTPUT"]}
+  ],
+  "user_decision_policy": ["视觉风格存在显著不同方向且项目未指定时询问"],
+  "auto_decision_policy": ["默认不改故事", "默认保持原剪辑和表演关系"],
+  "output_contracts": ["SOURCE_VIDEO_SNAPSHOT", "TARGET_BIBLE", "TARGET_ASSETS", "TARGET_STORYBOARD", "FINAL_OUTPUT"],
+  "completion_criteria": ["原片结构有正式依据", "目标视觉方案一致", "最终成片来自正式选择"],
+  "failure_policy": ["缺原片结构事实时阻断重绘", "生成失败有限重试后阻断"],
+  "next_recommended_skills": []
+}
