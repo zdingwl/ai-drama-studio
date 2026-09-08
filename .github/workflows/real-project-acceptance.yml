@@ -43,8 +43,8 @@ jobs:
           python -m pip install pytest==9.0.2
       - name: Compile acceptance tools
         run: python -m compileall -q scripts/run_real_project_acceptance_v1.py scripts/check_local_remake_runtime_stack.py scripts/check_qwen38_visual_runtime.py engine/tests/v2/test_real_project_acceptance_v1.py engine/tests/v2/test_local_remake_runtime_stack_v1.py
-      - name: Check PowerShell wrappers parse
-        shell: pwsh
+      - name: Check Windows PowerShell 5.1 wrappers parse
+        shell: powershell
         run: |
           foreach ($path in @('scripts/run_real_project_acceptance_v1.ps1', 'scripts/check_local_remake_runtime_stack.ps1', 'scripts/check_qwen38_visual_runtime.ps1')) {
             $errors = $null
