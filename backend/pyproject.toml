@@ -9,6 +9,7 @@ description = "AI Drama Studio V3 backend"
 requires-python = ">=3.12"
 dependencies = [
   "alembic>=1.16,<2",
+  "av>=18,<19",
   "fastapi>=0.116,<1",
   "pydantic>=2.11,<3",
   "pydantic-settings>=2.10,<3",
