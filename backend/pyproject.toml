@@ -22,6 +22,10 @@ dev = [
   "pytest>=8.4,<9",
 ]
 
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["alembic*", "tests*"]
+
 [tool.pytest.ini_options]
 addopts = "-q"
 pythonpath = ["."]
