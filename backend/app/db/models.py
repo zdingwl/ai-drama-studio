@@ -4,6 +4,7 @@ from app.artifacts.models import ArtifactEdge, ArtifactNode
 from app.projects.models import Project
 from app.skills.plan_models import ProjectExecutionPlanRecord, ProjectExecutionPlanStepRecord
 from app.sources.models import Episode, SourceAsset, SourceDocument
+from app.workflow.models import ProviderJob, Task
 
 __all__ = [
     "ArtifactEdge",
@@ -12,6 +13,8 @@ __all__ = [
     "Project",
     "ProjectExecutionPlanRecord",
     "ProjectExecutionPlanStepRecord",
+    "ProviderJob",
     "SourceAsset",
     "SourceDocument",
+    "Task",
 ]
