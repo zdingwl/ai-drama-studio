@@ -18,7 +18,7 @@ P1 新工程骨架              ✅ 完成
 Seko Skill 架构研究        ✅ 第一版完成
 P2 Project + Skill Kernel  ✅ 完成
 P3 SourceAsset + 输入系统  ✅ 完成
-P4 Task / ProviderJob      ▶ 当前阶段
+P4 Task / ProviderJob      ▶ 代码已落地，等待 CI 验收
 ```
 
 V3 当前正式架构：
@@ -70,6 +70,14 @@ TXT / Markdown
 ```
 
 原始 SourceAsset 不可变；同内容上传幂等。素材变化会使旧 Source Artifact / 依赖下游 STALE，并使当前执行计划失效，必须显式重新编译。
+
+## P4 执行底座
+
+P4 已写入 main，当前等待完整 CI 验收后再标记完成。执行底座包含持久化 Task、数据库队列 / Worker、heartbeat、checkpoint / resume、有限 retry、cancel，以及外部或计费 Provider 调用前必须先提交 ProviderJob 的硬约束。
+
+普通页面只读取并展示任务名称、进度、状态、失败原因以及可执行的重试 / 继续 / 取消操作；页面 GET 不负责启动或恢复任务。
+
+P4 不接入真实 ASR / OCR / Step 3.7 Flash / MiniMax H3 调用，这些能力必须在执行底座通过后按后续阶段逐步接入。
 
 ## 后端启动
 
@@ -152,4 +160,4 @@ npm test
 npm run build
 ```
 
-P3 已通过包含真实 FFmpeg 视频生成 / ffprobe / decode 的 GitHub Actions V3 CI。当前状态和下一步以 `docs/02_V3当前开发状态.md` 为准。
+P3 已通过包含真实 FFmpeg 视频生成 / ffprobe / decode 的 GitHub Actions V3 CI。P4 必须在 migration、pytest、frontend typecheck/test/build 全部通过后才能更新为完成。当前状态和下一步以 `docs/02_V3当前开发状态.md` 为准。
