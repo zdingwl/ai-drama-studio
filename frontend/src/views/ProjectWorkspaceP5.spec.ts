@@ -131,8 +131,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('ProjectWorkspaceView P5 shot boundary', () => {
-  it('auto-loads uploaded episodes through read-only GETs and starts processing only after explicit POST', async () => {
+describe('ProjectWorkspaceView P5 shot anchors', () => {
+  it('keeps P5 as an internal technical detail and starts it only after explicit POST', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
@@ -159,14 +159,17 @@ describe('ProjectWorkspaceView P5 shot boundary', () => {
     expect(initialCalls.some((call) => call.url.endsWith('/sources/episodes'))).toBe(true)
     expect(initialCalls.some((call) => call.url.endsWith('/episodes/episode-1/shot-boundary'))).toBe(true)
 
+    expect(wrapper.text()).toContain('原片理解')
+    expect(wrapper.text()).toContain('完整 Episode 始终是原片事实源')
+    expect(wrapper.text()).toContain('技术分析详情')
     expect(wrapper.text()).toContain('这里只识别切镜时间')
     expect(wrapper.text()).toContain('第 1 集 · episode-01.mp4')
-    expect(wrapper.text()).toContain('尚未处理')
-    expect(wrapper.text()).toContain('开始处理这一集')
+    expect(wrapper.text()).toContain('技术锚点未生成')
+    expect(wrapper.text()).toContain('生成技术锚点')
     expect(wrapper.text()).not.toContain('读取已上传剧集')
     expect(initialCalls.filter((call) => call.method === 'POST')).toHaveLength(0)
 
-    const startButton = wrapper.findAll('button').find((button) => button.text() === '开始处理这一集')
+    const startButton = wrapper.findAll('button').find((button) => button.text() === '生成技术锚点')
     await startButton?.trigger('click')
     await flushPromises()
 
@@ -205,6 +208,7 @@ describe('ProjectWorkspaceView P5 shot boundary', () => {
     expect(wrapper.find('.shot-grid.is-portrait').exists()).toBe(true)
     expect(wrapper.findAll('video')).toHaveLength(0)
     expect(wrapper.findAll('.preview-button')).toHaveLength(3)
+    expect(wrapper.find('.technical-details').attributes('open')).toBeUndefined()
 
     await wrapper.findAll('.preview-button')[1]?.trigger('click')
     await flushPromises()
