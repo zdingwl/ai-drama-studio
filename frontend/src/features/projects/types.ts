@@ -8,7 +8,8 @@ export type ProjectType =
 
 export type SceneStrategy = 'KEEP' | 'LOCALIZE' | 'MIXED'
 export type AudioPolicy = 'KEEP_SOURCE_AUDIO' | 'REGENERATE_AUDIO'
-export type PlanStepStatus = 'COMPLETED' | 'READY' | 'BLOCKED_DEPENDENCY'
+export type PlanStepStatus = 'COMPLETED' | 'READY' | 'BLOCKED_DEPENDENCY' | 'WAITING_CAPABILITY'
+export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 
 export interface ProjectTypeOption {
   value: ProjectType
@@ -103,6 +104,23 @@ export interface ProjectExecutionPlan {
   skill_title: string
   workflow_revision: number
   steps: ExecutionPlanStep[]
+}
+
+export interface TaskRead {
+  id: string
+  project_id: string
+  task_name: string
+  progress_percent: number
+  status: TaskStatus
+  last_error: string | null
+  attempt: number
+  max_attempts: number
+  can_retry: boolean
+  can_cancel: boolean
+  can_resume: boolean
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
 }
 
 export function projectTypeLabel(type: ProjectType): string {
