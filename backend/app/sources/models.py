@@ -55,7 +55,6 @@ class SourceDocument(Base):
     __tablename__ = "source_documents"
     __table_args__ = (
         UniqueConstraint("project_id", "revision", name="uq_source_document_project_revision"),
-        UniqueConstraint("source_asset_id", name="uq_source_document_source_asset"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
