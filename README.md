@@ -18,7 +18,7 @@ P1 新工程骨架              ✅ 完成
 Seko Skill 架构研究        ✅ 第一版完成
 P2 Project + Skill Kernel  ✅ 完成
 P3 SourceAsset + 输入系统  ✅ 完成
-P4 Task / ProviderJob      ▶ 代码已落地，等待 CI 验收
+P4 Task / ProviderJob      ▶ 代码已落地，CI 复验中
 ```
 
 V3 当前正式架构：
@@ -73,7 +73,7 @@ TXT / Markdown
 
 ## P4 执行底座
 
-P4 已写入 main，当前等待完整 CI 验收后再标记完成。执行底座包含持久化 Task、数据库队列 / Worker、heartbeat、checkpoint / resume、有限 retry、cancel，以及外部或计费 Provider 调用前必须先提交 ProviderJob 的硬约束。
+P4 已写入 main。第一轮 CI 的 backend（compile / import / migration / 39 个 pytest）已通过；前端新增测试的 TypeScript 类型推断问题已修复，正在进行完整复验，复验全绿前不标记 P4 完成。执行底座包含持久化 Task、数据库队列 / Worker、heartbeat、checkpoint / resume、有限 retry、cancel，以及外部或计费 Provider 调用前必须先提交 ProviderJob 的硬约束。
 
 普通页面只读取并展示任务名称、进度、状态、失败原因以及可执行的重试 / 继续 / 取消操作；页面 GET 不负责启动或恢复任务。
 
