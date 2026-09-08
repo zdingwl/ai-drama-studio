@@ -11,19 +11,19 @@ dependencies = [
   "alembic>=1.16,<2",
   "av>=18,<19",
   "fastapi>=0.116,<1",
+  "faster-whisper>=1.2.1,<2",
+  "onnxruntime>=1.29,<2",
   "pydantic>=2.11,<3",
   "pydantic-settings>=2.10,<3",
   "python-multipart>=0.0.20,<1",
+  "rapidocr>=3.9.2,<4",
   "scenedetect-headless>=0.7.1,<0.8",
   "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.35,<1",
 ]
 
 [project.optional-dependencies]
-dev = [
-  "httpx>=0.28,<1",
-  "pytest>=8.4,<9",
-]
+dev = ["httpx>=0.28,<1", "pytest>=8.4,<9"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
