@@ -149,15 +149,14 @@ def _scan_with_backend(
         last_timecode = timecode
 
         if downscale_factor is None:
-            downscale_factor = compute_downscale_factor(int(frame.shape[1]))
+            downscale_factor = max(1, int(compute_downscale_factor(int(frame.shape[1]))))
         detection_frame = frame
         if downscale_factor > 1:
+            target_width = int(max(1, int(frame.shape[1]) // downscale_factor))
+            target_height = int(max(1, int(frame.shape[0]) // downscale_factor))
             detection_frame = cv2.resize(
                 frame,
-                (
-                    max(1, int(frame.shape[1]) // downscale_factor),
-                    max(1, int(frame.shape[0]) // downscale_factor),
-                ),
+                (target_width, target_height),
                 interpolation=cv2.INTER_LINEAR,
             )
 
@@ -207,8 +206,10 @@ def detect_shot_ranges(
         except Exception as exc:
             backend_errors.append(exc)
             logger.warning(
-                "P5 shot detection backend failed; trying fallback",
-                extra={"backend": backend, "error_type": type(exc).__name__},
+                "P5 shot detection backend %s failed: %s: %s; trying fallback",
+                backend,
+                type(exc).__name__,
+                str(exc),
             )
 
     if candidates is None:
