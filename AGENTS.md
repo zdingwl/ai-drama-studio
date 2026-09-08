@@ -8,7 +8,8 @@
 2. `docs/03_Seko3.0_Skill架构逆向分析.md`
 3. `docs/01_V3开发阶段与验收清单.md`
 4. `docs/02_V3当前开发状态.md`
-5. 当前相关代码与测试
+5. `docs/04_阶段人工验收规范.md`
+6. 当前相关代码与测试
 
 历史分支只能做参考，不能覆盖 V3 当前规划。
 
@@ -60,6 +61,21 @@ Tool        = 用什么执行
 Guardrail   = 绝对不能违反什么
 ```
 
+同时强制区分：
+
+```text
+Product Stage
+= 用户关心的业务阶段
+
+Internal PlanStep / Capability
+= 为得到该业务结果而执行的内部步骤
+
+P0/P1/P2/... Engineering Phase
+= 我们开发和验收代码的切片
+```
+
+三者不能混为一谈。
+
 ### Skill 不是 Prompt
 
 禁止实现成：
@@ -88,6 +104,8 @@ Agent / Plan Compiler 生成的计划必须持久化、版本化和 fingerprint 
 
 页面刷新不能重新临时规划。
 
+Raw PlanStep 可以比普通用户看到的 Product Stage 更细；前端普通模式应按业务 phase 聚合，开发 / 排障模式才展开内部步骤。
+
 ---
 
 ## 4. Artifact Graph
@@ -110,7 +128,7 @@ Canvas View    = Artifact Graph 的可视化
 ## 5. 统一硬规则
 
 - 默认自动完成；只有真正需要创作选择或结构无法安全决定时询问用户。
-- 普通用户只看业务结果，不展示 ASR/OCR/VLM/Tracking/Fingerprint 等内部证据。
+- 普通用户只看业务结果，不展示 ASR/OCR/VLM/Shot Detector/Tracking/Fingerprint 等内部证据与工具名。
 - 页面 GET 必须只读。
 - 重任务必须由明确 POST / Command 启动。
 - Skill 无权绕过 GET read-only。
@@ -121,34 +139,95 @@ Canvas View    = Artifact Graph 的可视化
 - GenerationAttempt 不是正式可用结果；只有 GenerationSelection 可以进入后期。
 - 批量 Episode 默认顺序串行。
 - 上游 revision / fingerprint 改变后，下游必须 STALE。
+- 某个内部 Task succeeded 不等于整个 Product Stage 完成。
 
 ---
 
-## 6. 视频类项目原片理解顺序
+## 6. 视频类项目：原片理解编排
 
 适用：REPLICA / REDRAW / TRANSLATION。
 
-正式顺序：
+### 产品层
+
+普通用户看到：
 
 ```text
-导入原片
-→ 媒体检查
-→ Shot Boundary（只做时间锚点）
-→ ASR + OCR
-→ 整集理解
-→ Source Episode Bible
-→ Story Skeleton + Rhythm Skeleton
-→ 带全局知识逐镜精细拉片
-→ 人物 / 场景 / 道具 / Speaker 归一
-→ SourceVideoSnapshot
+导入完整 Episode
+→ 原片理解
+→ 业务可读理解结果
 ```
 
-禁止退回：
+不得设计成普通用户必须依次操作：
 
 ```text
-先逐 Shot 猜完整剧情
-→ 最后拼成整集理解
+P5 Shot Boundary
+→ P6 ASR/OCR
+→ P7 VLM
+→ P8 Shot Breakdown
 ```
+
+P5/P6/P7/P8 是工程实现与内部能力切片。
+
+### 完整 Episode 是 Source Truth
+
+```text
+SOURCE_VIDEO / 完整 Episode
+= 权威原片输入
+```
+
+thumbnail / Reference Clip 是派生技术资产，只用于人工核对、局部精看或索引，不得替代完整 Episode。
+
+### 内部执行关系
+
+```text
+完整 Episode
+        │
+        ↓
+Media Preflight
+        │
+        ├────────────────┬────────────────┐
+        ↓                ↓                ↓
+Shot Anchors         ASR Evidence      OCR Evidence
+        │                │                │
+        └────────────┬───┴────────────────┘
+                     ↓
+              Source Evidence
+                     +
+               完整 Episode
+                     ↓
+          整集多模态原片理解
+                     ↓
+      Source Episode Bible / Story / Rhythm
+                     ↓
+        带全局知识做逐镜精细拉片
+                     ↓
+人物 / 场景 / 道具 / Speaker 归一
+                     ↓
+             SourceVideoSnapshot
+```
+
+硬规则：
+
+- Shot Boundary 与连续 ASR 都直接读取 `SOURCE_VIDEO`，可并行；
+- `SOURCE_DIALOGUE_EVIDENCE` 不得依赖 `SHOT_ANCHORS` 才能开始；
+- ASR 不得按每个 Reference Clip 分开识别后拼句子；
+- OCR 可以读取 Shot Anchors 作为抽帧提示，但完整 Episode 时间轴仍是 Source Truth；
+- 整集理解必须能读取完整 Episode；
+- 先整集理解，再逐 Shot 精细拉片；
+- 禁止先逐 Shot 猜完整剧情，再拼整集理解。
+
+### Source Evidence 与理解结果分离
+
+```text
+Source Evidence
+= 原片实际说了什么 / 写了什么
+= canonical + provenance
+
+Source Understanding
+= 这些事实在剧情、人物、关系、场景、事件和节奏上意味着什么
+```
+
+VLM / Agent / 安全过滤后的生成文本无权静默覆盖 canonical ASR / OCR / subtitle evidence。
 
 ---
 
@@ -189,9 +268,8 @@ Replica 的默认目标：
 例如：
 
 ```text
-SOURCE_EPISODE_UNDERSTANDING
+EPISODE_UNDERSTANDING
 SHOT_BREAKDOWN
-AGENT_REASONING
 VIDEO_GENERATION
 ```
 
@@ -202,8 +280,8 @@ Provider Registry 决定实际实现。
 - Agent reasoning：Step 3.7 Flash；
 - 整集理解：Step 3.7 Flash 等真实 Episode A/B 后确定；
 - 逐镜理解：Step 3.7 Flash / Qwen3.8 等真实镜头 A/B；
-- ASR：faster-whisper；
-- OCR：RapidOCR 或替代实现；
+- ASR：faster-whisper 等候选，P6 真实验收后确定；
+- OCR：RapidOCR 或替代实现，P6 真实验收后确定；
 - TTS：Qwen3-TTS Provider；
 - Video：MiniMax H3 Provider → local runtime；
 - Lip Sync：LatentSync 或替代实现。
@@ -254,13 +332,17 @@ P1 新工程骨架              ✅
 P2 Project + Skill Kernel  ✅
 P3 SourceAsset + 输入系统  ✅
 P4 Task / ProviderJob      ✅
-P5 视频技术预处理          ✅
-P6 ASR / OCR               下一阶段，尚未开始
+P5 镜头技术锚点            ✅（原片理解内部能力）
+P6 Source Evidence         下一工程切片，尚未开始
+P7 整集多模态原片理解      尚未开始
+P8 逐镜精细拉片            尚未开始
 ```
 
 P5 已完成真实 Episode Shot Boundary、thumbnail、Reference Clip、Task 执行和 `SHOT_ANCHORS` Artifact，并保持 GET read-only、CURRENT/STALE、revision / fingerprint 等约束。
 
-P6 开始前继续遵守：不得因为 P5 已有 Shot 时间锚点就提前做对白识别、OCR、剧情理解或 Step 3.7 Flash 调用。P6 只在其独立阶段开发 ASR / OCR / Source Dialogue；P7 才进入整集理解。
+当前真实短剧已经跑通一条约 1:06 Episode 并产生 28 个 Shot Anchors，但这只代表 P5 技术能力通过，不代表“原片理解完成”。
+
+P6 开发时必须作为“原片理解”内部 Source Evidence 能力接入，不新增要求普通用户单独操作的 P6 页面。P7 才进入真实整集多模态理解，P8 才进入带全局知识的逐镜精细拉片。
 
 ---
 
