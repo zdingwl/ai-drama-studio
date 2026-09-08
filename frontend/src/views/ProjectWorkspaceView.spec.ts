@@ -42,8 +42,8 @@ const plan = {
     {
       id: 'shot_boundary',
       phase: '理解',
-      title: '镜头边界',
-      description: '完成媒体检查并建立镜头时间锚点。',
+      title: '镜头技术锚点',
+      description: '从完整 Episode 建立镜头时间锚点。',
       status: 'READY',
       capabilities: ['MEDIA_PREFLIGHT', 'SHOT_BOUNDARY'],
       requires: ['SOURCE_VIDEO'],
@@ -53,11 +53,11 @@ const plan = {
     {
       id: 'source_dialogue',
       phase: '理解',
-      title: '原对白证据',
-      description: '后续阶段能力。',
+      title: '原片对白与文字证据',
+      description: '直接读取完整 Episode 的连续时间轴。',
       status: 'WAITING_CAPABILITY',
       capabilities: ['SOURCE_DIALOGUE_EVIDENCE'],
-      requires: ['SOURCE_VIDEO', 'SHOT_ANCHORS'],
+      requires: ['SOURCE_VIDEO'],
       produces: ['SOURCE_DIALOGUE'],
       missing_artifacts: [],
     },
@@ -175,7 +175,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('ProjectWorkspaceView P4/P5 workflow', () => {
+describe('ProjectWorkspaceView source-understanding workflow', () => {
   it('auto-reads episodes with GET, shows upload when empty, and never auto-starts processing', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
@@ -188,16 +188,18 @@ describe('ProjectWorkspaceView P4/P5 workflow', () => {
 
     const wrapper = await mountWorkspace()
 
-    expect(wrapper.text()).toContain('视频技术预处理')
+    expect(wrapper.text()).toContain('原片理解')
     expect(wrapper.text()).toContain('上传原片')
     expect(wrapper.text()).toContain('还没有原片')
     expect(wrapper.text()).toContain('上传完成后剧集列表会自动出现')
     expect(wrapper.text()).not.toContain('读取已上传剧集')
+    expect(wrapper.text()).not.toContain('视频技术预处理')
 
     expect(wrapper.text()).toContain('开发验收工具')
     expect(wrapper.text()).toContain('任务状态')
     expect(wrapper.text()).toContain('原片准备任务')
-    expect(wrapper.text()).toContain('等待能力接入')
+    expect(wrapper.text()).toContain('能力待接入')
+    expect(wrapper.text()).toContain('产品执行计划')
 
     expect(wrapper.text()).not.toContain('ProviderJob')
     expect(wrapper.text()).not.toContain('payload_fingerprint')
@@ -214,7 +216,7 @@ describe('ProjectWorkspaceView P4/P5 workflow', () => {
     wrapper.unmount()
   })
 
-  it('uploads real episode input from P5 workspace and shows it without auto-starting shot boundary', async () => {
+  it('uploads real episode input from the source-understanding workspace without auto-starting shot anchors', async () => {
     let episodeReads = 0
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
@@ -250,7 +252,8 @@ describe('ProjectWorkspaceView P4/P5 workflow', () => {
     expect(uploadCall).toBeTruthy()
     expect((uploadCall?.[1] as RequestInit | undefined)?.body).toBeInstanceOf(FormData)
     expect(wrapper.text()).toContain('第 1 集 · ep01.mp4')
-    expect(wrapper.text()).toContain('开始处理这一集')
+    expect(wrapper.text()).toContain('完整 Episode 始终是原片事实源')
+    expect(wrapper.text()).toContain('生成技术锚点')
 
     const shotBoundaryPosts = fetchMock.mock.calls.filter(([inputValue, init]) => (
       String(inputValue).includes('/commands/shot-boundary')
