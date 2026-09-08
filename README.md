@@ -75,6 +75,8 @@ TXT / Markdown
 
 要求 Python 3.12+，视频输入需要 FFmpeg / ffprobe 可执行文件。
 
+首次启动或拉取到新的数据库 migration 后，必须先执行 `alembic upgrade head`：
+
 ```bash
 python -m venv .venv
 # Windows: .venv\\Scripts\\activate
@@ -82,8 +84,11 @@ python -m venv .venv
 python -m pip install --upgrade pip
 pip install -e "backend[dev]"
 cd backend
+alembic upgrade head
 uvicorn app.main:app --reload
 ```
+
+如果已经安装为 editable package，从仓库根目录启动 Uvicorn 也可以；数据库和 Artifact 默认路径已经固定到 `backend/`，不会再随当前工作目录改变。但 Alembic 仍建议在 `backend/` 目录执行。
 
 健康检查：
 
@@ -98,7 +103,7 @@ backend/data/       SQLite
 backend/artifacts/  Artifact 根目录
 ```
 
-可以复制 `backend/.env.example` 为 `backend/.env` 修改配置。所有业务时间戳统一使用 UTC 存储；用户时区只在展示层转换。
+可以复制 `backend/.env.example` 为 `backend/.env` 修改配置。相对数据库 / Artifact 路径统一以 `backend/` 为基准；所有业务时间戳统一使用 UTC 存储，用户时区只在展示层转换。
 
 ## 前端启动
 
