@@ -94,7 +94,7 @@ def test_plan_must_be_explicitly_compiled_then_get_is_read_only(client: TestClie
     assert plan["revision"] == 1
     assert len(plan["input_fingerprint"]) == 64
     assert plan["steps"][0]["id"] == "source_input"
-    assert plan["steps"][0]["status"] == "WAITING_CAPABILITY"
+    assert plan["steps"][0]["status"] == "READY"
     assert plan["steps"][1]["status"] == "BLOCKED_DEPENDENCY"
 
     persisted = client.get(f"/api/v3/projects/{project['id']}/plan")
