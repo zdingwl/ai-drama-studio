@@ -47,7 +47,7 @@ class ShotRange:
 
 
 def _timecode_us(timecode) -> int:
-    return int(round(float(timecode.get_seconds()) * 1_000_000))
+    return int(round(float(timecode.seconds) * 1_000_000))
 
 
 def _cluster_cut_candidates(candidates: list[int], *, duration_us: int) -> list[int]:
