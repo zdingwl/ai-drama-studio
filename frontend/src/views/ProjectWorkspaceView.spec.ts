@@ -129,7 +129,7 @@ afterEach(() => {
 })
 
 describe('ProjectWorkspaceView P4 task status', () => {
-  it('shows only user-facing task status and keeps GET requests read-only', async () => {
+  it('shows user-facing task status, manual acceptance controls and keeps initial GET requests read-only', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
@@ -142,6 +142,12 @@ describe('ProjectWorkspaceView P4 task status', () => {
 
     const wrapper = await mountWorkspace()
 
+    expect(wrapper.text()).toContain('开发验收工具')
+    expect(wrapper.text()).toContain('测试正常完成')
+    expect(wrapper.text()).toContain('测试失败 → 重试')
+    expect(wrapper.text()).toContain('测试中断 → 继续')
+    expect(wrapper.text()).toContain('测试防重复提交')
+    expect(wrapper.text()).toContain('不调用真实模型')
     expect(wrapper.text()).toContain('任务状态')
     expect(wrapper.text()).toContain('原片准备任务')
     expect(wrapper.text()).toContain('35%')
@@ -164,6 +170,53 @@ describe('ProjectWorkspaceView P4 task status', () => {
     }))
     expect(calls).toHaveLength(3)
     expect(calls.every((call) => call.method === 'GET')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('starts P4 acceptance only through an explicit POST command with idempotency protection', async () => {
+    const acceptanceTask: TaskRead = {
+      id: 'task-acceptance',
+      project_id: 'project-1',
+      task_name: 'P4 验收：正常执行与安全调用',
+      progress_percent: 0,
+      status: 'queued',
+      last_error: null,
+      attempt: 0,
+      max_attempts: 3,
+      can_retry: false,
+      can_cancel: true,
+      can_resume: false,
+      created_at: '2026-09-08T00:00:00Z',
+      started_at: null,
+      finished_at: null,
+    }
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/v3/projects/project-1') && method === 'GET') return response(project)
+      if (url.endsWith('/api/v3/projects/project-1/plan') && method === 'GET') return response(plan)
+      if (url.endsWith('/api/v3/projects/project-1/tasks') && method === 'GET') return response([])
+      if (url.endsWith('/api/v3/projects/project-1/commands/p4-acceptance/success') && method === 'POST') {
+        return response(acceptanceTask, 202)
+      }
+      throw new Error(`unexpected request: ${method} ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = await mountWorkspace()
+    const button = wrapper.findAll('.acceptance-actions button').find((item) => item.text() === '测试正常完成')
+    await button?.trigger('click')
+    await flushPromises()
+
+    const acceptanceCall = fetchMock.mock.calls.find(([input, init]) => (
+      String(input).endsWith('/api/v3/projects/project-1/commands/p4-acceptance/success')
+      && (init as RequestInit | undefined)?.method === 'POST'
+    ))
+    expect(acceptanceCall).toBeTruthy()
+    const headers = new Headers((acceptanceCall?.[1] as RequestInit | undefined)?.headers)
+    expect(headers.get('Idempotency-Key')).toMatch(/^p4-success-/)
+    expect(wrapper.text()).toContain('P4 验收：正常执行与安全调用')
+    wrapper.unmount()
   })
 
   it('uses explicit POST commands for retry, cancel and resume', async () => {
@@ -211,5 +264,6 @@ describe('ProjectWorkspaceView P4 task status', () => {
       '/api/v3/projects/project-1/tasks/task-running/commands/cancel',
       '/api/v3/projects/project-1/tasks/task-interrupted/commands/resume',
     ])
+    wrapper.unmount()
   })
 })
