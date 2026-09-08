@@ -34,6 +34,8 @@ def test_relative_runtime_paths_are_anchored_to_backend() -> None:
 
 
 def test_default_runtime_paths_do_not_depend_on_working_directory(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AI_DRAMA_ARTIFACT_ROOT", raising=False)
+    monkeypatch.delenv("AI_DRAMA_DATABASE_URL", raising=False)
     monkeypatch.chdir(tmp_path)
     settings = Settings(_env_file=None)
 
