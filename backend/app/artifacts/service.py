@@ -103,6 +103,30 @@ def _mark_stale_with_downstream(db: Session, roots: list[ArtifactNode]) -> None:
         queue.extend(child_ids)
 
 
+def invalidate_current_artifact_type(
+    db: Session,
+    *,
+    project_id: str,
+    artifact_type: ArtifactType,
+) -> None:
+    project = get_project(db, project_id)
+    current_nodes = list(
+        db.scalars(
+            select(ArtifactNode).where(
+                ArtifactNode.project_id == project_id,
+                ArtifactNode.artifact_type == artifact_type.value,
+                ArtifactNode.is_current.is_(True),
+                ArtifactNode.validity == ArtifactValidity.CURRENT,
+            )
+        ).all()
+    )
+    if not current_nodes:
+        return
+    _mark_stale_with_downstream(db, current_nodes)
+    _invalidate_project_plan(db, project)
+    db.commit()
+
+
 def create_artifact(
     db: Session,
     *,
