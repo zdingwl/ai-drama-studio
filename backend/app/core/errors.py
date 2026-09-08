@@ -22,6 +22,18 @@ class AppError(Exception):
         self.details = details
 
 
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Exception):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    return str(value)
+
+
 def _error_response(*, status_code: int, code: str, message: str, details: Any = None) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -29,7 +41,7 @@ def _error_response(*, status_code: int, code: str, message: str, details: Any =
             "error": {
                 "code": code,
                 "message": message,
-                "details": details,
+                "details": _json_safe(details),
             }
         },
     )
