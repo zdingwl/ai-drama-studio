@@ -1,0 +1,28 @@
+{
+  "id": "project.script_localization",
+  "name": "剧本本土化",
+  "version": "1.0.0",
+  "category": "project",
+  "description": "保留故事骨架，把剧本中的文化、身份、制度、场景、道具与表达改成目标地区成立的版本。",
+  "project_type": "SCRIPT_LOCALIZATION",
+  "when_to_use": ["已经有剧本，只需要得到目标地区成立的本土化剧本"],
+  "when_not_to_use": ["需要直接生成视频", "只有完成视频没有剧本文本"],
+  "required_inputs": ["SOURCE_TEXT"],
+  "readable_artifacts": ["SOURCE_TEXT", "SOURCE_TEXT_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON", "ADAPTATION_PLAN", "TARGET_SCRIPT"],
+  "required_capabilities": ["SOURCE_TEXT_INGEST", "SCRIPT_ANALYSIS", "STORY_RHYTHM", "LOCALIZATION", "TARGET_SCRIPT", "EXPORT_SCRIPT"],
+  "subskills": ["script-analysis", "script-localization"],
+  "manual_path": "script_localization/SKILL.md",
+  "steps": [
+    {"id":"source_input","phase":"输入","title":"导入原剧本","description":"登记待本土化剧本。","capabilities":["SOURCE_TEXT_INGEST"],"requires":[],"produces":["SOURCE_TEXT"]},
+    {"id":"script_analyze","phase":"理解","title":"原剧本理解","description":"理解故事、人物关系、场景、关键道具和节奏骨架。","capabilities":["SCRIPT_ANALYSIS","STORY_RHYTHM"],"requires":["SOURCE_TEXT"],"produces":["SOURCE_TEXT_SNAPSHOT","STORY_SKELETON","RHYTHM_SKELETON"]},
+    {"id":"localize","phase":"目标版本","title":"本土化方案","description":"判断哪些元素必须保留、哪些需要替换，并说明文化理由。","capabilities":["LOCALIZATION"],"requires":["SOURCE_TEXT_SNAPSHOT","STORY_SKELETON"],"produces":["ADAPTATION_PLAN"]},
+    {"id":"target_script","phase":"目标版本","title":"目标地区剧本","description":"生成目标地区自然成立的正式剧本。","capabilities":["TARGET_SCRIPT"],"requires":["ADAPTATION_PLAN"],"produces":["TARGET_SCRIPT"]},
+    {"id":"export","phase":"导出","title":"导出正式剧本","description":"导出本土化完成的剧本；可后续转为剧本生成短剧项目。","capabilities":["EXPORT_SCRIPT"],"requires":["TARGET_SCRIPT"],"produces":["FINAL_OUTPUT"]}
+  ],
+  "user_decision_policy": ["本土化会改变核心冲突成立条件或故事价值取向时询问"],
+  "auto_decision_policy": ["默认保留故事骨架，只替换文化、身份、制度、场景、道具和表达"],
+  "output_contracts": ["SOURCE_TEXT_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON", "ADAPTATION_PLAN", "TARGET_SCRIPT", "FINAL_OUTPUT"],
+  "completion_criteria": ["故事主线可追溯", "文化替换在目标地区成立", "正式目标剧本可导出"],
+  "failure_policy": ["关键文化冲突无法在不改变故事主线的情况下成立时请求用户决策"],
+  "next_recommended_skills": ["project.script_to_drama"]
+}
