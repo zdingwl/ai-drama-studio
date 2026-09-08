@@ -28,7 +28,8 @@ const loading = ref(true)
 const loadingEvidence = ref(false)
 const starting = ref(false)
 const errorMessage = ref('')
-let pollTimer: number | null = null
+let taskPollTimer: number | null = null
+let evidencePollTimer: number | null = null
 
 const visible = computed(() => Boolean(project.value && VIDEO_PROJECT_TYPES.has(project.value.project_type)))
 const selectedEpisode = computed(() => episodes.value.find((item) => item.id === selectedEpisodeId.value) ?? null)
@@ -60,47 +61,69 @@ function commandKey(): string {
   return `p6-acceptance-${selectedEpisodeId.value}-${suffix}`.slice(0, 128)
 }
 
-async function refreshEvidence(): Promise<void> {
+function stopEvidencePolling(): void {
+  if (evidencePollTimer !== null) {
+    window.clearInterval(evidencePollTimer)
+    evidencePollTimer = null
+  }
+}
+
+function startEvidencePolling(): void {
+  if (evidencePollTimer !== null || !selectedEpisodeId.value || evidence.value?.status === 'CURRENT') return
+  evidencePollTimer = window.setInterval(async () => {
+    if (loadingEvidence.value || taskActive.value) return
+    await refreshEvidence(false)
+  }, 2500)
+}
+
+async function refreshEvidence(showLoading = true): Promise<void> {
   if (!selectedEpisodeId.value) {
     evidence.value = null
+    stopEvidencePolling()
     return
   }
-  loadingEvidence.value = true
+  if (showLoading) loadingEvidence.value = true
   errorMessage.value = ''
   try {
     evidence.value = await getEpisodeSourceEvidence(projectId.value, selectedEpisodeId.value)
+    if (evidence.value.status === 'CURRENT') {
+      stopEvidencePolling()
+    } else {
+      startEvidencePolling()
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Source Evidence 读取失败'
   } finally {
-    loadingEvidence.value = false
+    if (showLoading) loadingEvidence.value = false
   }
 }
 
 async function changeEpisode(): Promise<void> {
   activeTask.value = null
+  stopEvidencePolling()
   await refreshEvidence()
 }
 
-function stopPolling(): void {
-  if (pollTimer !== null) {
-    window.clearInterval(pollTimer)
-    pollTimer = null
+function stopTaskPolling(): void {
+  if (taskPollTimer !== null) {
+    window.clearInterval(taskPollTimer)
+    taskPollTimer = null
   }
 }
 
-function startPolling(taskId: string): void {
-  stopPolling()
-  pollTimer = window.setInterval(async () => {
+function startTaskPolling(taskId: string): void {
+  stopTaskPolling()
+  taskPollTimer = window.setInterval(async () => {
     try {
       const tasks = await listProjectTasks(projectId.value)
       const task = tasks.find((item) => item.id === taskId) ?? null
       activeTask.value = task
       if (!task || (task.status !== 'queued' && task.status !== 'running')) {
-        stopPolling()
+        stopTaskPolling()
         await refreshEvidence()
       }
     } catch (error) {
-      stopPolling()
+      stopTaskPolling()
       errorMessage.value = error instanceof Error ? error.message : 'P6 任务状态读取失败'
     }
   }, 900)
@@ -117,7 +140,8 @@ async function startEvidence(): Promise<void> {
       commandKey(),
     )
     activeTask.value = task
-    startPolling(task.id)
+    startTaskPolling(task.id)
+    startEvidencePolling()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'P6 Source Evidence 任务启动失败'
   } finally {
@@ -142,7 +166,10 @@ async function load(): Promise<void> {
 }
 
 onMounted(load)
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  stopTaskPolling()
+  stopEvidencePolling()
+})
 </script>
 
 <template>
@@ -178,7 +205,7 @@ onBeforeUnmount(stopPolling)
               <button type="button" :disabled="starting || taskActive || !selectedEpisodeId" @click="startEvidence">
                 {{ starting ? '正在提交…' : evidence?.status === 'CURRENT' ? '重新运行真实 ASR + OCR' : '运行真实 ASR + OCR' }}
               </button>
-              <button class="secondary" type="button" :disabled="loadingEvidence || taskActive || !selectedEpisodeId" @click="refreshEvidence">
+              <button class="secondary" type="button" :disabled="loadingEvidence || taskActive || !selectedEpisodeId" @click="refreshEvidence()">
                 {{ loadingEvidence ? '刷新中…' : '刷新结果' }}
               </button>
             </div>
