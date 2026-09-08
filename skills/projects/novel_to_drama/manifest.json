@@ -1,0 +1,30 @@
+{
+  "id": "project.novel_to_drama",
+  "name": "小说生成短剧",
+  "version": "1.0.0",
+  "category": "project",
+  "description": "把小说转换成短剧化剧本、统一目标世界、导演分镜并生成成片。",
+  "project_type": "NOVEL_TO_DRAMA",
+  "when_to_use": ["输入是小说、故事梗概或长篇叙事文本，希望产出短剧"],
+  "when_not_to_use": ["已经有可拍摄剧本", "输入是完成视频"],
+  "required_inputs": ["SOURCE_TEXT"],
+  "readable_artifacts": ["SOURCE_TEXT", "SOURCE_TEXT_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON", "ADAPTATION_PLAN", "TARGET_SCRIPT", "TARGET_BIBLE", "TARGET_ASSETS", "TARGET_STORYBOARD", "TARGET_AUDIO", "TIMING_PLAN", "GENERATION_SEGMENTS", "GENERATION_SELECTION"],
+  "required_capabilities": ["SOURCE_TEXT_INGEST", "SCRIPT_ANALYSIS", "STORY_RHYTHM", "NOVEL_ADAPTATION", "TARGET_SCRIPT", "TARGET_BIBLE", "TARGET_ASSETS", "STORYBOARD", "TTS", "TIMING", "VIDEO_GENERATION", "QC_SELECTION", "LIP_SYNC", "POST_PRODUCTION"],
+  "subskills": ["novel-adaptation", "story-rhythm-analysis", "character-design", "scene-design", "prop-design", "storyboard-directing", "timing-adaptation", "video-generation-qc", "post-production"],
+  "manual_path": "novel_to_drama/SKILL.md",
+  "steps": [
+    {"id":"source_input","phase":"输入","title":"导入小说","description":"登记小说或故事文本。","capabilities":["SOURCE_TEXT_INGEST"],"requires":[],"produces":["SOURCE_TEXT"]},
+    {"id":"novel_adapt","phase":"理解","title":"小说短剧化","description":"理解人物和故事，提炼 Hook、冲突、反转并规划 Episode。","capabilities":["SCRIPT_ANALYSIS","STORY_RHYTHM","NOVEL_ADAPTATION"],"requires":["SOURCE_TEXT"],"produces":["SOURCE_TEXT_SNAPSHOT","STORY_SKELETON","RHYTHM_SKELETON","ADAPTATION_PLAN"]},
+    {"id":"target_script","phase":"目标版本","title":"正式短剧剧本","description":"形成可生成的目标剧本和统一目标世界。","capabilities":["TARGET_SCRIPT","TARGET_BIBLE"],"requires":["SOURCE_TEXT_SNAPSHOT","ADAPTATION_PLAN"],"produces":["TARGET_SCRIPT","TARGET_BIBLE"]},
+    {"id":"assets_storyboard","phase":"分镜","title":"资产与导演分镜","description":"建立人物、场景、道具资产并完成目标分镜。","capabilities":["TARGET_ASSETS","STORYBOARD"],"requires":["TARGET_SCRIPT","TARGET_BIBLE"],"produces":["TARGET_ASSETS","TARGET_STORYBOARD"]},
+    {"id":"voice_timing","phase":"分镜","title":"配音与生成窗口","description":"生成目标对白音频并形成时间计划和生成片段。","capabilities":["TTS","TIMING"],"requires":["TARGET_SCRIPT","TARGET_STORYBOARD"],"produces":["TARGET_AUDIO","TIMING_PLAN","GENERATION_SEGMENTS"]},
+    {"id":"generate","phase":"生成","title":"视频生成与质检","description":"生成镜头、质检并选择正式结果。","capabilities":["VIDEO_GENERATION","QC_SELECTION"],"requires":["GENERATION_SEGMENTS"],"produces":["GENERATED_VIDEO","GENERATION_SELECTION"]},
+    {"id":"post","phase":"成片","title":"口型与后期","description":"完成目标短剧成片。","capabilities":["LIP_SYNC","POST_PRODUCTION"],"requires":["GENERATION_SELECTION","TARGET_AUDIO"],"produces":["FINAL_OUTPUT"]}
+  ],
+  "user_decision_policy": ["改编强度或结局方向不明确且会改变核心故事时询问"],
+  "auto_decision_policy": ["默认按短剧 Hook、冲突、反转、Cliffhanger 结构重组小说素材"],
+  "output_contracts": ["SOURCE_TEXT_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON", "TARGET_SCRIPT", "TARGET_BIBLE", "TARGET_STORYBOARD", "FINAL_OUTPUT"],
+  "completion_criteria": ["小说已转换为可影视化短剧结构", "目标世界与资产一致", "分镜与正式剧本一致", "最终成片来自正式选择"],
+  "failure_policy": ["核心人物或主线无法稳定提取时阻断改编", "生成失败有限重试后阻断"],
+  "next_recommended_skills": []
+}
