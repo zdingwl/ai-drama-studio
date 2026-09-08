@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-drama-studio-backend"
-version = "0.1.0"
+version = "0.2.0"
 description = "AI Drama Studio V3 backend"
 requires-python = ">=3.12"
 dependencies = [
@@ -25,6 +25,9 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["app*"]
 exclude = ["alembic*", "tests*"]
+
+[tool.setuptools.package-data]
+"app.skills" = ["manuals/*/SKILL.md"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
