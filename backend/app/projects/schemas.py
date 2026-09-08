@@ -13,6 +13,7 @@ class ProjectCreate(BaseModel):
     target_region: str = Field(min_length=1, max_length=64)
     scene_strategy: SceneStrategy | None = None
     audio_policy: AudioPolicy | None = None
+    visual_style: str | None = Field(default=None, max_length=80)
 
     @model_validator(mode="after")
     def validate_source_language(self) -> "ProjectCreate":
@@ -28,6 +29,7 @@ class ProjectUpdate(BaseModel):
     target_region: str | None = Field(default=None, min_length=1, max_length=64)
     scene_strategy: SceneStrategy | None = None
     audio_policy: AudioPolicy | None = None
+    visual_style: str | None = Field(default=None, max_length=80)
 
 
 class ProjectRead(BaseModel):
@@ -41,6 +43,10 @@ class ProjectRead(BaseModel):
     target_region: str
     scene_strategy: SceneStrategy
     audio_policy: AudioPolicy
+    visual_style: str | None
+    root_skill_id: str
+    root_skill_version: str
+    current_plan_id: str | None
     status: ProjectStatus
     workflow_revision: int
     created_at: datetime
