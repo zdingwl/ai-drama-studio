@@ -18,7 +18,8 @@ P1 新工程骨架              ✅ 完成
 Seko Skill 架构研究        ✅ 第一版完成
 P2 Project + Skill Kernel  ✅ 完成
 P3 SourceAsset + 输入系统  ✅ 完成
-P4 Task / ProviderJob      ▶ 代码已落地，CI 复验中
+P4 Task / ProviderJob      ✅ 完成
+P5 视频技术预处理          ⏸ 未开始
 ```
 
 V3 当前正式架构：
@@ -73,11 +74,25 @@ TXT / Markdown
 
 ## P4 执行底座
 
-P4 已写入 main。第一轮 CI 的 backend（compile / import / migration / 39 个 pytest）已通过；前端新增测试的 TypeScript 类型推断问题已修复，正在进行完整复验，复验全绿前不标记 P4 完成。执行底座包含持久化 Task、数据库队列 / Worker、heartbeat、checkpoint / resume、有限 retry、cancel，以及外部或计费 Provider 调用前必须先提交 ProviderJob 的硬约束。
+P4 已完成。执行底座包含持久化 Task、数据库队列 / Worker、heartbeat、checkpoint / resume、有限 retry、cancel，以及外部或计费 Provider 调用前必须先提交 ProviderJob 的硬约束。
 
 普通页面只读取并展示任务名称、进度、状态、失败原因以及可执行的重试 / 继续 / 取消操作；页面 GET 不负责启动或恢复任务。
 
-P4 不接入真实 ASR / OCR / Step 3.7 Flash / MiniMax H3 调用，这些能力必须在执行底座通过后按后续阶段逐步接入。
+Task 技术执行成功不会自动发布正式 Artifact；只有输出校验通过后，才允许发布新的 CURRENT Artifact。Task、ProviderJob、Artifact 与 ProjectExecutionPlan 继续保持独立职责。
+
+P4 自动验收代码基线：
+
+```text
+Run: 34200833593
+Head: 136e9a400938c1d403a3e0a1b05cc9231e4c05bc
+Conclusion: success
+Backend pytest: 39 passed
+Frontend unit test: 13 passed / 4 files
+```
+
+P4 使用 Provider mock 验证“先 commit ProviderJob，再远端调用”以及敏感信息不落库 / 不进日志。P4 没有接入真实 ASR / OCR / Step 3.7 Flash / MiniMax H3，因此本阶段不声称真实模型已验收。
+
+P5 Shot Boundary、P6 ASR/OCR、P7 Step 3.7 Flash 仍未开始。
 
 ## 后端启动
 
@@ -160,4 +175,4 @@ npm test
 npm run build
 ```
 
-P3 已通过包含真实 FFmpeg 视频生成 / ffprobe / decode 的 GitHub Actions V3 CI。P4 必须在 migration、pytest、frontend typecheck/test/build 全部通过后才能更新为完成。当前状态和下一步以 `docs/02_V3当前开发状态.md` 为准。
+P4 已通过 migration、pytest、frontend typecheck/test/build 的完整 GitHub Actions V3 CI。当前状态和下一步以 `docs/02_V3当前开发状态.md` 为准。
