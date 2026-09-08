@@ -1,0 +1,30 @@
+{
+  "id": "project.script_to_drama",
+  "name": "剧本生成短剧",
+  "version": "1.0.0",
+  "category": "project",
+  "description": "把已有剧本标准化为可生成的目标世界、导演分镜并生成完整短剧。",
+  "project_type": "SCRIPT_TO_DRAMA",
+  "when_to_use": ["已经有完整或半完整剧本，希望生成短剧"],
+  "when_not_to_use": ["输入主要是小说", "只需要本土化剧本文本"],
+  "required_inputs": ["SOURCE_TEXT"],
+  "readable_artifacts": ["SOURCE_TEXT", "SOURCE_TEXT_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON", "TARGET_BIBLE", "TARGET_SCRIPT", "TARGET_ASSETS", "TARGET_STORYBOARD", "TARGET_AUDIO", "TIMING_PLAN", "GENERATION_SEGMENTS", "GENERATION_SELECTION"],
+  "required_capabilities": ["SOURCE_TEXT_INGEST", "SCRIPT_ANALYSIS", "STORY_RHYTHM", "TARGET_BIBLE", "TARGET_SCRIPT", "TARGET_ASSETS", "STORYBOARD", "TTS", "TIMING", "VIDEO_GENERATION", "QC_SELECTION", "LIP_SYNC", "POST_PRODUCTION"],
+  "subskills": ["script-analysis", "story-rhythm-analysis", "character-design", "scene-design", "prop-design", "storyboard-directing", "timing-adaptation", "video-generation-qc", "post-production"],
+  "manual_path": "script_to_drama/SKILL.md",
+  "steps": [
+    {"id":"source_input","phase":"输入","title":"导入剧本","description":"登记用户已有剧本。","capabilities":["SOURCE_TEXT_INGEST"],"requires":[],"produces":["SOURCE_TEXT"]},
+    {"id":"script_analyze","phase":"理解","title":"剧本整理","description":"标准化场次、人物、对白、动作与故事节奏。","capabilities":["SCRIPT_ANALYSIS","STORY_RHYTHM"],"requires":["SOURCE_TEXT"],"produces":["SOURCE_TEXT_SNAPSHOT","STORY_SKELETON","RHYTHM_SKELETON"]},
+    {"id":"target_world","phase":"目标版本","title":"目标世界与正式剧本","description":"补足可视化信息，形成目标世界和正式剧本。","capabilities":["TARGET_BIBLE","TARGET_SCRIPT"],"requires":["SOURCE_TEXT_SNAPSHOT"],"produces":["TARGET_BIBLE","TARGET_SCRIPT"]},
+    {"id":"assets_storyboard","phase":"分镜","title":"资产与导演分镜","description":"建立目标资产并完成导演分镜。","capabilities":["TARGET_ASSETS","STORYBOARD"],"requires":["TARGET_BIBLE","TARGET_SCRIPT"],"produces":["TARGET_ASSETS","TARGET_STORYBOARD"]},
+    {"id":"voice_timing","phase":"分镜","title":"配音与生成窗口","description":"用真实对白时长形成时间计划和生成片段。","capabilities":["TTS","TIMING"],"requires":["TARGET_SCRIPT","TARGET_STORYBOARD"],"produces":["TARGET_AUDIO","TIMING_PLAN","GENERATION_SEGMENTS"]},
+    {"id":"generate","phase":"生成","title":"视频生成与质检","description":"生成镜头、质检并选择正式结果。","capabilities":["VIDEO_GENERATION","QC_SELECTION"],"requires":["GENERATION_SEGMENTS"],"produces":["GENERATED_VIDEO","GENERATION_SELECTION"]},
+    {"id":"post","phase":"成片","title":"口型与后期","description":"完成音频、口型、字幕、剪辑和成片。","capabilities":["LIP_SYNC","POST_PRODUCTION"],"requires":["GENERATION_SELECTION","TARGET_AUDIO"],"produces":["FINAL_OUTPUT"]}
+  ],
+  "user_decision_policy": ["剧本缺少关键视觉设定且多种方案会改变叙事时询问"],
+  "auto_decision_policy": ["不改变用户已有故事主线，只补足可生成信息"],
+  "output_contracts": ["SOURCE_TEXT_SNAPSHOT", "TARGET_BIBLE", "TARGET_SCRIPT", "TARGET_STORYBOARD", "FINAL_OUTPUT"],
+  "completion_criteria": ["剧本结构已标准化", "目标资产与剧本一致", "分镜可生成", "最终成片来自正式选择"],
+  "failure_policy": ["关键剧本信息冲突无法消解时阻断", "生成失败有限重试后阻断"],
+  "next_recommended_skills": []
+}
