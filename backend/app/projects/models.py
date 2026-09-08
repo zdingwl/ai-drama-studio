@@ -26,6 +26,10 @@ class Project(Base):
     audio_policy: Mapped[AudioPolicy] = mapped_column(
         Enum(AudioPolicy, native_enum=False, length=32), nullable=False
     )
+    visual_style: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    root_skill_id: Mapped[str] = mapped_column(String(96), nullable=False)
+    root_skill_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    current_plan_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     status: Mapped[ProjectStatus] = mapped_column(
         Enum(ProjectStatus, native_enum=False, length=16), nullable=False, default=ProjectStatus.ACTIVE
     )
