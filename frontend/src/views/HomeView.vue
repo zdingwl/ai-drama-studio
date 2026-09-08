@@ -58,6 +58,31 @@ interface ProjectPlan {
   steps: PlanStep[]
 }
 
+interface SourceAsset {
+  id: string
+  original_filename: string
+  mime_type: string
+  size_bytes: number
+}
+
+interface Episode {
+  id: string
+  source_asset: SourceAsset
+  episode_order: number
+  duration_us: number
+  width: number
+  height: number
+  has_audio: boolean
+}
+
+interface SourceDocument {
+  id: string
+  source_asset: SourceAsset
+  revision: number
+  document_format: 'TXT' | 'MARKDOWN'
+  char_count: number
+}
+
 const projectLabels: Record<ProjectType, string> = {
   REPLICA: '复刻',
   REDRAW: '重绘',
@@ -74,12 +99,20 @@ const statusLabels: Record<PlanStatus, string> = {
   WAITING_CAPABILITY: '等待后续能力接入',
 }
 
+const videoProjectTypes: ProjectType[] = ['REPLICA', 'REDRAW', 'TRANSLATION']
+
 const skills = ref<RootSkill[]>([])
 const projects = ref<Project[]>([])
 const selectedProjectId = ref<string | null>(null)
 const plan = ref<ProjectPlan | null>(null)
+const episodes = ref<Episode[]>([])
+const sourceDocument = ref<SourceDocument | null>(null)
 const loading = ref(true)
+const sourceLoading = ref(false)
 const saving = ref(false)
+const uploading = ref(false)
+const reordering = ref(false)
+const draggedEpisodeId = ref<string | null>(null)
 const message = ref('')
 
 const form = reactive({
@@ -93,13 +126,18 @@ const form = reactive({
   visual_style: 'SOURCE_LIKE',
 })
 
-const isVideoProject = computed(() =>
-  ['REPLICA', 'REDRAW', 'TRANSLATION'].includes(form.project_type),
-)
-
+const isVideoProject = computed(() => videoProjectTypes.includes(form.project_type))
 const selectedProject = computed(() =>
   projects.value.find((item) => item.id === selectedProjectId.value) ?? null,
 )
+const selectedIsVideoProject = computed(() =>
+  selectedProject.value ? videoProjectTypes.includes(selectedProject.value.project_type) : false,
+)
+const sourceTitle = computed(() => {
+  if (!selectedProject.value) return '原始素材'
+  if (selectedIsVideoProject.value) return '原片剧集'
+  return selectedProject.value.project_type === 'NOVEL_TO_DRAMA' ? '原始小说' : '原始剧本'
+})
 
 function chooseProjectType(projectType: ProjectType) {
   form.project_type = projectType
@@ -111,6 +149,14 @@ function chooseProjectType(projectType: ProjectType) {
     form.scene_strategy = 'LOCALIZE'
   }
   form.audio_policy = projectType === 'REDRAW' ? 'KEEP_SOURCE_AUDIO' : 'REGENERATE_AUDIO'
+}
+
+function humanDuration(durationUs: number) {
+  const seconds = durationUs / 1_000_000
+  if (seconds < 60) return `${seconds.toFixed(1)} 秒`
+  const minutes = Math.floor(seconds / 60)
+  const remaining = Math.round(seconds % 60)
+  return `${minutes}分${remaining}秒`
 }
 
 async function loadPlan(projectId: string) {
@@ -125,10 +171,31 @@ async function loadPlan(projectId: string) {
   }
 }
 
+async function loadSources(project: Project) {
+  sourceLoading.value = true
+  episodes.value = []
+  sourceDocument.value = null
+  try {
+    if (videoProjectTypes.includes(project.project_type)) {
+      episodes.value = await apiRequest<Episode[]>(`/projects/${project.id}/sources/episodes`)
+      return
+    }
+    try {
+      sourceDocument.value = await apiRequest<SourceDocument>(`/projects/${project.id}/sources/document`)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return
+      throw error
+    }
+  } finally {
+    sourceLoading.value = false
+  }
+}
+
 async function selectProject(projectId: string) {
   selectedProjectId.value = projectId
   message.value = ''
-  await loadPlan(projectId)
+  const project = projects.value.find((item) => item.id === projectId)
+  await Promise.all([loadPlan(projectId), project ? loadSources(project) : Promise.resolve()])
 }
 
 async function loadWorkspace() {
@@ -155,9 +222,14 @@ async function compilePlan(projectId: string) {
     method: 'POST',
   })
   const project = projects.value.find((item) => item.id === projectId)
-  if (project) {
-    project.current_plan_id = plan.value.id
-  }
+  if (project) project.current_plan_id = plan.value.id
+  message.value = '执行计划已根据当前素材重新生成。'
+}
+
+function markSourceChanged() {
+  plan.value = null
+  if (selectedProject.value) selectedProject.value.current_plan_id = null
+  message.value = '原始素材已更新，请重新生成执行计划。'
 }
 
 async function createProject() {
@@ -184,13 +256,90 @@ async function createProject() {
     })
     projects.value = [project, ...projects.value]
     selectedProjectId.value = project.id
+    episodes.value = []
+    sourceDocument.value = null
     await compilePlan(project.id)
     form.name = ''
-    message.value = '项目已创建，执行计划已生成。'
+    message.value = '项目已创建。现在可以导入原始素材。'
   } catch (error) {
     message.value = error instanceof Error ? error.message : '项目创建失败'
   } finally {
     saving.value = false
+  }
+}
+
+async function uploadVideos(event: Event) {
+  const input = event.target as HTMLInputElement
+  if (!selectedProject.value || !input.files?.length) return
+  uploading.value = true
+  message.value = ''
+  try {
+    const data = new FormData()
+    Array.from(input.files).forEach((file) => data.append('files', file))
+    await apiRequest<Episode[]>(`/projects/${selectedProject.value.id}/sources/videos`, {
+      method: 'POST',
+      body: data,
+    })
+    episodes.value = await apiRequest<Episode[]>(`/projects/${selectedProject.value.id}/sources/episodes`)
+    markSourceChanged()
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '原片上传失败'
+  } finally {
+    uploading.value = false
+    input.value = ''
+  }
+}
+
+async function uploadDocument(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!selectedProject.value || !file) return
+  uploading.value = true
+  message.value = ''
+  try {
+    const data = new FormData()
+    data.append('file', file)
+    sourceDocument.value = await apiRequest<SourceDocument>(
+      `/projects/${selectedProject.value.id}/sources/document`,
+      { method: 'POST', body: data },
+    )
+    markSourceChanged()
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '文本上传失败'
+  } finally {
+    uploading.value = false
+    input.value = ''
+  }
+}
+
+function startEpisodeDrag(episodeId: string) {
+  draggedEpisodeId.value = episodeId
+}
+
+async function dropEpisode(targetEpisodeId: string) {
+  if (!selectedProject.value || !draggedEpisodeId.value || reordering.value) return
+  const sourceId = draggedEpisodeId.value
+  draggedEpisodeId.value = null
+  if (sourceId === targetEpisodeId) return
+
+  const ids = episodes.value.map((item) => item.id)
+  const sourceIndex = ids.indexOf(sourceId)
+  const targetIndex = ids.indexOf(targetEpisodeId)
+  if (sourceIndex < 0 || targetIndex < 0) return
+  const [moved] = ids.splice(sourceIndex, 1)
+  ids.splice(targetIndex, 0, moved)
+
+  reordering.value = true
+  try {
+    episodes.value = await apiRequest<Episode[]>(
+      `/projects/${selectedProject.value.id}/sources/episodes/reorder`,
+      { method: 'POST', body: JSON.stringify({ episode_ids: ids }) },
+    )
+    markSourceChanged()
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '剧集排序失败'
+  } finally {
+    reordering.value = false
   }
 }
 
@@ -327,42 +476,108 @@ onMounted(loadWorkspace)
             <strong>{{ project.name }}</strong>
             <small>{{ projectLabels[project.project_type] }} · {{ project.target_language }} / {{ project.target_region }}</small>
           </span>
-          <small>计划 r{{ project.workflow_revision }}</small>
+          <small>流程 r{{ project.workflow_revision }}</small>
         </button>
       </div>
 
-      <div class="panel">
-        <div class="section-heading plan-heading">
+      <div class="panel source-panel">
+        <div class="section-heading source-heading">
           <div>
-            <p class="eyebrow">当前执行计划</p>
-            <h2>{{ selectedProject?.name ?? '选择一个项目' }}</h2>
+            <p class="eyebrow">原始素材</p>
+            <h2>{{ selectedProject ? sourceTitle : '选择一个项目' }}</h2>
           </div>
-          <button
-            v-if="selectedProject && !plan"
-            class="secondary"
-            type="button"
-            @click="compilePlan(selectedProject.id)"
-          >
-            生成执行计划
-          </button>
+          <label v-if="selectedProject && selectedIsVideoProject" class="upload-button">
+            <span>{{ uploading ? '正在导入…' : '上传原片' }}</span>
+            <input
+              class="visually-hidden"
+              type="file"
+              multiple
+              accept="video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm,.avi,.m4v"
+              :disabled="uploading"
+              @change="uploadVideos"
+            />
+          </label>
+          <label v-else-if="selectedProject" class="upload-button">
+            <span>{{ uploading ? '正在导入…' : sourceDocument ? '替换文本' : '上传文本' }}</span>
+            <input
+              class="visually-hidden"
+              type="file"
+              accept=".txt,.md,.markdown,text/plain,text/markdown"
+              :disabled="uploading"
+              @change="uploadDocument"
+            />
+          </label>
         </div>
 
-        <p v-if="selectedProject && !plan" class="empty">当前没有可用计划。项目配置或正式资产变化后，需要显式重新生成。</p>
-        <p v-else-if="!selectedProject" class="empty">从左侧选择项目查看计划。</p>
+        <p v-if="!selectedProject" class="empty">从左侧选择项目后导入素材。</p>
+        <p v-else-if="sourceLoading" class="muted">正在读取原始素材…</p>
 
-        <ol v-if="plan" class="plan-list">
-          <li v-for="step in plan.steps" :key="step.id" class="plan-step">
-            <div class="step-index">{{ String(plan.steps.indexOf(step) + 1).padStart(2, '0') }}</div>
-            <div class="step-body">
-              <div class="step-title-row">
-                <strong>{{ step.title }}</strong>
-                <span class="status-pill" :data-status="step.status">{{ statusLabels[step.status] }}</span>
-              </div>
-              <p>{{ step.description }}</p>
+        <template v-else-if="selectedProject && selectedIsVideoProject">
+          <p v-if="episodes.length === 0" class="empty">还没有原片。可以一次选择多集，上传顺序就是初始剧集顺序。</p>
+          <p v-else class="source-help">拖动剧集可以调整顺序。这里只展示你真正需要确认的集数、文件和时长。</p>
+          <ol v-if="episodes.length" class="episode-list">
+            <li
+              v-for="episode in episodes"
+              :key="episode.id"
+              class="episode-row"
+              draggable="true"
+              @dragstart="startEpisodeDrag(episode.id)"
+              @dragover.prevent
+              @drop.prevent="dropEpisode(episode.id)"
+            >
+              <span class="drag-handle" title="拖动排序">⋮⋮</span>
+              <span class="episode-number">第 {{ episode.episode_order }} 集</span>
+              <span class="episode-file">{{ episode.source_asset.original_filename }}</span>
+              <span class="episode-duration">{{ humanDuration(episode.duration_us) }}</span>
+            </li>
+          </ol>
+          <p v-if="reordering" class="muted">正在保存剧集顺序…</p>
+        </template>
+
+        <template v-else-if="selectedProject">
+          <div v-if="sourceDocument" class="document-card">
+            <div>
+              <strong>{{ sourceDocument.source_asset.original_filename }}</strong>
+              <p>当前版本 r{{ sourceDocument.revision }} · {{ sourceDocument.char_count.toLocaleString() }} 字符</p>
             </div>
-          </li>
-        </ol>
+            <span>{{ sourceDocument.document_format === 'MARKDOWN' ? 'Markdown' : 'TXT' }}</span>
+          </div>
+          <p v-else class="empty">还没有{{ selectedProject.project_type === 'NOVEL_TO_DRAMA' ? '小说' : '剧本' }}文本。当前支持 TXT 和 Markdown。</p>
+        </template>
       </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-heading plan-heading">
+        <div>
+          <p class="eyebrow">当前执行计划</p>
+          <h2>{{ selectedProject?.name ?? '选择一个项目' }}</h2>
+        </div>
+        <button
+          v-if="selectedProject && !plan"
+          class="secondary"
+          type="button"
+          @click="compilePlan(selectedProject.id)"
+        >
+          重新生成执行计划
+        </button>
+      </div>
+
+      <p v-if="selectedProject && !plan" class="empty">当前没有可用计划。项目配置或原始素材变化后，需要显式重新生成。</p>
+      <p v-else-if="!selectedProject" class="empty">选择项目后查看执行计划。</p>
+
+      <ol v-if="plan" class="plan-list">
+        <li v-for="(step, index) in plan.steps" :key="step.id" class="plan-step">
+          <div class="step-index">{{ String(index + 1).padStart(2, '0') }}</div>
+          <div class="step-body">
+            <div class="step-title-row">
+              <strong>{{ step.title }}</strong>
+              <span class="status-pill" :data-status="step.status">{{ statusLabels[step.status] }}</span>
+            </div>
+            <p>{{ step.description }}</p>
+          </div>
+        </li>
+      </ol>
     </section>
   </div>
 </template>
