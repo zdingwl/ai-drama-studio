@@ -252,12 +252,13 @@ Task 必须逐步支持：
 P0 仓库重建                ✅
 P1 新工程骨架              ✅
 P2 Project + Skill Kernel  ✅
-P3 SourceAsset + 输入系统  当前阶段
+P3 SourceAsset + 输入系统  ✅
+P4 Task / ProviderJob      当前阶段
 ```
 
-P3 只做真实 SourceAsset / Episode / SourceDocument 输入、校验、排序与 Artifact Graph 绑定。
+P4 先建立显式 Command、Task、queue/worker、heartbeat/checkpoint/retry/cancel/resume，以及“外部 / 计费 Provider 请求前必须先持久化 ProviderJob”的硬约束。
 
-P3 完成前不要提前进入 ASR / OCR / 整集理解 / 逐镜拉片 / H3 业务开发。
+P4 完成前不要接真实 ASR / OCR / Step 3.7 Flash / H3 Provider 请求，避免后续出现无法追踪、无法恢复或绕过 ProviderJob 的模型调用。
 
 ---
 
