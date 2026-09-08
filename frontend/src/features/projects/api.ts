@@ -1,6 +1,6 @@
 import { apiRequest } from '@/lib/api'
 
-import type { ProjectCreatePayload, ProjectExecutionPlan, ProjectRead } from './types'
+import type { ProjectCreatePayload, ProjectExecutionPlan, ProjectRead, TaskRead } from './types'
 
 export function listProjects(): Promise<ProjectRead[]> {
   return apiRequest<ProjectRead[]>('/projects')
@@ -19,4 +19,26 @@ export function getProject(projectId: string): Promise<ProjectRead> {
 
 export function getProjectPlan(projectId: string): Promise<ProjectExecutionPlan> {
   return apiRequest<ProjectExecutionPlan>(`/projects/${projectId}/plan`)
+}
+
+export function listProjectTasks(projectId: string): Promise<TaskRead[]> {
+  return apiRequest<TaskRead[]>(`/projects/${projectId}/tasks`)
+}
+
+export function cancelProjectTask(projectId: string, taskId: string): Promise<TaskRead> {
+  return apiRequest<TaskRead>(`/projects/${projectId}/tasks/${taskId}/commands/cancel`, {
+    method: 'POST',
+  })
+}
+
+export function retryProjectTask(projectId: string, taskId: string): Promise<TaskRead> {
+  return apiRequest<TaskRead>(`/projects/${projectId}/tasks/${taskId}/commands/retry`, {
+    method: 'POST',
+  })
+}
+
+export function resumeProjectTask(projectId: string, taskId: string): Promise<TaskRead> {
+  return apiRequest<TaskRead>(`/projects/${projectId}/tasks/${taskId}/commands/resume`, {
+    method: 'POST',
+  })
 }
