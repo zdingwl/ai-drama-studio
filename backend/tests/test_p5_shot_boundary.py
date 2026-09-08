@@ -2,7 +2,9 @@ import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import pytest
 
+import app.preprocessing.detector as detector_module
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.preprocessing.detector import ShotRange
@@ -139,6 +141,62 @@ def test_p5_real_video_builds_ordered_shots_thumbnails_clips_and_formal_artifact
         and edge["relation_type"] == "DERIVED_FROM"
         for edge in graph["edges"]
     )
+
+
+def test_p5_detector_real_video_uses_pyav_without_opencv_fallback(tmp_path: Path, monkeypatch) -> None:
+    video_path = tmp_path / "pyav-primary.mp4"
+    _make_cut_video(video_path)
+
+    def unexpected_opencv(*args, **kwargs):
+        raise AssertionError("OpenCV fallback should not be needed for this real video")
+
+    monkeypatch.setattr(detector_module, "VideoStreamCv2", unexpected_opencv)
+    progress: list[float] = []
+    ranges = detector_module.detect_shot_ranges(
+        video_path,
+        duration_us=3_250_000,
+        on_progress=progress.append,
+    )
+
+    assert len(ranges) >= 3
+    assert ranges[0].start_us == 0
+    assert ranges[-1].end_us == 3_250_000
+    assert progress
+    assert progress[-1] == 1.0
+
+
+def test_p5_detector_falls_back_to_opencv_when_pyav_fails(tmp_path: Path, monkeypatch) -> None:
+    video_path = tmp_path / "opencv-fallback.mp4"
+    _make_cut_video(video_path)
+
+    def unavailable_pyav(*args, **kwargs):
+        raise RuntimeError("simulated PyAV open failure")
+
+    monkeypatch.setattr(detector_module, "VideoStreamAv", unavailable_pyav)
+    ranges = detector_module.detect_shot_ranges(video_path, duration_us=3_250_000)
+
+    assert len(ranges) >= 3
+    assert ranges[0].start_us == 0
+    assert ranges[-1].end_us == 3_250_000
+
+
+def test_p5_detector_progress_abort_does_not_start_fallback(tmp_path: Path, monkeypatch) -> None:
+    video_path = tmp_path / "cancel.mp4"
+    _make_cut_video(video_path)
+
+    def unexpected_opencv(*args, **kwargs):
+        raise AssertionError("cancellation must not start a decoder fallback")
+
+    def cancelled(_: float) -> None:
+        raise RuntimeError("cancelled-by-task")
+
+    monkeypatch.setattr(detector_module, "VideoStreamCv2", unexpected_opencv)
+    with pytest.raises(RuntimeError, match="cancelled-by-task"):
+        detector_module.detect_shot_ranges(
+            video_path,
+            duration_us=3_250_000,
+            on_progress=cancelled,
+        )
 
 
 def test_p5_source_video_change_stales_old_boundary_artifact_and_episode_result(
