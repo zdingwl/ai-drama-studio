@@ -2,7 +2,7 @@ import { apiRequest } from '@/lib/api'
 
 import type { ProjectCreatePayload, ProjectExecutionPlan, ProjectRead, TaskRead } from './types'
 
-export type P4AcceptanceScenario = 'success' | 'retry' | 'resume'
+export type P4AcceptanceScenario = 'success' | 'retry' | 'resume' | 'dedupe'
 
 export function listProjects(): Promise<ProjectRead[]> {
   return apiRequest<ProjectRead[]>('/projects')
