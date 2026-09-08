@@ -73,6 +73,43 @@ const boundary = {
   shots: [],
 }
 
+const currentBoundary = {
+  ...boundary,
+  status: 'CURRENT',
+  revision: 1,
+  artifact_revision: 1,
+  shot_count: 3,
+  shots: [
+    {
+      id: 'shot-1',
+      shot_number: 1,
+      start_us: 0,
+      end_us: 800_000,
+      duration_us: 800_000,
+      thumbnail_url: '/thumb-1.jpg',
+      reference_clip_url: '/clip-1.mp4',
+    },
+    {
+      id: 'shot-2',
+      shot_number: 2,
+      start_us: 800_000,
+      end_us: 1_900_000,
+      duration_us: 1_100_000,
+      thumbnail_url: '/thumb-2.jpg',
+      reference_clip_url: '/clip-2.mp4',
+    },
+    {
+      id: 'shot-3',
+      shot_number: 3,
+      start_us: 1_900_000,
+      end_us: 3_000_000,
+      duration_us: 1_100_000,
+      thumbnail_url: '/thumb-3.jpg',
+      reference_clip_url: '/clip-3.mp4',
+    },
+  ],
+}
+
 const queuedTask = {
   id: 'task-p5',
   project_id: 'project-p5',
@@ -146,6 +183,39 @@ describe('ProjectWorkspaceView P5 shot boundary', () => {
     expect(wrapper.text()).not.toContain('fingerprint')
     expect(wrapper.text()).not.toContain('ProviderJob')
     expect(wrapper.text()).not.toContain('adaptive_threshold')
+    wrapper.unmount()
+  })
+
+  it('keeps reference clips compact and opens only the selected shot on demand', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/v3/projects/project-p5') && method === 'GET') return response(project)
+      if (url.endsWith('/api/v3/projects/project-p5/plan') && method === 'GET') return response(plan)
+      if (url.endsWith('/api/v3/projects/project-p5/tasks') && method === 'GET') return response([])
+      if (url.endsWith('/api/v3/projects/project-p5/sources/episodes') && method === 'GET') return response([episode])
+      if (url.endsWith('/api/v3/projects/project-p5/episodes/episode-1/shot-boundary') && method === 'GET') return response(currentBoundary)
+      throw new Error(`unexpected request: ${method} ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = await mountWorkspace()
+
+    expect(wrapper.findAll('.shot-card')).toHaveLength(3)
+    expect(wrapper.find('.shot-grid.is-portrait').exists()).toBe(true)
+    expect(wrapper.findAll('video')).toHaveLength(0)
+    expect(wrapper.findAll('.preview-button')).toHaveLength(3)
+
+    await wrapper.findAll('.preview-button')[1]?.trigger('click')
+    await flushPromises()
+
+    const video = wrapper.find('.preview-overlay video')
+    expect(video.exists()).toBe(true)
+    expect(video.attributes('src')).toBe('/clip-2.mp4')
+    expect(wrapper.findAll('video')).toHaveLength(1)
+
+    await wrapper.find('.preview-header button').trigger('click')
+    expect(wrapper.findAll('video')).toHaveLength(0)
     wrapper.unmount()
   })
 })
