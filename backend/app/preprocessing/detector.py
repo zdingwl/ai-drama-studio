@@ -52,6 +52,12 @@ class ShotRange:
         return self.end_us - self.start_us
 
 
+class _ProgressCallbackError(Exception):
+    def __init__(self, original: Exception) -> None:
+        super().__init__(str(original))
+        self.original = original
+
+
 def _timecode_us(timecode) -> int:
     return int(round(float(timecode.seconds) * 1_000_000))
 
@@ -114,6 +120,13 @@ def _open_backend(path: Path, backend: str):
     raise ValueError(f"unsupported backend: {backend}")
 
 
+def _emit_progress(callback: Callable[[float], None], ratio: float) -> None:
+    try:
+        callback(ratio)
+    except Exception as exc:
+        raise _ProgressCallbackError(exc) from exc
+
+
 def _scan_with_backend(
     path: Path,
     *,
@@ -157,7 +170,7 @@ def _scan_with_backend(
             percent = int(ratio * 100)
             if percent > last_progress_percent:
                 last_progress_percent = percent
-                on_progress(ratio)
+                _emit_progress(on_progress, ratio)
 
     if last_timecode is None:
         raise RuntimeError("video backend returned no decoded frames")
@@ -189,6 +202,8 @@ def detect_shot_ranges(
                 on_progress=on_progress,
             )
             break
+        except _ProgressCallbackError as exc:
+            raise exc.original
         except Exception as exc:
             backend_errors.append(exc)
             logger.warning(
