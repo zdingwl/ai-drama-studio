@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/ai_drama_studio.db"
     artifact_root: Path = Field(default=Path("./artifacts"))
     timezone: str = "UTC"
+    ffmpeg_binary: str = "ffmpeg"
+    ffprobe_binary: str = "ffprobe"
+    upload_chunk_bytes: int = 1024 * 1024
+    max_text_source_bytes: int = 32 * 1024 * 1024
+    max_video_source_bytes: int = 20 * 1024 * 1024 * 1024
+    media_probe_timeout_seconds: int = 60
+    media_decode_timeout_seconds: int = 120
 
     def ensure_runtime_directories(self) -> None:
         self.artifact_root.mkdir(parents=True, exist_ok=True)
