@@ -140,15 +140,28 @@ async function verifyDuplicateProtection(): Promise<void> {
   taskErrorMessage.value = ''
   const key = newAcceptanceKey('dedupe')
   try {
+    const beforeTasks = await listProjectTasks(projectId.value)
+    const beforeTaskIds = new Set(beforeTasks.map((task) => task.id))
     const [first, second] = await Promise.all([
-      startP4AcceptanceTask(projectId.value, 'success', key),
-      startP4AcceptanceTask(projectId.value, 'success', key),
+      startP4AcceptanceTask(projectId.value, 'dedupe', key),
+      startP4AcceptanceTask(projectId.value, 'dedupe', key),
     ])
-    replaceTask(first)
-    p4AcceptanceMessage.value = first.id === second.id
-      ? '重复提交保护：通过。两次相同提交只产生了 1 个任务。'
-      : '重复提交保护：未通过。两次相同提交产生了不同任务。'
-    startTaskPolling()
+    const afterTasks = await listProjectTasks(projectId.value)
+    tasks.value = afterTasks
+    const newlyCreatedTasks = afterTasks.filter((task) => !beforeTaskIds.has(task.id))
+    const passed = first.id === second.id
+      && newlyCreatedTasks.length === 1
+      && newlyCreatedTasks[0]?.id === first.id
+
+    if (passed) {
+      p4AcceptanceMessage.value = '重复提交保护：通过。本次两次相同提交只新增了 1 个“防重复提交”任务。'
+    } else {
+      taskErrorMessage.value = `重复提交保护：未通过。本次测试新增了 ${newlyCreatedTasks.length} 个任务。`
+    }
+
+    if (afterTasks.some((task) => task.status === 'queued' || task.status === 'running')) {
+      startTaskPolling()
+    }
   } catch (error) {
     taskErrorMessage.value = error instanceof Error ? error.message : '重复提交保护测试失败'
   } finally {
