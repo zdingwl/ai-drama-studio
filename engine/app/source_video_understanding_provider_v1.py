@@ -1,15 +1,15 @@
-"""Workflow V2 source-video understanding Provider boundary.
+"""Workflow V2 per-Shot source visual understanding Provider boundary.
 
-Module 3 business code depends on ``SourceVideoUnderstandingProvider`` rather than a concrete
-model class. The current production implementation is Qwen3.8-27B, while the accepted Breakdown
-Fast Grounded visual pipeline remains the evidence/runtime implementation underneath.
+Whole-Episode story/character/scene/prop understanding is now an explicit upstream stage.  This
+provider consumes the materialized Gemini Source Bible and refines exact Shot visual/directing facts
+with local Qwen3.8-27B.  It no longer silently falls back to a smaller model.
 
 Hard boundaries:
 - visual understanding emits anonymous VLM Evidence only;
 - ASR/OCR remain the canonical source-dialogue evidence owners;
 - D-ORCA remains the Speaker Attribution provider;
 - raw model output never creates Final Character/Scene/Prop or Target-side data;
-- every result records the provider/model profile and a deterministic input fingerprint.
+- every result records both source-video and Source-Bible fingerprints.
 """
 from __future__ import annotations
 
@@ -24,21 +24,19 @@ from engine.app.breakdown_p2_vlm_continuity_v1 import (
     Qwen3VLSemanticProvider as _FastGroundedQwenProvider,
 )
 
-SOURCE_VIDEO_PROVIDER_PROFILE = "source-video-understanding-qwen38-v1"
+SOURCE_VIDEO_PROVIDER_PROFILE = "source-video-understanding-qwen38-with-source-bible-v2"
 QWEN38_PROVIDER_NAME = "qwen38-video-understanding"
 DEFAULT_QWEN38_MODEL = "Qwen/Qwen3.8-27B"
 CANONICAL_DIALOGUE_POLICY = "asr-ocr-owned-visual-provider-cannot-overwrite-v1"
 QWEN38_REASONING_POLICY = "non-thinking-structured-visual-json-v1"
+SOURCE_BIBLE_ENV = "AI_DRAMA_EPISODE_INTELLIGENCE_PATH"
 
 
 @runtime_checkable
 class SourceVideoUnderstandingProvider(Protocol):
-    """Business-facing source visual-understanding contract for module 3."""
-
     component: str
 
     def analyze(self, context: p2.P2RunContext) -> p2.P2ProviderResult:
-        """Return traceable source-visual evidence without writing business truth directly."""
         ...
 
 
@@ -46,18 +44,18 @@ def source_video_input_fingerprint(
     context: p2.P2RunContext,
     *,
     model_name: str,
+    episode_intelligence_fingerprint: str | None = None,
     provider_profile: str = SOURCE_VIDEO_PROVIDER_PROFILE,
 ) -> str:
-    """Fingerprint immutable source anchors and model profile consumed by visual inference."""
-
     payload = {
-        "schema_version": "source-video-understanding-input-v1",
+        "schema_version": "source-video-understanding-input-v2",
         "provider_profile": provider_profile,
         "model": model_name,
         "project_id": context.project_id,
         "episode_id": context.episode_id,
         "source_language": context.source_language,
         "source_shot_revision_id": context.source_shot_revision_id,
+        "episode_intelligence_fingerprint": episode_intelligence_fingerprint,
         "shots": [
             {
                 "revision_item_id": shot.revision_item_id,
@@ -74,16 +72,7 @@ def source_video_input_fingerprint(
 
 
 class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
-    """Current per-Shot directing/visual provider backed by local Qwen3.8-27B.
-
-    Whole-Episode story/character/scene/prop understanding happens before this provider and is
-    injected into the runner as Source Bible context by the P2 orchestrator. Qwen3.8 therefore no
-    longer owns first-pass story discovery; it refines exact Shot facts against known global context.
-
-    The underlying Fast Grounded implementation keeps exact frozen Shot frames authoritative. Its
-    semantic normalizer is whitelist-only, so dialogue/source_text fields returned by the model are
-    discarded before a ``VLM_OUTPUT`` can be persisted. Canonical source dialogue remains ASR/OCR-owned.
-    """
+    """Second-pass Shot provider backed by local Qwen3.8-27B and Gemini Source Bible context."""
 
     component = "VLM"
 
@@ -121,6 +110,8 @@ class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
             kwargs["runner_script"] = str(
                 repo_root / "scripts" / "run_breakdown_vlm_fast_grounded_qwen38.py"
             )
+        self._episode_intelligence_path: str | None = None
+        self._episode_intelligence_fingerprint: str | None = None
         super().__init__(
             *args,
             model_name=resolved_model,
@@ -128,6 +119,13 @@ class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
             python_executable=str(resolved_python),
             **kwargs,
         )
+
+    def set_episode_intelligence_artifact(self, path: str, fingerprint: str) -> None:
+        resolved = Path(path)
+        if not resolved.is_file():
+            raise FileNotFoundError("Gemini Episode Intelligence artifact missing")
+        self._episode_intelligence_path = str(resolved.resolve())
+        self._episode_intelligence_fingerprint = str(fingerprint).strip()
 
     def _runtime_missing(self, config):  # type: ignore[no-untyped-def]
         if not self._uses_production_runner:
@@ -141,9 +139,32 @@ class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
             missing.append("Qwen3.8-27B checkpoint")
         elif not (config.model_path / "config.json").is_file():
             missing.append("Qwen3.8-27B checkpoint config.json")
+        if not self._episode_intelligence_path or not Path(self._episode_intelligence_path).is_file():
+            missing.append("Gemini Episode Intelligence Source Bible")
         return tuple(missing)
 
+    def _subprocess_env(self, config):  # type: ignore[no-untyped-def]
+        env = super()._subprocess_env(config)
+        if not self._episode_intelligence_path:
+            raise RuntimeError("Qwen3.8 per-Shot analysis requires Gemini Episode Intelligence")
+        env[SOURCE_BIBLE_ENV] = self._episode_intelligence_path
+        return env
+
     def analyze(self, context: p2.P2RunContext) -> p2.P2ProviderResult:
+        if self._uses_production_runner and (
+            not self._episode_intelligence_path or not self._episode_intelligence_fingerprint
+        ):
+            return p2.P2ProviderResult(
+                component="VLM",
+                provider=QWEN38_PROVIDER_NAME,
+                model=self.model_name,
+                status="NOT_CONFIGURED",
+                warnings=("Gemini Episode Intelligence 未准备好，禁止逐镜语义拉片",),
+                metadata={
+                    "provider_profile": SOURCE_VIDEO_PROVIDER_PROFILE,
+                    "canonical_dialogue_policy": CANONICAL_DIALOGUE_POLICY,
+                },
+            )
         result = super().analyze(context)
         metadata = dict(result.metadata)
         metadata.update({
@@ -152,8 +173,10 @@ class Qwen38VideoUnderstandingProvider(_FastGroundedQwenProvider):
             "input_fingerprint": source_video_input_fingerprint(
                 context,
                 model_name=self.model_name,
+                episode_intelligence_fingerprint=self._episode_intelligence_fingerprint,
             ),
             "source_shot_revision_id": context.source_shot_revision_id,
+            "episode_intelligence_fingerprint": self._episode_intelligence_fingerprint,
             "canonical_dialogue_policy": CANONICAL_DIALOGUE_POLICY,
             "reasoning_policy": QWEN38_REASONING_POLICY,
         })
@@ -174,6 +197,7 @@ __all__ = [
     "QWEN38_PROVIDER_NAME",
     "QWEN38_REASONING_POLICY",
     "Qwen38VideoUnderstandingProvider",
+    "SOURCE_BIBLE_ENV",
     "SOURCE_VIDEO_PROVIDER_PROFILE",
     "SourceVideoUnderstandingProvider",
     "source_video_input_fingerprint",
