@@ -5,19 +5,47 @@ AI 短剧生产工作台，当前处于 V3 从零重建阶段。
 正式规划：
 
 1. `docs/00_V3产品与系统详细规划.md`
-2. `docs/01_V3开发阶段与验收清单.md`
-3. `docs/02_V3当前开发状态.md`
-4. `AGENTS.md`
+2. `docs/03_Seko3.0_Skill架构逆向分析.md`
+3. `docs/01_V3开发阶段与验收清单.md`
+4. `docs/02_V3当前开发状态.md`
+5. `AGENTS.md`
 
 ## 当前阶段
 
 ```text
-P0 仓库重建基线      ✅ 完成
-P1 新工程骨架        ✅ 完成
-P2 六类项目与工作流  ▶ 下一阶段
+P0 仓库重建基线          ✅ 完成
+P1 新工程骨架            ✅ 完成
+Seko Skill 架构研究      ✅ 第一版完成
+P2 Project + Skill Kernel ▶ 下一阶段
 ```
 
-P1 已建立全新的 FastAPI 后端、Vue 3 前端和 GitHub Actions CI，不依赖旧仓库业务模块。P2 开始实现 Project、六种 `project_type` 和由后端驱动的独立工作流图。
+V3 当前正式架构：
+
+```text
+Project Type
+→ Root Project Skill
+→ Agent / Plan Compiler
+→ ProjectExecutionPlan
+→ Professional Skills
+→ Provider / Tools
+→ Typed Artifacts
+→ Artifact Graph
+```
+
+六种项目类型仍然是真实后端枚举，但不再分别写死六套 stage graph。每种项目绑定自己的 Root Skill，由 Skill 声明输入、专业能力、正式输出和完成标准，再编译成持久化执行计划。
+
+第一版不会为了模仿 Seko 先开发复杂无限画布；后端先把正式 Artifact Graph 做正确，未来画布只是它的可视化。
+
+## 六种项目
+
+```text
+REPLICA              复刻
+REDRAW               重绘
+TRANSLATION          翻译
+NOVEL_TO_DRAMA       小说生成短剧
+SCRIPT_TO_DRAMA      剧本生成短剧
+SCRIPT_LOCALIZATION  剧本本土化
+```
 
 ## 后端启动
 
@@ -80,4 +108,4 @@ npm test
 npm run build
 ```
 
-最新 P1 代码已通过 GitHub Actions V3 CI。当前验收记录见 `docs/02_V3当前开发状态.md`。
+P1 工程骨架已经通过 GitHub Actions V3 CI。当前状态和下一步只以 `docs/02_V3当前开发状态.md` 为准。
