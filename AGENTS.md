@@ -249,12 +249,15 @@ Task 必须逐步支持：
 ## 10. 当前开发顺序
 
 ```text
-P0 仓库重建              ✅
-P1 新工程骨架            ✅
-P2 Project + Skill Kernel 当前阶段
+P0 仓库重建                ✅
+P1 新工程骨架              ✅
+P2 Project + Skill Kernel  ✅
+P3 SourceAsset + 输入系统  当前阶段
 ```
 
-P2 完成前不要提前进入视频模型、拉片或 H3 业务开发。
+P3 只做真实 SourceAsset / Episode / SourceDocument 输入、校验、排序与 Artifact Graph 绑定。
+
+P3 完成前不要提前进入 ASR / OCR / 整集理解 / 逐镜拉片 / H3 业务开发。
 
 ---
 
