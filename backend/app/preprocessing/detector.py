@@ -1,18 +1,24 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from statistics import median
-from threading import Event, Thread
 
-from scenedetect import SceneManager, open_video
+import cv2
+from scenedetect.backends.opencv import VideoStreamCv2
+from scenedetect.backends.pyav import VideoStreamAv
 from scenedetect.detectors import AdaptiveDetector, ThresholdDetector
+from scenedetect.scene_manager import compute_downscale_factor
 
 from app.core.errors import AppError
 
 
-DETECTOR_PROFILE_VERSION = "p5-short-drama-v1"
+logger = logging.getLogger(__name__)
+
+DETECTOR_PROFILE_VERSION = "p5-short-drama-v2"
 DETECTOR_PROFILE = {
     "version": DETECTOR_PROFILE_VERSION,
+    "decode_backends": ["pyav", "opencv"],
     "adaptive": {
         "adaptive_threshold": 3.0,
         "min_content_val": 15.0,
@@ -77,6 +83,92 @@ def _cluster_cut_candidates(candidates: list[int], *, duration_us: int) -> list[
     return filtered
 
 
+def _build_detectors() -> list:
+    return [
+        AdaptiveDetector(
+            adaptive_threshold=3.0,
+            min_content_val=15.0,
+            window_width=2,
+            min_scene_len="0.12s",
+        ),
+        ThresholdDetector(
+            threshold=14.0,
+            min_scene_len="0.12s",
+            fade_bias=0.0,
+            method=ThresholdDetector.Method.FLOOR,
+        ),
+        ThresholdDetector(
+            threshold=242.0,
+            min_scene_len="0.12s",
+            fade_bias=0.0,
+            method=ThresholdDetector.Method.CEILING,
+        ),
+    ]
+
+
+def _open_backend(path: Path, backend: str):
+    if backend == "pyav":
+        return VideoStreamAv(str(path), threading_mode="AUTO")
+    if backend == "opencv":
+        return VideoStreamCv2(str(path), max_decode_attempts=20)
+    raise ValueError(f"unsupported backend: {backend}")
+
+
+def _scan_with_backend(
+    path: Path,
+    *,
+    backend: str,
+    duration_us: int,
+    on_progress: Callable[[float], None] | None,
+) -> list[int]:
+    video = _open_backend(path, backend)
+    detectors = _build_detectors()
+    candidates: list[int] = []
+    last_timecode = None
+    downscale_factor: int | None = None
+    last_progress_percent = -1
+
+    while True:
+        frame = video.read()
+        if frame is False:
+            break
+        timecode = video.position
+        last_timecode = timecode
+
+        if downscale_factor is None:
+            downscale_factor = compute_downscale_factor(int(frame.shape[1]))
+        detection_frame = frame
+        if downscale_factor > 1:
+            detection_frame = cv2.resize(
+                frame,
+                (
+                    max(1, int(frame.shape[1]) // downscale_factor),
+                    max(1, int(frame.shape[0]) // downscale_factor),
+                ),
+                interpolation=cv2.INTER_LINEAR,
+            )
+
+        for detector in detectors:
+            for cut in detector.process_frame(timecode, detection_frame):
+                candidates.append(_timecode_us(cut))
+
+        if on_progress is not None:
+            ratio = max(0.0, min(0.99, _timecode_us(timecode) / duration_us))
+            percent = int(ratio * 100)
+            if percent > last_progress_percent:
+                last_progress_percent = percent
+                on_progress(ratio)
+
+    if last_timecode is None:
+        raise RuntimeError("video backend returned no decoded frames")
+
+    for detector in detectors:
+        for cut in detector.post_process(last_timecode):
+            candidates.append(_timecode_us(cut))
+
+    return candidates
+
+
 def detect_shot_ranges(
     path: Path,
     *,
@@ -86,75 +178,30 @@ def detect_shot_ranges(
     if duration_us <= 0:
         raise AppError("SHOT_BOUNDARY_DURATION_INVALID", "视频时长无效，无法建立镜头边界", status_code=422)
 
-    try:
-        video = open_video(str(path), backend="opencv")
-    except Exception as exc:
-        raise AppError("SHOT_BOUNDARY_VIDEO_OPEN_FAILED", "镜头检测无法打开视频", status_code=422) from exc
+    candidates: list[int] | None = None
+    backend_errors: list[Exception] = []
+    for backend in ("pyav", "opencv"):
+        try:
+            candidates = _scan_with_backend(
+                path,
+                backend=backend,
+                duration_us=duration_us,
+                on_progress=on_progress,
+            )
+            break
+        except Exception as exc:
+            backend_errors.append(exc)
+            logger.warning(
+                "P5 shot detection backend failed; trying fallback",
+                extra={"backend": backend, "error_type": type(exc).__name__},
+            )
 
-    manager = SceneManager()
-    manager.auto_downscale = True
-    manager.add_detector(
-        AdaptiveDetector(
-            adaptive_threshold=3.0,
-            min_content_val=15.0,
-            window_width=2,
-            min_scene_len="0.12s",
-        )
-    )
-    manager.add_detector(
-        ThresholdDetector(
-            threshold=14.0,
-            min_scene_len="0.12s",
-            fade_bias=0.0,
-            method=ThresholdDetector.Method.FLOOR,
-        )
-    )
-    manager.add_detector(
-        ThresholdDetector(
-            threshold=242.0,
-            min_scene_len="0.12s",
-            fade_bias=0.0,
-            method=ThresholdDetector.Method.CEILING,
-        )
-    )
-
-    monitor_done = Event()
-    monitor_errors: list[Exception] = []
-
-    def monitor() -> None:
-        if on_progress is None:
-            return
-        while not monitor_done.wait(0.75):
-            try:
-                position_us = _timecode_us(video.position)
-                ratio = max(0.0, min(0.99, position_us / duration_us))
-                on_progress(ratio)
-            except Exception as exc:
-                monitor_errors.append(exc)
-                manager.stop()
-                return
-
-    monitor_thread = Thread(target=monitor, name="p5-shot-detect-progress", daemon=True)
-    monitor_thread.start()
-    detection_error: Exception | None = None
-    try:
-        manager.detect_scenes(video=video, show_progress=False)
-    except Exception as exc:
-        detection_error = exc
-    finally:
-        monitor_done.set()
-        monitor_thread.join(timeout=2.0)
-
-    if monitor_errors:
-        raise monitor_errors[0]
-    if detection_error is not None:
-        raise AppError("SHOT_BOUNDARY_DETECTION_FAILED", "镜头边界检测失败", status_code=422) from detection_error
+    if candidates is None:
+        raise AppError("SHOT_BOUNDARY_DETECTION_FAILED", "镜头边界检测失败", status_code=422) from backend_errors[-1]
 
     if on_progress is not None:
         on_progress(1.0)
 
-    scenes = manager.get_scene_list(start_in_scene=True)
-    candidates = [_timecode_us(scene_start) for scene_start, _ in scenes[1:]]
     cuts = _cluster_cut_candidates(candidates, duration_us=duration_us)
     boundaries = [0, *cuts, duration_us]
     ranges = [ShotRange(start_us=start, end_us=end) for start, end in zip(boundaries, boundaries[1:])]
