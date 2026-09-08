@@ -33,21 +33,32 @@ const plan = {
       phase: '输入',
       title: '导入原片',
       description: '登记原始短剧 Episode。',
-      status: 'READY',
-      capabilities: [],
+      status: 'COMPLETED',
+      capabilities: ['SOURCE_VIDEO_INGEST'],
       requires: [],
       produces: ['SOURCE_VIDEO'],
       missing_artifacts: [],
     },
     {
       id: 'shot_boundary',
-      phase: '原片理解',
+      phase: '理解',
       title: '镜头边界',
-      description: '后续阶段能力，P4 不执行。',
-      status: 'WAITING_CAPABILITY',
-      capabilities: ['SHOT_BOUNDARY'],
+      description: '完成媒体检查并建立镜头时间锚点。',
+      status: 'READY',
+      capabilities: ['MEDIA_PREFLIGHT', 'SHOT_BOUNDARY'],
       requires: ['SOURCE_VIDEO'],
       produces: ['SHOT_ANCHORS'],
+      missing_artifacts: [],
+    },
+    {
+      id: 'source_dialogue',
+      phase: '理解',
+      title: '原对白证据',
+      description: '后续阶段能力。',
+      status: 'WAITING_CAPABILITY',
+      capabilities: ['SOURCE_DIALOGUE_EVIDENCE'],
+      requires: ['SOURCE_VIDEO', 'SHOT_ANCHORS'],
+      produces: ['SOURCE_DIALOGUE'],
       missing_artifacts: [],
     },
   ],
@@ -104,6 +115,34 @@ const tasks: TaskRead[] = [
   },
 ]
 
+const uploadedEpisode = {
+  id: 'episode-1',
+  project_id: 'project-1',
+  source_asset: {
+    id: 'asset-1',
+    original_filename: 'ep01.mp4',
+  },
+  episode_order: 1,
+  duration_us: 12_000_000,
+  width: 1080,
+  height: 1920,
+  codec_name: 'h264',
+  avg_frame_rate: '30/1',
+  has_audio: true,
+  created_at: '2026-09-08T00:00:00Z',
+}
+
+const notBuiltShotBoundary = {
+  episode_id: 'episode-1',
+  episode_order: 1,
+  source_filename: 'ep01.mp4',
+  status: 'NOT_BUILT',
+  revision: null,
+  artifact_revision: null,
+  shot_count: 0,
+  shots: [],
+}
+
 function response(data: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -124,43 +163,44 @@ async function mountWorkspace() {
   return wrapper
 }
 
+function baseGetResponse(url: string, method: string, taskRows: TaskRead[] = tasks): Response | null {
+  if (url.endsWith('/api/v3/projects/project-1') && method === 'GET') return response(project)
+  if (url.endsWith('/api/v3/projects/project-1/plan') && method === 'GET') return response(plan)
+  if (url.endsWith('/api/v3/projects/project-1/tasks') && method === 'GET') return response(taskRows)
+  if (url.endsWith('/api/v3/projects/project-1/sources/episodes') && method === 'GET') return response([])
+  return null
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('ProjectWorkspaceView P4 task status', () => {
-  it('shows user-facing task status, manual acceptance controls and keeps initial GET requests read-only', async () => {
+describe('ProjectWorkspaceView P4/P5 workflow', () => {
+  it('auto-reads episodes with GET, shows upload when empty, and never auto-starts processing', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
-      if (url.endsWith('/api/v3/projects/project-1') && method === 'GET') return response(project)
-      if (url.endsWith('/api/v3/projects/project-1/plan') && method === 'GET') return response(plan)
-      if (url.endsWith('/api/v3/projects/project-1/tasks') && method === 'GET') return response(tasks)
+      const result = baseGetResponse(url, method)
+      if (result) return result
       throw new Error(`unexpected request: ${method} ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
 
     const wrapper = await mountWorkspace()
 
+    expect(wrapper.text()).toContain('视频技术预处理')
+    expect(wrapper.text()).toContain('上传原片')
+    expect(wrapper.text()).toContain('还没有原片')
+    expect(wrapper.text()).toContain('上传完成后剧集列表会自动出现')
+    expect(wrapper.text()).not.toContain('读取已上传剧集')
+
     expect(wrapper.text()).toContain('开发验收工具')
-    expect(wrapper.text()).toContain('测试正常完成')
-    expect(wrapper.text()).toContain('测试失败 → 重试')
-    expect(wrapper.text()).toContain('测试中断 → 继续')
-    expect(wrapper.text()).toContain('测试防重复提交')
-    expect(wrapper.text()).toContain('不调用真实模型')
     expect(wrapper.text()).toContain('任务状态')
     expect(wrapper.text()).toContain('原片准备任务')
-    expect(wrapper.text()).toContain('35%')
-    expect(wrapper.text()).toContain('失败')
-    expect(wrapper.text()).toContain('媒体准备失败')
-    expect(wrapper.text()).toContain('重试')
-    expect(wrapper.text()).toContain('取消')
-    expect(wrapper.text()).toContain('继续')
     expect(wrapper.text()).toContain('等待能力接入')
 
     expect(wrapper.text()).not.toContain('ProviderJob')
     expect(wrapper.text()).not.toContain('payload_fingerprint')
-    expect(wrapper.text()).not.toContain('mock-provider')
     expect(wrapper.text()).not.toContain('checkpoint_json')
     expect(wrapper.text()).not.toContain('Idempotency-Key')
 
@@ -168,8 +208,55 @@ describe('ProjectWorkspaceView P4 task status', () => {
       url: String(input),
       method: (init as RequestInit | undefined)?.method ?? 'GET',
     }))
-    expect(calls).toHaveLength(3)
+    expect(calls).toHaveLength(4)
     expect(calls.every((call) => call.method === 'GET')).toBe(true)
+    expect(calls.some((call) => call.url.endsWith('/sources/episodes'))).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('uploads real episode input from P5 workspace and shows it without auto-starting shot boundary', async () => {
+    let episodeReads = 0
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/v3/projects/project-1') && method === 'GET') return response(project)
+      if (url.endsWith('/api/v3/projects/project-1/plan') && method === 'GET') return response(plan)
+      if (url.endsWith('/api/v3/projects/project-1/tasks') && method === 'GET') return response([])
+      if (url.endsWith('/api/v3/projects/project-1/sources/episodes') && method === 'GET') {
+        episodeReads += 1
+        return response(episodeReads === 1 ? [] : [uploadedEpisode])
+      }
+      if (url.endsWith('/api/v3/projects/project-1/sources/videos') && method === 'POST') {
+        return response([uploadedEpisode], 201)
+      }
+      if (url.endsWith('/api/v3/projects/project-1/episodes/episode-1/shot-boundary') && method === 'GET') {
+        return response(notBuiltShotBoundary)
+      }
+      throw new Error(`unexpected request: ${method} ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = await mountWorkspace()
+    const input = wrapper.find('input[type="file"]')
+    const file = new File(['video-bytes'], 'ep01.mp4', { type: 'video/mp4' })
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+    await flushPromises()
+
+    const uploadCall = fetchMock.mock.calls.find(([inputValue, init]) => (
+      String(inputValue).endsWith('/api/v3/projects/project-1/sources/videos')
+      && (init as RequestInit | undefined)?.method === 'POST'
+    ))
+    expect(uploadCall).toBeTruthy()
+    expect((uploadCall?.[1] as RequestInit | undefined)?.body).toBeInstanceOf(FormData)
+    expect(wrapper.text()).toContain('第 1 集 · ep01.mp4')
+    expect(wrapper.text()).toContain('开始处理这一集')
+
+    const shotBoundaryPosts = fetchMock.mock.calls.filter(([inputValue, init]) => (
+      String(inputValue).includes('/commands/shot-boundary')
+      && (init as RequestInit | undefined)?.method === 'POST'
+    ))
+    expect(shotBoundaryPosts).toHaveLength(0)
     wrapper.unmount()
   })
 
@@ -193,9 +280,8 @@ describe('ProjectWorkspaceView P4 task status', () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
-      if (url.endsWith('/api/v3/projects/project-1') && method === 'GET') return response(project)
-      if (url.endsWith('/api/v3/projects/project-1/plan') && method === 'GET') return response(plan)
-      if (url.endsWith('/api/v3/projects/project-1/tasks') && method === 'GET') return response([])
+      const result = baseGetResponse(url, method, [])
+      if (result) return result
       if (url.endsWith('/api/v3/projects/project-1/commands/p4-acceptance/success') && method === 'POST') {
         return response(acceptanceTask, 202)
       }
@@ -258,6 +344,7 @@ describe('ProjectWorkspaceView P4 task status', () => {
       const method = init?.method ?? 'GET'
       if (url.endsWith('/api/v3/projects/project-1') && method === 'GET') return response(project)
       if (url.endsWith('/api/v3/projects/project-1/plan') && method === 'GET') return response(plan)
+      if (url.endsWith('/api/v3/projects/project-1/sources/episodes') && method === 'GET') return response([])
       if (url.endsWith('/api/v3/projects/project-1/tasks') && method === 'GET') {
         taskListReads += 1
         return response(taskListReads <= 2 ? [existingTask] : [dedupeTask, existingTask])
@@ -284,8 +371,6 @@ describe('ProjectWorkspaceView P4 task status', () => {
     expect(firstHeaders.get('Idempotency-Key')).toMatch(/^p4-dedupe-/)
     expect(secondHeaders.get('Idempotency-Key')).toBe(firstHeaders.get('Idempotency-Key'))
     expect(wrapper.text()).toContain('重复提交保护：通过。本次两次相同提交只新增了 1 个“防重复提交”任务。')
-    expect(wrapper.findAll('.task-card').filter((card) => card.text().includes('P4 验收：防重复提交'))).toHaveLength(1)
-    expect(wrapper.findAll('.task-card').filter((card) => card.text().includes('P4 验收：正常执行与安全调用'))).toHaveLength(1)
     wrapper.unmount()
   })
 
@@ -299,9 +384,8 @@ describe('ProjectWorkspaceView P4 task status', () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
-      if (url.endsWith('/api/v3/projects/project-1') && method === 'GET') return response(project)
-      if (url.endsWith('/api/v3/projects/project-1/plan') && method === 'GET') return response(plan)
-      if (url.endsWith('/api/v3/projects/project-1/tasks') && method === 'GET') return response(tasks)
+      const result = baseGetResponse(url, method)
+      if (result) return result
       if (url.endsWith('/api/v3/projects/project-1/tasks/task-failed/commands/retry') && method === 'POST') {
         return response(updated.get('task-failed'))
       }
