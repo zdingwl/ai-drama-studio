@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from app.projects.enums import ProjectType
 
@@ -32,6 +32,11 @@ class Capability(StrEnum):
     LIP_SYNC = "LIP_SYNC"
     POST_PRODUCTION = "POST_PRODUCTION"
     EXPORT_SCRIPT = "EXPORT_SCRIPT"
+
+
+class CapabilityAvailability(StrEnum):
+    PLANNED = "PLANNED"
+    AVAILABLE = "AVAILABLE"
 
 
 class ArtifactType(StrEnum):
@@ -66,26 +71,68 @@ class CapabilityDefinition(BaseModel):
     title: str
     description: str
     category: str
+    availability: CapabilityAvailability = CapabilityAvailability.PLANNED
 
 
 class SkillStepDefinition(BaseModel):
-    id: str
-    phase: str
-    title: str
-    description: str
+    id: str = Field(min_length=1, max_length=96)
+    phase: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=800)
     capabilities: tuple[Capability, ...]
     requires: tuple[ArtifactType, ...] = ()
     produces: tuple[ArtifactType, ...] = ()
 
 
-class RootSkillDefinition(BaseModel):
-    id: str
+class SkillManifest(BaseModel):
+    id: str = Field(min_length=1, max_length=96)
+    name: str = Field(min_length=1, max_length=160)
+    version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
+    category: str = Field(min_length=1, max_length=64)
+    description: str = Field(min_length=1, max_length=800)
     project_type: ProjectType
-    title: str
-    purpose: str
-    manual_path: str
+    when_to_use: tuple[str, ...]
+    when_not_to_use: tuple[str, ...]
+    required_inputs: tuple[ArtifactType, ...]
+    readable_artifacts: tuple[ArtifactType, ...]
+    required_capabilities: tuple[Capability, ...]
+    subskills: tuple[str, ...]
+    manual_path: str = Field(min_length=1, max_length=240)
     steps: tuple[SkillStepDefinition, ...]
+    user_decision_policy: tuple[str, ...]
+    auto_decision_policy: tuple[str, ...]
+    output_contracts: tuple[ArtifactType, ...]
+    completion_criteria: tuple[str, ...]
+    failure_policy: tuple[str, ...]
+    next_recommended_skills: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def validate_manifest(self) -> "SkillManifest":
+        step_ids = [step.id for step in self.steps]
+        if len(step_ids) != len(set(step_ids)):
+            raise ValueError("Skill step id 不能重复")
+
+        declared = set(self.required_capabilities)
+        used = {capability for step in self.steps for capability in step.capabilities}
+        missing = used - declared
+        if missing:
+            raise ValueError(f"Skill step 使用了未声明 capability: {sorted(item.value for item in missing)}")
+
+        if not self.steps:
+            raise ValueError("Root Skill 必须至少包含一个执行步骤")
+        return self
+
+    @property
+    def title(self) -> str:
+        return self.name
+
+    @property
+    def purpose(self) -> str:
+        return self.description
 
 
-class RootSkillDetail(RootSkillDefinition):
+RootSkillDefinition = SkillManifest
+
+
+class RootSkillDetail(SkillManifest):
     manual: str
