@@ -86,7 +86,7 @@ def test_video_batch_upload_preserves_order_and_binds_source_artifact(
     assert client.get(f"/api/v3/projects/{project['id']}/plan").status_code == 404
     compiled = client.post(f"/api/v3/projects/{project['id']}/commands/compile-plan").json()
     assert compiled["steps"][0]["status"] == "COMPLETED"
-    assert compiled["steps"][1]["status"] == "WAITING_CAPABILITY"
+    assert compiled["steps"][1]["status"] == "READY"
 
 
 def test_video_upload_is_idempotent_and_raw_file_is_immutable(

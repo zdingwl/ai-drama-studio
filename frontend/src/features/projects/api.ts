@@ -1,6 +1,13 @@
 import { apiRequest } from '@/lib/api'
 
-import type { ProjectCreatePayload, ProjectExecutionPlan, ProjectRead, TaskRead } from './types'
+import type {
+  EpisodeRead,
+  EpisodeShotBoundaryRead,
+  ProjectCreatePayload,
+  ProjectExecutionPlan,
+  ProjectRead,
+  TaskRead,
+} from './types'
 
 export type P4AcceptanceScenario = 'success' | 'retry' | 'resume' | 'dedupe'
 
@@ -21,6 +28,27 @@ export function getProject(projectId: string): Promise<ProjectRead> {
 
 export function getProjectPlan(projectId: string): Promise<ProjectExecutionPlan> {
   return apiRequest<ProjectExecutionPlan>(`/projects/${projectId}/plan`)
+}
+
+export function listProjectEpisodes(projectId: string): Promise<EpisodeRead[]> {
+  return apiRequest<EpisodeRead[]>(`/projects/${projectId}/sources/episodes`)
+}
+
+export function getEpisodeShotBoundary(projectId: string, episodeId: string): Promise<EpisodeShotBoundaryRead> {
+  return apiRequest<EpisodeShotBoundaryRead>(`/projects/${projectId}/episodes/${episodeId}/shot-boundary`)
+}
+
+export function startEpisodeShotBoundary(
+  projectId: string,
+  episodeId: string,
+  idempotencyKey: string,
+): Promise<TaskRead> {
+  return apiRequest<TaskRead>(`/projects/${projectId}/episodes/${episodeId}/commands/shot-boundary`, {
+    method: 'POST',
+    headers: {
+      'Idempotency-Key': idempotencyKey,
+    },
+  })
 }
 
 export function listProjectTasks(projectId: string): Promise<TaskRead[]> {

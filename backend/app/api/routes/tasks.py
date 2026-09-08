@@ -4,6 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, status
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
+from app.preprocessing.service import is_p5_shot_boundary_task, run_p5_shot_boundary_task
 from app.workflow.p4_acceptance import (
     P4AcceptanceScenario,
     build_p4_acceptance_payload,
@@ -33,17 +34,16 @@ def _request_session_factory(db: Session) -> sessionmaker[Session]:
     )
 
 
-def _schedule_acceptance_if_needed(
+def _schedule_task_if_needed(
     background_tasks: BackgroundTasks,
     db: Session,
     task,
 ) -> None:
+    session_factory = _request_session_factory(db)
     if is_p4_acceptance_task(task):
-        background_tasks.add_task(
-            run_p4_acceptance_task,
-            _request_session_factory(db),
-            task.id,
-        )
+        background_tasks.add_task(run_p4_acceptance_task, session_factory, task.id)
+    elif is_p5_shot_boundary_task(task):
+        background_tasks.add_task(run_p5_shot_boundary_task, session_factory, task.id)
 
 
 @router.post(
@@ -89,7 +89,7 @@ def create_p4_acceptance_task_route(
         payload=payload,
         idempotency_key=idempotency_key,
     )
-    _schedule_acceptance_if_needed(background_tasks, db, task)
+    _schedule_task_if_needed(background_tasks, db, task)
     return task_to_read(task)
 
 
@@ -116,7 +116,7 @@ def retry_task_route(
     db: Session = Depends(get_db),
 ) -> TaskRead:
     task = retry_task(db, project_id, task_id)
-    _schedule_acceptance_if_needed(background_tasks, db, task)
+    _schedule_task_if_needed(background_tasks, db, task)
     return task_to_read(task)
 
 
@@ -128,5 +128,5 @@ def resume_task_route(
     db: Session = Depends(get_db),
 ) -> TaskRead:
     task = resume_task(db, project_id, task_id)
-    _schedule_acceptance_if_needed(background_tasks, db, task)
+    _schedule_task_if_needed(background_tasks, db, task)
     return task_to_read(task)

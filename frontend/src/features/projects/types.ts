@@ -10,6 +10,7 @@ export type SceneStrategy = 'KEEP' | 'LOCALIZE' | 'MIXED'
 export type AudioPolicy = 'KEEP_SOURCE_AUDIO' | 'REGENERATE_AUDIO'
 export type PlanStepStatus = 'COMPLETED' | 'READY' | 'BLOCKED_DEPENDENCY' | 'WAITING_CAPABILITY'
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+export type ShotBoundaryResultStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
 
 export interface ProjectTypeOption {
   value: ProjectType
@@ -121,6 +122,44 @@ export interface TaskRead {
   created_at: string
   started_at: string | null
   finished_at: string | null
+}
+
+export interface EpisodeRead {
+  id: string
+  project_id: string
+  source_asset: {
+    id: string
+    original_filename: string
+  }
+  episode_order: number
+  duration_us: number
+  width: number
+  height: number
+  codec_name: string
+  avg_frame_rate: string
+  has_audio: boolean
+  created_at: string
+}
+
+export interface ShotAnchorRead {
+  id: string
+  shot_number: number
+  start_us: number
+  end_us: number
+  duration_us: number
+  thumbnail_url: string
+  reference_clip_url: string
+}
+
+export interface EpisodeShotBoundaryRead {
+  episode_id: string
+  episode_order: number
+  source_filename: string
+  status: ShotBoundaryResultStatus
+  revision: number | null
+  artifact_revision: number | null
+  shot_count: number
+  shots: ShotAnchorRead[]
 }
 
 export function projectTypeLabel(type: ProjectType): string {

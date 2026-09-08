@@ -42,6 +42,22 @@ def _run_media_command(args: list[str], *, timeout_seconds: int, code: str, mess
     return result
 
 
+def run_ffmpeg(
+    args: list[str],
+    *,
+    timeout_seconds: int,
+    code: str,
+    message: str,
+) -> subprocess.CompletedProcess[str]:
+    settings = get_settings()
+    return _run_media_command(
+        [settings.ffmpeg_binary, *args],
+        timeout_seconds=timeout_seconds,
+        code=code,
+        message=message,
+    )
+
+
 def probe_video(path: Path) -> VideoProbeResult:
     settings = get_settings()
     result = _run_media_command(
@@ -111,4 +127,28 @@ def decode_preflight(path: Path) -> None:
         timeout_seconds=settings.media_decode_timeout_seconds,
         code="VIDEO_DECODE_FAILED",
         message="视频无法正常解码",
+    )
+
+
+def decode_full_video(path: Path, *, timeout_seconds: int | None = None) -> None:
+    settings = get_settings()
+    _run_media_command(
+        [
+            settings.ffmpeg_binary,
+            "-v",
+            "error",
+            "-xerror",
+            "-i",
+            str(path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0?",
+            "-f",
+            "null",
+            "-",
+        ],
+        timeout_seconds=timeout_seconds or settings.media_decode_timeout_seconds,
+        code="VIDEO_FULL_DECODE_FAILED",
+        message="视频参考片段无法完整解码",
     )
