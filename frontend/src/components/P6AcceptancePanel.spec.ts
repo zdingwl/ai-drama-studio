@@ -72,6 +72,19 @@ const evidence = {
   }],
 }
 
+const notBuiltEvidence = {
+  ...evidence,
+  status: 'NOT_BUILT' as const,
+  revision: null,
+  artifact_revision: null,
+  dialogue_count: 0,
+  visual_text_count: 0,
+  raw_asr_segment_count: 0,
+  raw_ocr_observation_count: 0,
+  dialogue: [],
+  visual_text: [],
+}
+
 async function mountPanel() {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -85,6 +98,7 @@ async function mountPanel() {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.clearAllMocks()
 })
 
@@ -107,18 +121,7 @@ describe('P6AcceptancePanel', () => {
   it('starts a real source-evidence command for the selected full Episode', async () => {
     vi.mocked(projectApi.getProject).mockResolvedValue(project)
     vi.mocked(projectApi.listProjectEpisodes).mockResolvedValue([episode])
-    vi.mocked(projectApi.getEpisodeSourceEvidence).mockResolvedValue({
-      ...evidence,
-      status: 'NOT_BUILT',
-      revision: null,
-      artifact_revision: null,
-      dialogue_count: 0,
-      visual_text_count: 0,
-      raw_asr_segment_count: 0,
-      raw_ocr_observation_count: 0,
-      dialogue: [],
-      visual_text: [],
-    })
+    vi.mocked(projectApi.getEpisodeSourceEvidence).mockResolvedValue(notBuiltEvidence)
     vi.mocked(projectApi.startEpisodeSourceEvidence).mockResolvedValue({
       id: 'task-1',
       project_id: 'project-1',
@@ -149,6 +152,26 @@ describe('P6AcceptancePanel', () => {
       expect.stringContaining('p6-acceptance-episode-1-'),
     )
     expect(wrapper.text()).toContain('第 1 集：对白与画面文字证据')
+    wrapper.unmount()
+  })
+
+  it('auto-refreshes NOT_BUILT evidence so a task retried from the shared task card becomes visible', async () => {
+    vi.useFakeTimers()
+    vi.mocked(projectApi.getProject).mockResolvedValue(project)
+    vi.mocked(projectApi.listProjectEpisodes).mockResolvedValue([episode])
+    vi.mocked(projectApi.getEpisodeSourceEvidence)
+      .mockResolvedValueOnce(notBuiltEvidence)
+      .mockResolvedValue(evidence)
+
+    const wrapper = await mountPanel()
+    expect(wrapper.text()).toContain('NOT_BUILT · 尚未提取')
+
+    await vi.advanceTimersByTimeAsync(2600)
+    await flushPromises()
+
+    expect(projectApi.getEpisodeSourceEvidence).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('CURRENT · 当前有效')
+    expect(wrapper.text()).toContain('你好，世界。')
     wrapper.unmount()
   })
 })
