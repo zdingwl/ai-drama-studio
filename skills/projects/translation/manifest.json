@@ -1,0 +1,28 @@
+{
+  "id": "project.translation",
+  "name": "翻译短剧",
+  "version": "1.0.0",
+  "category": "project",
+  "description": "尽量保持原始画面不变，重建目标语言对白、时长、口型和字幕。",
+  "project_type": "TRANSLATION",
+  "when_to_use": ["已有成片，只希望做目标语言版本"],
+  "when_not_to_use": ["希望换演员或大规模重绘画面", "希望改写故事"],
+  "required_inputs": ["SOURCE_VIDEO"],
+  "readable_artifacts": ["SOURCE_VIDEO", "SHOT_ANCHORS", "SOURCE_DIALOGUE", "ADAPTATION_PLAN", "TARGET_SCRIPT", "TARGET_AUDIO", "TIMING_PLAN"],
+  "required_capabilities": ["SOURCE_VIDEO_INGEST", "MEDIA_PREFLIGHT", "SHOT_BOUNDARY", "SOURCE_DIALOGUE_EVIDENCE", "LOCALIZATION", "TARGET_SCRIPT", "TTS", "TIMING", "LIP_SYNC", "POST_PRODUCTION"],
+  "subskills": ["speaker-attribution", "dialogue-localization", "timing-adaptation", "post-production"],
+  "manual_path": "translation/SKILL.md",
+  "steps": [
+    {"id":"source_input","phase":"输入","title":"导入原片","description":"登记需要翻译的 Episode。","capabilities":["SOURCE_VIDEO_INGEST"],"requires":[],"produces":["SOURCE_VIDEO"]},
+    {"id":"dialogue","phase":"理解","title":"对白与说话信息","description":"获取带时间证据的原对白与镜头时间锚点。","capabilities":["MEDIA_PREFLIGHT","SHOT_BOUNDARY","SOURCE_DIALOGUE_EVIDENCE"],"requires":["SOURCE_VIDEO"],"produces":["SHOT_ANCHORS","SOURCE_DIALOGUE"]},
+    {"id":"target_dialogue","phase":"目标版本","title":"翻译与本土化对白","description":"保留原意图和情绪，生成目标语言正式对白。","capabilities":["LOCALIZATION","TARGET_SCRIPT"],"requires":["SOURCE_DIALOGUE"],"produces":["ADAPTATION_PLAN","TARGET_SCRIPT"]},
+    {"id":"voice_timing","phase":"分镜","title":"配音与时间适配","description":"以真实 TTS 时长决定压缩对白、延长、裁剪或反应镜头承接。","capabilities":["TTS","TIMING"],"requires":["TARGET_SCRIPT","SHOT_ANCHORS"],"produces":["TARGET_AUDIO","TIMING_PLAN"]},
+    {"id":"post","phase":"成片","title":"口型、字幕与合成","description":"对可见说话人做口型同步，重建目标语言音轨并输出。","capabilities":["LIP_SYNC","POST_PRODUCTION"],"requires":["TARGET_AUDIO","TIMING_PLAN","SOURCE_VIDEO"],"produces":["FINAL_OUTPUT"]}
+  ],
+  "user_decision_policy": ["原意存在多种文化解释且会改变剧情含义时询问"],
+  "auto_decision_policy": ["优先压缩目标对白而不是硬拉长镜头"],
+  "output_contracts": ["TARGET_SCRIPT", "TARGET_AUDIO", "TIMING_PLAN", "FINAL_OUTPUT"],
+  "completion_criteria": ["目标对白语义和情绪成立", "真实语音时长已进入 Timing", "最终音画可播放"],
+  "failure_policy": ["说话人或对白证据不足时阻断对应句段", "不得把原始源音频直接当目标语言正式音轨"],
+  "next_recommended_skills": []
+}
