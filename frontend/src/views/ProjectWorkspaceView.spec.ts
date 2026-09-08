@@ -193,13 +193,13 @@ describe('ProjectWorkspaceView P4 task status', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const wrapper = await mountWorkspace()
-    const buttons = () => wrapper.findAll('button')
+    const findTaskCard = (taskName: string) => wrapper.findAll('.task-card').find((card) => card.text().includes(taskName))
 
-    await buttons().find((button) => button.text() === '重试')?.trigger('click')
+    await findTaskCard('原片准备任务')?.findAll('button').find((button) => button.text() === '重试')?.trigger('click')
     await flushPromises()
-    await buttons().find((button) => button.text() === '取消')?.trigger('click')
+    await findTaskCard('执行中任务')?.findAll('button').find((button) => button.text() === '取消')?.trigger('click')
     await flushPromises()
-    await buttons().find((button) => button.text() === '继续')?.trigger('click')
+    await findTaskCard('可继续任务')?.findAll('button').find((button) => button.text() === '继续')?.trigger('click')
     await flushPromises()
 
     const postCalls = fetchMock.mock.calls
