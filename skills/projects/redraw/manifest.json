@@ -14,8 +14,10 @@
   "manual_path": "redraw/SKILL.md",
   "steps": [
     {"id":"source_input","phase":"输入","title":"导入原片","description":"登记需要重绘的 Episode。","capabilities":["SOURCE_VIDEO_INGEST"],"requires":[],"produces":["SOURCE_VIDEO"]},
-    {"id":"shot_boundary","phase":"理解","title":"镜头边界","description":"完成媒体检查并建立镜头时间锚点、缩略图和参考片段，不做剧情理解。","capabilities":["MEDIA_PREFLIGHT","SHOT_BOUNDARY"],"requires":["SOURCE_VIDEO"],"produces":["SHOT_ANCHORS"]},
-    {"id":"source_understand","phase":"理解","title":"原片结构理解","description":"在镜头锚点基础上建立对白证据并理解人物、场景和镜头结构。","capabilities":["SOURCE_DIALOGUE_EVIDENCE","EPISODE_UNDERSTANDING","SHOT_BREAKDOWN"],"requires":["SOURCE_VIDEO","SHOT_ANCHORS"],"produces":["SOURCE_DIALOGUE","SOURCE_BIBLE","SOURCE_SHOT_FACTS"]},
+    {"id":"shot_boundary","phase":"理解","title":"镜头技术锚点","description":"从完整 Episode 建立镜头时间锚点、缩略图和参考片段；这是内部技术证据，不等于内容理解。","capabilities":["MEDIA_PREFLIGHT","SHOT_BOUNDARY"],"requires":["SOURCE_VIDEO"],"produces":["SHOT_ANCHORS"]},
+    {"id":"source_evidence","phase":"理解","title":"原片对白与文字证据","description":"直接读取完整 Episode 的连续音轨和画面时间轴，提取带时间证据的对白与画面文字；可与镜头技术锚点并行。","capabilities":["SOURCE_DIALOGUE_EVIDENCE"],"requires":["SOURCE_VIDEO"],"produces":["SOURCE_DIALOGUE"]},
+    {"id":"source_understand","phase":"理解","title":"整集原片理解","description":"结合完整 Episode 与原片证据建立整集人物、场景、事件和叙事结构理解，不先把原片切碎再拼剧情。","capabilities":["EPISODE_UNDERSTANDING"],"requires":["SOURCE_VIDEO","SOURCE_DIALOGUE"],"produces":["SOURCE_BIBLE"]},
+    {"id":"source_breakdown","phase":"理解","title":"逐镜结构拉片","description":"在整集知识建立后，再结合镜头时间锚点提取可用于重绘的逐镜事实。","capabilities":["SHOT_BREAKDOWN"],"requires":["SOURCE_BIBLE","SHOT_ANCHORS"],"produces":["SOURCE_SHOT_FACTS"]},
     {"id":"source_finalize","phase":"理解","title":"原片分析定稿","description":"形成可供重绘使用的正式原片事实。","capabilities":["SOURCE_SNAPSHOT"],"requires":["SOURCE_BIBLE","SOURCE_SHOT_FACTS"],"produces":["SOURCE_VIDEO_SNAPSHOT"]},
     {"id":"visual_plan","phase":"目标版本","title":"视觉重绘方案","description":"确定目标人物、场景、时代和视觉风格。","capabilities":["LOCALIZATION","TARGET_BIBLE","TARGET_ASSETS"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":["ADAPTATION_PLAN","TARGET_BIBLE","TARGET_ASSETS"]},
     {"id":"storyboard","phase":"分镜","title":"重绘分镜","description":"保持原剪辑和表演关系，生成目标视觉分镜。","capabilities":["STORYBOARD","TIMING"],"requires":["SOURCE_VIDEO_SNAPSHOT","TARGET_ASSETS"],"produces":["TIMING_PLAN","TARGET_STORYBOARD","GENERATION_SEGMENTS"]},
