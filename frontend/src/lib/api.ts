@@ -23,12 +23,14 @@ export class ApiError extends Error {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v3'
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers)
+  if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
     ...init,
+    headers,
   })
 
   if (!response.ok) {
