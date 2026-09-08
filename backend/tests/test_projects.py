@@ -116,11 +116,17 @@ def test_translation_and_script_localization_have_different_persisted_plans(clie
 
     assert {step["id"] for step in translation_plan["steps"]} == {
         "source_input",
+        "shot_boundary",
         "dialogue",
         "target_dialogue",
         "voice_timing",
         "post",
     }
+    translation_steps = {step["id"]: step for step in translation_plan["steps"]}
+    assert translation_steps["shot_boundary"]["capabilities"] == ["MEDIA_PREFLIGHT", "SHOT_BOUNDARY"]
+    assert translation_steps["shot_boundary"]["produces"] == ["SHOT_ANCHORS"]
+    assert translation_steps["dialogue"]["capabilities"] == ["SOURCE_DIALOGUE_EVIDENCE"]
+
     assert {step["id"] for step in localization_plan["steps"]} == {
         "source_input",
         "script_analyze",
