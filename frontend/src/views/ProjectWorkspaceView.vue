@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import {
@@ -9,6 +9,8 @@ import {
   listProjectTasks,
   resumeProjectTask,
   retryProjectTask,
+  startP4AcceptanceTask,
+  type P4AcceptanceScenario,
 } from '@/features/projects/api'
 import {
   projectTypeLabel,
@@ -27,8 +29,12 @@ const tasks = ref<TaskRead[]>([])
 const loading = ref(true)
 const refreshingTasks = ref(false)
 const taskActionId = ref('')
+const p4Starting = ref('')
 const errorMessage = ref('')
+const planErrorMessage = ref('')
 const taskErrorMessage = ref('')
+const p4AcceptanceMessage = ref('')
+let taskPollTimer: number | null = null
 
 const statusText: Record<PlanStepStatus, string> = {
   COMPLETED: '已完成',
@@ -49,15 +55,19 @@ const taskStatusText: Record<TaskStatus, string> = {
 async function loadWorkspace(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
+  planErrorMessage.value = ''
   try {
-    const [projectResult, planResult, taskResult] = await Promise.all([
+    const [projectResult, taskResult, planResult] = await Promise.all([
       getProject(projectId.value),
-      getProjectPlan(projectId.value),
       listProjectTasks(projectId.value),
+      getProjectPlan(projectId.value).catch((error: unknown) => {
+        planErrorMessage.value = error instanceof Error ? error.message : '执行计划暂不可用'
+        return null
+      }),
     ])
     project.value = projectResult
-    plan.value = planResult
     tasks.value = taskResult
+    plan.value = planResult
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '项目加载失败'
   } finally {
@@ -77,12 +87,72 @@ async function refreshTasks(): Promise<void> {
   }
 }
 
+function stopTaskPolling(): void {
+  if (taskPollTimer !== null) {
+    window.clearInterval(taskPollTimer)
+    taskPollTimer = null
+  }
+}
+
+function startTaskPolling(): void {
+  if (taskPollTimer !== null) return
+  taskPollTimer = window.setInterval(async () => {
+    await refreshTasks()
+    const hasActiveTask = tasks.value.some((task) => task.status === 'queued' || task.status === 'running')
+    if (!hasActiveTask) stopTaskPolling()
+  }, 500)
+}
+
 function replaceTask(updated: TaskRead): void {
   const index = tasks.value.findIndex((item) => item.id === updated.id)
   if (index >= 0) {
     tasks.value[index] = updated
   } else {
     tasks.value.unshift(updated)
+  }
+}
+
+function newAcceptanceKey(label: string): string {
+  const suffix = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`
+  return `p4-${label}-${suffix}`.slice(0, 128)
+}
+
+async function startAcceptanceScenario(scenario: P4AcceptanceScenario): Promise<void> {
+  p4Starting.value = scenario
+  p4AcceptanceMessage.value = ''
+  taskErrorMessage.value = ''
+  try {
+    const task = await startP4AcceptanceTask(projectId.value, scenario, newAcceptanceKey(scenario))
+    replaceTask(task)
+    startTaskPolling()
+  } catch (error) {
+    taskErrorMessage.value = error instanceof Error ? error.message : 'P4 验收任务启动失败'
+  } finally {
+    p4Starting.value = ''
+  }
+}
+
+async function verifyDuplicateProtection(): Promise<void> {
+  p4Starting.value = 'dedupe'
+  p4AcceptanceMessage.value = ''
+  taskErrorMessage.value = ''
+  const key = newAcceptanceKey('dedupe')
+  try {
+    const [first, second] = await Promise.all([
+      startP4AcceptanceTask(projectId.value, 'success', key),
+      startP4AcceptanceTask(projectId.value, 'success', key),
+    ])
+    replaceTask(first)
+    p4AcceptanceMessage.value = first.id === second.id
+      ? '重复提交保护：通过。两次相同提交只产生了 1 个任务。'
+      : '重复提交保护：未通过。两次相同提交产生了不同任务。'
+    startTaskPolling()
+  } catch (error) {
+    taskErrorMessage.value = error instanceof Error ? error.message : '重复提交保护测试失败'
+  } finally {
+    p4Starting.value = ''
   }
 }
 
@@ -96,6 +166,7 @@ async function runTaskAction(task: TaskRead, action: 'retry' | 'cancel' | 'resum
         ? await cancelProjectTask(projectId.value, task.id)
         : await resumeProjectTask(projectId.value, task.id)
     replaceTask(updated)
+    if (updated.status === 'queued' || updated.status === 'running') startTaskPolling()
   } catch (error) {
     taskErrorMessage.value = error instanceof Error ? error.message : '任务操作失败'
   } finally {
@@ -104,6 +175,7 @@ async function runTaskAction(task: TaskRead, action: 'retry' | 'cancel' | 'resum
 }
 
 onMounted(loadWorkspace)
+onBeforeUnmount(stopTaskPolling)
 </script>
 
 <template>
@@ -113,19 +185,51 @@ onMounted(loadWorkspace)
     <p v-if="loading" class="muted">正在加载项目…</p>
     <p v-else-if="errorMessage" class="error-message">{{ errorMessage }}</p>
 
-    <template v-else-if="project && plan">
+    <template v-else-if="project">
       <header class="workspace-header">
         <div>
           <span class="project-type">{{ projectTypeLabel(project.project_type) }}</span>
           <h1>{{ project.name }}</h1>
           <p>{{ project.target_language }} · {{ project.target_region }}</p>
         </div>
-        <div class="skill-card">
+        <div v-if="plan" class="skill-card">
           <small>当前根技能</small>
           <strong>{{ plan.skill_title }}</strong>
           <span>{{ plan.skill_id }}</span>
         </div>
+        <div v-else class="skill-card">
+          <small>执行计划</small>
+          <strong>尚未生成</strong>
+          <span>任务验收仍可独立进行</span>
+        </div>
       </header>
+
+      <section class="acceptance-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">开发验收工具</p>
+            <h2>P4 任务执行机制</h2>
+          </div>
+        </div>
+        <p class="acceptance-note">
+          这里只运行本地模拟任务，不调用真实模型、不产生费用。用于人工检查排队、进度、失败重试、中断继续、取消和重复提交保护。
+        </p>
+        <div class="acceptance-actions">
+          <button type="button" :disabled="Boolean(p4Starting)" @click="startAcceptanceScenario('success')">
+            {{ p4Starting === 'success' ? '启动中…' : '测试正常完成' }}
+          </button>
+          <button type="button" :disabled="Boolean(p4Starting)" @click="startAcceptanceScenario('retry')">
+            {{ p4Starting === 'retry' ? '启动中…' : '测试失败 → 重试' }}
+          </button>
+          <button type="button" :disabled="Boolean(p4Starting)" @click="startAcceptanceScenario('resume')">
+            {{ p4Starting === 'resume' ? '启动中…' : '测试中断 → 继续' }}
+          </button>
+          <button type="button" :disabled="Boolean(p4Starting)" @click="verifyDuplicateProtection">
+            {{ p4Starting === 'dedupe' ? '测试中…' : '测试防重复提交' }}
+          </button>
+        </div>
+        <p v-if="p4AcceptanceMessage" class="success-message">{{ p4AcceptanceMessage }}</p>
+      </section>
 
       <section class="task-section">
         <div class="section-heading">
@@ -183,7 +287,7 @@ onMounted(loadWorkspace)
         <p v-else class="muted task-empty">当前没有执行任务。</p>
       </section>
 
-      <section class="plan-section">
+      <section v-if="plan" class="plan-section">
         <div class="section-heading">
           <div>
             <p class="eyebrow">执行计划</p>
@@ -211,6 +315,12 @@ onMounted(loadWorkspace)
           </article>
         </div>
       </section>
+      <section v-else class="plan-section">
+        <div class="plan-empty">
+          <strong>当前还没有可显示的执行计划</strong>
+          <span>{{ planErrorMessage || '任务区与 P4 验收工具仍然可以独立使用。' }}</span>
+        </div>
+      </section>
     </template>
   </section>
 </template>
@@ -224,6 +334,12 @@ onMounted(loadWorkspace)
 .project-type { display: inline-flex; padding: 5px 9px; border-radius: 999px; background: #f1f0ff; color: #5b4ee8; font-size: 12px; font-weight: 800; }
 .skill-card { min-width: 230px; display: grid; gap: 5px; padding: 16px; border-radius: 14px; background: #f8f8fb; }
 .skill-card small, .skill-card span { color: #667085; }
+.acceptance-section { display: grid; gap: 14px; padding: 20px; border: 1px solid #ddd9ff; border-radius: 16px; background: #faf9ff; }
+.acceptance-note { margin: 0; color: #667085; line-height: 1.7; }
+.acceptance-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.acceptance-actions button { border: 1px solid #c9c2ff; border-radius: 10px; background: #fff; padding: 10px 14px; font-weight: 800; cursor: pointer; }
+.acceptance-actions button:disabled { cursor: wait; opacity: .55; }
+.success-message { margin: 0; color: #027a48; font-weight: 700; }
 .task-section, .plan-section { display: grid; gap: 16px; }
 .section-heading { display: flex; justify-content: space-between; align-items: end; gap: 16px; }
 .section-heading h2 { margin: 3px 0 0; font-size: 22px; }
@@ -261,6 +377,8 @@ onMounted(loadWorkspace)
 .status.completed { background: #eff8ff; color: #175cd3; }
 .status.blocked_dependency, .status.waiting_capability { background: #f2f4f7; color: #667085; }
 .dependency-note { font-size: 12px; }
+.plan-empty { display: grid; gap: 6px; padding: 18px; border: 1px dashed #d0d5dd; border-radius: 12px; background: #fff; }
+.plan-empty span { color: #667085; }
 .error-message { color: #b42318; }
 .muted { color: #667085; }
 @media (max-width: 720px) { .workspace-header, .section-heading { display: grid; } .skill-card { min-width: 0; } .plan-step { grid-template-columns: 1fr; } .step-heading { align-items: flex-start; } .task-heading { display: grid; } }
