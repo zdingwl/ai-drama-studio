@@ -27,6 +27,7 @@ import {
   type TaskRead,
   type TaskStatus,
 } from '@/features/projects/types'
+import { apiRequest } from '@/lib/api'
 
 const route = useRoute()
 const projectId = computed(() => String(route.params.id))
@@ -39,6 +40,7 @@ const shotBoundary = ref<EpisodeShotBoundaryRead | null>(null)
 const loading = ref(true)
 const refreshingTasks = ref(false)
 const loadingEpisodes = ref(false)
+const uploadingVideos = ref(false)
 const loadingShots = ref(false)
 const startingShots = ref(false)
 const taskActionId = ref('')
@@ -90,6 +92,10 @@ async function loadWorkspace(): Promise<void> {
     project.value = projectResult
     tasks.value = taskResult
     plan.value = planResult
+
+    if (VIDEO_PROJECT_TYPES.has(projectResult.project_type)) {
+      await loadEpisodes()
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '项目加载失败'
   } finally {
@@ -127,6 +133,29 @@ async function loadEpisodes(): Promise<void> {
     shotErrorMessage.value = error instanceof Error ? error.message : '剧集读取失败'
   } finally {
     loadingEpisodes.value = false
+  }
+}
+
+async function uploadVideos(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  if (!input.files?.length) return
+  uploadingVideos.value = true
+  shotErrorMessage.value = ''
+  try {
+    const data = new FormData()
+    Array.from(input.files).forEach((file) => data.append('files', file))
+    await apiRequest<EpisodeRead[]>(`/projects/${projectId.value}/sources/videos`, {
+      method: 'POST',
+      body: data,
+    })
+    plan.value = null
+    planErrorMessage.value = '原片已更新，请根据当前素材重新生成执行计划。'
+    await loadEpisodes()
+  } catch (error) {
+    shotErrorMessage.value = error instanceof Error ? error.message : '原片上传失败'
+  } finally {
+    uploadingVideos.value = false
+    input.value = ''
   }
 }
 
@@ -311,7 +340,7 @@ onBeforeUnmount(stopTaskPolling)
         <div v-else class="skill-card">
           <small>执行计划</small>
           <strong>尚未生成</strong>
-          <span>可以先处理已上传的原片</span>
+          <span>可以先上传并处理原片</span>
         </div>
       </header>
 
@@ -321,12 +350,26 @@ onBeforeUnmount(stopTaskPolling)
             <p class="eyebrow">视频技术预处理</p>
             <h2>镜头边界</h2>
           </div>
-          <button class="secondary-button" type="button" :disabled="loadingEpisodes" @click="loadEpisodes">
-            {{ loadingEpisodes ? '读取中…' : episodes.length ? '刷新剧集' : '读取已上传剧集' }}
-          </button>
+          <div class="source-actions">
+            <label class="upload-button">
+              <span>{{ uploadingVideos ? '正在上传…' : episodes.length ? '继续上传原片' : '上传原片' }}</span>
+              <input
+                class="visually-hidden"
+                type="file"
+                multiple
+                accept="video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm,.avi,.m4v"
+                :disabled="uploadingVideos"
+                @change="uploadVideos"
+              />
+            </label>
+            <button v-if="episodes.length" class="secondary-button" type="button" :disabled="loadingEpisodes" @click="loadEpisodes">
+              {{ loadingEpisodes ? '刷新中…' : '刷新剧集' }}
+            </button>
+          </div>
         </div>
-        <p class="section-note">这里只识别切镜时间，并生成缩略图和可播放参考片段；不做人物、剧情或对白理解。</p>
+        <p class="section-note">先上传真实 Episode，再选择某一集显式开始处理。这里只识别切镜时间，并生成缩略图和可播放参考片段；不做人物、剧情或对白理解。</p>
         <p v-if="shotErrorMessage" class="error-message">{{ shotErrorMessage }}</p>
+        <p v-if="loadingEpisodes && !episodes.length" class="muted">正在读取已上传原片…</p>
 
         <div v-if="episodes.length" class="episode-controls">
           <label>
@@ -338,12 +381,12 @@ onBeforeUnmount(stopTaskPolling)
             </select>
           </label>
           <button class="primary-button" type="button" :disabled="startingShots || !selectedEpisodeId" @click="startShotBoundary">
-            {{ startingShots ? '正在提交…' : shotBoundary?.status === 'CURRENT' ? '重新检查当前结果' : '开始处理这一集' }}
+            {{ startingShots ? '正在提交…' : shotBoundary?.status === 'CURRENT' ? '重新处理这一集' : '开始处理这一集' }}
           </button>
         </div>
         <div v-else-if="!loadingEpisodes" class="shot-empty">
-          <strong>先读取已上传剧集</strong>
-          <span>系统不会因为打开或刷新页面自动开始处理。</span>
+          <strong>还没有原片</strong>
+          <span>先点击“上传原片”选择一集或多集短剧视频。上传完成后剧集列表会自动出现，不需要再点“读取”。</span>
         </div>
 
         <p v-if="loadingShots" class="muted">正在读取镜头结果…</p>
@@ -460,7 +503,7 @@ onBeforeUnmount(stopTaskPolling)
       <section v-else class="plan-section">
         <div class="plan-empty">
           <strong>当前还没有可显示的执行计划</strong>
-          <span>{{ planErrorMessage || '原片处理和任务区仍然可以独立使用。' }}</span>
+          <span>{{ planErrorMessage || '原片上传、镜头处理和任务区仍然可以独立使用。' }}</span>
         </div>
       </section>
     </template>
@@ -478,6 +521,10 @@ onBeforeUnmount(stopTaskPolling)
 .skill-card small, .skill-card span, .muted { color: #667085; }
 .shot-section { display: grid; gap: 16px; padding: 22px; border: 1px solid #d9e5ff; border-radius: 18px; background: #fbfdff; }
 .section-note, .acceptance-note { margin: 0; color: #667085; line-height: 1.7; }
+.source-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.upload-button { display: inline-flex; align-items: center; border: 0; border-radius: 10px; padding: 10px 14px; background: #5b4ee8; color: #fff; font-weight: 800; cursor: pointer; }
+.upload-button:has(input:disabled) { cursor: wait; opacity: .55; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .episode-controls { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
 .episode-controls label { display: grid; gap: 7px; min-width: 340px; font-weight: 700; }
 .episode-controls select { min-height: 42px; padding: 0 12px; border: 1px solid #d0d5dd; border-radius: 10px; background: #fff; }
@@ -532,7 +579,8 @@ button:disabled { cursor: wait; opacity: .55; }
 @media (max-width: 760px) {
   .workspace-header, .section-heading, .shot-result-heading { align-items: stretch; flex-direction: column; }
   .skill-card, .episode-controls label { min-width: 0; width: 100%; }
-  .episode-controls { align-items: stretch; }
+  .source-actions, .episode-controls { align-items: stretch; }
+  .source-actions > *, .upload-button { width: 100%; justify-content: center; }
   .shot-grid { grid-template-columns: 1fr; }
 }
 </style>

@@ -14,7 +14,8 @@
   "manual_path": "translation/SKILL.md",
   "steps": [
     {"id":"source_input","phase":"输入","title":"导入原片","description":"登记需要翻译的 Episode。","capabilities":["SOURCE_VIDEO_INGEST"],"requires":[],"produces":["SOURCE_VIDEO"]},
-    {"id":"dialogue","phase":"理解","title":"对白与说话信息","description":"获取带时间证据的原对白与镜头时间锚点。","capabilities":["MEDIA_PREFLIGHT","SHOT_BOUNDARY","SOURCE_DIALOGUE_EVIDENCE"],"requires":["SOURCE_VIDEO"],"produces":["SHOT_ANCHORS","SOURCE_DIALOGUE"]},
+    {"id":"shot_boundary","phase":"理解","title":"镜头边界","description":"完成媒体检查并建立镜头时间锚点、缩略图和参考片段，不做对白或剧情理解。","capabilities":["MEDIA_PREFLIGHT","SHOT_BOUNDARY"],"requires":["SOURCE_VIDEO"],"produces":["SHOT_ANCHORS"]},
+    {"id":"dialogue","phase":"理解","title":"对白与说话信息","description":"在镜头时间锚点基础上获取带时间证据的原对白与画面文字。","capabilities":["SOURCE_DIALOGUE_EVIDENCE"],"requires":["SOURCE_VIDEO","SHOT_ANCHORS"],"produces":["SOURCE_DIALOGUE"]},
     {"id":"target_dialogue","phase":"目标版本","title":"翻译与本土化对白","description":"保留原意图和情绪，生成目标语言正式对白。","capabilities":["LOCALIZATION","TARGET_SCRIPT"],"requires":["SOURCE_DIALOGUE"],"produces":["ADAPTATION_PLAN","TARGET_SCRIPT"]},
     {"id":"voice_timing","phase":"分镜","title":"配音与时间适配","description":"以真实 TTS 时长决定压缩对白、延长、裁剪或反应镜头承接。","capabilities":["TTS","TIMING"],"requires":["TARGET_SCRIPT","SHOT_ANCHORS"],"produces":["TARGET_AUDIO","TIMING_PLAN"]},
     {"id":"post","phase":"成片","title":"口型、字幕与合成","description":"对可见说话人做口型同步，重建目标语言音轨并输出。","capabilities":["LIP_SYNC","POST_PRODUCTION"],"requires":["TARGET_AUDIO","TIMING_PLAN","SOURCE_VIDEO"],"produces":["FINAL_OUTPUT"]}

@@ -14,7 +14,8 @@
   "manual_path": "redraw/SKILL.md",
   "steps": [
     {"id":"source_input","phase":"输入","title":"导入原片","description":"登记需要重绘的 Episode。","capabilities":["SOURCE_VIDEO_INGEST"],"requires":[],"produces":["SOURCE_VIDEO"]},
-    {"id":"source_understand","phase":"理解","title":"原片结构理解","description":"建立镜头锚点、对白证据并理解人物、场景和镜头结构。","capabilities":["MEDIA_PREFLIGHT","SHOT_BOUNDARY","SOURCE_DIALOGUE_EVIDENCE","EPISODE_UNDERSTANDING","SHOT_BREAKDOWN"],"requires":["SOURCE_VIDEO"],"produces":["SHOT_ANCHORS","SOURCE_DIALOGUE","SOURCE_BIBLE","SOURCE_SHOT_FACTS"]},
+    {"id":"shot_boundary","phase":"理解","title":"镜头边界","description":"完成媒体检查并建立镜头时间锚点、缩略图和参考片段，不做剧情理解。","capabilities":["MEDIA_PREFLIGHT","SHOT_BOUNDARY"],"requires":["SOURCE_VIDEO"],"produces":["SHOT_ANCHORS"]},
+    {"id":"source_understand","phase":"理解","title":"原片结构理解","description":"在镜头锚点基础上建立对白证据并理解人物、场景和镜头结构。","capabilities":["SOURCE_DIALOGUE_EVIDENCE","EPISODE_UNDERSTANDING","SHOT_BREAKDOWN"],"requires":["SOURCE_VIDEO","SHOT_ANCHORS"],"produces":["SOURCE_DIALOGUE","SOURCE_BIBLE","SOURCE_SHOT_FACTS"]},
     {"id":"source_finalize","phase":"理解","title":"原片分析定稿","description":"形成可供重绘使用的正式原片事实。","capabilities":["SOURCE_SNAPSHOT"],"requires":["SOURCE_BIBLE","SOURCE_SHOT_FACTS"],"produces":["SOURCE_VIDEO_SNAPSHOT"]},
     {"id":"visual_plan","phase":"目标版本","title":"视觉重绘方案","description":"确定目标人物、场景、时代和视觉风格。","capabilities":["LOCALIZATION","TARGET_BIBLE","TARGET_ASSETS"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":["ADAPTATION_PLAN","TARGET_BIBLE","TARGET_ASSETS"]},
     {"id":"storyboard","phase":"分镜","title":"重绘分镜","description":"保持原剪辑和表演关系，生成目标视觉分镜。","capabilities":["STORYBOARD","TIMING"],"requires":["SOURCE_VIDEO_SNAPSHOT","TARGET_ASSETS"],"produces":["TIMING_PLAN","TARGET_STORYBOARD","GENERATION_SEGMENTS"]},
