@@ -21,12 +21,14 @@ class P4AcceptanceScenario(StrEnum):
     SUCCESS = "success"
     RETRY = "retry"
     RESUME = "resume"
+    DEDUPE = "dedupe"
 
 
 _SCENARIO_TASK_NAMES = {
     P4AcceptanceScenario.SUCCESS: "P4 验收：正常执行与安全调用",
     P4AcceptanceScenario.RETRY: "P4 验收：失败后重试",
     P4AcceptanceScenario.RESUME: "P4 验收：中断后继续",
+    P4AcceptanceScenario.DEDUPE: "P4 验收：防重复提交",
 }
 
 
