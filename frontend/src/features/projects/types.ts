@@ -11,6 +11,7 @@ export type AudioPolicy = 'KEEP_SOURCE_AUDIO' | 'REGENERATE_AUDIO'
 export type PlanStepStatus = 'COMPLETED' | 'READY' | 'BLOCKED_DEPENDENCY' | 'WAITING_CAPABILITY'
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 export type ShotBoundaryResultStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
+export type SourceEvidenceResultStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
 
 export interface ProjectTypeOption {
   value: ProjectType
@@ -160,6 +161,40 @@ export interface EpisodeShotBoundaryRead {
   artifact_revision: number | null
   shot_count: number
   shots: ShotAnchorRead[]
+}
+
+export interface DialogueUtteranceRead {
+  id: string
+  utterance_number: number
+  start_us: number
+  end_us: number
+  text: string
+  language: string | null
+  projected_shot_numbers: number[]
+}
+
+export interface VisualTextSpanRead {
+  id: string
+  span_number: number
+  start_us: number
+  end_us: number
+  text: string
+  confidence: number | null
+}
+
+export interface EpisodeSourceEvidenceRead {
+  episode_id: string
+  episode_order: number
+  source_filename: string
+  status: SourceEvidenceResultStatus
+  revision: number | null
+  artifact_revision: number | null
+  dialogue_count: number
+  visual_text_count: number
+  raw_asr_segment_count: number
+  raw_ocr_observation_count: number
+  dialogue: DialogueUtteranceRead[]
+  visual_text: VisualTextSpanRead[]
 }
 
 export function projectTypeLabel(type: ProjectType): string {
