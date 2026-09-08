@@ -2,6 +2,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { TaskRead } from '@/features/projects/types'
+
 import ProjectWorkspaceView from './ProjectWorkspaceView.vue'
 
 const project = {
@@ -51,7 +53,7 @@ const plan = {
   ],
 }
 
-const tasks = [
+const tasks: TaskRead[] = [
   {
     id: 'task-failed',
     project_id: 'project-1',
@@ -165,7 +167,7 @@ describe('ProjectWorkspaceView P4 task status', () => {
   })
 
   it('uses explicit POST commands for retry, cancel and resume', async () => {
-    const updated = new Map([
+    const updated = new Map<string, TaskRead>([
       ['task-failed', { ...tasks[0], status: 'queued', last_error: null, can_retry: false, can_cancel: true }],
       ['task-running', { ...tasks[1], status: 'running', can_cancel: false }],
       ['task-interrupted', { ...tasks[2], status: 'queued', last_error: null, can_resume: false, can_cancel: true }],
