@@ -219,6 +219,76 @@ describe('ProjectWorkspaceView P4 task status', () => {
     wrapper.unmount()
   })
 
+  it('verifies duplicate submission with a dedicated task and exactly one new task', async () => {
+    const existingTask: TaskRead = {
+      id: 'task-existing-success',
+      project_id: 'project-1',
+      task_name: 'P4 验收：正常执行与安全调用',
+      progress_percent: 100,
+      status: 'succeeded',
+      last_error: null,
+      attempt: 1,
+      max_attempts: 3,
+      can_retry: false,
+      can_cancel: false,
+      can_resume: false,
+      created_at: '2026-09-08T00:00:00Z',
+      started_at: '2026-09-08T00:00:01Z',
+      finished_at: '2026-09-08T00:00:05Z',
+    }
+    const dedupeTask: TaskRead = {
+      id: 'task-dedupe',
+      project_id: 'project-1',
+      task_name: 'P4 验收：防重复提交',
+      progress_percent: 100,
+      status: 'succeeded',
+      last_error: null,
+      attempt: 1,
+      max_attempts: 3,
+      can_retry: false,
+      can_cancel: false,
+      can_resume: false,
+      created_at: '2026-09-08T00:01:00Z',
+      started_at: '2026-09-08T00:01:01Z',
+      finished_at: '2026-09-08T00:01:05Z',
+    }
+    let taskListReads = 0
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/v3/projects/project-1') && method === 'GET') return response(project)
+      if (url.endsWith('/api/v3/projects/project-1/plan') && method === 'GET') return response(plan)
+      if (url.endsWith('/api/v3/projects/project-1/tasks') && method === 'GET') {
+        taskListReads += 1
+        return response(taskListReads <= 2 ? [existingTask] : [dedupeTask, existingTask])
+      }
+      if (url.endsWith('/api/v3/projects/project-1/commands/p4-acceptance/dedupe') && method === 'POST') {
+        return response(dedupeTask, 202)
+      }
+      throw new Error(`unexpected request: ${method} ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = await mountWorkspace()
+    const button = wrapper.findAll('.acceptance-actions button').find((item) => item.text() === '测试防重复提交')
+    await button?.trigger('click')
+    await flushPromises()
+
+    const dedupeCalls = fetchMock.mock.calls.filter(([input, init]) => (
+      String(input).endsWith('/api/v3/projects/project-1/commands/p4-acceptance/dedupe')
+      && (init as RequestInit | undefined)?.method === 'POST'
+    ))
+    expect(dedupeCalls).toHaveLength(2)
+    const firstHeaders = new Headers((dedupeCalls[0]?.[1] as RequestInit | undefined)?.headers)
+    const secondHeaders = new Headers((dedupeCalls[1]?.[1] as RequestInit | undefined)?.headers)
+    expect(firstHeaders.get('Idempotency-Key')).toMatch(/^p4-dedupe-/)
+    expect(secondHeaders.get('Idempotency-Key')).toBe(firstHeaders.get('Idempotency-Key'))
+    expect(wrapper.text()).toContain('重复提交保护：通过。本次两次相同提交只新增了 1 个“防重复提交”任务。')
+    expect(wrapper.findAll('.task-card').filter((card) => card.text().includes('P4 验收：防重复提交'))).toHaveLength(1)
+    expect(wrapper.findAll('.task-card').filter((card) => card.text().includes('P4 验收：正常执行与安全调用'))).toHaveLength(1)
+    wrapper.unmount()
+  })
+
   it('uses explicit POST commands for retry, cancel and resume', async () => {
     const updated = new Map<string, TaskRead>([
       ['task-failed', { ...tasks[0], status: 'queued', last_error: null, can_retry: false, can_cancel: true }],
