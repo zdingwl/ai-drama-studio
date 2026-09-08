@@ -59,15 +59,16 @@ def test_manual_acceptance_success_uses_real_task_and_provider_job_guardrails(
         assert jobs[0].payload_fingerprint
 
 
-def test_manual_acceptance_same_idempotency_key_creates_only_one_task(
+def test_manual_acceptance_same_idempotency_key_creates_only_one_dedupe_task(
     client: TestClient,
     session_factory: sessionmaker[Session],
 ) -> None:
     project = _project(client)
-    first = _start(client, project["id"], "success", "manual-dedupe-1")
-    second = _start(client, project["id"], "success", "manual-dedupe-1")
+    first = _start(client, project["id"], "dedupe", "manual-dedupe-1")
+    second = _start(client, project["id"], "dedupe", "manual-dedupe-1")
 
     assert first["id"] == second["id"]
+    assert first["task_name"] == second["task_name"] == "P4 验收：防重复提交"
     with session_factory() as db:
         assert db.scalar(select(func.count(Task.id)).where(Task.project_id == project["id"])) == 1
         assert db.scalar(select(func.count(ProviderJob.id)).where(ProviderJob.task_id == first["id"])) == 1
