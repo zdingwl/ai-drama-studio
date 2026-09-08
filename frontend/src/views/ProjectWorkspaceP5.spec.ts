@@ -95,7 +95,7 @@ afterEach(() => {
 })
 
 describe('ProjectWorkspaceView P5 shot boundary', () => {
-  it('loads uploaded episodes through read-only GETs and starts processing only after explicit POST', async () => {
+  it('auto-loads uploaded episodes through read-only GETs and starts processing only after explicit POST', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
@@ -112,22 +112,22 @@ describe('ProjectWorkspaceView P5 shot boundary', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const wrapper = await mountWorkspace()
-    expect(fetchMock.mock.calls).toHaveLength(3)
-    expect(fetchMock.mock.calls.every(([, init]) => ((init as RequestInit | undefined)?.method ?? 'GET') === 'GET')).toBe(true)
-    expect(wrapper.text()).toContain('这里只识别切镜时间')
-    expect(wrapper.text()).toContain('系统不会因为打开或刷新页面自动开始处理')
 
-    const loadButton = wrapper.findAll('button').find((button) => button.text() === '读取已上传剧集')
-    await loadButton?.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('第 1 集 · episode-01.mp4')
-    expect(wrapper.text()).toContain('尚未处理')
-    const preStartCalls = fetchMock.mock.calls.map(([input, init]) => ({
+    const initialCalls = fetchMock.mock.calls.map(([input, init]) => ({
       url: String(input),
       method: (init as RequestInit | undefined)?.method ?? 'GET',
     }))
-    expect(preStartCalls.filter((call) => call.method === 'POST')).toHaveLength(0)
+    expect(initialCalls).toHaveLength(5)
+    expect(initialCalls.every((call) => call.method === 'GET')).toBe(true)
+    expect(initialCalls.some((call) => call.url.endsWith('/sources/episodes'))).toBe(true)
+    expect(initialCalls.some((call) => call.url.endsWith('/episodes/episode-1/shot-boundary'))).toBe(true)
+
+    expect(wrapper.text()).toContain('这里只识别切镜时间')
+    expect(wrapper.text()).toContain('第 1 集 · episode-01.mp4')
+    expect(wrapper.text()).toContain('尚未处理')
+    expect(wrapper.text()).toContain('开始处理这一集')
+    expect(wrapper.text()).not.toContain('读取已上传剧集')
+    expect(initialCalls.filter((call) => call.method === 'POST')).toHaveLength(0)
 
     const startButton = wrapper.findAll('button').find((button) => button.text() === '开始处理这一集')
     await startButton?.trigger('click')
