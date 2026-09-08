@@ -13,10 +13,12 @@ AI 短剧生产工作台，当前处于 V3 从零重建阶段。
 ## 当前阶段
 
 ```text
-P0 仓库重建基线          ✅ 完成
-P1 新工程骨架            ✅ 完成
-Seko Skill 架构研究      ✅ 第一版完成
-P2 Project + Skill Kernel ▶ 下一阶段
+P0 仓库重建基线            ✅ 完成
+P1 新工程骨架              ✅ 完成
+Seko Skill 架构研究        ✅ 第一版完成
+P2 Project + Skill Kernel  ✅ 完成
+P3 SourceAsset + 输入系统  ✅ 完成
+P4 Task / ProviderJob      ▶ 当前阶段
 ```
 
 V3 当前正式架构：
@@ -32,7 +34,7 @@ Project Type
 → Artifact Graph
 ```
 
-六种项目类型仍然是真实后端枚举，但不再分别写死六套 stage graph。每种项目绑定自己的 Root Skill，由 Skill 声明输入、专业能力、正式输出和完成标准，再编译成持久化执行计划。
+六种项目类型是真实后端枚举。每种项目绑定自己的 Root Skill，由 Skill 声明输入、专业能力、正式输出和完成标准，再编译成持久化执行计划。
 
 第一版不会为了模仿 Seko 先开发复杂无限画布；后端先把正式 Artifact Graph 做正确，未来画布只是它的可视化。
 
@@ -47,9 +49,31 @@ SCRIPT_TO_DRAMA      剧本生成短剧
 SCRIPT_LOCALIZATION  剧本本土化
 ```
 
+## 当前已可用的真实输入
+
+视频类项目：
+
+```text
+多视频上传
+→ Episode
+→ ffprobe / decode preflight
+→ 拖动排序
+→ SOURCE_VIDEO Artifact revision
+```
+
+文本类项目：
+
+```text
+TXT / Markdown
+→ SourceDocument revision
+→ SOURCE_TEXT Artifact revision
+```
+
+原始 SourceAsset 不可变；同内容上传幂等。素材变化会使旧 Source Artifact / 依赖下游 STALE，并使当前执行计划失效，必须显式重新编译。
+
 ## 后端启动
 
-要求 Python 3.12+。
+要求 Python 3.12+，视频输入需要 FFmpeg / ffprobe 可执行文件。
 
 ```bash
 python -m venv .venv
@@ -96,6 +120,7 @@ npm run dev
 cd backend
 python -m compileall app
 python -c "from app.main import app; print(app.title)"
+alembic upgrade head
 pytest
 ```
 
@@ -108,4 +133,4 @@ npm test
 npm run build
 ```
 
-P1 工程骨架已经通过 GitHub Actions V3 CI。当前状态和下一步只以 `docs/02_V3当前开发状态.md` 为准。
+P3 已通过包含真实 FFmpeg 视频生成 / ffprobe / decode 的 GitHub Actions V3 CI。当前状态和下一步以 `docs/02_V3当前开发状态.md` 为准。
