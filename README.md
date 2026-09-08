@@ -110,7 +110,21 @@ npm install
 npm run dev
 ```
 
-默认由 `VITE_API_BASE_URL` 控制 API 根地址，未配置时使用 `/api/v3`。
+开发环境默认请求 `/api/v3`，Vite 会把 `/api/*` 代理到：
+
+```text
+http://127.0.0.1:8000
+```
+
+因此本地开发时应同时启动 FastAPI 和 Vite，不需要额外配置 CORS。
+
+如后端不是运行在默认地址，可以在 `frontend/.env` 设置：
+
+```text
+VITE_API_PROXY_TARGET=http://127.0.0.1:9000
+```
+
+`VITE_API_BASE_URL` 只用于确实需要覆盖浏览器实际 API 根地址的部署场景；普通本地开发优先使用 Vite 代理。
 
 ## 验证
 
