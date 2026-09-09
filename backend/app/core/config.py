@@ -43,7 +43,15 @@ class Settings(BaseSettings):
     p6_ocr_provider: str = "rapidocr"
     p6_ocr_sample_interval_ms: int = 500
     p6_ocr_min_confidence: float = 0.45
-    p7_understanding_provider: str = "gemini"
+
+    # P7 defaults to a provider that is directly reachable from mainland China.
+    p7_understanding_provider: str = "qwen"
+    p7_qwen_api_key: SecretStr | None = None
+    p7_qwen_model: str = "qwen3-vl-flash"
+    p7_qwen_video_fps: float = 2.0
+    p7_qwen_local_file_max_bytes: int = 100 * 1024 * 1024
+
+    # Gemini remains available as an optional provider for environments that can reach it.
     p7_gemini_api_key: SecretStr | None = None
     p7_gemini_model: str = "gemini-3.8-flash"
     p7_gemini_base_url: str = "https://generativelanguage.googleapis.com"
@@ -69,6 +77,10 @@ class Settings(BaseSettings):
             raise ValueError("p6_ocr_sample_interval_ms must be >= 100")
         if not 0 <= self.p6_ocr_min_confidence <= 1:
             raise ValueError("p6_ocr_min_confidence must be between 0 and 1")
+        if not 0.1 <= self.p7_qwen_video_fps <= 10:
+            raise ValueError("p7_qwen_video_fps must be between 0.1 and 10")
+        if self.p7_qwen_local_file_max_bytes <= 0:
+            raise ValueError("p7_qwen_local_file_max_bytes must be positive")
         if self.p7_gemini_request_timeout_seconds <= 0:
             raise ValueError("p7_gemini_request_timeout_seconds must be positive")
         if self.p7_gemini_processing_timeout_seconds <= 0:
