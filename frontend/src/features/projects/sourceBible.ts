@@ -3,10 +3,19 @@ import { apiRequest } from '@/lib/api'
 import type { TaskRead } from './types'
 
 export type SourceBibleResultStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
+export type ClaimSupportLevel = 'FACT' | 'INFERENCE' | 'UNKNOWN'
 
 export interface TimeRange {
   start_us: number
   end_us: number
+}
+
+export interface ClaimGrounding {
+  support_level: ClaimSupportLevel
+  dialogue_evidence_ids: string[]
+  visual_text_evidence_ids: string[]
+  video_time_ranges: TimeRange[]
+  note: string | null
 }
 
 export interface MaterialBaseline {
@@ -27,8 +36,10 @@ export interface MaterialBaseline {
 export interface OverallAnalysis {
   story_summary: string
   story_background: string
+  story_background_grounding: ClaimGrounding
   genre: string[]
   world_rules: string[]
+  world_rule_groundings: ClaimGrounding[]
   narrative_structure: string
   audiovisual_style: string
   rhythm_overview: string
@@ -47,6 +58,7 @@ export interface TimedStorySegment {
 export interface CharacterProfile {
   character_id: string
   name: string
+  identity_grounding: ClaimGrounding
   story_function: string
   appearance_baseline: string
   states: Array<{ time_range: TimeRange; state: string }>
@@ -56,6 +68,7 @@ export interface CharacterRelationship {
   source_character_id: string
   target_character_id: string
   relationship: string
+  grounding: ClaimGrounding
   change_summary: string | null
 }
 
@@ -65,6 +78,7 @@ export interface SceneProfile {
   time_ranges: TimeRange[]
   spatial_relationship: string
   environment_details: string
+  grounding: ClaimGrounding
 }
 
 export interface PropProfile {
@@ -73,6 +87,7 @@ export interface PropProfile {
   time_ranges: TimeRange[]
   appearance_state: string
   story_function: string
+  story_function_grounding: ClaimGrounding
 }
 
 export interface StoryEvent {
@@ -81,6 +96,7 @@ export interface StoryEvent {
   summary: string
   participants: string[]
   consequences: string
+  grounding: ClaimGrounding
 }
 
 export interface EmotionBeat {
