@@ -187,6 +187,38 @@ export interface SourceBibleRevisionSummary {
   edit_parent_artifact_id: string | null
 }
 
+export interface DoubaoRuntimeConfig {
+  api_key: string
+  model: string
+  base_url: string
+  request_timeout_seconds: number
+  video_fps: number
+}
+
+export interface LocalQwenRuntimeConfig {
+  api_key: string
+  model: string
+  base_url: string
+}
+
+export interface P7RuntimeConfig {
+  doubao: DoubaoRuntimeConfig
+  qwen38: LocalQwenRuntimeConfig
+  qwen3_vl_8b: LocalQwenRuntimeConfig
+  qwen_request_timeout_seconds: number
+}
+
+export function getP7RuntimeConfig(): Promise<P7RuntimeConfig> {
+  return apiRequest<P7RuntimeConfig>('/source-understanding/runtime-config')
+}
+
+export function updateP7RuntimeConfig(payload: P7RuntimeConfig): Promise<P7RuntimeConfig> {
+  return apiRequest<P7RuntimeConfig>('/source-understanding/runtime-config', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function getSourceBible(projectId: string): Promise<SourceBibleRead> {
   return apiRequest<SourceBibleRead>(`/projects/${projectId}/source-bible`)
 }
