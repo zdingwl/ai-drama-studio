@@ -1,11 +1,8 @@
 """P8 speaker-candidate contract v2 runtime adapter.
 
-This module keeps the existing P8 service lifecycle intact while tightening the dialogue contract:
-canonical text remains P6-owned, but each canonical utterance may carry a provisional speaker
-candidate chosen only from the CURRENT P7 SOURCE_BIBLE character candidates.
-
-It deliberately does not create SourceSpeaker identities, voiceprints, cross-Episode speaker
-clusters, or final identity-resolution artifacts. Those remain P9 work.
+The existing P8 service remains the single Task / ProviderJob / publication lifecycle. This module
+versions the provider contract and replaces only the typed composition step so canonical P6 text can
+carry a provisional CURRENT-P7 character candidate without entering P9 identity resolution.
 """
 
 import json
@@ -42,17 +39,17 @@ Professional Skill 执行规则：
 Source Truth 权威层级：
 1. 当前上传的完整 Episode 是视觉、表演与声音现场的最高层原片事实源；必须直接观看完整 Episode。
 2. CURRENT P5 Shot Anchors 已由服务端给出；只能按 shot_number 分析，不能输出或修改 start/end/duration。
-3. CURRENT P6 canonical dialogue/OCR 已由服务端给出；只能对已提供的 utterance_number 标 delivery 和 provisional speaker candidate，不能输出 dialogue text，也不能重新听写。
+3. CURRENT P6 canonical dialogue/OCR 已由服务端给出；dialogue_annotations 只能标 delivery，不能输出 dialogue text 或重新听写。
 4. CURRENT P7 SOURCE_BIBLE 是人物、关系、故事、场景、道具、Story/Rhythm 的整集全局知识；不得让每个 Shot 各猜一套故事。
 5. character_ids / scene_ids / prop_ids 只能从 SOURCE_BIBLE 已存在的 candidate ID 中选择，不创建新 ID。
-6. dialogue_annotations 中每个 speaker_character_id 只能是 CURRENT SOURCE_BIBLE.characters 的 character_id；无法可靠判断时必须为 null。
-7. 同一个 canonical utterance 如果跨多个 Shot 出现，所有 Shot 的 speaker_character_id 必须完全一致；不能因切镜而换说话人。
-8. speaker_character_id 只是 P8 的 provisional candidate hint，不是 P9 最终 Speaker Truth；禁止声纹聚类、跨 Episode speaker identity 或最终人物归一。
+6. dialogue_speakers 必须对本 Episode 每条 canonical utterance 恰好输出一次；speaker_character_id 只能是 CURRENT SOURCE_BIBLE.characters 的 character_id，无法可靠判断时填 null。
+7. speaker candidate 属于 canonical utterance，不属于 Shot；同一 utterance 跨多个 Shot 时服务端会把同一个 candidate 注入全部 overlap。
+8. speaker_character_id 只是 P8 provisional candidate hint，不是 P9 最终 Speaker Truth；禁止声纹聚类、跨 Episode speaker identity、SourceSpeaker 物化或最终人物归一。
 9. sound_effects / ambience 只写该 Shot 实际可听见的声音；无法可靠判断就留空。
 10. 镜头语言无法可靠判断时明确写“无法可靠判断”，不得为了填满字段而猜测。
 11. 必须对 shot_context 中每个 shot_number 恰好输出一次，不能漏镜、增镜、重复或重编号。
 12. 每个 Shot 的 dialogue_annotations 必须与该 Shot canonical_dialogue_overlaps 的 utterance_number 集合完全一致。
-13. 输出模型禁止额外字段；不得加入 shot 时间、dialogue text、推理过程或解释。
+13. 输出模型禁止额外字段；不得加入 shot 时间、dialogue text、speaker label、推理过程或解释。
 
 Episode:
 - episode_id: {payload.episode_id}
@@ -75,14 +72,14 @@ Output JSON Schema:
 """
 
 
-# Patch provider constants/prompt before importing the original service so its imported contract
-# constants and fingerprint logic are v2 from first load.
+# Version provider constants/prompt before importing the original service so its copied constants,
+# fingerprint inputs and Provider profile are v2 from first load.
 _providers.P8_PROMPT_VERSION = P8_PROMPT_VERSION
 _providers.P8_SCHEMA_VERSION = P8_SCHEMA_VERSION
 _providers.P8_SOURCE_TRUTH_CONTRACT = P8_SOURCE_TRUTH_CONTRACT
 _providers._prompt = _prompt_v2
 
-from app.shot_breakdown import service as _base  # noqa: E402  (intentional import order)
+from app.shot_breakdown import service as _base  # noqa: E402
 
 _base.P8_PROMPT_VERSION = P8_PROMPT_VERSION
 _base.P8_SCHEMA_VERSION = P8_SCHEMA_VERSION
@@ -109,48 +106,34 @@ def _compose_episode_v2(
     if len(utterance_by_number) != len(context.dialogue):
         raise AppError("SOURCE_DIALOGUE_NUMBER_DUPLICATED", "P6 canonical utterance_number 重复", status_code=409)
 
-    # Speaker is an Episode-level property of the canonical utterance even though the provider emits
-    # it alongside each Shot annotation. Repeated appearances must agree exactly.
-    speaker_by_utterance: dict[int, str | None] = {}
-    for shot in semantic.shots:
-        for annotation in shot.dialogue_annotations:
-            number = annotation.utterance_number
-            speaker_id = annotation.speaker_character_id
-            if speaker_id is not None and speaker_id not in character_map:
-                raise AppError(
-                    "P8_SPEAKER_CANDIDATE_INVALID",
-                    "P8 speaker candidate 引用了 CURRENT SOURCE_BIBLE 不存在的人物 candidate ID",
-                    status_code=422,
-                    details={
-                        "shot_number": shot.shot_number,
-                        "utterance_number": number,
-                        "speaker_character_id": speaker_id,
-                    },
-                )
-            if number in speaker_by_utterance and speaker_by_utterance[number] != speaker_id:
-                raise AppError(
-                    "P8_SPEAKER_CANDIDATE_CONFLICT",
-                    "同一 canonical utterance 跨 Shot 的 speaker candidate 不一致",
-                    status_code=422,
-                    details={
-                        "utterance_number": number,
-                        "first": speaker_by_utterance[number],
-                        "conflicting": speaker_id,
-                    },
-                )
-            speaker_by_utterance[number] = speaker_id
-
+    speaker_by_utterance = {
+        item.utterance_number: item.speaker_character_id
+        for item in semantic.dialogue_speakers
+    }
     expected_utterance_numbers = set(utterance_by_number)
-    actual_speaker_numbers = set(speaker_by_utterance)
-    if actual_speaker_numbers != expected_utterance_numbers:
+    if set(speaker_by_utterance) != expected_utterance_numbers:
         raise AppError(
             "P8_SPEAKER_CANDIDATE_SET_INVALID",
-            "P8 speaker candidate 集合必须覆盖本 Episode 的全部 canonical utterance，且不能增删 utterance",
+            "P8 dialogue_speakers 必须对本 Episode 每条 canonical utterance 恰好输出一次，且不能增删 utterance",
             status_code=422,
             details={
                 "expected": sorted(expected_utterance_numbers),
-                "actual": sorted(actual_speaker_numbers),
+                "actual": sorted(speaker_by_utterance),
             },
+        )
+    invalid_speakers = sorted(
+        {
+            speaker_id
+            for speaker_id in speaker_by_utterance.values()
+            if speaker_id is not None and speaker_id not in character_map
+        }
+    )
+    if invalid_speakers:
+        raise AppError(
+            "P8_SPEAKER_CANDIDATE_INVALID",
+            "P8 speaker candidate 引用了 CURRENT SOURCE_BIBLE 不存在的人物 candidate ID",
+            status_code=422,
+            details={"candidate_ids": invalid_speakers},
         )
 
     shots: list[SourceShotFact] = []
@@ -231,9 +214,7 @@ def _compose_episode_v2(
     )
 
 
-# The existing lifecycle (Task, ProviderJob-before-call, publication, provenance, retry/resume,
-# CURRENT/STALE and supersedes) stays in the original service. Only the typed composition step is
-# replaced, so P8 v2 does not fork a second workflow implementation.
+# Reuse the original lifecycle and replace only typed composition.
 _base._compose_episode = _compose_episode_v2
 
 P8_TASK_TYPE = _base.P8_TASK_TYPE
