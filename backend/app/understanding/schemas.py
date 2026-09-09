@@ -25,6 +25,28 @@ class TimeRange(BaseModel):
         return self
 
 
+class ClaimSupportLevel(StrEnum):
+    FACT = "FACT"
+    INFERENCE = "INFERENCE"
+    UNKNOWN = "UNKNOWN"
+
+
+class ClaimGrounding(BaseModel):
+    support_level: ClaimSupportLevel = ClaimSupportLevel.UNKNOWN
+    dialogue_evidence_ids: list[str] = Field(default_factory=list, max_length=80)
+    visual_text_evidence_ids: list[str] = Field(default_factory=list, max_length=80)
+    video_time_ranges: list[TimeRange] = Field(default_factory=list, max_length=40)
+    note: ShortText | None = None
+
+    @model_validator(mode="after")
+    def validate_fact_has_support(self) -> "ClaimGrounding":
+        if self.support_level == ClaimSupportLevel.FACT and not (
+            self.dialogue_evidence_ids or self.visual_text_evidence_ids or self.video_time_ranges
+        ):
+            raise ValueError("FACT 必须至少提供 Evidence ID 或完整 Episode 视频时间依据")
+        return self
+
+
 class MaterialBaseline(BaseModel):
     episode_id: str
     episode_order: int = Field(ge=1)
@@ -43,8 +65,12 @@ class MaterialBaseline(BaseModel):
 class OverallAnalysis(BaseModel):
     story_summary: NonEmptyText
     story_background: NonEmptyText
+    story_background_grounding: ClaimGrounding = Field(default_factory=ClaimGrounding)
     genre: list[ShortText] = Field(default_factory=list, max_length=12)
+    # Backward-compatible field name. In the grounded P7 contract this may only contain
+    # source-internal rules/facts, never social generalizations or legal conclusions.
     world_rules: list[ShortText] = Field(default_factory=list, max_length=30)
+    world_rule_groundings: list[ClaimGrounding] = Field(default_factory=list, max_length=30)
     narrative_structure: NonEmptyText
     audiovisual_style: NonEmptyText
     rhythm_overview: NonEmptyText
@@ -68,6 +94,7 @@ class CharacterState(BaseModel):
 class CharacterProfile(BaseModel):
     character_id: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=160)
+    identity_grounding: ClaimGrounding = Field(default_factory=ClaimGrounding)
     story_function: NonEmptyText
     appearance_baseline: NonEmptyText
     states: list[CharacterState] = Field(default_factory=list, max_length=40)
@@ -77,6 +104,7 @@ class CharacterRelationship(BaseModel):
     source_character_id: str = Field(min_length=1, max_length=80)
     target_character_id: str = Field(min_length=1, max_length=80)
     relationship: NonEmptyText
+    grounding: ClaimGrounding = Field(default_factory=ClaimGrounding)
     change_summary: NonEmptyText | None = None
 
 
@@ -86,6 +114,7 @@ class SceneProfile(BaseModel):
     time_ranges: list[TimeRange] = Field(default_factory=list, max_length=40)
     spatial_relationship: NonEmptyText
     environment_details: NonEmptyText
+    grounding: ClaimGrounding = Field(default_factory=ClaimGrounding)
 
 
 class PropProfile(BaseModel):
@@ -94,6 +123,7 @@ class PropProfile(BaseModel):
     time_ranges: list[TimeRange] = Field(default_factory=list, max_length=40)
     appearance_state: NonEmptyText
     story_function: NonEmptyText
+    story_function_grounding: ClaimGrounding = Field(default_factory=ClaimGrounding)
 
 
 class StoryEvent(BaseModel):
@@ -102,6 +132,7 @@ class StoryEvent(BaseModel):
     summary: NonEmptyText
     participants: list[str] = Field(default_factory=list, max_length=40)
     consequences: NonEmptyText
+    grounding: ClaimGrounding = Field(default_factory=ClaimGrounding)
 
 
 class EmotionBeat(BaseModel):
