@@ -99,6 +99,14 @@ Provider 不拥有 Shot 时间、canonical dialogue text、P7 candidate label �
 
 ## 6. Artifact / revision / fingerprint / provenance
 
+P8 正式 Source Truth 绑定契约固定为：
+
+```text
+source-bible-shot-facts-v1
+```
+
+它表示 `SOURCE_SHOT_FACTS` 的 Shot 时间由 CURRENT P5 固化、对白正文由 CURRENT P6 固化、人物/场景/道具候选只能绑定 CURRENT P7，而逐镜视觉与导演语言必须直接观察完整 Episode。Provider 不拥有前三类权威事实的改写权。
+
 每次成功发布生成新的 `SOURCE_SHOT_FACTS` Artifact revision，并持久化 `SourceShotFactsRevision`。
 
 `input_fingerprint` 至少覆盖：
