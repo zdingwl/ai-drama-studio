@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     media_probe_timeout_seconds: int = 60
     media_decode_timeout_seconds: int = 120
     p6_asr_provider: str = "faster-whisper"
-    p6_asr_model: str = "small"
+    p6_asr_model: str = "large-v3-turbo"
     p6_asr_device: str = "auto"
     p6_asr_compute_type: str = "default"
     p6_asr_download_root: Path | None = None
