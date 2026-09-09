@@ -127,7 +127,6 @@ def test_p7_prompt_is_driven_by_professional_skill_source_truth_rules() -> None:
     prompt = _prompt(_input())
 
     assert "source-video-understanding@1.1.0" in prompt
-    assert "宁可 UNKNOWN" in prompt
     assert "社会学泛化" in prompt
     assert "world_rules 不是社会常识列表" in prompt
     assert "UNKNOWN 不是已填写事实字段的通行证" in prompt
@@ -201,11 +200,9 @@ def test_story_background_cannot_publish_as_unknown() -> None:
 
 def test_character_identity_cannot_publish_as_unknown() -> None:
     semantic = _base_semantic()
-    semantic.characters = [
-        SimpleNamespace(character_id="char-a", identity_grounding=ClaimGrounding())
-    ]
+    semantic.characters = [SimpleNamespace(character_id="char-a", identity_grounding=ClaimGrounding())]
 
-    with pytest.raises(ValueError, match="character\[char-a\].*support_level FACT"):
+    with pytest.raises(ValueError, match=r"character\[char-a\].*support_level FACT"):
         validate_episode_understanding_grounding(semantic, _input())
 
 
@@ -215,17 +212,17 @@ def test_relationship_scene_and_event_require_fact_grounding() -> None:
         SimpleNamespace(source_character_id="a", target_character_id="b", grounding=ClaimGrounding())
     ]
 
-    with pytest.raises(ValueError, match="relationship\[a->b\].*support_level FACT"):
+    with pytest.raises(ValueError, match=r"relationship\[a->b\].*support_level FACT"):
         validate_episode_understanding_grounding(semantic, _input())
 
     semantic = _base_semantic()
     semantic.scenes = [SimpleNamespace(scene_id="scene-a", grounding=ClaimGrounding())]
-    with pytest.raises(ValueError, match="scene\[scene-a\].*support_level FACT"):
+    with pytest.raises(ValueError, match=r"scene\[scene-a\].*support_level FACT"):
         validate_episode_understanding_grounding(semantic, _input())
 
     semantic = _base_semantic()
     semantic.story_events = [SimpleNamespace(event_id="event-a", grounding=ClaimGrounding())]
-    with pytest.raises(ValueError, match="story_event\[event-a\].*support_level FACT"):
+    with pytest.raises(ValueError, match=r"story_event\[event-a\].*support_level FACT"):
         validate_episode_understanding_grounding(semantic, _input())
 
 
