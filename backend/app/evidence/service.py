@@ -48,8 +48,12 @@ from app.workflow.task_service import (
 from app.workflow.worker import TaskExecutionContext
 
 P6_TASK_TYPE = "P6_SOURCE_EVIDENCE"
-P6_PROFILE_VERSION = "p6-source-evidence-v1"
+P6_PROFILE_VERSION = "p6-source-evidence-v2"
+P6_CANONICAL_POLICY = "segment-preserving-dialogue-v2"
 _TERMINAL = ("。", "！", "？", "!", "?", "…")
+_CONTINUATION = ("，", ",", "、", "：", ":", "；", ";")
+_MAX_DIALOGUE_MERGE_GAP_US = 300_000
+_MAX_DIALOGUE_UTTERANCE_US = 12_000_000
 
 
 @dataclass(frozen=True)
@@ -180,10 +184,20 @@ def create_source_evidence_task(
     shot_artifact, boundary, _ = _shot_hint(db, project_id, episode_id, source.id)
     providers = build_evidence_providers(get_settings())
     settings = get_settings()
+    previous_source_evidence_set_id = db.scalar(
+        select(SourceEvidenceSet.id)
+        .where(
+            SourceEvidenceSet.project_id == project_id,
+            SourceEvidenceSet.episode_id == episode_id,
+        )
+        .order_by(SourceEvidenceSet.revision.desc())
+        .limit(1)
+    )
     fingerprint = _sha(
         {
             "task": P6_TASK_TYPE,
             "profile": P6_PROFILE_VERSION,
+            "canonical_policy": P6_CANONICAL_POLICY,
             "source_video_artifact_id": source.id,
             "source_video_fingerprint": source.input_fingerprint,
             "episode_id": episode.id,
@@ -197,6 +211,7 @@ def create_source_evidence_task(
             "optional_shot_hint_artifact_id": shot_artifact.id if shot_artifact else None,
             "optional_shot_hint_fingerprint": shot_artifact.input_fingerprint if shot_artifact else None,
             "optional_shot_boundary_set_id": boundary.id if boundary else None,
+            "previous_source_evidence_set_id": previous_source_evidence_set_id,
         }
     )
     return create_task_from_command(
@@ -224,12 +239,23 @@ def _canonical_dialogue(segments: list[AsrSegmentResult]) -> list[CanonicalUtter
         if current is None:
             current = CanonicalUtterance(segment.start_us, segment.end_us, text, segment.language, [index])
             continue
+
         gap = max(0, segment.start_us - current.end_us)
-        if (
-            gap <= 500_000
-            and segment.end_us - current.start_us <= 20_000_000
-            and not current.text.rstrip().endswith(_TERMINAL)
-        ):
+        current_text = current.text.rstrip()
+        language_compatible = (
+            current.language is None
+            or segment.language is None
+            or current.language == segment.language
+        )
+        explicit_continuation = current_text.endswith(_CONTINUATION)
+        can_merge = (
+            gap <= _MAX_DIALOGUE_MERGE_GAP_US
+            and segment.end_us - current.start_us <= _MAX_DIALOGUE_UTTERANCE_US
+            and language_compatible
+            and explicit_continuation
+            and not current_text.endswith(_TERMINAL)
+        )
+        if can_merge:
             sep = " " if current.text and text and current.text[-1].isascii() else ""
             current = CanonicalUtterance(
                 current.start_us,
@@ -628,6 +654,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> SourceEvide
     )
     hints = {
         "timeline_source": "FULL_EPISODE",
+        "canonical_dialogue_policy": P6_CANONICAL_POLICY,
         "ocr_sample_interval_ms": get_settings().p6_ocr_sample_interval_ms,
         "shot_anchors_optional": True,
         "shot_anchors_artifact_id": shot_artifact.id if shot_artifact else None,
@@ -758,7 +785,7 @@ def _publish(db: Session, task_id: str, set_id: str) -> ArtifactNode | None:
             "episode_count": len(required_episode_ids),
             "complete": True,
             "evidence_profile": P6_PROFILE_VERSION,
-            "canonical_policy": "ASR_OCR_IMMUTABLE_SOURCE_EVIDENCE",
+            "canonical_policy": P6_CANONICAL_POLICY,
         },
     )
     create_artifact_relation(
