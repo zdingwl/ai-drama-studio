@@ -1,46 +1,39 @@
 # P7 整集原片理解 Professional Skill 与 Grounding 验收
 
 > 日期：2026-09-09  
-> 当前状态：P7 工程实现已具备真实 Provider、项目级模型选择、运行时配置、Professional Skill 与 claim grounding；**P7 仍未最终验收**。  
+> 当前状态：P7 工程已接入真实 Provider、项目级模型选择、运行时配置、Professional Skill 与 `grounded-source-truth-v2`；**P7 仍未最终人工验收**。  
 > 本文补充 `docs/04_阶段人工验收规范.md`，不改变 P8 尚未开始的状态。
 
 ---
 
-# 1. 为什么增加 Professional Skill
+# 1. Professional Skill
 
-真实短剧 `货到付款惩治隔壁大妈-第01集.mp4` 使用 Doubao Seed 2.1 Pro 已经能够生成完整的《源作概览分析》，说明整集故事、人物、关系、时间化剧情、Story / Rhythm 的模型能力基本可用。
-
-但第一次真实结果也暴露了 Source Truth 边界问题，例如：
-
-- `world_rules` 出现社会学泛化 / 道德或法律式总结；
-- 某些道具 `story_function` 可能把合理推断写成确定因果；
-- 人物历史、关系年限、过去行为等事实如果没有明确 Evidence，容易被模型合理补全。
-
-这不是简单的 JSON 格式问题，也不优先通过再增加一次语言模型来解决。
-
-P7 需要正式的专业执行标准：
-
-```text
-Root Project Skill
-→ source-video-understanding Professional Skill
-→ Provider Prompt
-→ Grounded Schema
-→ Provider / Server Validation
-→ SOURCE_BIBLE
-```
-
-正式 Skill：
+正式 Professional Skill：
 
 ```text
 skills/professional/episode-understanding/SKILL.md
 skills/professional/episode-understanding/manifest.json
 ```
 
-Skill ID：
+当前版本：
 
 ```text
-source-video-understanding@1.0.0
+source-video-understanding@1.1.0
 ```
+
+Skill 不是一段 Prompt。正式运行关系：
+
+```text
+Root Project Skill
+→ source-video-understanding Professional Skill
+→ Provider Prompt
+→ Grounded Schema
+→ Provider Guardrail
+→ Service Publication Guardrail
+→ SOURCE_BIBLE
+```
+
+Doubao / Qwen 三个 P7 Provider 必须执行同一套 Professional Skill，不得各自维护互相冲突的业务判断标准。
 
 ---
 
@@ -72,67 +65,79 @@ Reference Clip 2 → 猜一段剧情
 
 ---
 
-# 3. Grounding 三档
+# 3. Grounding v2
 
-P7 对容易被合理补全的 claim 统一区分：
+当前 Grounding Contract：
+
+```text
+grounded-source-truth-v2
+```
+
+Schema：
+
+```text
+SOURCE_BIBLE schema 1.1
+```
+
+Provider Prompt：
+
+```text
+p7-source-bible-v2
+```
+
+事实等级仍为：
 
 ```text
 FACT
 = 原片直接可见，或 CURRENT Source Evidence 明确陈述
 
 INFERENCE
-= 根据已知事实可以合理推导，但原片没有直接确认
+= 根据已有 Source Facts 可以合理推导，但原片没有直接确认
 
 UNKNOWN
 = 无法可靠判断
 ```
 
+但 v2 增加最关键的发布语义：
+
+```text
+FACT / INFERENCE
+→ 必须至少有 CURRENT Evidence ID 或完整 Episode video_time_ranges
+
+UNKNOWN
+→ 不得携带 Evidence / video_time_ranges
+→ 只能对应省略 / null 的未确认 claim
+→ 禁止“确定性正文 + UNKNOWN grounding”
+```
+
 核心原则：
 
-> **宁可 UNKNOWN，也不要合理补全。**
-
-FACT 必须至少提供一种依据：
-
-- CURRENT dialogue evidence ID；
-- CURRENT visual text evidence ID；
-- 完整 Episode 中明确的 `video_time_ranges`。
-
-不存在的 Evidence ID、越过 Episode duration 的视频依据必须 fail closed。
+> **UNKNOWN 不是绕过 Source Truth 校验的通行证。**
 
 ---
 
-# 4. Schema Grounding 范围
+# 4. 必须 FACT-grounded 的正式 Source Facts
 
-当前 Grounding Contract：
+当前 Provider 输出如果存在以下正式字段，其 grounding 必须为 `FACT`：
 
 ```text
-grounded-source-truth-v1
+overall_analysis.story_background
+characters[].identity
+relationships[]
+scenes[]
+story_events[]
+key_props[].appearance_state
+world_rules[]
 ```
 
-P7 Schema 已支持以下 claim grounding：
+其中：
 
-- `overall_analysis.story_background_grounding`；
-- `overall_analysis.world_rule_groundings`；
-- `character.identity_grounding`；
-- `relationship.grounding`；
-- `scene.grounding`；
-- `prop.story_function_grounding`；
-- `story_event.grounding`。
+- 人物真实姓名无法确认时可以使用稳定“未命名角色A”标签，但该角色在原片中的存在仍需视频依据；
+- 夫妻 / 邻居 / 婆媳 / 同事 / 结婚年限 / 赘婿等具体关系没有直接依据时，不得创建正式 relationship；
+- 场景与 Story Event 可以使用完整 Episode 的明确视频时间范围作为直接视觉依据；
+- `world_rules` 每一条必须和同索引 `world_rule_groundings` 一一对应，且 grounding 必须为 FACT。
 
-其中 `world_rules` 保留原字段名用于兼容已有 SOURCE_BIBLE，但语义已经收紧为：
-
-> 只允许本作品内部已经成立、并且对剧情理解有约束作用的 source-internal FACT。
-
-禁止写入：
-
-- “部分老人一般会……”；
-- “某类男性通常会……”；
-- 社会经验总结；
-- 法律结论；
-- 道德训诫；
-- 与本片无关的世界知识。
-
-没有 source-internal world rule 时应直接输出：
+没有真正 source-internal world rule 时应直接：
 
 ```json
 {
@@ -141,70 +146,177 @@ P7 Schema 已支持以下 claim grounding：
 }
 ```
 
----
+禁止写入：
 
-# 5. Professional Skill 与 Prompt 的关系
-
-Skill 不是 Prompt。
-
-```text
-SKILL.md
-= 人类可读的专业工作方法 / 决策边界 / 失败策略
-
-manifest.json
-= 机器可读取的 Skill 契约和 provider_rules
-
-Provider Prompt
-= 当前任务对 Skill 规则的执行表达
-```
-
-P7 Provider 不再自己维护一套孤立的业务规则；Doubao / Qwen Provider 都读取：
-
-```text
-source-video-understanding@1.0.0
-```
-
-的 `provider_rules`，再组合当前 Episode / Evidence / Shot hints / Schema 形成调用 Prompt。
-
-Professional Skill 可通过只读 API 检查：
-
-```text
-GET /api/v3/skills/professional
-GET /api/v3/skills/professional/source-video-understanding
-```
-
-GET 只读取 Skill，不执行模型。
+- “部分老人一般会……”；
+- “某类男性通常会……”；
+- 社会经验总结；
+- 法律结论；
+- 道德训诫；
+- 与本 Episode 无关的世界知识。
 
 ---
 
-# 6. Provider Fingerprint 行为
+# 5. 道具 Grounding
 
-Provider profile 已包含：
+v1 暴露出的典型错误是：
 
 ```text
-professional_skill_id
-professional_skill_version
-grounding_contract
+画面看到王桂香手持黑色垃圾袋
+↓
+模型补成
+她正准备倒垃圾
+↓
+进一步补成
+她倒垃圾时看到门口花并顺手拿走
 ```
 
-因此 Professional Skill 版本或 Grounding Contract 改变会进入 P7 task fingerprint。
-
-旧 SOURCE_BIBLE 不会被新 Skill 静默视为相同生成条件。
-
-模型切换 / 模型 profile 改变仍遵守：
+v2 强制拆开：
 
 ```text
-旧 SOURCE_BIBLE    → STALE
-旧 STORY_SKELETON  → STALE
-旧 RHYTHM_SKELETON → STALE
-P6 Source Evidence → CURRENT，不修改
+appearance_state
+= 画面可见状态
+= appearance_grounding 必须 FACT
+
+story_function
+= 剧情作用
+```
+
+`story_function` 规则：
+
+```text
+原片直接确认
+→ FACT + grounding
+
+只是合理解释
+→ INFERENCE + grounding + 推断语气
+
+无法可靠确认
+→ story_function = null
+→ story_function_grounding = UNKNOWN
+```
+
+因此黑色垃圾袋如果原片没有进一步依据，正确结果应类似：
+
+```json
+{
+  "name": "黑色垃圾袋",
+  "appearance_state": "王桂香出场时手里拎着黑色垃圾袋",
+  "appearance_grounding": {
+    "support_level": "FACT",
+    "video_time_ranges": [{"start_us": 3640000, "end_us": 15560000}]
+  },
+  "story_function": null,
+  "story_function_grounding": {
+    "support_level": "UNKNOWN",
+    "dialogue_evidence_ids": [],
+    "visual_text_evidence_ids": [],
+    "video_time_ranges": []
+  }
+}
 ```
 
 ---
 
-# 7. 同一真实短剧重跑验收
+# 6. 双层 fail-closed
 
-Professional Skill / Grounding 修改完成后，必须使用**与第一次真实 P7 相同的 Episode**重新运行 Doubao Seed 2.1 Pro。
+Grounding v2 不再只依赖 Provider adapter 自己校验。
+
+运行时必须经过：
+
+```text
+Provider response
+↓
+Provider grounding validation
+↓
+Pydantic parse
+↓
+Service publication grounding validation
+↓
+Episode / Evidence / character reference validation
+↓
+只有全部通过才发布 SOURCE_BIBLE
+```
+
+以下任一情况必须失败且不能发布半成品：
+
+- 不存在或不属于 CURRENT Episode 的 Evidence ID；
+- FACT / INFERENCE 无任何支持依据；
+- UNKNOWN 携带 Evidence / video range；
+- 确定性 Source Fact 仍标 UNKNOWN；
+- world_rules / groundings 数量不一致；
+- 任意 world rule 不是 FACT；
+- 道具 appearance 没有 FACT grounding；
+- 道具 story_function 为 UNKNOWN 时正文仍非空；
+- grounding 视频时间越过 Episode；
+- 人物关系引用不存在的人物；
+- Provider 输出 Schema 不合法；
+- 上游 Source / Evidence / Provider profile 在任务执行期间发生变化。
+
+P6 Source Evidence 在任何上述失败中都不能被改写。
+
+---
+
+# 7. Provenance 可审计性
+
+新的 SOURCE_BIBLE provenance 必须直接显示：
+
+```text
+prompt_version = p7-source-bible-v2
+schema_version = 1.1
+professional_skill_id = source-video-understanding
+professional_skill_version = 1.1.0
+grounding_contract = grounded-source-truth-v2
+```
+
+此外继续保留：
+
+- exact SOURCE_VIDEO Artifact ID / fingerprint；
+- exact SOURCE_DIALOGUE Artifact ID / fingerprint；
+- 可选 Shot Anchors ID / fingerprint；
+- Episode Evidence Set ID / fingerprint；
+- ProviderJob ID；
+- provider / model；
+- remote response ID；
+- generated Task ID。
+
+这些字段也进入 Provider profile / task fingerprint；Professional Skill、Prompt、Schema 或 Grounding Contract 改变后不得复用旧任务结果。
+
+---
+
+# 8. v1 → v2 STALE 行为
+
+`grounded-source-truth-v1` 已经通过真实短剧暴露出：
+
+```text
+确定性正文
++
+UNKNOWN grounding
+```
+
+的逃逸路径。
+
+因此 Alembic `0010_p7_grounding_contract_v2` 部署时必须自动使旧 P7 链失效：
+
+```text
+旧 SOURCE_BIBLE       → STALE
+旧 STORY_SKELETON     → STALE
+旧 RHYTHM_SKELETON    → STALE
+P6 Source Evidence    → CURRENT，完全不动
+```
+
+迁移不可逆地避免旧 v1 SOURCE_BIBLE 在 downgrade 后被静默恢复为 CURRENT。
+
+---
+
+# 9. 同一真实短剧第三次重跑验收
+
+必须继续使用用户已经用于前两轮验收的同一 Episode：
+
+```text
+货到付款惩治隔壁大妈-第01集.mp4
+约 66 秒
+```
 
 输入保持：
 
@@ -216,30 +328,38 @@ Professional Skill / Grounding 修改完成后，必须使用**与第一次真�
 同一 CURRENT Shot Anchors（如果仍 CURRENT）
 ```
 
-这样才能判断变化来自 Skill / Prompt / Grounding，而不是素材差异。
+这样变化才能归因于 Skill / Prompt / Grounding Contract，而不是素材变化。
 
-## 7.1 必查事实
+## 9.1 必查 Source Truth
 
 人工至少抽查：
 
-1. `128 元` 是否与 canonical dialogue 对应；
-2. `结婚八年` 如果仍出现，是否有明确 Evidence / 视频依据；
-3. `赘婿` 如果仍出现，是否有明确 Evidence / 视频依据；
-4. `以前也拿过花 / 经常拿快递` 如果仍出现，是否原片明确交代；
-5. 黑色垃圾袋只应确认其画面存在；如果“顺手拿花”的因果没有明确依据，应为 INFERENCE / UNKNOWN，而不是 FACT；
-6. 人物姓名、502 / 503 业主等身份是否由 OCR / 视频身份卡或 canonical dialogue 支持。
+1. `128 元` 是否与 canonical dialogue 一致；
+2. `结婚八年` 如果出现，关系 grounding 是否明确支持；
+3. `赘婿` 如果出现，是否有 Evidence / 视频直接支持；
+4. `以前也拿过花 / 经常拿快递` 如果出现，是否原片明确交代；
+5. 黑色垃圾袋如果没有明确剧情功能，`story_function` 是否为 null / UNKNOWN，而不是继续写“顺手拿花”；
+6. 人物姓名、502 / 503 业主等身份是否为 FACT grounding；
+7. 所有 scene / story_event 是否不再整体使用 UNKNOWN 逃逸。
 
-## 7.2 必查 world_rules
+## 9.2 必查 world_rules
 
-预期：
+预期只有两种合法状态：
 
-- 不再出现对“老人”“男性”“现实社会”等群体的泛化；
-- 不出现法律定性或道德训诫；
-- 每一条保留的 world rule 都是一条本作品内部 FACT；
-- 每条 world rule 都有对应 `world_rule_groundings`；
-- 没有明确内部规则时为空数组。
+```text
+A. [] / []
+```
 
-## 7.3 必查故事质量没有退化
+或者：
+
+```text
+B. 每条都是本作品内部 FACT
+   且 world_rules 与 groundings 1:1
+```
+
+任何社会泛化 / 法律结论直接判本轮失败。
+
+## 9.3 必查故事质量没有退化
 
 Grounding 收紧不能把模型变成只会摘抄 Evidence。
 
@@ -248,16 +368,30 @@ Grounding 收紧不能把模型变成只会摘抄 Evidence。
 - 整集故事概述准确；
 - 人物不混淆；
 - 关系变化准确；
-- 6 个左右的语义剧情窗口可以继续跨多个 Shot；
+- 约 6 个语义剧情窗口可以继续跨多个 Shot；
 - Hook / Conflict / Escalation / Reveal / Relationship Change / Cliffhanger 与原片一致；
-- Story Skeleton 可用于后续改编约束；
+- Story Skeleton 可作为后续复刻 / 重绘约束；
 - Rhythm Skeleton 能描述完整 Episode 的叙事 / 剪辑节奏。
+
+## 9.4 必查 provenance
+
+导出的结果必须能直接看到：
+
+```text
+schema_version: 1.1
+prompt_version: p7-source-bible-v2
+professional_skill_id: source-video-understanding
+professional_skill_version: 1.1.0
+grounding_contract: grounded-source-truth-v2
+```
+
+缺任一项均视为审计能力未收口。
 
 ---
 
-# 8. P7 与 P8 边界
+# 10. P7 与 P8 边界
 
-Seko 产品实测已经看到：
+Seko 产品实测观察到：
 
 ```text
 源作概览分析
@@ -266,7 +400,7 @@ Seko 产品实测已经看到：
 → 分镜表
 ```
 
-因此 P7 不应该为了接近 Seko 分镜表而提前逐 Shot 输出：
+因此 P7 仍不能提前逐 Shot 输出：
 
 - 景别；
 - 构图；
@@ -278,7 +412,7 @@ Seko 产品实测已经看到：
 
 这些仍属于 P8。
 
-P7 的正式职责保持：
+P7 正式职责保持：
 
 ```text
 完整 Episode
@@ -294,38 +428,32 @@ Rhythm Skeleton
 
 ---
 
-# 9. 当前完成状态
+# 11. 当前完成状态
 
-当前代码层：
-
-```text
-Professional Skill manual / manifest  ✅
-Professional Skill machine registry    ✅
-Skill read-only API                     ✅
-Doubao / Qwen Prompt 读取 Skill rules   ✅
-FACT / INFERENCE / UNKNOWN Schema       ✅
-Provider claim grounding guardrail      ✅
-Provider profile / task fingerprint     ✅
-自动测试                                ✅
-```
-
-2026-09-09 当前 CI：
+代码层目标：
 
 ```text
-Frontend Typecheck / Unit / Build = PASS
-Backend install / compile / import / migrate / pytest = PASS
-pytest = 81 passed
+Professional Skill 1.1.0                  ✅
+grounded-source-truth-v2                  ✅
+Prompt p7-source-bible-v2                 ✅
+SOURCE_BIBLE schema 1.1                   ✅
+UNKNOWN 非通行证                          ✅
+Provider grounding guardrail              ✅
+Service publication grounding guardrail   ✅
+Provenance 直接记录 Skill / contract       ✅
+v1 CURRENT 迁移为 STALE                    ✅
+自动测试                                  待最终 CI 确认
 ```
 
-但真实人工状态仍为：
+真实人工状态继续保持：
 
 ```text
 P6 = ✅ 已验收
-P7 = 🟡 需要用同一真实短剧按新 Professional Skill / Grounding Contract 重跑并人工确认
+P7 = 🟡 等待同一真实短剧按 v2 第三次重跑并由项目使用者确认
 P8 = ⏸ 未开始
 
 EPISODE_UNDERSTANDING != AVAILABLE
 STORY_RHYTHM != AVAILABLE
 ```
 
-只有重跑结果通过第 7 节的 Source Truth 与故事质量检查，并由项目使用者明确确认，才允许正式把 P7 标记为完成。
+只有第三次真实 Doubao 结果通过第 9 节，并由项目使用者明确确认，才允许正式把 P7 标记为完成。
