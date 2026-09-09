@@ -16,9 +16,9 @@ from app.skills.professional import get_professional_skill
 
 
 P8_PROFESSIONAL_SKILL_ID = "shot-breakdown"
-P8_PROMPT_VERSION = "p8-shot-breakdown-v1"
-P8_SCHEMA_VERSION = "1.0"
-P8_SOURCE_TRUTH_CONTRACT = "source-bible-shot-facts-v1"
+P8_PROMPT_VERSION = "p8-shot-breakdown-v2"
+P8_SCHEMA_VERSION = "1.1"
+P8_SOURCE_TRUTH_CONTRACT = "source-bible-shot-facts-v2"
 
 
 @dataclass(frozen=True)
@@ -121,7 +121,7 @@ def _prompt(payload: EpisodeShotBreakdownInput) -> str:
     shots_json = json.dumps(payload.shot_context, ensure_ascii=False, separators=(",", ":"))
     schema_json = json.dumps(_response_schema(), ensure_ascii=False, separators=(",", ":"))
     return f"""你正在执行 AI Drama Studio Professional Skill：{skill.name}（{skill.id}@{skill.version}）。
-任务是 P8《带 Source Bible 的逐镜精细拉片》，不是 P7 整集故事重写，也不是 P9 身份归一。
+任务是 P8《带 Source Bible 的逐镜精细拉片》，不是 P7 整集故事重写，也不是 P9 最终身份归一。
 
 Professional Skill 执行规则：
 {skill_rules}
@@ -129,14 +129,17 @@ Professional Skill 执行规则：
 Source Truth 权威层级：
 1. 当前上传的完整 Episode 是视觉、表演与声音现场的最高层原片事实源；你必须直接观看完整 Episode。
 2. CURRENT P5 Shot Anchors 已由服务端给出；你只能按 shot_number 分析，不能输出或修改 start/end/duration。
-3. CURRENT P6 canonical dialogue/OCR 已由服务端给出；你只能为已提供的 utterance_number 标 delivery，不能输出 dialogue text，也不能重新听写。
+3. CURRENT P6 canonical dialogue/OCR 已由服务端给出；每个 Shot 只能为 overlap utterance 标 delivery，不能输出 dialogue text，也不能重新听写。
 4. CURRENT P7 SOURCE_BIBLE 是整集人物、关系、故事、场景、道具、Story/Rhythm 全局知识；不得让每个 Shot 各猜一套整集故事。
-5. character_ids / scene_ids / prop_ids 只能从下面 SOURCE_BIBLE 已存在的 candidate ID 中选择；不创建新 ID，不做 Speaker→Character 最终归一。
-6. sound_effects / ambience 只写该 Shot 实际可听见的声音；无法可靠判断就留空。
-7. 镜头语言无法可靠判断时，用“无法可靠判断”等明确文本，不为了填满字段而猜测。
-8. 必须对 shot_context 中每个 shot_number 恰好输出一次，不能漏镜、增镜、重复或重编号。
-9. 每个 Shot 的 dialogue_annotations 必须与该 Shot 的 canonical_dialogue_overlaps 中 utterance_number 集合完全一致；不确定 delivery 时填 UNKNOWN。
-10. 输出模型禁止额外字段；不得加入 shot 时间、dialogue text、speaker identity、推理过程或解释。
+5. character_ids / scene_ids / prop_ids 只能从下面 SOURCE_BIBLE 已存在的 candidate ID 中选择；不创建新 ID。
+6. Episode 级 dialogue_speakers 必须对当前 P6 每条 canonical utterance 恰好输出一次；speaker_character_id 只能选择 CURRENT SOURCE_BIBLE 已存在的 character_id，无法可靠判断时填 null。
+7. 说话人候选属于 canonical utterance；同一 utterance 即使跨多个 Shot 也只能有一个 candidate，服务端会把它绑定到全部 overlap。
+8. speaker_character_id 只是 P8 provisional candidate hint，不是 P9 最终 Speaker Truth；不得创建 SourceSpeaker、不得做声纹聚类、跨 Episode speaker identity 或最终人物归一。
+9. sound_effects / ambience 只写该 Shot 实际可听见的声音；无法可靠判断就留空。
+10. 镜头语言无法可靠判断时，用“无法可靠判断”等明确文本，不为了填满字段而猜测。
+11. 必须对 shot_context 中每个 shot_number 恰好输出一次，不能漏镜、增镜、重复或重编号。
+12. 每个 Shot 的 dialogue_annotations 必须与该 Shot 的 canonical_dialogue_overlaps 中 utterance_number 集合完全一致；不确定 delivery 时填 UNKNOWN。
+13. 输出模型禁止额外字段；不得加入 shot 时间、dialogue text、speaker label、推理过程或解释。
 
 Episode:
 - episode_id: {payload.episode_id}
