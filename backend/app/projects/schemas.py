@@ -2,7 +2,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.projects.enums import AudioPolicy, ProjectStatus, ProjectType, SceneStrategy, VIDEO_PROJECT_TYPES
+from app.projects.enums import (
+    AudioPolicy,
+    ProjectStatus,
+    ProjectType,
+    SceneStrategy,
+    SourceUnderstandingProvider,
+    VIDEO_PROJECT_TYPES,
+)
 
 
 class ProjectCreate(BaseModel):
@@ -14,6 +21,7 @@ class ProjectCreate(BaseModel):
     scene_strategy: SceneStrategy | None = None
     audio_policy: AudioPolicy | None = None
     visual_style: str | None = Field(default=None, max_length=80)
+    source_understanding_provider: SourceUnderstandingProvider = SourceUnderstandingProvider.DOUBAO_SEED_2_1_PRO_API
 
     @model_validator(mode="after")
     def validate_source_language(self) -> "ProjectCreate":
@@ -30,6 +38,7 @@ class ProjectUpdate(BaseModel):
     scene_strategy: SceneStrategy | None = None
     audio_policy: AudioPolicy | None = None
     visual_style: str | None = Field(default=None, max_length=80)
+    source_understanding_provider: SourceUnderstandingProvider | None = None
 
 
 class ProjectRead(BaseModel):
@@ -44,6 +53,7 @@ class ProjectRead(BaseModel):
     scene_strategy: SceneStrategy
     audio_policy: AudioPolicy
     visual_style: str | None
+    source_understanding_provider: SourceUnderstandingProvider
     root_skill_id: str
     root_skill_version: str
     current_plan_id: str | None
