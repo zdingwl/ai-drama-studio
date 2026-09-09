@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
 from app.shot_breakdown.schemas import ShotBreakdownRead, ShotBreakdownRevisionSummary
-from app.shot_breakdown.service import (
+from app.shot_breakdown.service_v2 import (
     create_shot_breakdown_task,
     get_shot_breakdown,
     list_shot_breakdown_revisions,
