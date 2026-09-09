@@ -1,7 +1,7 @@
 # P6 Canonical Evidence v2 与 P8 最终验收整改
 
 > 日期：2026-09-09  
-> 状态：实施中  
+> 状态：工程实现完成；真实 P6 v2 → P7 → P8 恢复验收待执行  
 > 触发原因：P8 真实短剧程序验收通过，但最终人工逐镜音画检查发现 P6 canonical dialogue 存在过度合并与明显 ASR 错词，导致 P8 虽严格原样绑定 P6，仍无法作为最终可靠逐镜对白事实输入。
 
 ---
@@ -120,9 +120,10 @@ P6 v2 改变 canonical Evidence 语义，因此部署时旧链必须失效：
 依赖旧 P6 的 SOURCE_BIBLE  → STALE
 旧 Story / Rhythm           → STALE
 旧 SOURCE_SHOT_FACTS        → STALE
+受影响 ProjectExecutionPlan → STALE / current pointer cleared
 ```
 
-历史 revision 必须保留，不删除。
+历史 revision 必须保留，不删除。`SOURCE_VIDEO` 与 `SHOT_ANCHORS` 不因本迁移失效。
 
 正确恢复链：
 
@@ -157,16 +158,28 @@ P6 v2 重跑后，旧 P8 应因上游变化自动 STALE；新 P8 必须基于新
 
 # 7. 自动验收
 
-至少新增回归测试：
+已完成回归覆盖：
 
 - `你好，` + `世界。` 这类明确 continuation 仍可合并；
 - 无终止标点但没有明确 continuation 的相邻发言不得因短 gap 被合并；
 - 不同语言 segment 不合并；
 - 显式 P6 rerun 产生新 Task / Evidence revision；
-- 同轮重复请求仍 business-key 去重；
-- P6 v2 Provider profile 记录高质量默认模型；
-- Alembic 升级后旧 P6 / P7 / P8 CURRENT 链失效；
+- P6 v2 Provider profile 记录高质量默认模型与连续 Episode 输入；
+- 旧 P6 / P7 / P8 CURRENT 链由 `0012_p6_canonical_evidence_v2` 失效；
+- 受影响 ProjectExecutionPlan 同步失效；
 - 完整 backend / frontend CI 全绿。
+
+工程完成基线（2026-09-09）：
+
+```text
+P6 profile          = p6-source-evidence-v2
+canonical policy    = segment-preserving-dialogue-v2
+default ASR model   = large-v3-turbo
+migration head      = 0012_p6_canonical_evidence_v2
+latest verified CI = V3 CI #292 PASS
+```
+
+工程通过只证明代码与迁移契约成立，**不等于真实短剧的 P6 v2 内容质量已经通过**。真实质量仍必须在本机同一 Episode 上重新执行和人工核对。
 
 ---
 
