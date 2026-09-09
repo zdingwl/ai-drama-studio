@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.core.config import get_settings
 from app.evidence.models import ShotDialogueProjection
 from app.evidence.providers import AsrSegmentResult, EvidenceProviders, OcrDetectionResult
+from app.evidence.service import _canonical_dialogue
 from app.preprocessing.detector import ShotRange
 
 
@@ -68,6 +69,22 @@ class FakeOcrProvider:
                 bbox=[[10, 10], [100, 10], [100, 40], [10, 40]],
             )
         ]
+
+
+def _segment(
+    start_us: int,
+    end_us: int,
+    text: str,
+    language: str | None = "zh",
+) -> AsrSegmentResult:
+    return AsrSegmentResult(
+        start_us=start_us,
+        end_us=end_us,
+        text=text,
+        language=language,
+        confidence=0.95,
+        provenance={"provider": "fake"},
+    )
 
 
 def _project(client: TestClient) -> dict:
@@ -145,13 +162,43 @@ def _fake(monkeypatch) -> tuple[FakeAsrProvider, FakeOcrProvider]:
     return asr, ocr
 
 
-def _run(client: TestClient, project_id: str, episode_id: str, key: str) -> None:
+def _run(client: TestClient, project_id: str, episode_id: str, key: str) -> str:
     response = client.post(
         f"/api/v3/projects/{project_id}/episodes/{episode_id}/commands/source-evidence",
         headers={"Idempotency-Key": key},
     )
     assert response.status_code == 202, response.text
-    assert _task(client, project_id, response.json()["id"])["status"] == "succeeded"
+    task_id = response.json()["id"]
+    assert _task(client, project_id, task_id)["status"] == "succeeded"
+    return task_id
+
+
+def test_p6_v2_canonical_dialogue_only_merges_explicit_continuation() -> None:
+    dialogue = _canonical_dialogue(
+        [
+            _segment(0, 250_000, "你好，"),
+            _segment(250_000, 600_000, "世界。"),
+            _segment(650_000, 900_000, "你凶什么"),
+            _segment(900_000, 1_200_000, "捡的"),
+        ]
+    )
+
+    assert [(item.start_us, item.end_us, item.text) for item in dialogue] == [
+        (0, 600_000, "你好，世界。"),
+        (650_000, 900_000, "你凶什么"),
+        (900_000, 1_200_000, "捡的"),
+    ]
+
+
+def test_p6_v2_canonical_dialogue_does_not_merge_language_change() -> None:
+    dialogue = _canonical_dialogue(
+        [
+            _segment(0, 200_000, "继续，", "zh"),
+            _segment(200_000, 500_000, "continue.", "en"),
+        ]
+    )
+
+    assert [item.text for item in dialogue] == ["继续，", "continue."]
 
 
 def test_p6_get_is_read_only_and_asr_uses_full_episode_without_shots(
@@ -194,12 +241,56 @@ def test_p6_get_is_read_only_and_asr_uses_full_episode_without_shots(
     assert evidence["validity"] == "CURRENT" and evidence["revision"] == 1
     assert evidence["metadata_json"]["complete"] is True
     assert evidence["metadata_json"]["episode_count"] == 1
+    assert evidence["metadata_json"]["evidence_profile"] == "p6-source-evidence-v2"
+    assert evidence["metadata_json"]["canonical_policy"] == "segment-preserving-dialogue-v2"
     assert any(
         edge["source_node_id"] == source["id"]
         and edge["target_node_id"] == evidence["id"]
         and edge["relation_type"] == "DERIVED_FROM"
         for edge in graph["edges"]
     )
+
+
+def test_p6_explicit_rerun_creates_new_task_evidence_set_and_artifact_revision(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project = _project(client)
+    episode = _upload(client, project["id"], _video(tmp_path / "rerun.mp4"))
+    asr, _ = _fake(monkeypatch)
+
+    first_task_id = _run(client, project["id"], episode["id"], "p6-rerun-first")
+    first_result = client.get(
+        f"/api/v3/projects/{project['id']}/episodes/{episode['id']}/source-evidence"
+    ).json()
+    first_graph = client.get(f"/api/v3/projects/{project['id']}/artifact-graph").json()
+    first_artifact = next(
+        node
+        for node in first_graph["nodes"]
+        if node["artifact_type"] == "SOURCE_DIALOGUE" and node["is_current"]
+    )
+
+    second_task_id = _run(client, project["id"], episode["id"], "p6-rerun-second")
+    second_result = client.get(
+        f"/api/v3/projects/{project['id']}/episodes/{episode['id']}/source-evidence"
+    ).json()
+    second_graph = client.get(f"/api/v3/projects/{project['id']}/artifact-graph").json()
+    second_artifact = next(
+        node
+        for node in second_graph["nodes"]
+        if node["artifact_type"] == "SOURCE_DIALOGUE" and node["is_current"]
+    )
+    old_artifact = next(node for node in second_graph["nodes"] if node["id"] == first_artifact["id"])
+
+    assert second_task_id != first_task_id
+    assert len(asr.calls) == 2
+    assert first_result["revision"] == 1
+    assert second_result["revision"] == 2
+    assert second_result["artifact_revision"] == 2
+    assert second_artifact["id"] != first_artifact["id"]
+    assert old_artifact["validity"] == "STALE"
+    assert old_artifact["is_current"] is False
 
 
 def test_p6_project_artifact_waits_for_every_episode_in_current_source_video(
