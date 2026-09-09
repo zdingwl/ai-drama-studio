@@ -38,6 +38,7 @@ class ShotSubjectBindingsSemantic(_StrictProviderModel):
 class ShotDialogueAnnotationSemantic(_StrictProviderModel):
     utterance_number: int = Field(ge=1)
     delivery: DialogueDelivery = DialogueDelivery.UNKNOWN
+    speaker_character_id: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 class SourceShotSemantic(_StrictProviderModel):
@@ -83,6 +84,7 @@ class CanonicalDialogueBinding(BaseModel):
     text: str
     language: str | None = None
     delivery: DialogueDelivery = DialogueDelivery.UNKNOWN
+    speaker: BoundSubjectRef | None = None
 
     @model_validator(mode="after")
     def valid_overlap(self) -> "CanonicalDialogueBinding":
@@ -137,7 +139,7 @@ class SourceShotFactsEpisode(BaseModel):
 
 
 class SourceShotFactsContent(BaseModel):
-    schema_version: str = "1.0"
+    schema_version: str = "1.1"
     title: str = "逐镜精细拉片"
     episodes: list[SourceShotFactsEpisode] = Field(min_length=1)
 
