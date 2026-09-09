@@ -6,7 +6,7 @@ CAPABILITIES: tuple[CapabilityDefinition, ...] = (
     CapabilityDefinition(id=Capability.SOURCE_TEXT_INGEST, title="文本导入", description="接收小说或剧本等文本来源素材。", category="input", availability=CapabilityAvailability.AVAILABLE),
     CapabilityDefinition(id=Capability.MEDIA_PREFLIGHT, title="媒体检查", description="检查视频可解码性、时间基准和基础媒体信息。", category="source", availability=CapabilityAvailability.AVAILABLE),
     CapabilityDefinition(id=Capability.SHOT_BOUNDARY, title="镜头边界", description="建立原片切镜时间锚点，不承担剧情理解。", category="source", availability=CapabilityAvailability.AVAILABLE),
-    CapabilityDefinition(id=Capability.SOURCE_DIALOGUE_EVIDENCE, title="对白证据", description="形成带时间证据的原对白与画面文字。", category="source"),
+    CapabilityDefinition(id=Capability.SOURCE_DIALOGUE_EVIDENCE, title="对白证据", description="形成带时间证据的原对白与画面文字。", category="source", availability=CapabilityAvailability.AVAILABLE),
     CapabilityDefinition(id=Capability.EPISODE_UNDERSTANDING, title="整集理解", description="理解整集故事、角色关系、场景、关键道具和事件。", category="source"),
     CapabilityDefinition(id=Capability.STORY_RHYTHM, title="故事与节奏", description="提取故事骨架、Hook、冲突、反转、爽点和节奏骨架。", category="source"),
     CapabilityDefinition(id=Capability.SHOT_BREAKDOWN, title="逐镜拉片", description="在整集上下文中分析动作、表演和镜头语言。", category="source"),
