@@ -8,6 +8,7 @@ export type ProjectType =
 
 export type SceneStrategy = 'KEEP' | 'LOCALIZE' | 'MIXED'
 export type AudioPolicy = 'KEEP_SOURCE_AUDIO' | 'REGENERATE_AUDIO'
+export type SourceUnderstandingProvider = 'DOUBAO_SEED_2_1_PRO_API' | 'QWEN3_VL_LOCAL'
 export type PlanStepStatus = 'COMPLETED' | 'READY' | 'BLOCKED_DEPENDENCY' | 'WAITING_CAPABILITY'
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 export type ShotBoundaryResultStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
@@ -71,6 +72,8 @@ export interface ProjectRead {
   target_region: string
   scene_strategy: SceneStrategy
   audio_policy: AudioPolicy
+  visual_style: string | null
+  source_understanding_provider: SourceUnderstandingProvider
   status: 'ACTIVE' | 'ARCHIVED'
   workflow_revision: number
   created_at: string
@@ -85,6 +88,11 @@ export interface ProjectCreatePayload {
   target_region: string
   scene_strategy?: SceneStrategy
   audio_policy?: AudioPolicy
+  source_understanding_provider?: SourceUnderstandingProvider
+}
+
+export interface ProjectUpdatePayload {
+  source_understanding_provider?: SourceUnderstandingProvider
 }
 
 export interface ExecutionPlanStep {
