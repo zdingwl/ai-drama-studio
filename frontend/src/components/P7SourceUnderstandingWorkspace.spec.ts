@@ -3,11 +3,17 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import * as projectApi from '@/features/projects/api'
+import * as sourceBibleApi from '@/features/projects/sourceBible'
 import P7SourceUnderstandingWorkspace from './P7SourceUnderstandingWorkspace.vue'
 
 vi.mock('@/features/projects/api', () => ({
   getProject: vi.fn(),
   updateProject: vi.fn(),
+}))
+
+vi.mock('@/features/projects/sourceBible', () => ({
+  getP7RuntimeConfig: vi.fn(),
+  updateP7RuntimeConfig: vi.fn(),
 }))
 
 const project = {
@@ -27,7 +33,29 @@ const project = {
   updated_at: '2026-09-09T00:00:00Z',
 }
 
+const runtimeConfig: sourceBibleApi.P7RuntimeConfig = {
+  doubao: {
+    api_key: '',
+    model: 'doubao-seed-2-1-pro-260628',
+    base_url: 'https://ark.cn-beijing.volces.com/api/v3',
+    request_timeout_seconds: 1800,
+    video_fps: 1,
+  },
+  qwen38: {
+    api_key: '',
+    model: 'Qwen/Qwen3.8-27B',
+    base_url: 'http://127.0.0.1:8000/v1',
+  },
+  qwen3_vl_8b: {
+    api_key: '',
+    model: 'Qwen/Qwen3-VL-8B-Thinking',
+    base_url: 'http://127.0.0.1:8001/v1',
+  },
+  qwen_request_timeout_seconds: 3600,
+}
+
 async function mountWorkspace() {
+  vi.mocked(sourceBibleApi.getP7RuntimeConfig).mockResolvedValue(runtimeConfig)
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/projects/:id', name: 'project-workspace', component: P7SourceUnderstandingWorkspace }],
@@ -72,13 +100,35 @@ describe('P7SourceUnderstandingWorkspace', () => {
 
     const qwen38 = wrapper.find('input[value="QWEN3_8_27B_LOCAL"]')
     await qwen38.setValue(true)
-    await wrapper.get('button').trigger('click')
+    const saveModelButton = wrapper.findAll('button').find((item) => item.text().includes('保存模型选择'))
+    expect(saveModelButton).toBeTruthy()
+    await saveModelButton!.trigger('click')
     await flushPromises()
 
     expect(projectApi.updateProject).toHaveBeenCalledWith('project-p7', {
       source_understanding_provider: 'QWEN3_8_27B_LOCAL',
     })
     expect(wrapper.text()).toContain('旧 SOURCE_BIBLE')
+    wrapper.unmount()
+  })
+
+  it('shows plaintext Ark configuration and saves it through the runtime config API', async () => {
+    vi.mocked(projectApi.getProject).mockResolvedValue(project)
+    vi.mocked(sourceBibleApi.updateP7RuntimeConfig).mockImplementation(async (payload) => payload)
+    const wrapper = await mountWorkspace()
+
+    const apiKey = wrapper.get('[data-testid="doubao-api-key"]')
+    expect(apiKey.attributes('type')).toBe('text')
+    await apiKey.setValue('ark-local-test-key')
+    await wrapper.get('[data-testid="doubao-model"]').setValue('ep-test-seed-2.1-pro')
+    await wrapper.get('[data-testid="save-runtime-config"]').trigger('click')
+    await flushPromises()
+
+    expect(sourceBibleApi.updateP7RuntimeConfig).toHaveBeenCalledOnce()
+    const payload = vi.mocked(sourceBibleApi.updateP7RuntimeConfig).mock.calls[0]?.[0]
+    expect(payload?.doubao.api_key).toBe('ark-local-test-key')
+    expect(payload?.doubao.model).toBe('ep-test-seed-2.1-pro')
+    expect(wrapper.text()).toContain('backend/.env')
     wrapper.unmount()
   })
 })
