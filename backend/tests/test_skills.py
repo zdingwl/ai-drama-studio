@@ -44,10 +44,12 @@ def test_professional_skill_api_exposes_episode_understanding_manual(client: Tes
     response = client.get("/api/v3/skills/professional/source-video-understanding")
     assert response.status_code == 200
     detail = response.json()
-    assert detail["version"] == "1.0.0"
+    assert detail["version"] == "1.1.0"
     assert detail["required_inputs"] == ["SOURCE_VIDEO", "SOURCE_DIALOGUE"]
     assert "EPISODE_UNDERSTANDING" in detail["required_capabilities"]
-    assert "宁可 UNKNOWN" in "\n".join(detail["provider_rules"])
+    rules = "\n".join(detail["provider_rules"])
+    assert "UNKNOWN 不是" in rules
+    assert "grounded-source-truth-v2" in detail["manual"]
     assert "完整 Episode" in detail["manual"]
     assert "P8" in detail["manual"]
 
