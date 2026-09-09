@@ -1,8 +1,13 @@
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session, sessionmaker
 
+from app.artifacts.enums import ArtifactNamespace, ArtifactValidity
+from app.artifacts.models import ArtifactNode
+from app.artifacts.service import create_artifact
 from app.core.config import get_settings
+from app.skills.models import ArtifactType
 from app.understanding import runtime_config
 
 
@@ -27,6 +32,17 @@ def _isolate_p7_env(monkeypatch, env_path: Path) -> None:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(runtime_config, "P7_RUNTIME_ENV_PATH", env_path)
     get_settings.cache_clear()
+
+
+def _project_payload() -> dict:
+    return {
+        "name": "P7 runtime config",
+        "project_type": "REPLICA",
+        "source_language": "zh-CN",
+        "target_language": "en-US",
+        "target_region": "US",
+        "visual_style": "SOURCE_LIKE",
+    }
 
 
 def test_runtime_config_get_and_put_round_trip_plaintext(
@@ -98,3 +114,63 @@ def test_runtime_config_empty_api_key_removes_secret_from_env_file(
     assert cleared.status_code == 200
     assert cleared.json()["doubao"]["api_key"] == ""
     assert "AI_DRAMA_P7_DOUBAO_API_KEY" not in env_path.read_text(encoding="utf-8")
+
+
+def test_runtime_model_profile_change_stales_matching_source_bible_but_key_change_does_not(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    env_path = tmp_path / ".env"
+    _isolate_p7_env(monkeypatch, env_path)
+
+    created = client.post("/api/v3/projects", json=_project_payload())
+    assert created.status_code == 201
+    project_id = created.json()["id"]
+
+    with session_factory() as db:
+        first = create_artifact(
+            db,
+            project_id=project_id,
+            artifact_type=ArtifactType.SOURCE_BIBLE,
+            namespace=ArtifactNamespace.SOURCE,
+            label="源作概览分析",
+            input_fingerprint="a" * 64,
+            skill_id="project.replica",
+            skill_version="1.0.0",
+        )
+        first_id = first.id
+
+    payload = client.get("/api/v3/source-understanding/runtime-config").json()
+    payload["doubao"]["model"] = "changed-seed-model"
+    changed = client.put("/api/v3/source-understanding/runtime-config", json=payload)
+    assert changed.status_code == 200
+
+    with session_factory() as db:
+        first = db.get(ArtifactNode, first_id)
+        assert first is not None
+        assert first.validity == ArtifactValidity.STALE
+        assert first.is_current is False
+        second = create_artifact(
+            db,
+            project_id=project_id,
+            artifact_type=ArtifactType.SOURCE_BIBLE,
+            namespace=ArtifactNamespace.SOURCE,
+            label="源作概览分析",
+            input_fingerprint="b" * 64,
+            skill_id="project.replica",
+            skill_version="1.0.0",
+        )
+        second_id = second.id
+
+    payload = changed.json()
+    payload["doubao"]["api_key"] = "replacement-key-only"
+    key_only = client.put("/api/v3/source-understanding/runtime-config", json=payload)
+    assert key_only.status_code == 200
+
+    with session_factory() as db:
+        second = db.get(ArtifactNode, second_id)
+        assert second is not None
+        assert second.validity == ArtifactValidity.CURRENT
+        assert second.is_current is True
