@@ -35,19 +35,19 @@ const project = {
 
 const runtimeConfig: sourceBibleApi.P7RuntimeConfig = {
   doubao: {
-    api_key: '',
+    api_key: 'ark-local-existing-key',
     model: 'doubao-seed-2-1-pro-260628',
     base_url: 'https://ark.cn-beijing.volces.com/api/v3',
     request_timeout_seconds: 1800,
     video_fps: 1,
   },
   qwen38: {
-    api_key: '',
+    api_key: 'qwen38-local-key',
     model: 'Qwen/Qwen3.8-27B',
     base_url: 'http://127.0.0.1:8000/v1',
   },
   qwen3_vl_8b: {
-    api_key: '',
+    api_key: 'qwen8b-local-key',
     model: 'Qwen/Qwen3-VL-8B-Thinking',
     base_url: 'http://127.0.0.1:8001/v1',
   },
@@ -112,13 +112,41 @@ describe('P7SourceUnderstandingWorkspace', () => {
     wrapper.unmount()
   })
 
-  it('shows plaintext Ark configuration and saves it through the runtime config API', async () => {
+  it('masks all runtime API keys by default and reveals each key on demand', async () => {
+    vi.mocked(projectApi.getProject).mockResolvedValue(project)
+    const wrapper = await mountWorkspace()
+
+    const doubaoKey = wrapper.get('[data-testid="doubao-api-key"]')
+    const qwen38Key = wrapper.get('[data-testid="qwen38-api-key"]')
+    const qwen8bKey = wrapper.get('[data-testid="qwen3-vl-8b-api-key"]')
+
+    expect(doubaoKey.attributes('type')).toBe('password')
+    expect(qwen38Key.attributes('type')).toBe('password')
+    expect(qwen8bKey.attributes('type')).toBe('password')
+
+    await wrapper.get('[data-testid="toggle-doubao-api-key"]').trigger('click')
+    expect(doubaoKey.attributes('type')).toBe('text')
+    expect(wrapper.get('[data-testid="toggle-doubao-api-key"]').text()).toBe('隐藏')
+
+    await wrapper.get('[data-testid="toggle-qwen38-api-key"]').trigger('click')
+    expect(qwen38Key.attributes('type')).toBe('text')
+
+    await wrapper.get('[data-testid="toggle-qwen3-vl-8b-api-key"]').trigger('click')
+    expect(qwen8bKey.attributes('type')).toBe('text')
+
+    await wrapper.get('[data-testid="toggle-doubao-api-key"]').trigger('click')
+    expect(doubaoKey.attributes('type')).toBe('password')
+    expect(wrapper.get('[data-testid="toggle-doubao-api-key"]').text()).toBe('显示')
+    wrapper.unmount()
+  })
+
+  it('saves the original API key value through the runtime config API', async () => {
     vi.mocked(projectApi.getProject).mockResolvedValue(project)
     vi.mocked(sourceBibleApi.updateP7RuntimeConfig).mockImplementation(async (payload) => payload)
     const wrapper = await mountWorkspace()
 
     const apiKey = wrapper.get('[data-testid="doubao-api-key"]')
-    expect(apiKey.attributes('type')).toBe('text')
+    expect(apiKey.attributes('type')).toBe('password')
     await apiKey.setValue('ark-local-test-key')
     await wrapper.get('[data-testid="doubao-model"]').setValue('ep-test-seed-2.1-pro')
     await wrapper.get('[data-testid="save-runtime-config"]').trigger('click')
