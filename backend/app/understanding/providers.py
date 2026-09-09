@@ -11,7 +11,16 @@ from pydantic import SecretStr
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.projects.enums import SourceUnderstandingProvider
-from app.understanding.schemas import EpisodeUnderstandingSemantic
+from app.skills.professional import get_professional_skill
+from app.understanding.schemas import (
+    ClaimGrounding,
+    ClaimSupportLevel,
+    EpisodeUnderstandingSemantic,
+)
+
+
+P7_PROFESSIONAL_SKILL_ID = "source-video-understanding"
+P7_GROUNDING_CONTRACT = "grounded-source-truth-v1"
 
 
 @dataclass(frozen=True)
@@ -41,6 +50,10 @@ class SourceEpisodeUnderstandingProvider(Protocol):
     def profile(self) -> dict: ...
 
     def analyze(self, payload: EpisodeUnderstandingInput) -> EpisodeUnderstandingProviderResult: ...
+
+
+def _professional_skill():
+    return get_professional_skill(P7_PROFESSIONAL_SKILL_ID)
 
 
 def _clean_json_schema(value: Any) -> Any:
@@ -102,25 +115,133 @@ def _json_text(text: str) -> str:
     raise ValueError("P7 provider response did not contain a JSON object")
 
 
-def _parse_semantic(text: str) -> EpisodeUnderstandingSemantic:
-    return EpisodeUnderstandingSemantic.model_validate_json(_json_text(text))
+def _validate_grounding(
+    label: str,
+    grounding: ClaimGrounding,
+    *,
+    payload: EpisodeUnderstandingInput,
+    dialogue_ids: set[str],
+    visual_ids: set[str],
+) -> None:
+    invalid_dialogue = sorted(set(grounding.dialogue_evidence_ids) - dialogue_ids)
+    invalid_visual = sorted(set(grounding.visual_text_evidence_ids) - visual_ids)
+    if invalid_dialogue or invalid_visual:
+        raise ValueError(
+            f"{label} grounding referenced non-current Source Evidence: "
+            f"dialogue={invalid_dialogue}, visual_text={invalid_visual}"
+        )
+    for time_range in grounding.video_time_ranges:
+        if time_range.end_us > payload.duration_us:
+            raise ValueError(
+                f"{label} grounding video time range exceeded Episode duration: "
+                f"end_us={time_range.end_us}, duration_us={payload.duration_us}"
+            )
+
+
+def validate_episode_understanding_grounding(
+    semantic: EpisodeUnderstandingSemantic,
+    payload: EpisodeUnderstandingInput,
+) -> None:
+    """Validate claim-level grounding before semantic output can enter SOURCE_BIBLE.
+
+    This is intentionally provider-side because the provider has the exact Episode evidence payload
+    used for this call. The later service validation remains the final Artifact guardrail.
+    """
+    dialogue_ids = {str(item.get("id")) for item in payload.evidence_payload.get("dialogue", []) if item.get("id")}
+    visual_ids = {str(item.get("id")) for item in payload.evidence_payload.get("visual_text", []) if item.get("id")}
+
+    analysis = semantic.overall_analysis
+    if len(analysis.world_rule_groundings) != len(analysis.world_rules):
+        raise ValueError("world_rules must have one world_rule_groundings item per rule")
+    _validate_grounding(
+        "overall_analysis.story_background",
+        analysis.story_background_grounding,
+        payload=payload,
+        dialogue_ids=dialogue_ids,
+        visual_ids=visual_ids,
+    )
+    for index, grounding in enumerate(analysis.world_rule_groundings):
+        if grounding.support_level != ClaimSupportLevel.FACT:
+            raise ValueError(f"world_rules[{index}] must be FACT, otherwise omit it from world_rules")
+        _validate_grounding(
+            f"overall_analysis.world_rules[{index}]",
+            grounding,
+            payload=payload,
+            dialogue_ids=dialogue_ids,
+            visual_ids=visual_ids,
+        )
+
+    for character in semantic.characters:
+        _validate_grounding(
+            f"character[{character.character_id}].identity",
+            character.identity_grounding,
+            payload=payload,
+            dialogue_ids=dialogue_ids,
+            visual_ids=visual_ids,
+        )
+    for relation in semantic.relationships:
+        _validate_grounding(
+            f"relationship[{relation.source_character_id}->{relation.target_character_id}]",
+            relation.grounding,
+            payload=payload,
+            dialogue_ids=dialogue_ids,
+            visual_ids=visual_ids,
+        )
+    for scene in semantic.scenes:
+        _validate_grounding(
+            f"scene[{scene.scene_id}]",
+            scene.grounding,
+            payload=payload,
+            dialogue_ids=dialogue_ids,
+            visual_ids=visual_ids,
+        )
+    for prop in semantic.key_props:
+        _validate_grounding(
+            f"prop[{prop.prop_id}].story_function",
+            prop.story_function_grounding,
+            payload=payload,
+            dialogue_ids=dialogue_ids,
+            visual_ids=visual_ids,
+        )
+    for event in semantic.story_events:
+        _validate_grounding(
+            f"story_event[{event.event_id}]",
+            event.grounding,
+            payload=payload,
+            dialogue_ids=dialogue_ids,
+            visual_ids=visual_ids,
+        )
+
+
+def _parse_semantic(text: str, payload: EpisodeUnderstandingInput) -> EpisodeUnderstandingSemantic:
+    semantic = EpisodeUnderstandingSemantic.model_validate_json(_json_text(text))
+    validate_episode_understanding_grounding(semantic, payload)
+    return semantic
 
 
 def _prompt(payload: EpisodeUnderstandingInput) -> str:
+    skill = _professional_skill()
     evidence_json = json.dumps(payload.evidence_payload, ensure_ascii=False, separators=(",", ":"))
     shot_json = json.dumps(payload.shot_hints, ensure_ascii=False, separators=(",", ":"))
     schema_json = json.dumps(_response_schema(), ensure_ascii=False, separators=(",", ":"))
-    return f"""你正在执行 AI Drama Studio P7「整集多模态原片理解」。
+    skill_rules = "\n".join(f"{index}. {rule}" for index, rule in enumerate(skill.provider_rules, 1))
+    return f"""你正在执行 AI Drama Studio Professional Skill：{skill.name}（{skill.id}@{skill.version}）。
+任务产物是 P7《源作概览分析》，不是 P8 分镜表。
 
-硬约束：
-1. 输入视频是完整 Episode，必须按完整时间轴理解，不得拆成独立 Shot 后再拼剧情。
-2. canonical Source Evidence 是对白和画面文字的事实来源。你可以理解视频画面，但不得纠正、改写或覆盖 canonical 对白/OCR。
-3. timed_script 中 dialogue_evidence_ids / visual_text_evidence_ids 只能引用下方给出的真实 ID；没有证据就留空，不得编造 ID。
-4. Shot Anchors 只是可选定位提示。timed_script / story beat 的时间窗口是语义窗口，允许重叠，绝不能假装是精确 Shot Boundary。
-5. 不要根据视频音轨自行补写对白；对白事实以 Source Evidence 为准。可利用非语言声音辅助理解情绪，但不得形成新的 canonical 文本事实。
-6. 所有时间使用微秒，范围必须位于 0 到 {payload.duration_us} 之间。
-7. 只输出一个 JSON object，不要输出 Markdown、解释或额外文本。JSON 必须符合末尾 Schema。
-8. 内容使用与原片相适应的自然中文表达；人物名无法确认时使用稳定候选名（如“女主候选”），不要伪造身份。
+Professional Skill 执行规则：
+{skill_rules}
+
+Grounding 输出约定：
+1. support_level 只能是 FACT / INFERENCE / UNKNOWN。
+2. FACT 必须至少包含一个 CURRENT dialogue_evidence_id、CURRENT visual_text_evidence_id，或完整 Episode 中明确的 video_time_ranges。
+3. INFERENCE 可以引用支持它的 Evidence / 视频时间，但必须保持“推断”身份，不能在其他字段中偷换成客观事实。
+4. UNKNOWN 表示原片无法可靠确认；不要为了让内容完整而补写。
+5. story_background_grounding 必须说明 story_background 中历史/关系性事实的可信等级。
+6. world_rules 不是社会常识列表。每条 world_rule 必须是本作品内部已确认 FACT，并在 world_rule_groundings 中按相同索引提供依据；如果没有，两个数组都输出空数组。
+7. character.identity_grounding 用于姓名/身份等事实；人物性格与剧情功能属于分析，不要伪装成身份事实。
+8. relationship.grounding 用于夫妻/亲属/邻居/同事/婚姻年限等关系事实。
+9. prop.story_function_grounding 如果没有明确依据，使用 UNKNOWN，并把 story_function 写成“未确认明确剧情功能”。
+10. scene / story_event grounding 可使用完整 Episode 视频时间窗口作为直接视觉依据。
 
 Episode:
 - episode_id: {payload.episode_id}
@@ -134,6 +255,10 @@ CURRENT Source Evidence:
 
 Optional Shot Anchor hints（只用于定位/去歧义，不是语义分段边界）:
 {shot_json}
+
+所有时间使用微秒，范围必须位于 0 到 {payload.duration_us} 之间。
+只输出一个 JSON object，不要输出 Markdown、解释、思考过程或额外文本。
+内容使用与原片相适应的自然中文表达。
 
 Output JSON Schema:
 {schema_json}
@@ -177,6 +302,7 @@ class DoubaoSeedSourceEpisodeUnderstandingProvider:
 
     @property
     def profile(self) -> dict:
+        skill = _professional_skill()
         return {
             "selection": SourceUnderstandingProvider.DOUBAO_SEED_2_1_PRO_API.value,
             "provider": self.provider_name,
@@ -185,8 +311,11 @@ class DoubaoSeedSourceEpisodeUnderstandingProvider:
             "base_url": self.settings.p7_doubao_base_url,
             "video_input": "ARK_FILES_API_FULL_EPISODE",
             "video_fps": self.settings.p7_doubao_video_fps,
-            "structured_output": "JSON_SCHEMA_PROMPT_PLUS_SERVER_VALIDATION",
+            "structured_output": "JSON_SCHEMA_PROMPT_PLUS_GROUNDING_PLUS_SERVER_VALIDATION",
             "prompt_version": "p7-source-bible-v1",
+            "professional_skill_id": skill.id,
+            "professional_skill_version": skill.version,
+            "grounding_contract": P7_GROUNDING_CONTRACT,
         }
 
     @property
@@ -229,7 +358,7 @@ class DoubaoSeedSourceEpisodeUnderstandingProvider:
                 ],
                 thinking={"type": "enabled"},
             )
-            semantic = _parse_semantic(_ark_response_text(response))
+            semantic = _parse_semantic(_ark_response_text(response), payload)
             response_id = str(getattr(response, "id", "") or "") or None
             return EpisodeUnderstandingProviderResult(semantic=semantic, remote_job_id=response_id)
         finally:
@@ -260,6 +389,7 @@ class LocalQwenSourceEpisodeUnderstandingProvider:
 
     @property
     def profile(self) -> dict:
+        skill = _professional_skill()
         return {
             "selection": self.selection.value,
             "provider": self.provider_name,
@@ -267,8 +397,11 @@ class LocalQwenSourceEpisodeUnderstandingProvider:
             "mode": "LOCAL_OPENAI_COMPATIBLE",
             "base_url": self.base_url,
             "video_input": "VLLM_FILE_URL_FULL_EPISODE",
-            "structured_output": "JSON_SCHEMA_PROMPT_PLUS_SERVER_VALIDATION",
+            "structured_output": "JSON_SCHEMA_PROMPT_PLUS_GROUNDING_PLUS_SERVER_VALIDATION",
             "prompt_version": "p7-source-bible-v1",
+            "professional_skill_id": skill.id,
+            "professional_skill_version": skill.version,
+            "grounding_contract": P7_GROUNDING_CONTRACT,
         }
 
     def analyze(self, payload: EpisodeUnderstandingInput) -> EpisodeUnderstandingProviderResult:
@@ -307,7 +440,7 @@ class LocalQwenSourceEpisodeUnderstandingProvider:
         text = message.get("content")
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Local Qwen response did not contain final content")
-        semantic = _parse_semantic(text)
+        semantic = _parse_semantic(text, payload)
         response_id = str(body.get("id") or "") or None
         return EpisodeUnderstandingProviderResult(semantic=semantic, remote_job_id=response_id)
 
