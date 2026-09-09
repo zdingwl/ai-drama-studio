@@ -1,5 +1,6 @@
 import { apiRequest } from '@/lib/api'
 
+import { getSourceBible } from './sourceBible'
 import type { TaskRead } from './types'
 
 export type ShotBreakdownResultStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
@@ -127,7 +128,24 @@ export function listShotBreakdownRevisions(projectId: string): Promise<ShotBreak
   return apiRequest<ShotBreakdownRevisionSummary[]>(`/projects/${projectId}/shot-breakdown/revisions`)
 }
 
-export function startShotBreakdown(projectId: string, idempotencyKey: string): Promise<TaskRead> {
+export async function startShotBreakdown(projectId: string, idempotencyKey: string): Promise<TaskRead> {
+  // P8 cannot safely consume a historical/STALE Source Bible. Do a read-only
+  // preflight so the acceptance UI can give an actionable recovery message
+  // before creating a heavy Task. The backend repeats the CURRENT check to
+  // remain authoritative if the artifact changes between this GET and POST.
+  const sourceBible = await getSourceBible(projectId)
+  if (sourceBible.status === 'NOT_BUILT') {
+    throw new Error(
+      'P8 前置未就绪：P7 SOURCE_BIBLE 尚未生成。请先在上方 P7「源作概览分析」运行整集原片理解，待 SOURCE_BIBLE 变为 CURRENT 后再运行 P8。',
+    )
+  }
+  if (sourceBible.status === 'STALE') {
+    const revision = sourceBible.revision == null ? '' : `（rev ${sourceBible.revision}）`
+    throw new Error(
+      `P8 前置未就绪：P7 SOURCE_BIBLE ${revision}当前为 STALE。请先在上方 P7 重新运行整集原片理解，生成新的 CURRENT SOURCE_BIBLE 后再运行 P8。`,
+    )
+  }
+
   return apiRequest<TaskRead>(`/projects/${projectId}/commands/shot-breakdown`, {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },
