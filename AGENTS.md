@@ -9,7 +9,9 @@
 3. `docs/01_V3开发阶段与验收清单.md`
 4. `docs/02_V3当前开发状态.md`
 5. `docs/04_阶段人工验收规范.md`
-6. 当前相关代码与测试
+6. `docs/05_Seko源作概览画布节点实测.md`
+7. `docs/06_P7整集原片理解ProfessionalSkill与Grounding验收.md`
+8. 当前相关代码与测试
 
 历史分支只能做参考，不能覆盖 V3 当前规划。
 
@@ -97,6 +99,15 @@ Skill 至少要有：
 - 校验；
 - 完成标准；
 - 失败处理。
+
+P7 的 `source-video-understanding` 已经物化为正式 Professional Skill：
+
+```text
+skills/professional/episode-understanding/SKILL.md
+skills/professional/episode-understanding/manifest.json
+```
+
+Provider Prompt 必须执行 Professional Skill 的规则，但 **Professional Skill 本身不等于 Prompt**。
 
 ### ProjectExecutionPlan 必须物化
 
@@ -229,6 +240,23 @@ Source Understanding
 
 VLM / Agent / 安全过滤后的生成文本无权静默覆盖 canonical ASR / OCR / subtitle evidence。
 
+P7 另外强制：
+
+```text
+FACT
+= 原片直接可见或 CURRENT Source Evidence 明确陈述
+
+INFERENCE
+= 合理推导，但原片未直接确认
+
+UNKNOWN
+= 无法可靠判断
+```
+
+原则：**宁可 UNKNOWN，也不要合理补全。**
+
+`world_rules` 只允许本作品内部已确认的 Source FACT，禁止社会泛化、法律结论、道德训诫或片外常识扩写。
+
 ---
 
 ## 7. Replica 硬规则
@@ -275,13 +303,20 @@ VIDEO_GENERATION
 
 Provider Registry 决定实际实现。
 
-当前重点候选：
+当前 P7 正式接入三个用户可选 Provider 档位：
 
-- Agent reasoning：Step 3.7 Flash；
-- 整集理解：Step 3.7 Flash 等真实 Episode A/B 后确定；
-- 逐镜理解：Step 3.7 Flash / Qwen3.8 等真实镜头 A/B；
-- ASR：faster-whisper 等候选，P6 真实验收后确定；
-- OCR：RapidOCR 或替代实现，P6 真实验收后确定；
+- 云端：Doubao Seed 2.1 Pro / Volcengine Ark API；
+- 本地高质量：Qwen3.8-27B / vLLM OpenAI-compatible；
+- 本地低显存：Qwen3-VL-8B-Thinking / vLLM OpenAI-compatible。
+
+三个 Provider 都必须执行 `source-video-understanding` Professional Skill；模型接入不等于真实验收通过。
+
+当前其它重点候选：
+
+- Agent reasoning：后续按阶段真实 A/B 选择；
+- 逐镜理解：P8 开始后再基于真实 Shot 做 Provider A/B；
+- ASR：faster-whisper，P6 已完成真实短剧验收；
+- OCR：RapidOCR 当前实现，P6 已完成真实短剧验收；
 - TTS：Qwen3-TTS Provider；
 - Video：MiniMax H3 Provider → local runtime；
 - Lip Sync：LatentSync 或替代实现。
@@ -332,17 +367,25 @@ P1 新工程骨架              ✅
 P2 Project + Skill Kernel  ✅
 P3 SourceAsset + 输入系统  ✅
 P4 Task / ProviderJob      ✅
-P5 镜头技术锚点            ✅（原片理解内部能力）
-P6 Source Evidence         下一工程切片，尚未开始
-P7 整集多模态原片理解      尚未开始
-P8 逐镜精细拉片            尚未开始
+P5 镜头技术锚点            ✅（真实 Episode 人工验收通过）
+P6 Source Evidence         ✅（真实短剧 ASR + OCR 人工验收通过）
+P7 整集多模态原片理解      🟡（工程/CI 已实现；新 Professional Skill + Grounding 后需同源真实短剧重跑确认）
+P8 逐镜精细拉片            ⏸ 未开始
 ```
 
 P5 已完成真实 Episode Shot Boundary、thumbnail、Reference Clip、Task 执行和 `SHOT_ANCHORS` Artifact，并保持 GET read-only、CURRENT/STALE、revision / fingerprint 等约束。
 
-当前真实短剧已经跑通一条约 1:06 Episode 并产生 28 个 Shot Anchors，但这只代表 P5 技术能力通过，不代表“原片理解完成”。
+P6 已完成连续完整音轨 ASR、完整视频时间轴 OCR、canonical Source Evidence、项目级 SOURCE_DIALOGUE 与真实短剧人工验收；`SOURCE_DIALOGUE_EVIDENCE` 可作为后续原片理解的正式输入。
 
-P6 开发时必须作为“原片理解”内部 Source Evidence 能力接入，不新增要求普通用户单独操作的 P6 页面。P7 才进入真实整集多模态理解，P8 才进入带全局知识的逐镜精细拉片。
+P7 已具备 SOURCE_BIBLE / Story / Rhythm、三模型选择、真实 Doubao Ark 调用、本地 Qwen vLLM 调用、运行时配置、Professional Skill 和 claim grounding。第一次真实 Doubao 结果证明整集故事理解基本可用，但暴露了社会泛化 / 合理补全问题；当前必须使用同一真实 Episode 按 `source-video-understanding@1.0.0` + `grounded-source-truth-v1` 重跑并人工确认，才能将 P7 标记完成。
+
+在 P7 真实验收通过以前：
+
+```text
+EPISODE_UNDERSTANDING != AVAILABLE
+STORY_RHYTHM != AVAILABLE
+P8 不开始
+```
 
 ---
 
