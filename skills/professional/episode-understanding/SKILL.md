@@ -1,7 +1,7 @@
 # 整集原片理解 Professional Skill
 
 > Skill ID：`source-video-understanding`  
-> 当前版本：`1.0.0`  
+> 当前版本：`1.1.0`  
 > 适用能力：`EPISODE_UNDERSTANDING`、`STORY_RHYTHM`
 
 ## 1. 目标
@@ -73,7 +73,7 @@ FACT
 = 原片直接可见，或 CURRENT Evidence 明确陈述
 
 INFERENCE
-= 基于多个已知事实可以合理推导，但原片没有直接确认
+= 基于已知事实可以合理推导，但原片没有直接确认
 
 UNKNOWN
 = 无法可靠判断
@@ -82,6 +82,18 @@ UNKNOWN
 总原则：
 
 > **宁可 UNKNOWN，也不要合理补全。**
+
+但 `UNKNOWN` 不是已填写事实字段的通行证。`grounded-source-truth-v2` 明确规定：
+
+```text
+FACT / INFERENCE
+→ 必须有 Evidence ID 或完整 Episode 视频时间依据
+
+UNKNOWN
+→ 不得携带 Evidence / 视频依据
+→ 对应的可选 claim 必须省略或置空
+→ 不能一边写确定性正文，一边把 grounding 标 UNKNOWN
+```
 
 ### 4.1 FACT
 
@@ -103,7 +115,7 @@ FACT 必须能追溯到至少一种来源：
 
 ### 4.2 INFERENCE
 
-推断可以用于理解，但不能伪装成 Source Truth。
+推断可以用于理解，但不能伪装成 Source Truth，而且同样必须能追溯到支撑它的 Source Facts。
 
 例如：
 
@@ -111,11 +123,14 @@ FACT 必须能追溯到至少一种来源：
 人物拎着垃圾袋走出家门
 → 可以确认：人物手里拎着垃圾袋（FACT）
 
-因此推断“她刚才一定是倒垃圾时顺手拿走快递”
-→ 原片若未明确确认，只能是 INFERENCE
+因此推断“她可能正准备倒垃圾”
+→ 若原片未直接确认，只能是 INFERENCE
+
+进一步推断“她倒垃圾时顺手拿走门口的花”
+→ 如果没有直接线索，不能作为正式 story_function 发布
 ```
 
-INFERENCE 可以出现在剧情分析、人物动机分析中，但必须保留其推断性质，不得改写为人物历史或客观事实。
+INFERENCE 可以用于分析性字段，但必须保持其推断性质；不得改写成人物历史、关系事实、事件原因或客观背景。
 
 ### 4.3 UNKNOWN
 
@@ -126,6 +141,8 @@ INFERENCE 可以出现在剧情分析、人物动机分析中，但必须保留�
 - 道具剧情作用没有明确依据；
 - 行为动机没有原片信息支撑；
 - 人物过去经历只存在合理想象，没有原片陈述。
+
+当某个 Schema 字段本身代表正式 Source Fact 时，如果无法确认，应省略对应候选 / 关系 / 规则，而不是保留确定性正文再标 UNKNOWN。
 
 ---
 
@@ -145,7 +162,7 @@ INFERENCE 可以出现在剧情分析、人物动机分析中，但必须保留�
 - 人物身份卡 / OCR 明确提供的信息；
 - 从完整 Episode 可直接确认的地点 / 关系 / 情境。
 
-禁止为了让背景“完整”而自动补充人物履历。
+`story_background` 是 Source Facts 区域，因此正式 Provider 输出时 `story_background_grounding` 必须为 `FACT`。无法确认的人物履历、过去行为和因果不得为了让背景“完整”而补写。
 
 ### 5.3 世界规则
 
@@ -168,7 +185,16 @@ INFERENCE 可以出现在剧情分析、人物动机分析中，但必须保留�
 法律结论 / 道德训诫 / 社会学泛化
 ```
 
-如果本集没有真正的世界规则，允许 `world_rules = []`。
+如果本集没有真正的世界规则，必须允许：
+
+```json
+{
+  "world_rules": [],
+  "world_rule_groundings": []
+}
+```
+
+每条保留的 world rule 都必须与同索引 `world_rule_groundings` 一一对应，并且是有直接依据的 `FACT`。
 
 ---
 
@@ -182,12 +208,13 @@ INFERENCE 可以出现在剧情分析、人物动机分析中，但必须保留�
 画面身份卡 / OCR
 → canonical 对白明确称呼
 → 完整 Episode 连续上下文
-→ 无法确认则使用稳定候选名
 ```
+
+正式 `CharacterProfile` 必须能用 `identity_grounding=FACT` 证明“该角色在原片中确实存在以及当前标签所依赖的身份依据”。如果真实姓名无法确认，可以使用稳定候选标签，如“未命名女性A”，但不能把猜测姓名当事实。
 
 禁止：
 
-- 因为“一张脸”直接确定最终身份；
+- 因为“一张脸”直接确定最终真实姓名；
 - 因年龄、服装、性别刻板印象补全职业 / 亲属关系；
 - 把剧情功能描述写成人物真实历史。
 
@@ -195,7 +222,7 @@ INFERENCE 可以出现在剧情分析、人物动机分析中，但必须保留�
 
 “夫妻、母子、婆媳、邻居、同事、结婚年限、赘婿”等具体关系事实必须有来源。
 
-关系变化可以做剧情分析，但必须与本集可观察行为一致。
+正式 `relationships[]` 只发布 `FACT` 关系；如果只有推测则不创建该关系行。关系变化可以做剧情分析，但必须与本集可观察行为一致。
 
 ---
 
@@ -210,7 +237,7 @@ INFERENCE 可以出现在剧情分析、人物动机分析中，但必须保留�
 - 空间关系；
 - 可观察环境细节。
 
-不得把视觉装修风格推断成未经证实的社会身份或经济背景事实。
+场景存在与空间描述必须有 `FACT` 视频时间依据或 Evidence。不得把视觉装修风格推断成未经证实的社会身份或经济背景事实。
 
 ### 7.2 道具
 
@@ -219,14 +246,29 @@ INFERENCE 可以出现在剧情分析、人物动机分析中，但必须保留�
 ```text
 appearance_state
 = 画面可见状态
+= 必须 appearance_grounding=FACT
 
 story_function
 = 该道具在剧情中的作用
 ```
 
-`appearance_state` 可以由画面直接确认。
+`appearance_state` 可以由画面直接确认，因此必须提供直接视频 / Evidence grounding。
 
-`story_function` 没有明确依据时允许写“未确认明确剧情功能”，不得因为道具出现就硬编因果。
+`story_function` 使用规则：
+
+```text
+明确由原片确认
+→ FACT
+
+基于已知事实的合理解释
+→ INFERENCE + 支撑依据 + 明确推断语气
+
+没有可靠依据
+→ story_function = null
+→ story_function_grounding = UNKNOWN
+```
+
+禁止因为普通生活道具出现就补写事件因果。
 
 ---
 
@@ -306,8 +348,9 @@ P7 只建立整集节奏骨架。
 7. 建立 Story Skeleton
 8. 建立 Rhythm Skeleton
 9. 对容易被补全的事实做 FACT / INFERENCE / UNKNOWN 检查
-10. 校验 Evidence ID / 时间范围 / 引用完整性
-11. 只有全部通过才发布 SOURCE_BIBLE
+10. 删除“UNKNOWN + 确定性正文”的矛盾 claim
+11. 校验 Evidence ID / 视频时间范围 / world rule 一一对应
+12. 只有全部通过才发布 SOURCE_BIBLE
 ```
 
 ---
@@ -323,7 +366,7 @@ P7 只建立整集节奏骨架。
 - 原片本身存在无法判断的版本 / 剪辑缺失，直接影响 Story Skeleton；
 - 用户明确要求偏离原片事实做创作解释。
 
-普通不确定性优先标记 UNKNOWN，而不是询问或猜测。
+普通不确定性优先标记 UNKNOWN 或省略不可确认 claim，而不是询问或猜测。
 
 ---
 
@@ -346,6 +389,7 @@ RHYTHM_SKELETON
 - revision 明确；
 - input fingerprint 明确；
 - 完整 Episode 与 Source Evidence provenance 可追溯；
+- provenance 直接记录 Professional Skill ID / version / grounding contract；
 - canonical Evidence 保持原文；
 - 重要事实与推断边界明确；
 - 不能提前产出 P8 分镜表。
@@ -357,8 +401,14 @@ RHYTHM_SKELETON
 以下情况禁止发布 SOURCE_BIBLE：
 
 - 引用不存在的 dialogue / OCR evidence ID；
-- FACT 没有任何 Evidence / 视频时间依据；
-- 时间范围超出 Episode；
+- FACT 或 INFERENCE 没有任何 Evidence / 视频时间依据；
+- UNKNOWN 携带 Evidence / 视频依据；
+- `story_background`、人物身份、人物关系、场景、Story Event 仍以 UNKNOWN 形式发布确定性正文；
+- `world_rules` 与 `world_rule_groundings` 数量不一致；
+- 任意 world rule 不是 FACT；
+- 道具 appearance 没有 FACT grounding；
+- 道具 `story_function` 为 UNKNOWN 时仍填写确定性剧情作用；
+- grounding 视频时间范围超出 Episode；
 - 人物关系引用不存在的人物；
 - Provider 输出结构不合法；
 - 把社会泛化 / 法律判断写成 source world rule；
@@ -377,6 +427,7 @@ RHYTHM_SKELETON
 - SOURCE_BIBLE 结构合法；
 - 时间 / Evidence / 人物引用合法；
 - 关键 source facts 有可追溯依据；
+- UNKNOWN 没有被用来承载确定性事实；
 - Story / Rhythm 与整集剧情一致；
 - 不包含明显片外补全和社会泛化；
 - 输出可以作为 P8 的全局上下文。
