@@ -15,7 +15,7 @@ from app.core.errors import AppError
 from app.core.time import utc_now
 from app.evidence.models import SourceDialogueUtterance, SourceEvidenceSet, SourceVisualTextSpan
 from app.preprocessing.models import ShotAnchor, ShotBoundarySet
-from app.projects.enums import VIDEO_PROJECT_TYPES
+from app.projects.enums import SOURCE_BIBLE_PROJECT_TYPES
 from app.projects.service import get_project
 from app.skills.models import ArtifactType, Capability
 from app.sources.models import Episode, SourceAsset
@@ -242,10 +242,17 @@ def _fingerprint_inputs(
     )
 
 
+def _provider_for_project(project) -> SourceEpisodeUnderstandingProvider:
+    return build_source_episode_understanding_provider(
+        get_settings(),
+        project.source_understanding_provider,
+    )
+
+
 def create_source_bible_task(db: Session, *, project_id: str, idempotency_key: str) -> Task:
     project = get_project(db, project_id)
-    if project.project_type not in VIDEO_PROJECT_TYPES:
-        raise AppError("SOURCE_BIBLE_NOT_ALLOWED", "当前项目类型不执行视频 Source Understanding", status_code=422)
+    if project.project_type not in SOURCE_BIBLE_PROJECT_TYPES:
+        raise AppError("SOURCE_BIBLE_NOT_ALLOWED", "当前项目类型不执行 SOURCE_BIBLE 整集原片理解", status_code=422)
     source = _required_source(db, project_id)
     dialogue = _required_dialogue(db, project_id, source)
     shots = _optional_shots(db, project_id, source)
@@ -256,7 +263,7 @@ def create_source_bible_task(db: Session, *, project_id: str, idempotency_key: s
         dialogue_artifact=dialogue,
         shots_artifact=shots,
     )
-    provider = build_source_episode_understanding_provider(get_settings())
+    provider = _provider_for_project(project)
     fingerprint = _fingerprint_inputs(source, dialogue, shots, contexts, provider)
     inputs = [source.id, dialogue.id]
     if shots is not None:
@@ -420,6 +427,8 @@ def _compose_episode(context: EpisodeContext, semantic) -> SourceBibleEpisode:
 def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[SourceBibleContent, SourceBibleProvenance]:
     with context.session_factory() as db:
         project = get_project(db, task.project_id)
+        if project.project_type not in SOURCE_BIBLE_PROJECT_TYPES:
+            raise AppError("SOURCE_BIBLE_NOT_ALLOWED", "当前项目类型不执行 SOURCE_BIBLE 整集原片理解", status_code=422)
         source = _required_source(db, task.project_id)
         dialogue = _required_dialogue(db, task.project_id, source)
         shots = _optional_shots(db, task.project_id, source)
@@ -433,9 +442,9 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
             dialogue_artifact=dialogue,
             shots_artifact=shots,
         )
-        provider = build_source_episode_understanding_provider(get_settings())
+        provider = _provider_for_project(project)
         if task.input_fingerprint != _fingerprint_inputs(source, dialogue, shots, episode_contexts, provider):
-            raise AppError("STALE_ARTIFACT_INPUT", "P7 输入 fingerprint 已变化，请重新创建任务", status_code=409)
+            raise AppError("STALE_ARTIFACT_INPUT", "P7 输入 fingerprint 或 Provider 已变化，请重新创建任务", status_code=409)
 
     episodes: list[SourceBibleEpisode] = []
     provider_jobs: list[dict] = []
@@ -469,6 +478,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
             "visual_text_count": len(episode_context.visual_text),
             "optional_shot_boundary_set_id": episode_context.shot_boundary.id if episode_context.shot_boundary else None,
             "optional_shot_anchor_count": len(episode_context.shot_anchors),
+            "provider_profile": provider.profile,
         }
         with context.session_factory() as db:
             job, dispatched = dispatch_provider_call(
@@ -632,12 +642,24 @@ def _publish(
     if task is None:
         raise AppError("TASK_NOT_FOUND", "P7 任务不存在", status_code=404)
     project = get_project(db, task.project_id)
+    if project.project_type not in SOURCE_BIBLE_PROJECT_TYPES:
+        raise AppError("SOURCE_BIBLE_NOT_ALLOWED", "当前项目类型不执行 SOURCE_BIBLE 整集原片理解", status_code=422)
     source = _required_source(db, task.project_id)
     dialogue = _required_dialogue(db, task.project_id, source)
     shots = _optional_shots(db, task.project_id, source)
     expected = {source.id, dialogue.id, *([shots.id] if shots else [])}
     if set(task.input_artifact_ids_json) != expected:
         raise AppError("STALE_ARTIFACT_INPUT", "P7 发布时上游 Artifact 已变化", status_code=409)
+    contexts = _episode_contexts(
+        db,
+        project_id=task.project_id,
+        source=source,
+        dialogue_artifact=dialogue,
+        shots_artifact=shots,
+    )
+    current_provider = _provider_for_project(project)
+    if task.input_fingerprint != _fingerprint_inputs(source, dialogue, shots, contexts, current_provider):
+        raise AppError("STALE_ARTIFACT_INPUT", "P7 发布时 Provider 或输入 fingerprint 已变化", status_code=409)
     artifact = publish_validated_task_artifact(
         db,
         task_id=task.id,
@@ -656,6 +678,7 @@ def _publish(
             "episode_count": len(content.episodes),
             "provider": provenance.provider,
             "model": provenance.model,
+            "source_understanding_provider": project.source_understanding_provider.value,
             "editable": True,
             "document_title": "源作概览分析",
         },
