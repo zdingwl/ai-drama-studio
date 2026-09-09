@@ -34,6 +34,7 @@ def create_project(db: Session, payload: ProjectCreate) -> Project:
         audio_policy=payload.audio_policy
         or _DEFAULT_AUDIO_POLICY.get(payload.project_type, AudioPolicy.REGENERATE_AUDIO),
         visual_style=payload.visual_style,
+        source_understanding_provider=payload.source_understanding_provider,
         root_skill_id=root_skill.id,
         root_skill_version=root_skill.version,
     )
