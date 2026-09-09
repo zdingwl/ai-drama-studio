@@ -6,7 +6,13 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.time import utc_now
 from app.db.base import Base
-from app.projects.enums import AudioPolicy, ProjectStatus, ProjectType, SceneStrategy
+from app.projects.enums import (
+    AudioPolicy,
+    ProjectStatus,
+    ProjectType,
+    SceneStrategy,
+    SourceUnderstandingProvider,
+)
 
 
 class Project(Base):
@@ -27,6 +33,11 @@ class Project(Base):
         Enum(AudioPolicy, native_enum=False, length=32), nullable=False
     )
     visual_style: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    source_understanding_provider: Mapped[SourceUnderstandingProvider] = mapped_column(
+        Enum(SourceUnderstandingProvider, native_enum=False, length=40),
+        nullable=False,
+        default=SourceUnderstandingProvider.DOUBAO_SEED_2_1_PRO_API,
+    )
     root_skill_id: Mapped[str] = mapped_column(String(96), nullable=False)
     root_skill_version: Mapped[str] = mapped_column(String(32), nullable=False)
     current_plan_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
