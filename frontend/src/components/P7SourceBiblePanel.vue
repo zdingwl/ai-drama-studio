@@ -218,7 +218,7 @@ onBeforeUnmount(stopPolling)
           <div class="toolbar">
             <div class="provider-line">
               <span>Provider</span>
-              <strong>{{ bible?.provenance?.provider ?? 'Gemini（运行时配置）' }}</strong>
+              <strong>{{ bible?.provenance?.provider ?? '待真实调用' }}</strong>
               <span>{{ bible?.provenance?.model ?? '待真实调用' }}</span>
             </div>
             <div class="actions">
@@ -299,11 +299,24 @@ onBeforeUnmount(stopPolling)
                 <div><strong>叙事结构</strong><p>{{ episode.overall_analysis.narrative_structure }}</p></div>
                 <div><strong>视听风格</strong><p>{{ episode.overall_analysis.audiovisual_style }}</p></div>
                 <div><strong>节奏概述</strong><p>{{ episode.overall_analysis.rhythm_overview }}</p></div>
-                <div><strong>类型 / 世界规则</strong><p>{{ [...episode.overall_analysis.genre, ...episode.overall_analysis.world_rules].join(' · ') }}</p></div>
+                <div class="analysis-fact-block">
+                  <strong>类型</strong>
+                  <p v-if="episode.overall_analysis.genre.length" class="inline-tags">
+                    <span v-for="item in episode.overall_analysis.genre" :key="item">{{ item }}</span>
+                  </p>
+                  <p v-else class="muted">未归纳类型</p>
+                </div>
+                <div class="analysis-fact-block world-rules">
+                  <strong>世界规则</strong>
+                  <ul v-if="episode.overall_analysis.world_rules.length">
+                    <li v-for="item in episode.overall_analysis.world_rules" :key="item">{{ item }}</li>
+                  </ul>
+                  <p v-else class="muted">无明确片内世界规则</p>
+                </div>
               </section>
 
               <section class="result-section">
-                <div class="section-title"><strong>时间化原作剧情</strong><span>语义窗口可重叠；Evidence ID 反查 P6 正文</span></div>
+                <div class="section-title"><strong>时间化原作剧情</strong><span>语义窗口可重叠；证据默认折叠，可按需反查 P6 canonical 正文</span></div>
                 <div class="timeline">
                   <article v-for="segment in episode.timed_script" :key="segment.segment_number" class="timeline-row">
                     <div class="time">{{ rangeText(segment.time_range) }}</div>
@@ -311,11 +324,17 @@ onBeforeUnmount(stopPolling)
                       <strong>#{{ segment.segment_number }} · {{ segment.narrative_function }}</strong>
                       <p>{{ segment.visual_description }}</p>
                       <p class="story">{{ segment.story_summary }}</p>
-                      <div v-if="segment.dialogue_evidence_ids.length || segment.visual_text_evidence_ids.length" class="evidence-refs">
-                        <span v-for="id in [...segment.dialogue_evidence_ids, ...segment.visual_text_evidence_ids]" :key="id">
-                          {{ evidenceText[id] ?? `Evidence ${shortId(id)}` }}
-                        </span>
-                      </div>
+                      <details v-if="segment.dialogue_evidence_ids.length || segment.visual_text_evidence_ids.length" class="evidence-disclosure">
+                        <summary>
+                          <span>证据 · 对白 {{ segment.dialogue_evidence_ids.length }} 条 · OCR {{ segment.visual_text_evidence_ids.length }} 条</span>
+                          <small>查看依据</small>
+                        </summary>
+                        <div class="evidence-refs">
+                          <span v-for="id in [...segment.dialogue_evidence_ids, ...segment.visual_text_evidence_ids]" :key="id">
+                            {{ evidenceText[id] ?? `Evidence ${shortId(id)}` }}
+                          </span>
+                        </div>
+                      </details>
                     </div>
                   </article>
                 </div>
@@ -340,7 +359,7 @@ onBeforeUnmount(stopPolling)
                     <strong>{{ scene.name }}</strong><p>{{ scene.environment_details }}</p><small>{{ scene.spatial_relationship }}</small>
                   </article>
                   <article v-for="prop in episode.key_props" :key="prop.prop_id" class="compact-card">
-                    <strong>{{ prop.name }}</strong><p>{{ prop.story_function }}</p><small>{{ prop.appearance_state }}</small>
+                    <strong>{{ prop.name }}</strong><p>{{ prop.story_function ?? '未确认独立剧情作用' }}</p><small>{{ prop.appearance_state }}</small>
                   </article>
                 </section>
               </div>
@@ -371,15 +390,50 @@ onBeforeUnmount(stopPolling)
             </article>
 
             <details class="provenance">
-              <summary><strong>Revision / Provenance</strong><span>{{ revisions.length }} 个 SOURCE_BIBLE revision</span></summary>
-              <div class="provenance-body">
-                <p>Source Video：{{ shortId(bible.provenance?.source_video_artifact_id) }} · {{ shortId(bible.provenance?.source_video_fingerprint) }}</p>
-                <p>Source Evidence：{{ shortId(bible.provenance?.source_dialogue_artifact_id) }} · {{ shortId(bible.provenance?.source_dialogue_fingerprint) }}</p>
-                <p>Shot Anchors：{{ shortId(bible.provenance?.shot_anchors_artifact_id) }}（可选）</p>
-                <p v-if="bible.provenance?.edit_parent_artifact_id">编辑父版本：{{ shortId(bible.provenance.edit_parent_artifact_id) }}</p>
-                <div class="revision-list">
-                  <span v-for="item in revisions" :key="item.artifact_id">rev {{ item.revision }} · {{ item.status }} · {{ shortId(item.artifact_id) }}</span>
-                </div>
+              <summary><strong>Revision / Provenance</strong><span>{{ revisions.length }} 个 SOURCE_BIBLE revision · 展开技术审计详情</span></summary>
+              <div v-if="bible.provenance" class="provenance-body">
+                <section class="provenance-section">
+                  <strong>生成</strong>
+                  <div class="audit-grid">
+                    <span>Provider</span><b>{{ bible.provenance.provider ?? '—' }}</b>
+                    <span>Model</span><b>{{ bible.provenance.model ?? '—' }}</b>
+                    <span>Generated Task</span><b>{{ shortId(bible.provenance.generated_by_task_id) }}</b>
+                    <span>ProviderJob</span><b>{{ bible.provenance.provider_jobs.length }} 个</b>
+                  </div>
+                  <div v-if="bible.provenance.provider_jobs.length" class="provider-job-list">
+                    <span v-for="job in bible.provenance.provider_jobs" :key="job.provider_job_id">
+                      {{ shortId(job.provider_job_id) }} · {{ job.provider }} / {{ job.model }}<template v-if="job.remote_job_id"> · remote {{ shortId(job.remote_job_id) }}</template>
+                    </span>
+                  </div>
+                </section>
+
+                <section class="provenance-section">
+                  <strong>分析契约</strong>
+                  <div class="audit-grid">
+                    <span>Schema</span><b>{{ bible.provenance.schema_version }}</b>
+                    <span>Prompt</span><b>{{ bible.provenance.prompt_version }}</b>
+                    <span>Professional Skill</span><b>{{ bible.provenance.professional_skill_id ?? '—' }}<template v-if="bible.provenance.professional_skill_version">@{{ bible.provenance.professional_skill_version }}</template></b>
+                    <span>Grounding</span><b>{{ bible.provenance.grounding_contract ?? '—' }}</b>
+                  </div>
+                </section>
+
+                <section class="provenance-section">
+                  <strong>上游</strong>
+                  <div class="audit-grid">
+                    <span>Source Video</span><b>{{ shortId(bible.provenance.source_video_artifact_id) }} · {{ shortId(bible.provenance.source_video_fingerprint) }}</b>
+                    <span>Source Evidence</span><b>{{ shortId(bible.provenance.source_dialogue_artifact_id) }} · {{ shortId(bible.provenance.source_dialogue_fingerprint) }}</b>
+                    <span>Shot Anchors</span><b>{{ shortId(bible.provenance.shot_anchors_artifact_id) }}（可选）</b>
+                    <span>Input fingerprint</span><b>{{ shortId(bible.input_fingerprint) }}</b>
+                  </div>
+                  <p v-if="bible.provenance.edit_parent_artifact_id">编辑父版本：{{ shortId(bible.provenance.edit_parent_artifact_id) }}</p>
+                </section>
+
+                <section class="provenance-section">
+                  <strong>Revision</strong>
+                  <div class="revision-list">
+                    <span v-for="item in revisions" :key="item.artifact_id">rev {{ item.revision }} · {{ item.status }} · {{ shortId(item.artifact_id) }}</span>
+                  </div>
+                </section>
               </div>
             </details>
           </template>
@@ -394,7 +448,7 @@ onBeforeUnmount(stopPolling)
 
           <div class="acceptance-checklist">
             <strong>真实短剧人工验收</strong>
-            <span>① 故事梗概/背景/结构与整集成立；② 人物关系、场景、道具、事件不靠单镜头臆测；③ 时间化剧情与完整原片同步且允许语义窗口重叠；④ Evidence 引用能反查 P6 正文且正文不被模型改写；⑤ 编辑后出现 rev2、rev1/旧 Story/Rhythm STALE；⑥ ProviderJob、模型、上游 fingerprint 可追溯；⑦ 记录真实 API 延迟与成本。验收通过前不进入 P8。</span>
+            <span>① 故事梗概/背景/结构与整集成立；② 人物关系、场景、道具、事件不靠单镜头臆测；③ 时间化剧情与完整原片同步且允许语义窗口重叠；④ Evidence 引用能反查 P6 正文且正文不被模型改写；⑤ 编辑后出现 rev2、rev1/旧 Story/Rhythm STALE；⑥ ProviderJob、模型、Prompt/Skill/Grounding、上游 fingerprint 可追溯；⑦ 记录真实 API 延迟与成本。验收通过前不进入 P8。</span>
           </div>
         </template>
       </div>
@@ -437,19 +491,26 @@ button:disabled { opacity: .55; cursor: wait; }
 .section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
 .section-title span { color: #777771; font-size: 10px; }
 .baseline-grid { display: flex; flex-wrap: wrap; gap: 7px; }
-.baseline-grid span, .tags span { padding: 5px 7px; border-radius: 6px; background: #f4f4f1; font-size: 11px; }
-.tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 9px 0 0; }
+.baseline-grid span, .tags span, .inline-tags span { padding: 5px 7px; border-radius: 6px; background: #f4f4f1; font-size: 11px; }
+.tags, .inline-tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 9px 0 0; }
 .analysis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .analysis-grid > div { min-width: 0; }
 .analysis-grid p, .compact-card p, .beat-row p, .result-section > p { margin: 4px 0 0; font-size: 12px; line-height: 1.55; }
+.analysis-fact-block { padding-top: 2px; }
+.world-rules ul { margin: 5px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.55; }
 .timeline { display: grid; gap: 8px; }
 .timeline-row { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 12px; padding: 9px 0; border-top: 1px solid #f0efeb; }
 .timeline-row:first-child { border-top: 0; }
 .time { color: #5f5f5a; font-size: 11px; font-variant-numeric: tabular-nums; }
 .timeline-row p { margin: 4px 0; font-size: 12px; line-height: 1.55; }
 .timeline-row p.story { color: #555550; }
-.evidence-refs { display: grid; gap: 3px; margin-top: 7px; }
-.evidence-refs span { padding: 5px 7px; border-left: 2px solid #c8c7d8; background: #fafafe; color: #55556a; font-size: 10px; }
+.evidence-disclosure { margin-top: 7px; border: 1px solid #ecebf2; border-radius: 7px; background: #fafafe; }
+.evidence-disclosure summary { padding: 6px 8px; }
+.evidence-disclosure summary span { color: #55556a; font-size: 10px; font-weight: 750; }
+.evidence-disclosure summary small { margin-left: auto; }
+.evidence-disclosure[open] summary { border-bottom: 1px solid #ecebf2; }
+.evidence-refs { display: grid; gap: 3px; padding: 7px 8px 8px; }
+.evidence-refs span { padding: 5px 7px; border-left: 2px solid #c8c7d8; background: #fff; color: #55556a; font-size: 10px; }
 .two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .compact-card, .beat-row { padding: 8px 0; border-top: 1px solid #f0efeb; }
 .compact-card:first-of-type, .beat-row:first-of-type { border-top: 0; }
@@ -464,14 +525,23 @@ button:disabled { opacity: .55; cursor: wait; }
 textarea { width: 100%; box-sizing: border-box; padding: 8px 9px; border: 1px solid #d8d8d2; border-radius: 7px; resize: vertical; font: inherit; line-height: 1.5; }
 .provenance { border: 1px solid #ecebe8; border-radius: 10px; }
 .provenance summary { padding: 10px 12px; }
-.provenance-body { padding: 0 12px 12px; font-size: 10px; color: #666660; }
+.provenance-body { display: grid; gap: 12px; padding: 0 12px 12px; font-size: 10px; color: #666660; }
 .provenance-body p { margin: 5px 0; }
-.revision-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.provenance-section { display: grid; gap: 7px; padding-top: 10px; border-top: 1px solid #f0efeb; }
+.provenance-section:first-child { border-top: 0; }
+.provenance-section > strong { color: #31312d; font-size: 11px; }
+.audit-grid { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 5px 10px; align-items: baseline; }
+.audit-grid span { color: #888880; }
+.audit-grid b { min-width: 0; overflow-wrap: anywhere; color: #4f4f49; font-weight: 650; }
+.provider-job-list { display: grid; gap: 4px; }
+.provider-job-list span { padding: 5px 7px; border-radius: 5px; background: #f7f7f4; overflow-wrap: anywhere; }
+.revision-list { display: flex; gap: 6px; flex-wrap: wrap; }
 .revision-list span { padding: 4px 6px; background: #f4f4f1; border-radius: 5px; }
 @media (max-width: 900px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .analysis-grid, .two-column { grid-template-columns: 1fr; }
   .toolbar { align-items: stretch; flex-direction: column; }
   .timeline-row { grid-template-columns: 1fr; gap: 4px; }
+  .audit-grid { grid-template-columns: 1fr; gap: 2px; }
 }
 </style>
