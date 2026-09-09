@@ -1,16 +1,16 @@
 {
   "id": "shot-breakdown",
   "name": "带 Source Bible 的逐镜精细拉片",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "category": "source-understanding",
-  "description": "在完整 Episode 的 Source Truth 上，结合 CURRENT SOURCE_BIBLE、CURRENT P5 Shot Anchors 与 CURRENT P6 canonical Source Evidence，生成逐镜可读、可追溯、可版本化的 SOURCE_SHOT_FACTS。",
+  "description": "在完整 Episode 的 Source Truth 上，结合 CURRENT SOURCE_BIBLE、CURRENT P5 Shot Anchors 与 CURRENT P6 canonical Source Evidence，生成带逐句说话人候选绑定的逐镜可读、可追溯、可版本化 SOURCE_SHOT_FACTS。",
   "when_to_use": [
-    "P7 SOURCE_BIBLE 已 CURRENT，且需要把整集知识落实到每个 P5 Shot 的画面、镜头语言、主体绑定、对白投影和声音事实时",
+    "P7 SOURCE_BIBLE 已 CURRENT，且需要把整集知识落实到每个 P5 Shot 的画面、镜头语言、主体绑定、对白投影、说话人候选和声音事实时",
     "需要生成类似 Seko 实测分镜表的逐镜专业拉片结果时"
   ],
   "when_not_to_use": [
     "还没有 CURRENT SOURCE_BIBLE 或 CURRENT SHOT_ANCHORS",
-    "需要重新听写对白正文、重新切 Shot、独立猜整集故事或执行人物/场景/道具最终身份归一时"
+    "需要重新听写对白正文、重新切 Shot、独立猜整集故事或执行 Speaker/人物/场景/道具最终身份归一时"
   ],
   "required_inputs": ["SOURCE_VIDEO", "SOURCE_BIBLE", "SHOT_ANCHORS", "SOURCE_DIALOGUE"],
   "optional_inputs": [],
@@ -30,8 +30,8 @@
     {
       "id": "full_episode_shot_analysis",
       "phase": "理解",
-      "title": "完整 Episode 驱动的逐镜精看",
-      "description": "Provider 直接消费完整 Episode，并用 Source Bible 全局上下文解释各 Shot 的视觉与镜头语言；Reference Clip 仅允许局部精看。",
+      "title": "完整 Episode 驱动的逐镜精看与说话人候选判断",
+      "description": "Provider 直接消费完整 Episode，并用 Source Bible 全局上下文解释各 Shot 的视觉、镜头语言、delivery 和 canonical utterance 的 P7 character speaker candidate；Reference Clip 仅允许局部精看。",
       "capabilities": ["SHOT_BREAKDOWN"],
       "requires": ["SOURCE_VIDEO", "SOURCE_BIBLE", "SHOT_ANCHORS", "SOURCE_DIALOGUE"],
       "produces": []
@@ -40,7 +40,7 @@
       "id": "validate_and_publish",
       "phase": "理解",
       "title": "绑定权威事实并发布 SOURCE_SHOT_FACTS",
-      "description": "服务端强制使用 P5 start/end、P6 canonical dialogue text 和 P7 candidate IDs，完成 schema 校验、revision、fingerprint、provenance、CURRENT/STALE 与 supersedes。",
+      "description": "服务端强制使用 P5 start/end、P6 canonical dialogue text 和 P7 candidate IDs/labels，校验 Episode 级 speaker candidate 后完成 schema、revision、fingerprint、provenance、CURRENT/STALE 与 supersedes。",
       "capabilities": ["SHOT_BREAKDOWN"],
       "requires": ["SOURCE_VIDEO", "SOURCE_BIBLE", "SHOT_ANCHORS", "SOURCE_DIALOGUE"],
       "produces": ["SOURCE_SHOT_FACTS"]
@@ -50,7 +50,8 @@
     "P5_SHOT_BOUNDARY_AUTHORITY",
     "P6_CANONICAL_TEXT_AUTHORITY",
     "P7_GLOBAL_SEMANTIC_CONTEXT",
-    "P8_SHOT_LEVEL_VISUAL_AUDIO_FACTS"
+    "P8_SHOT_LEVEL_VISUAL_AUDIO_FACTS",
+    "P8_PROVISIONAL_SPEAKER_CANDIDATE"
   ],
   "provider_rules": [
     "完整 Episode 永远是 Source Truth；Provider 必须直接读取完整 Episode，不能把 Reference Clip 或 Shot 列表当成整集真值。",
@@ -58,19 +59,21 @@
     "P8 不能让每个 Shot 独立猜整集故事；人物关系、故事、场景、道具、Story/Rhythm 必须以 CURRENT SOURCE_BIBLE 为全局上下文。",
     "对白正文只允许来自 CURRENT P6 SourceDialogueUtterance；Provider 只能对服务端计算出的 overlap utterance number 标注 DIALOGUE/VOICEOVER/OFFSCREEN/UNKNOWN，不能输出或改写对白正文。",
     "character_ids、scene_ids、prop_ids 只能选择 CURRENT SOURCE_BIBLE 已存在的候选 ID；不得创建新 ID，不得冒充 P9 最终身份归一。",
-    "不得输出 speaker attribution；Speaker Attribution 属于后续 P9。",
-    "Reference Clip 只用于局部精看，不得成为 ASR、整集故事理解或 Shot Boundary 的事实源。",
+    "每条 canonical utterance 必须在 Episode 级 dialogue_speakers 中恰好出现一次；speaker_character_id 只能选择 CURRENT SOURCE_BIBLE 已存在的 character_id，无法可靠判断时必须为 null。",
+    "P8 speaker_character_id 只是逐镜拉片的 provisional candidate hint，不是 P9 最终 Speaker Truth；不得创建 SourceSpeaker、不得做声纹聚类、跨 Episode speaker identity 或最终人物归一。",
+    "Reference Clip 只用于局部精看，不得成为 ASR、整集故事理解、speaker candidate 判断或 Shot Boundary 的事实源。",
     "sound_effects 与 ambience 只能描述该 Shot 实际可听见的声音；不确定时留空，不补想象音效。",
     "镜头语言字段不确定时明确写无法可靠判断，不得为了填满景别、构图、角度、运镜、焦距景深而猜测。",
     "Provider 必须对 CURRENT P5 的每个 shot_number 恰好输出一次，不能漏 Shot、增 Shot 或重编号。",
-    "任何 Provider 输出都必须在发布前经过服务端 schema、Shot set、Source Bible binding 与 P6 dialogue overlap 校验。"
+    "任何 Provider 输出都必须在发布前经过服务端 schema、Shot set、Source Bible binding、P6 dialogue overlap 与 speaker candidate 校验。"
   ],
   "output_contracts": ["SOURCE_SHOT_FACTS"],
   "completion_criteria": [
     "SOURCE_SHOT_FACTS 每个 Shot 与 CURRENT P5 Shot Anchor 一一对应，start/end/duration 完全一致",
-    "对白正文逐字来自 CURRENT P6 canonical Source Evidence，P8 只增加 Shot overlap 与 delivery 标注",
-    "人物、场景、道具绑定只引用 CURRENT SOURCE_BIBLE candidate IDs，不越界进入 P9",
-    "每个 Shot 包含画面描述、景别、构图、角度或镜头类型、运镜、焦距景深、主体绑定、对白/旁白投影、音效与环境声",
+    "对白正文逐字来自 CURRENT P6 canonical Source Evidence，P8 只增加 Shot overlap、delivery 和 P7 character speaker candidate",
+    "人物、场景、道具及 speaker candidate 只引用 CURRENT SOURCE_BIBLE candidate IDs，不越界进入 P9",
+    "每个 canonical utterance 恰好有一条 Episode 级 speaker candidate annotation；跨 Shot utterance 在所有 Shot 中保持同一 candidate，无法判断时为 null",
+    "每个 Shot 包含画面描述、景别、构图、角度或镜头类型、运镜、焦距景深、主体绑定、说话人候选 + 对白/旁白投影、音效与环境声",
     "Artifact revision、input_fingerprint、Professional Skill version、ProviderJob provenance、上游 Artifact IDs 与 supersedes 可追溯",
     "GET 只读取，不触发 Provider；重任务只能通过显式 POST；ProviderJob 在远端调用前已持久化"
   ],
@@ -78,6 +81,7 @@
     "缺少任一 CURRENT 硬输入时阻断，不使用 STALE 结果兜底",
     "P5 Shot 集不完整、P6 Episode 集不完整、P7 Episode 集不一致时阻断",
     "Provider 漏 Shot、增 Shot、引用未知 Source Bible ID、遗漏或虚构 canonical dialogue binding 时阻断发布",
+    "dialogue_speakers 漏 canonical utterance、增不存在 utterance、重复 utterance 或引用未知 character candidate 时阻断发布",
     "上游 revision/fingerprint 在执行或发布前发生变化时任务失败并要求显式重新创建，不把旧结果冒充 CURRENT",
     "真实短剧人工验收完成前 SHOT_BREAKDOWN capability 保持 PLANNED"
   ]
