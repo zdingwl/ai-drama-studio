@@ -190,12 +190,12 @@ class FakeUnderstandingProvider:
         return EpisodeUnderstandingProviderResult(semantic=semantic, remote_job_id="fake-upload-file")
 
 
-def _project(client: TestClient) -> dict:
+def _project(client: TestClient, project_type: str = "REPLICA") -> dict:
     response = client.post(
         "/api/v3/projects",
         json={
             "name": "P7-source-bible",
-            "project_type": "REPLICA",
+            "project_type": project_type,
             "source_language": "zh-CN",
             "target_language": "en-US",
             "target_region": "US",
@@ -281,7 +281,10 @@ def test_p7_requires_current_source_evidence_and_get_is_read_only(
     project = _project(client)
     _upload(client, project["id"], _video(tmp_path / "episode.mp4"))
     fake = FakeUnderstandingProvider(session_factory)
-    monkeypatch.setattr("app.understanding.service.build_source_episode_understanding_provider", lambda settings: fake)
+    monkeypatch.setattr(
+        "app.understanding.service.build_source_episode_understanding_provider",
+        lambda settings, selection: fake,
+    )
 
     before = client.get(f"/api/v3/projects/{project['id']}/source-bible")
     assert before.status_code == 200 and before.json()["status"] == "NOT_BUILT"
@@ -305,7 +308,10 @@ def test_p7_uses_full_episode_provider_job_first_and_publishes_typed_artifacts(
     episode = _upload(client, project["id"], _video(tmp_path / "full-episode.mp4"))
     evidence = _build_p6(client, project["id"], episode["id"], monkeypatch)
     fake = FakeUnderstandingProvider(session_factory)
-    monkeypatch.setattr("app.understanding.service.build_source_episode_understanding_provider", lambda settings: fake)
+    monkeypatch.setattr(
+        "app.understanding.service.build_source_episode_understanding_provider",
+        lambda settings, selection: fake,
+    )
 
     task = _start_p7(client, project["id"], "p7-full-episode")
     assert task["status"] == "succeeded"
@@ -346,7 +352,10 @@ def test_p7_rejects_hallucinated_evidence_reference_and_does_not_publish(
     episode = _upload(client, project["id"], _video(tmp_path / "invalid-evidence.mp4"))
     _build_p6(client, project["id"], episode["id"], monkeypatch)
     fake = FakeUnderstandingProvider(session_factory, hallucinate_evidence=True)
-    monkeypatch.setattr("app.understanding.service.build_source_episode_understanding_provider", lambda settings: fake)
+    monkeypatch.setattr(
+        "app.understanding.service.build_source_episode_understanding_provider",
+        lambda settings, selection: fake,
+    )
 
     task = _start_p7(client, project["id"], "p7-invalid-evidence")
     assert task["status"] == "failed"
@@ -368,7 +377,10 @@ def test_p7_edit_creates_new_revision_stales_old_derivatives_and_preserves_evide
         f"/api/v3/projects/{project['id']}/episodes/{episode['id']}/source-evidence"
     ).json()
     fake = FakeUnderstandingProvider(session_factory)
-    monkeypatch.setattr("app.understanding.service.build_source_episode_understanding_provider", lambda settings: fake)
+    monkeypatch.setattr(
+        "app.understanding.service.build_source_episode_understanding_provider",
+        lambda settings, selection: fake,
+    )
     assert _start_p7(client, project["id"], "p7-before-edit")["status"] == "succeeded"
 
     first = client.get(f"/api/v3/projects/{project['id']}/source-bible").json()
@@ -411,3 +423,73 @@ def test_p7_edit_creates_new_revision_stales_old_derivatives_and_preserves_evide
     assert evidence_after["status"] == "CURRENT"
     assert evidence_after["dialogue"] == evidence_before["dialogue"]
     assert evidence_after["visual_text"] == evidence_before["visual_text"]
+
+
+def test_p7_switching_provider_stales_source_bible_but_preserves_source_evidence(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch,
+    session_factory: sessionmaker[Session],
+) -> None:
+    project = _project(client)
+    assert project["source_understanding_provider"] == "DOUBAO_SEED_2_1_PRO_API"
+    episode = _upload(client, project["id"], _video(tmp_path / "provider-switch.mp4"))
+    evidence_before = _build_p6(client, project["id"], episode["id"], monkeypatch)
+    fake = FakeUnderstandingProvider(session_factory)
+    selections: list[str] = []
+
+    def build_fake(settings, selection):
+        selections.append(selection.value)
+        return fake
+
+    monkeypatch.setattr("app.understanding.service.build_source_episode_understanding_provider", build_fake)
+    assert _start_p7(client, project["id"], "p7-provider-before-switch")["status"] == "succeeded"
+    current = client.get(f"/api/v3/projects/{project['id']}/source-bible").json()
+    assert current["status"] == "CURRENT"
+    old_story_id = current["story_skeleton_artifact_id"]
+    old_rhythm_id = current["rhythm_skeleton_artifact_id"]
+    assert selections and set(selections) == {"DOUBAO_SEED_2_1_PRO_API"}
+
+    changed = client.patch(
+        f"/api/v3/projects/{project['id']}",
+        json={"source_understanding_provider": "QWEN3_VL_LOCAL"},
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["source_understanding_provider"] == "QWEN3_VL_LOCAL"
+
+    stale = client.get(f"/api/v3/projects/{project['id']}/source-bible").json()
+    assert stale["status"] == "STALE"
+    graph = client.get(f"/api/v3/projects/{project['id']}/artifact-graph").json()
+    by_id = {node["id"]: node for node in graph["nodes"]}
+    assert by_id[current["artifact_id"]]["validity"] == "STALE"
+    assert by_id[old_story_id]["validity"] == "STALE"
+    assert by_id[old_rhythm_id]["validity"] == "STALE"
+
+    evidence_after = client.get(
+        f"/api/v3/projects/{project['id']}/episodes/{episode['id']}/source-evidence"
+    ).json()
+    assert evidence_after["status"] == "CURRENT"
+    assert evidence_after["dialogue"] == evidence_before["dialogue"]
+    assert evidence_after["visual_text"] == evidence_before["visual_text"]
+
+
+def test_p7_does_not_run_for_translation(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch,
+    session_factory: sessionmaker[Session],
+) -> None:
+    project = _project(client, "TRANSLATION")
+    episode = _upload(client, project["id"], _video(tmp_path / "translation.mp4"))
+    _build_p6(client, project["id"], episode["id"], monkeypatch)
+    fake = FakeUnderstandingProvider(session_factory)
+    monkeypatch.setattr(
+        "app.understanding.service.build_source_episode_understanding_provider",
+        lambda settings, selection: fake,
+    )
+    response = client.post(
+        f"/api/v3/projects/{project['id']}/commands/source-bible",
+        headers={"Idempotency-Key": "p7-translation-rejected"},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "SOURCE_BIBLE_NOT_ALLOWED"
