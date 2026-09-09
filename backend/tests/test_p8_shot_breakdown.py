@@ -451,9 +451,18 @@ class FakeShotBreakdownProvider:
     provider_name = "fake-p8-multimodal"
     model_name = "fake-p8-full-episode"
 
-    def __init__(self, factory: sessionmaker[Session], *, invalid_character: bool = False):
+    def __init__(
+        self,
+        factory: sessionmaker[Session],
+        *,
+        invalid_character: bool = False,
+        speaker_character_id: str | None = "char-lead",
+        omit_speaker_annotation: bool = False,
+    ):
         self.factory = factory
         self.invalid_character = invalid_character
+        self.speaker_character_id = speaker_character_id
+        self.omit_speaker_annotation = omit_speaker_annotation
         self.calls: list[EpisodeShotBreakdownInput] = []
         self.provider_job_seen_before_call = False
 
@@ -463,10 +472,10 @@ class FakeShotBreakdownProvider:
             "provider": self.provider_name,
             "model": self.model_name,
             "video_input": "FULL_EPISODE_FILE",
-            "prompt_version": "p8-shot-breakdown-v1",
+            "prompt_version": "p8-shot-breakdown-v2",
             "professional_skill_id": "shot-breakdown",
-            "professional_skill_version": "1.0.0",
-            "source_truth_contract": "source-bible-shot-facts-v1",
+            "professional_skill_version": "1.1.0",
+            "source_truth_contract": "source-bible-shot-facts-v2",
         }
 
     def analyze(self, payload: EpisodeShotBreakdownInput) -> EpisodeShotBreakdownProviderResult:
@@ -483,7 +492,9 @@ class FakeShotBreakdownProvider:
             self.provider_job_seen_before_call = bool(job and job.status == ProviderJobStatus.RUNNING)
         character_id = "invented-character" if self.invalid_character else "char-lead"
         shots = []
+        utterance_numbers: set[int] = set()
         for shot in payload.shot_context:
+            utterance_numbers.update(item["utterance_number"] for item in shot["canonical_dialogue_overlaps"])
             shots.append(
                 {
                     "shot_number": shot["shot_number"],
@@ -509,7 +520,13 @@ class FakeShotBreakdownProvider:
                     "ambience": ["室内底噪"],
                 }
             )
-        semantic = EpisodeShotBreakdownSemantic.model_validate({"shots": shots})
+        dialogue_speakers = [] if self.omit_speaker_annotation else [
+            {"utterance_number": number, "speaker_character_id": self.speaker_character_id}
+            for number in sorted(utterance_numbers)
+        ]
+        semantic = EpisodeShotBreakdownSemantic.model_validate(
+            {"shots": shots, "dialogue_speakers": dialogue_speakers}
+        )
         return EpisodeShotBreakdownProviderResult(semantic=semantic, remote_job_id="fake-p8-job")
 
 
@@ -541,7 +558,7 @@ def test_p8_get_is_read_only_and_post_requires_hard_inputs(client: TestClient, t
     assert start.json()["error"]["code"] == "SOURCE_DIALOGUE_REQUIRED"
 
 
-def test_p8_provider_schema_forbids_shot_time_and_dialogue_text_fields() -> None:
+def test_p8_provider_schema_forbids_shot_time_dialogue_text_and_speaker_label_fields() -> None:
     payload = {
         "shots": [
             {
@@ -560,13 +577,16 @@ def test_p8_provider_schema_forbids_shot_time_and_dialogue_text_fields() -> None
                     {"utterance_number": 1, "delivery": "DIALOGUE", "text": "Provider 不得输出"}
                 ],
             }
-        ]
+        ],
+        "dialogue_speakers": [
+            {"utterance_number": 1, "speaker_character_id": "char-lead", "speaker_label": "不得输出 label"}
+        ],
     }
     with pytest.raises(ValidationError):
         EpisodeShotBreakdownSemantic.model_validate(payload)
 
 
-def test_p8_full_episode_provider_job_first_and_server_binds_p5_p6_p7(
+def test_p8_full_episode_provider_job_first_and_server_binds_p5_p6_p7_and_speaker(
     client: TestClient,
     tmp_path: Path,
     monkeypatch,
@@ -591,7 +611,7 @@ def test_p8_full_episode_provider_job_first_and_server_binds_p5_p6_p7(
     result = response.json()
     assert result["status"] == "CURRENT"
     assert result["revision"] == 1
-    assert result["content"]["schema_version"] == "1.0"
+    assert result["content"]["schema_version"] == "1.1"
     shots = result["content"]["episodes"][0]["shots"]
     assert [shot["shot_number"] for shot in shots] == [1, 2]
     assert [shot["shot_anchor_id"] for shot in shots] == seeded["anchor_ids"]
@@ -602,6 +622,10 @@ def test_p8_full_episode_provider_job_first_and_server_binds_p5_p6_p7(
 
     assert [shot["dialogue"][0]["utterance_id"] for shot in shots] == [seeded["utterance_id"], seeded["utterance_id"]]
     assert [shot["dialogue"][0]["text"] for shot in shots] == [seeded["utterance_text"], seeded["utterance_text"]]
+    assert [shot["dialogue"][0]["speaker"] for shot in shots] == [
+        {"id": "char-lead", "label": "未命名女性A"},
+        {"id": "char-lead", "label": "未命名女性A"},
+    ]
     assert shots[0]["dialogue"][0]["overlap_end_us"] == seeded["split"]
     assert shots[1]["dialogue"][0]["overlap_start_us"] == seeded["split"]
     assert seeded["visual_id"] in shots[0]["visual_text_evidence_ids"]
@@ -615,10 +639,10 @@ def test_p8_full_episode_provider_job_first_and_server_binds_p5_p6_p7(
     assert provenance["source_bible_artifact_id"] == seeded["bible"]
     assert provenance["shot_anchors_artifact_id"] == seeded["shots"]
     assert provenance["source_dialogue_artifact_id"] == seeded["dialogue"]
-    assert provenance["prompt_version"] == "p8-shot-breakdown-v1"
+    assert provenance["prompt_version"] == "p8-shot-breakdown-v2"
     assert provenance["professional_skill_id"] == "shot-breakdown"
-    assert provenance["professional_skill_version"] == "1.0.0"
-    assert provenance["source_truth_contract"] == "source-bible-shot-facts-v1"
+    assert provenance["professional_skill_version"] == "1.1.0"
+    assert provenance["source_truth_contract"] == "source-bible-shot-facts-v2"
     assert len(provenance["provider_jobs"]) == 1
     assert len(provenance["episode_inputs"]) == 1
 
@@ -638,8 +662,8 @@ def test_p8_full_episode_provider_job_first_and_server_binds_p5_p6_p7(
     assert expected_edges.issubset(actual_edges)
     node = next(item for item in graph["nodes"] if item["id"] == p8_id)
     assert node["skill_id"] == "shot-breakdown"
-    assert node["skill_version"] == "1.0.0"
-    assert node["metadata_json"]["source_truth_contract"] == "source-bible-shot-facts-v1"
+    assert node["skill_version"] == "1.1.0"
+    assert node["metadata_json"]["source_truth_contract"] == "source-bible-shot-facts-v2"
 
     rerun_task = _start(client, project["id"], "p8-full-episode-rerun")
     rerun = client.get(f"/api/v3/projects/{project['id']}/shot-breakdown").json()
@@ -649,6 +673,48 @@ def test_p8_full_episode_provider_job_first_and_server_binds_p5_p6_p7(
     assert rerun["revision"] == 2
     assert rerun["artifact_id"] != p8_id
     assert rerun["provenance"]["supersedes_artifact_id"] == p8_id
+
+
+def test_p8_allows_unconfirmed_speaker_without_guessing(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch,
+    session_factory: sessionmaker[Session],
+) -> None:
+    project = _project(client)
+    episode = _upload(client, project["id"], _video(tmp_path / "speaker-null.mp4"))
+    _seed_inputs(session_factory, project["id"], episode["id"])
+    fake = FakeShotBreakdownProvider(session_factory, speaker_character_id=None)
+    monkeypatch.setattr("app.shot_breakdown.service.build_shot_breakdown_provider", lambda settings, selection: fake)
+
+    task = _start(client, project["id"], "p8-speaker-null")
+    assert task["status"] == "succeeded", task
+    shots = client.get(f"/api/v3/projects/{project['id']}/shot-breakdown").json()["content"]["episodes"][0]["shots"]
+    assert [shot["dialogue"][0]["speaker"] for shot in shots] == [None, None]
+
+
+def test_p8_rejects_unknown_speaker_candidate_and_missing_utterance_annotation(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch,
+    session_factory: sessionmaker[Session],
+) -> None:
+    project = _project(client)
+    episode = _upload(client, project["id"], _video(tmp_path / "speaker-invalid.mp4"))
+    _seed_inputs(session_factory, project["id"], episode["id"])
+
+    fake = FakeShotBreakdownProvider(session_factory, speaker_character_id="invented-speaker")
+    monkeypatch.setattr("app.shot_breakdown.service.build_shot_breakdown_provider", lambda settings, selection: fake)
+    task = _start(client, project["id"], "p8-speaker-invalid")
+    assert task["status"] == "failed"
+    assert "P8_SPEAKER_CANDIDATE_INVALID" in (task["last_error"] or "")
+    assert client.get(f"/api/v3/projects/{project['id']}/shot-breakdown").json()["status"] == "NOT_BUILT"
+
+    missing = FakeShotBreakdownProvider(session_factory, omit_speaker_annotation=True)
+    monkeypatch.setattr("app.shot_breakdown.service.build_shot_breakdown_provider", lambda settings, selection: missing)
+    task = _start(client, project["id"], "p8-speaker-missing")
+    assert task["status"] == "failed"
+    assert "P8_SPEAKER_CANDIDATE_SET_INVALID" in (task["last_error"] or "")
 
 
 def test_p8_rejects_unknown_source_bible_candidate_and_does_not_publish(
