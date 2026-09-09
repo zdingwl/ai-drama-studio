@@ -5,7 +5,7 @@ from app.skills.professional import get_professional_skill, get_professional_ski
 def test_episode_understanding_professional_skill_is_machine_loadable() -> None:
     skill = get_professional_skill("source-video-understanding")
 
-    assert skill.version == "1.0.0"
+    assert skill.version == "1.1.0"
     assert skill.required_inputs == (ArtifactType.SOURCE_VIDEO, ArtifactType.SOURCE_DIALOGUE)
     assert skill.optional_inputs == (ArtifactType.SHOT_ANCHORS,)
     assert Capability.EPISODE_UNDERSTANDING in skill.required_capabilities
@@ -19,10 +19,11 @@ def test_episode_understanding_skill_manual_and_provider_rules_preserve_source_t
     detail = get_professional_skill_detail("source-video-understanding")
     rules = "\n".join(detail.provider_rules)
 
-    assert "宁可 UNKNOWN" in rules
+    assert "UNKNOWN 不是" in rules
     assert "社会学泛化" in rules
     assert "canonical" in rules
     assert "P8" in rules
+    assert "grounded-source-truth-v2" in detail.manual
     assert "FACT" in detail.manual
     assert "INFERENCE" in detail.manual
     assert "UNKNOWN" in detail.manual
