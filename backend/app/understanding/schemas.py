@@ -39,11 +39,12 @@ class ClaimGrounding(BaseModel):
     note: ShortText | None = None
 
     @model_validator(mode="after")
-    def validate_fact_has_support(self) -> "ClaimGrounding":
-        if self.support_level == ClaimSupportLevel.FACT and not (
-            self.dialogue_evidence_ids or self.visual_text_evidence_ids or self.video_time_ranges
-        ):
-            raise ValueError("FACT 必须至少提供 Evidence ID 或完整 Episode 视频时间依据")
+    def validate_support_contract(self) -> "ClaimGrounding":
+        has_support = bool(self.dialogue_evidence_ids or self.visual_text_evidence_ids or self.video_time_ranges)
+        if self.support_level in {ClaimSupportLevel.FACT, ClaimSupportLevel.INFERENCE} and not has_support:
+            raise ValueError(f"{self.support_level.value} 必须至少提供 Evidence ID 或完整 Episode 视频时间依据")
+        if self.support_level == ClaimSupportLevel.UNKNOWN and has_support:
+            raise ValueError("UNKNOWN 不得携带 Evidence ID 或视频时间依据；若已有支持应标为 FACT 或 INFERENCE")
         return self
 
 
@@ -122,7 +123,8 @@ class PropProfile(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     time_ranges: list[TimeRange] = Field(default_factory=list, max_length=40)
     appearance_state: NonEmptyText
-    story_function: NonEmptyText
+    appearance_grounding: ClaimGrounding = Field(default_factory=ClaimGrounding)
+    story_function: NonEmptyText | None = None
     story_function_grounding: ClaimGrounding = Field(default_factory=ClaimGrounding)
 
 
@@ -212,7 +214,7 @@ class SourceBibleEpisode(BaseModel):
 
 
 class SourceBibleContent(BaseModel):
-    schema_version: str = "1.0"
+    schema_version: str = "1.1"
     title: str = "源作概览分析"
     episodes: list[SourceBibleEpisode] = Field(min_length=1)
 
@@ -245,6 +247,9 @@ class SourceBibleProvenance(BaseModel):
     model: str | None = None
     prompt_version: str
     schema_version: str
+    professional_skill_id: str | None = None
+    professional_skill_version: str | None = None
+    grounding_contract: str | None = None
     generated_by_task_id: str | None = None
     edit_parent_artifact_id: str | None = None
 
