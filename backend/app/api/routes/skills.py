@@ -3,6 +3,12 @@ from fastapi import APIRouter
 from app.core.errors import AppError
 from app.skills.capabilities import CAPABILITIES
 from app.skills.models import CapabilityDefinition, RootSkillDefinition, RootSkillDetail
+from app.skills.professional import (
+    ProfessionalSkillDetail,
+    ProfessionalSkillManifest,
+    get_professional_skill_detail,
+    list_professional_skills,
+)
 from app.skills.registry import get_root_skill_by_id, get_skill_detail, list_root_skills
 
 router = APIRouter(prefix="/skills", tags=["skills"])
@@ -16,6 +22,24 @@ def list_skills_route() -> list[RootSkillDefinition]:
 @router.get("/capabilities", response_model=list[CapabilityDefinition])
 def list_capabilities_route() -> list[CapabilityDefinition]:
     return list(CAPABILITIES)
+
+
+@router.get("/professional", response_model=list[ProfessionalSkillManifest])
+def list_professional_skills_route() -> list[ProfessionalSkillManifest]:
+    return list_professional_skills()
+
+
+@router.get("/professional/{skill_id}", response_model=ProfessionalSkillDetail)
+def get_professional_skill_route(skill_id: str) -> ProfessionalSkillDetail:
+    try:
+        return get_professional_skill_detail(skill_id)
+    except RuntimeError as exc:
+        raise AppError(
+            "PROFESSIONAL_SKILL_NOT_FOUND",
+            "专业技能不存在",
+            status_code=404,
+            details={"skill_id": skill_id},
+        ) from exc
 
 
 @router.get("/{skill_id}", response_model=RootSkillDetail)
