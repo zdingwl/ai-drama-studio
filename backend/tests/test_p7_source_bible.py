@@ -311,7 +311,8 @@ def test_p7_uses_full_episode_provider_job_first_and_publishes_typed_artifacts(
     assert task["status"] == "succeeded"
     assert len(fake.calls) == 1
     assert fake.calls[0].episode_id == episode["id"]
-    assert fake.calls[0].source_path.name == "episode.mp4"
+    assert fake.calls[0].source_path.name == "source.mp4"
+    assert fake.calls[0].source_filename == "episode.mp4"
     assert fake.provider_job_seen_before_call is True
     assert fake.calls[0].shot_hints == []
 
