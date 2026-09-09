@@ -26,10 +26,22 @@ class AudioPolicy(StrEnum):
     REGENERATE_AUDIO = "REGENERATE_AUDIO"
 
 
+class SourceUnderstandingProvider(StrEnum):
+    DOUBAO_SEED_2_1_PRO_API = "DOUBAO_SEED_2_1_PRO_API"
+    QWEN3_VL_LOCAL = "QWEN3_VL_LOCAL"
+
+
 VIDEO_PROJECT_TYPES = frozenset(
     {
         ProjectType.REPLICA,
         ProjectType.REDRAW,
         ProjectType.TRANSLATION,
+    }
+)
+
+SOURCE_BIBLE_PROJECT_TYPES = frozenset(
+    {
+        ProjectType.REPLICA,
+        ProjectType.REDRAW,
     }
 )
