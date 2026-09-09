@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import P6AcceptancePanel from '@/components/P6AcceptancePanel.vue'
 import P7SourceUnderstandingWorkspace from '@/components/P7SourceUnderstandingWorkspace.vue'
+import P8ShotBreakdownPanel from '@/components/P8ShotBreakdownPanel.vue'
 
 const route = useRoute()
 </script>
@@ -13,5 +14,6 @@ const route = useRoute()
     <RouterView />
     <P6AcceptancePanel v-if="route.name === 'project-workspace'" />
     <P7SourceUnderstandingWorkspace v-if="route.name === 'project-workspace'" />
+    <P8ShotBreakdownPanel v-if="route.name === 'project-workspace'" />
   </AppShell>
 </template>
