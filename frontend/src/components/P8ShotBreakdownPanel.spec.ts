@@ -177,13 +177,16 @@ const breakdown: ShotBreakdownRead = {
   },
 }
 
-async function mountPanel(sourceBible: SourceBibleRead = currentSourceBible) {
+async function mountPanel(
+  sourceBible: SourceBibleRead = currentSourceBible,
+  shotBreakdown: ShotBreakdownRead = breakdown,
+) {
   vi.mocked(projectApi.getProject).mockResolvedValue({
     id: 'project-p8',
     project_type: 'REPLICA',
   } as Awaited<ReturnType<typeof projectApi.getProject>>)
   vi.mocked(projectApi.listProjectTasks).mockResolvedValue([])
-  vi.mocked(shotApi.getShotBreakdown).mockResolvedValue(breakdown)
+  vi.mocked(shotApi.getShotBreakdown).mockResolvedValue(shotBreakdown)
   vi.mocked(shotApi.listShotBreakdownRevisions).mockResolvedValue([
     {
       artifact_id: 'source-shot-facts-rev1',
@@ -246,9 +249,8 @@ describe('P8ShotBreakdownPanel', () => {
     const noSpeaker = structuredClone(breakdown)
     const line = noSpeaker.content?.episodes[0]?.shots[0]?.dialogue[0]
     if (line) line.speaker = null
-    vi.mocked(shotApi.getShotBreakdown).mockResolvedValue(noSpeaker)
 
-    const wrapper = await mountPanel()
+    const wrapper = await mountPanel(currentSourceBible, noSpeaker)
     expect(wrapper.findAll('.dialogue-line')[0]?.text()).toContain('说话人未确认')
     wrapper.unmount()
   })
