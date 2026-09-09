@@ -16,6 +16,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Keep the database default intentionally. It backfills existing projects and also gives direct
+    # SQL/import paths the same safe default as the application model. SQLite does not support the
+    # standalone ALTER COLUMN ... DROP DEFAULT emitted by op.alter_column().
     op.add_column(
         "projects",
         sa.Column(
@@ -25,7 +28,6 @@ def upgrade() -> None:
             server_default="DOUBAO_SEED_2_1_PRO_API",
         ),
     )
-    op.alter_column("projects", "source_understanding_provider", server_default=None)
 
 
 def downgrade() -> None:
