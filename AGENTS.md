@@ -11,7 +11,10 @@
 5. `docs/04_阶段人工验收规范.md`
 6. `docs/05_Seko源作概览画布节点实测.md`
 7. `docs/06_P7整集原片理解ProfessionalSkill与Grounding验收.md`
-8. 当前相关代码与测试
+8. `docs/07_P7最终验收与ProviderReadiness.md`
+9. 当前相关代码与测试
+
+**阶段状态以编号更高、日期更新的状态文档为准。** `docs/07` 已记录 P7 最终验收；旧文档中“P7 待验收 / P6-P7 未开发”等历史描述不得覆盖当前 `main` 事实。
 
 历史分支只能做参考，不能覆盖 V3 当前规划。
 
@@ -30,11 +33,7 @@ SCRIPT_TO_DRAMA      剧本生成短剧
 SCRIPT_LOCALIZATION  剧本本土化
 ```
 
-`project_type` 是真实数据库字段。
-
-每种 `project_type` 必须绑定自己的 Root Project Skill。
-
-禁止只在前端显示六种类型，后端仍然走同一条旧流程。
+`project_type` 是真实数据库字段；每种 `project_type` 必须绑定自己的 Root Project Skill。
 
 ---
 
@@ -53,7 +52,7 @@ Project Type
 → Artifact Graph
 ```
 
-Skill、Artifact、Agent、Tool、Guardrail 职责必须分开：
+职责必须分开：
 
 ```text
 Skill       = 怎么做对
@@ -73,49 +72,24 @@ Internal PlanStep / Capability
 = 为得到该业务结果而执行的内部步骤
 
 P0/P1/P2/... Engineering Phase
-= 我们开发和验收代码的切片
+= 开发和验收代码的切片
 ```
 
 三者不能混为一谈。
 
 ### Skill 不是 Prompt
 
-禁止实现成：
+Skill 至少要有使用条件、输入、可读取 Artifact、required capabilities、步骤、判断规则、用户询问规则、输出契约、校验、完成标准与失败处理。
 
-```text
-Skill = 数据库里一段 Prompt
-```
-
-Skill 至少要有：
-
-- 使用条件；
-- 输入；
-- 可读取 Artifact；
-- required capabilities；
-- 执行步骤；
-- 决策规则；
-- 用户询问规则；
-- 输出契约；
-- 校验；
-- 完成标准；
-- 失败处理。
-
-P7 的 `source-video-understanding` 已经物化为正式 Professional Skill：
+P7 的正式 Professional Skill：
 
 ```text
 skills/professional/episode-understanding/SKILL.md
 skills/professional/episode-understanding/manifest.json
+source-video-understanding@1.1.0
 ```
 
-Provider Prompt 必须执行 Professional Skill 的规则，但 **Professional Skill 本身不等于 Prompt**。
-
-### ProjectExecutionPlan 必须物化
-
-Agent / Plan Compiler 生成的计划必须持久化、版本化和 fingerprint 化。
-
-页面刷新不能重新临时规划。
-
-Raw PlanStep 可以比普通用户看到的 Product Stage 更细；前端普通模式应按业务 phase 聚合，开发 / 排障模式才展开内部步骤。
+Provider Prompt 必须执行 Professional Skill 规则，但 Professional Skill 本身不等于 Prompt。
 
 ---
 
@@ -123,14 +97,12 @@ Raw PlanStep 可以比普通用户看到的 Product Stage 更细；前端普通�
 
 V3 后端项目上下文必须由正式 Artifact 构成。
 
-第一版不以无限画布 UI 为真相源。
-
 ```text
 Artifact Graph = 正式业务关系
 Canvas View    = Artifact Graph 的可视化
 ```
 
-人物、场景、关键道具、剧本、分镜、音频和生成版本都必须成为可引用正式 Artifact 或正式领域对象。
+人物、场景、关键道具、剧本、分镜、音频和生成版本必须成为可引用正式 Artifact 或正式领域对象。
 
 禁止靠每次 Prompt 重复描述人物来维持一致性。
 
@@ -139,12 +111,13 @@ Canvas View    = Artifact Graph 的可视化
 ## 5. 统一硬规则
 
 - 默认自动完成；只有真正需要创作选择或结构无法安全决定时询问用户。
-- 普通用户只看业务结果，不展示 ASR/OCR/VLM/Shot Detector/Tracking/Fingerprint 等内部证据与工具名。
+- 普通用户按业务结果工作，不要求理解 P5/P6/P7/P8 技术切片。
 - 页面 GET 必须只读。
 - 重任务必须由明确 POST / Command 启动。
 - Skill 无权绕过 GET read-only。
 - 外部计费 Provider 请求前必须先持久化 ProviderJob。
-- API key 禁止写入 DB、日志、Artifact 或 Git。
+- API key 禁止写入 DB、日志、Artifact、ProviderJob、provenance 或 Git。
+- API Key UI 当前默认密码遮罩，用户显式点击“显示”后才回显明文；本机值仅写入被 `.gitignore` 排除的 `backend/.env`。
 - Source 与 Target 严格分离。
 - Source Shot、Target Storyboard Shot、GenerationSegment 严格分离。
 - GenerationAttempt 不是正式可用结果；只有 GenerationSelection 可以进入后期。
@@ -156,30 +129,7 @@ Canvas View    = Artifact Graph 的可视化
 
 ## 6. 视频类项目：原片理解编排
 
-适用：REPLICA / REDRAW / TRANSLATION。
-
-### 产品层
-
-普通用户看到：
-
-```text
-导入完整 Episode
-→ 原片理解
-→ 业务可读理解结果
-```
-
-不得设计成普通用户必须依次操作：
-
-```text
-P5 Shot Boundary
-→ P6 ASR/OCR
-→ P7 VLM
-→ P8 Shot Breakdown
-```
-
-P5/P6/P7/P8 是工程实现与内部能力切片。
-
-### 完整 Episode 是 Source Truth
+完整 Episode 永远是 Source Truth：
 
 ```text
 SOURCE_VIDEO / 完整 Episode
@@ -188,7 +138,7 @@ SOURCE_VIDEO / 完整 Episode
 
 thumbnail / Reference Clip 是派生技术资产，只用于人工核对、局部精看或索引，不得替代完整 Episode。
 
-### 内部执行关系
+内部执行关系：
 
 ```text
 完整 Episode
@@ -208,7 +158,7 @@ Shot Anchors         ASR Evidence      OCR Evidence
                      ↓
           整集多模态原片理解
                      ↓
-      Source Episode Bible / Story / Rhythm
+      SOURCE_BIBLE / Story / Rhythm
                      ↓
         带全局知识做逐镜精细拉片
                      ↓
@@ -223,11 +173,11 @@ Shot Anchors         ASR Evidence      OCR Evidence
 - `SOURCE_DIALOGUE_EVIDENCE` 不得依赖 `SHOT_ANCHORS` 才能开始；
 - ASR 不得按每个 Reference Clip 分开识别后拼句子；
 - OCR 可以读取 Shot Anchors 作为抽帧提示，但完整 Episode 时间轴仍是 Source Truth；
-- 整集理解必须能读取完整 Episode；
+- P7 整集理解必须读取完整 Episode；
 - 先整集理解，再逐 Shot 精细拉片；
 - 禁止先逐 Shot 猜完整剧情，再拼整集理解。
 
-### Source Evidence 与理解结果分离
+### Source Evidence 与 Source Understanding 分离
 
 ```text
 Source Evidence
@@ -238,9 +188,9 @@ Source Understanding
 = 这些事实在剧情、人物、关系、场景、事件和节奏上意味着什么
 ```
 
-VLM / Agent / 安全过滤后的生成文本无权静默覆盖 canonical ASR / OCR / subtitle evidence。
+VLM / Agent / 安全过滤后的文本无权静默覆盖 canonical ASR / OCR。
 
-P7 另外强制：
+P7 Grounding：
 
 ```text
 FACT
@@ -255,73 +205,62 @@ UNKNOWN
 
 原则：**宁可 UNKNOWN，也不要合理补全。**
 
-`world_rules` 只允许本作品内部已确认的 Source FACT，禁止社会泛化、法律结论、道德训诫或片外常识扩写。
+`UNKNOWN` 不是确定性正文的逃逸通道；`world_rules` 只允许本作品内部已确认 FACT，禁止社会泛化、法律结论、道德训诫或片外常识扩写。
 
 ---
 
 ## 7. Replica 硬规则
 
-Replica 的默认目标：
+Replica 默认目标：
 
 > 故事不乱改，节奏不重做，文化和表达才本土化。
 
-必须保留 / 锁定：
+必须保留 / 锁定：Hook、冲突、反转、信息揭示顺序、情绪峰值、Payoff、Cliffhanger、Story Beat timing、Shot rhythm baseline。
 
-- Hook；
-- 冲突；
-- 反转；
-- 信息揭示顺序；
-- 情绪峰值；
-- Payoff；
-- Cliffhanger；
-- Story Beat timing；
-- Shot rhythm baseline。
-
-允许本土化：
-
-- 人物身份 / 外形；
-- 场景；
-- 道具；
-- 文化信息；
-- 目标语言对白。
+允许本土化：人物身份 / 外形、场景、道具、文化信息、目标语言对白。
 
 目标对白必须先获得真实 TTS 时长，再做 Timing。
 
 ---
 
-## 8. Provider 原则
+## 8. Provider / Capability 原则
 
 业务 Skill 只依赖 capability，不依赖具体模型名。
 
-例如：
+当前已真实验收并 `AVAILABLE`：
 
 ```text
+SOURCE_DIALOGUE_EVIDENCE
 EPISODE_UNDERSTANDING
-SHOT_BREAKDOWN
-VIDEO_GENERATION
+STORY_RHYTHM
 ```
 
-Provider Registry 决定实际实现。
+仍为 `PLANNED`：
 
-当前 P7 正式接入三个用户可选 Provider 档位：
+```text
+SHOT_BREAKDOWN
+IDENTITY_RESOLUTION
+SCENE_RESOLUTION
+PROP_RESOLUTION
+SOURCE_SNAPSHOT
+以及后续目标创作 / 生成能力
+```
 
-- 云端：Doubao Seed 2.1 Pro / Volcengine Ark API；
-- 本地高质量：Qwen3.8-27B / vLLM OpenAI-compatible；
-- 本地低显存：Qwen3-VL-8B-Thinking / vLLM OpenAI-compatible。
+### Provider readiness 与 Capability availability 分离
 
-三个 Provider 都必须执行 `source-video-understanding` Professional Skill；模型接入不等于真实验收通过。
+```text
+Capability AVAILABLE
+!=
+所有 Provider 都已在当前环境实测
+```
 
-当前其它重点候选：
+P7 当前三个用户可选 Provider：
 
-- Agent reasoning：后续按阶段真实 A/B 选择；
-- 逐镜理解：P8 开始后再基于真实 Shot 做 Provider A/B；
-- ASR：faster-whisper，P6 已完成真实短剧验收；
-- OCR：RapidOCR 当前实现，P6 已完成真实短剧验收；
-- TTS：Qwen3-TTS Provider；
-- Video：MiniMax H3 Provider → local runtime；
-- Lip Sync：LatentSync 或替代实现。
+- Doubao Seed 2.1 Pro / Volcengine Ark：真实短剧 + Grounding v2 已通过，当前已验证生产 Provider；
+- Qwen3.8-27B / local vLLM：工程接入和自动测试完成，真实本机 GPU / vLLM 质量验收待补；
+- Qwen3-VL-8B-Thinking / local vLLM：工程接入和自动测试完成，低显存真实本机验收待补。
 
-任何候选模型都不能因为“代码接入”就写成“真实验收通过”。
+新增 / 可选 Provider 的 readiness 不应阻塞一个已经由真实生产 Provider 验收通过的业务 Capability。
 
 ---
 
@@ -348,14 +287,7 @@ CURRENT + READY
 
 才能下游消费。
 
-Task 必须逐步支持：
-
-- input fingerprint；
-- Idempotency-Key；
-- checkpoint；
-- heartbeat；
-- finite retry；
-- cancel / resume。
+Task 必须逐步支持 input fingerprint、Idempotency-Key、checkpoint、heartbeat、finite retry、cancel / resume。
 
 ---
 
@@ -369,23 +301,45 @@ P3 SourceAsset + 输入系统  ✅
 P4 Task / ProviderJob      ✅
 P5 镜头技术锚点            ✅（真实 Episode 人工验收通过）
 P6 Source Evidence         ✅（真实短剧 ASR + OCR 人工验收通过）
-P7 整集多模态原片理解      🟡（工程/CI 已实现；新 Professional Skill + Grounding 后需同源真实短剧重跑确认）
-P8 逐镜精细拉片            ⏸ 未开始
+P7 整集多模态原片理解      ✅（真实 Doubao + Grounding v2 + SOURCE_BIBLE 人工验收通过）
+P8 逐镜精细拉片            ⏸ 下一阶段，尚未开始
 ```
 
-P5 已完成真实 Episode Shot Boundary、thumbnail、Reference Clip、Task 执行和 `SHOT_ANCHORS` Artifact，并保持 GET read-only、CURRENT/STALE、revision / fingerprint 等约束。
-
-P6 已完成连续完整音轨 ASR、完整视频时间轴 OCR、canonical Source Evidence、项目级 SOURCE_DIALOGUE 与真实短剧人工验收；`SOURCE_DIALOGUE_EVIDENCE` 可作为后续原片理解的正式输入。
-
-P7 已具备 SOURCE_BIBLE / Story / Rhythm、三模型选择、真实 Doubao Ark 调用、本地 Qwen vLLM 调用、运行时配置、Professional Skill 和 claim grounding。第一次真实 Doubao 结果证明整集故事理解基本可用，但暴露了社会泛化 / 合理补全问题；当前必须使用同一真实 Episode 按 `source-video-understanding@1.0.0` + `grounded-source-truth-v1` 重跑并人工确认，才能将 P7 标记完成。
-
-在 P7 真实验收通过以前：
+P7 最终验收基线：
 
 ```text
-EPISODE_UNDERSTANDING != AVAILABLE
-STORY_RHYTHM != AVAILABLE
-P8 不开始
+source-video-understanding@1.1.0
+p7-source-bible-v2
+SOURCE_BIBLE schema 1.1
+grounded-source-truth-v2
 ```
+
+真实验收确认：
+
+- 完整 Episode 作为 Source Truth；
+- CURRENT P6 Evidence 作为 canonical 文字事实；
+- world rules 不再社会泛化；
+- 未确认道具剧情作用保持 UNKNOWN / null；
+- SOURCE_BIBLE 用户可读、Evidence 可追溯、revision / provenance / CURRENT / STALE 正确；
+- `EPISODE_UNDERSTANDING` 与 `STORY_RHYTHM` 已 `AVAILABLE`。
+
+新聊天进入 P8 前必须重新读取当前 `main` 和全部手册，尤其 `docs/07_P7最终验收与ProviderReadiness.md`。
+
+P8 固定输入契约：
+
+```text
+完整 Episode / SOURCE_VIDEO
++
+CURRENT SOURCE_BIBLE
++
+CURRENT SHOT_ANCHORS
++
+需要时读取 CURRENT canonical Source Evidence
+↓
+逐镜精细拉片
+```
+
+P8 不能重新从零猜整集故事；Shot 时间优先来自 P5；对白正文来自 P6 canonical Evidence。
 
 ---
 
