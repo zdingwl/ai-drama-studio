@@ -22,6 +22,8 @@ const project = {
   target_region: 'US',
   scene_strategy: 'MIXED' as const,
   audio_policy: 'REGENERATE_AUDIO' as const,
+  visual_style: null,
+  source_understanding_provider: 'DOUBAO_SEED_2_1_PRO_API' as const,
   status: 'ACTIVE' as const,
   workflow_revision: 1,
   created_at: '2026-09-08T00:00:00Z',
