@@ -1,0 +1,212 @@
+/* P8 product-layout overrides.
+   Keep the eight observable Seko columns, but fit them to the real workspace width
+   and avoid the nested scroll viewport that hid dialogue/sound columns. */
+
+.shot-breakdown-workspace .workspace-header {
+  padding-top: 30px;
+  padding-bottom: 22px;
+}
+
+.shot-breakdown-workspace .title-line h2 {
+  font-size: 28px;
+  letter-spacing: -0.025em;
+}
+
+.shot-breakdown-workspace .result-summary {
+  padding: 14px 2px 16px;
+}
+
+.shot-breakdown-workspace .episode-board {
+  margin-top: 24px;
+}
+
+.shot-breakdown-workspace .episode-header {
+  margin-bottom: 12px;
+}
+
+.shot-breakdown-workspace .episode-header h3 {
+  font-size: 16px;
+}
+
+/* Critical layout fix: do not force a 1540px table into a ~1300px workspace. */
+.shot-breakdown-workspace .episode-board .storyboard-table-wrap {
+  max-height: none !important;
+  overflow: visible !important;
+  border-color: #d9dde3;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgb(26 31 39 / 3%);
+}
+
+.shot-breakdown-workspace .episode-board .storyboard-table {
+  width: 100% !important;
+  min-width: 0 !important;
+  table-layout: fixed !important;
+}
+
+.shot-breakdown-workspace .storyboard-table th:nth-child(1) { width: 7% !important; }
+.shot-breakdown-workspace .storyboard-table th:nth-child(2) { width: 10% !important; }
+.shot-breakdown-workspace .storyboard-table th:nth-child(3) { width: 6% !important; }
+.shot-breakdown-workspace .storyboard-table th:nth-child(4) { width: 18% !important; }
+.shot-breakdown-workspace .storyboard-table th:nth-child(5) { width: 18% !important; }
+.shot-breakdown-workspace .storyboard-table th:nth-child(6) { width: 14% !important; }
+.shot-breakdown-workspace .storyboard-table th:nth-child(7) { width: 17% !important; }
+.shot-breakdown-workspace .storyboard-table th:nth-child(8) { width: 10% !important; }
+
+.shot-breakdown-workspace .storyboard-table thead th {
+  padding: 12px 10px !important;
+  background: #f4f5f7 !important;
+  color: #444b55 !important;
+  font-size: 11px !important;
+  letter-spacing: .01em;
+}
+
+.shot-breakdown-workspace .storyboard-table td {
+  padding: 16px 10px !important;
+  color: #30353d;
+  font-size: 12px !important;
+  line-height: 1.65 !important;
+  overflow-wrap: anywhere;
+}
+
+.shot-breakdown-workspace .storyboard-table tbody tr:nth-child(even) td {
+  background: #fcfcfd;
+}
+
+.shot-breakdown-workspace .storyboard-table tbody tr:hover td {
+  background: #f8f9fb !important;
+}
+
+.shot-breakdown-workspace .shot-id-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+.shot-breakdown-workspace .shot-id-cell strong {
+  margin-bottom: 10px !important;
+  font-size: 15px !important;
+}
+
+.shot-breakdown-workspace .shot-id-cell span,
+.shot-breakdown-workspace .shot-id-cell small {
+  font-size: 10px !important;
+  line-height: 1.5 !important;
+}
+
+.shot-breakdown-workspace .source-clip-cell {
+  text-align: center;
+}
+
+.shot-breakdown-workspace .shot-media-button {
+  width: min(100%, 108px) !important;
+  border-radius: 9px !important;
+  box-shadow: 0 2px 7px rgb(16 20 27 / 14%);
+}
+
+.shot-breakdown-workspace .play-overlay i {
+  width: 34px !important;
+  height: 34px !important;
+}
+
+.shot-breakdown-workspace .duration-cell strong {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.shot-breakdown-workspace .visual-cell p {
+  color: #303640;
+  line-height: 1.75 !important;
+}
+
+/* Camera language reads like a compact professional parameter sheet. */
+.shot-breakdown-workspace .camera-cell dl {
+  gap: 0 !important;
+}
+
+.shot-breakdown-workspace .camera-cell dl div {
+  grid-template-columns: 56px minmax(0, 1fr) !important;
+  gap: 8px !important;
+  padding: 5px 0;
+  border-bottom: 1px solid #eef0f3;
+}
+
+.shot-breakdown-workspace .camera-cell dl div:first-child {
+  padding-top: 0;
+}
+
+.shot-breakdown-workspace .camera-cell dl div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.shot-breakdown-workspace .camera-cell dt {
+  color: #8a9099 !important;
+  font-size: 10px !important;
+}
+
+.shot-breakdown-workspace .camera-cell dd {
+  color: #343941;
+  line-height: 1.5;
+}
+
+/* Subject binding is grouped vertically instead of trying to make every chip a column. */
+.shot-breakdown-workspace .binding-cell {
+  gap: 10px !important;
+}
+
+.shot-breakdown-workspace .binding-row {
+  align-items: flex-start !important;
+  gap: 5px !important;
+}
+
+.shot-breakdown-workspace .binding-row > b {
+  width: 34px !important;
+  flex: 0 0 34px;
+  color: #8a9099 !important;
+}
+
+.shot-breakdown-workspace .entity-chip {
+  max-width: calc(100% - 40px);
+  min-height: 22px !important;
+  padding: 2px 6px !important;
+  white-space: normal;
+}
+
+/* Dialogue must remain readable in the main viewport, not hidden offscreen. */
+.shot-breakdown-workspace .dialogue-cell {
+  gap: 11px !important;
+}
+
+.shot-breakdown-workspace .dialogue-line {
+  gap: 6px !important;
+  padding-left: 9px;
+  border-left: 2px solid #dfe5ee;
+}
+
+.shot-breakdown-workspace .dialogue-line p {
+  color: #252b33;
+  font-size: 12px !important;
+  line-height: 1.7 !important;
+}
+
+.shot-breakdown-workspace .delivery {
+  min-height: 21px;
+  font-size: 9px !important;
+}
+
+.shot-breakdown-workspace .sound-cell {
+  gap: 10px !important;
+}
+
+.shot-breakdown-workspace .sound-group span {
+  line-height: 1.55;
+}
+
+/* On narrower workspaces, only then allow one horizontal scroll instead of always hiding columns. */
+@media (max-width: 1180px) {
+  .shot-breakdown-workspace .episode-board .storyboard-table-wrap {
+    overflow-x: auto !important;
+  }
+
+  .shot-breakdown-workspace .episode-board .storyboard-table {
+    min-width: 1120px !important;
+  }
+}
