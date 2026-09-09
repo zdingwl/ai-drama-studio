@@ -641,6 +641,15 @@ def test_p8_full_episode_provider_job_first_and_server_binds_p5_p6_p7(
     assert node["skill_version"] == "1.0.0"
     assert node["metadata_json"]["source_truth_contract"] == "source-bible-shot-facts-v1"
 
+    rerun_task = _start(client, project["id"], "p8-full-episode-rerun")
+    rerun = client.get(f"/api/v3/projects/{project['id']}/shot-breakdown").json()
+    assert rerun_task["status"] == "succeeded"
+    assert rerun_task["id"] != task["id"]
+    assert len(fake.calls) == 2
+    assert rerun["revision"] == 2
+    assert rerun["artifact_id"] != p8_id
+    assert rerun["provenance"]["supersedes_artifact_id"] == p8_id
+
 
 def test_p8_rejects_unknown_source_bible_candidate_and_does_not_publish(
     client: TestClient,

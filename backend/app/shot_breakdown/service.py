@@ -347,6 +347,7 @@ def _fingerprint_inputs(
     dialogue: ArtifactNode,
     contexts: list[EpisodeContext],
     provider: ShotBreakdownProvider,
+    previous_source_shot_facts_artifact_id: str | None,
 ) -> str:
     skill = get_professional_skill(P8_PROFESSIONAL_SKILL_ID)
     return _sha(
@@ -360,6 +361,7 @@ def _fingerprint_inputs(
             "source_bible": [bible.id, bible.input_fingerprint],
             "shot_anchors": [shots.id, shots.input_fingerprint],
             "source_dialogue": [dialogue.id, dialogue.input_fingerprint],
+            "previous_source_shot_facts_artifact_id": previous_source_shot_facts_artifact_id,
             "episodes": [
                 {
                     "episode_id": item.episode.id,
@@ -405,7 +407,24 @@ def create_shot_breakdown_task(db: Session, *, project_id: str, idempotency_key:
         bible_content=bible_content,
     )
     provider = _provider_for_project(project)
-    fingerprint = _fingerprint_inputs(source, bible, shots, dialogue, contexts, provider)
+    previous = db.scalar(
+        select(ArtifactNode)
+        .where(
+            ArtifactNode.project_id == project_id,
+            ArtifactNode.artifact_type == ArtifactType.SOURCE_SHOT_FACTS.value,
+        )
+        .order_by(ArtifactNode.revision.desc())
+        .limit(1)
+    )
+    fingerprint = _fingerprint_inputs(
+        source,
+        bible,
+        shots,
+        dialogue,
+        contexts,
+        provider,
+        previous.id if previous is not None else None,
+    )
     return create_task_from_command(
         db,
         project_id=project_id,
@@ -565,7 +584,24 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
             bible_content=bible_content,
         )
         provider = _provider_for_project(project)
-        if task.input_fingerprint != _fingerprint_inputs(source, bible, shots, dialogue, episode_contexts, provider):
+        previous = db.scalar(
+            select(ArtifactNode)
+            .where(
+                ArtifactNode.project_id == task.project_id,
+                ArtifactNode.artifact_type == ArtifactType.SOURCE_SHOT_FACTS.value,
+            )
+            .order_by(ArtifactNode.revision.desc())
+            .limit(1)
+        )
+        if task.input_fingerprint != _fingerprint_inputs(
+            source,
+            bible,
+            shots,
+            dialogue,
+            episode_contexts,
+            provider,
+            previous.id if previous is not None else None,
+        ):
             raise AppError("STALE_ARTIFACT_INPUT", "P8 输入 fingerprint 或 Provider profile 已变化，请重新创建任务", status_code=409)
 
     episodes: list[SourceShotFactsEpisode] = []
@@ -730,7 +766,24 @@ def _publish(
         bible_content=bible_content,
     )
     provider = _provider_for_project(project)
-    if task.input_fingerprint != _fingerprint_inputs(source, bible, shots, dialogue, episode_contexts, provider):
+    previous = db.scalar(
+        select(ArtifactNode)
+        .where(
+            ArtifactNode.project_id == task.project_id,
+            ArtifactNode.artifact_type == ArtifactType.SOURCE_SHOT_FACTS.value,
+        )
+        .order_by(ArtifactNode.revision.desc())
+        .limit(1)
+    )
+    if task.input_fingerprint != _fingerprint_inputs(
+        source,
+        bible,
+        shots,
+        dialogue,
+        episode_contexts,
+        provider,
+        previous.id if previous is not None else None,
+    ):
         raise AppError("STALE_ARTIFACT_INPUT", "P8 发布时 Provider 或输入 fingerprint 已变化", status_code=409)
 
     previous = db.scalar(

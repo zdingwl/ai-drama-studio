@@ -5,7 +5,7 @@ from threading import Lock
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.core.config import BACKEND_ROOT, get_settings
+from app.core.config import BACKEND_ROOT, Settings, get_settings
 
 
 P7_RUNTIME_ENV_PATH = BACKEND_ROOT / ".env"
@@ -86,7 +86,10 @@ def _secret_value(value) -> str:
 
 
 def get_p7_runtime_config() -> P7RuntimeConfig:
-    settings = get_settings()
+    # Read from the same runtime file that this module updates.  Besides making
+    # the read/write contract explicit, this keeps an isolated runtime-config
+    # file from accidentally falling back to the workstation's real .env.
+    settings = Settings(_env_file=P7_RUNTIME_ENV_PATH)
     return P7RuntimeConfig(
         doubao=DoubaoRuntimeConfig(
             api_key=_secret_value(settings.p7_doubao_api_key),

@@ -375,6 +375,35 @@ def test_p7_uses_full_episode_provider_job_first_and_publishes_typed_artifacts(
     assert bible_node["metadata_json"]["grounding_contract"] == "grounded-source-truth-v2"
 
 
+def test_p7_explicit_rerun_creates_a_new_task_and_revision_for_unchanged_inputs(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch,
+    session_factory: sessionmaker[Session],
+) -> None:
+    project = _project(client)
+    episode = _upload(client, project["id"], _video(tmp_path / "p7-rerun.mp4"))
+    _build_p6(client, project["id"], episode["id"], monkeypatch)
+    fake = FakeUnderstandingProvider(session_factory)
+    monkeypatch.setattr(
+        "app.understanding.service.build_source_episode_understanding_provider",
+        lambda settings, selection: fake,
+    )
+
+    first_task = _start_p7(client, project["id"], "p7-rerun-first")
+    first = client.get(f"/api/v3/projects/{project['id']}/source-bible").json()
+    second_task = _start_p7(client, project["id"], "p7-rerun-second")
+    second = client.get(f"/api/v3/projects/{project['id']}/source-bible").json()
+
+    assert first_task["status"] == "succeeded"
+    assert second_task["status"] == "succeeded"
+    assert second_task["id"] != first_task["id"]
+    assert len(fake.calls) == 2
+    assert first["revision"] == 1
+    assert second["revision"] == 2
+    assert second["artifact_id"] != first["artifact_id"]
+
+
 def test_p7_rejects_hallucinated_evidence_reference_and_does_not_publish(
     client: TestClient,
     tmp_path: Path,

@@ -143,7 +143,19 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
             shots_artifact=shots,
         )
         provider = core._provider_for_project(project)
-        if task.input_fingerprint != core._fingerprint_inputs(source, dialogue, shots, episode_contexts, provider):
+        previous_source_bible_artifact_id = core._latest_artifact_id(
+            db,
+            task.project_id,
+            core.ArtifactType.SOURCE_BIBLE,
+        )
+        if task.input_fingerprint != core._fingerprint_inputs(
+            source,
+            dialogue,
+            shots,
+            episode_contexts,
+            provider,
+            previous_source_bible_artifact_id,
+        ):
             raise AppError("STALE_ARTIFACT_INPUT", "P7 输入 fingerprint 或 Provider 已变化，请重新创建任务", status_code=409)
 
     episodes = []

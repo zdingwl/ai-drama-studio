@@ -84,6 +84,19 @@ def _current_artifact(db: Session, project_id: str, artifact_type: ArtifactType)
     )
 
 
+def _latest_artifact_id(db: Session, project_id: str, artifact_type: ArtifactType) -> str | None:
+    artifact = db.scalar(
+        select(ArtifactNode)
+        .where(
+            ArtifactNode.project_id == project_id,
+            ArtifactNode.artifact_type == artifact_type.value,
+        )
+        .order_by(ArtifactNode.revision.desc())
+        .limit(1)
+    )
+    return artifact.id if artifact is not None else None
+
+
 def _required_source(db: Session, project_id: str) -> ArtifactNode:
     source = _current_artifact(db, project_id, ArtifactType.SOURCE_VIDEO)
     if source is None:
@@ -221,6 +234,7 @@ def _fingerprint_inputs(
     shots: ArtifactNode | None,
     contexts: list[EpisodeContext],
     provider: SourceEpisodeUnderstandingProvider,
+    previous_source_bible_artifact_id: str | None,
 ) -> str:
     return _sha(
         {
@@ -230,6 +244,7 @@ def _fingerprint_inputs(
             "source_video": [source.id, source.input_fingerprint],
             "source_dialogue": [dialogue.id, dialogue.input_fingerprint],
             "shot_anchors": [shots.id, shots.input_fingerprint] if shots else None,
+            "previous_source_bible_artifact_id": previous_source_bible_artifact_id,
             "episodes": [
                 {
                     "episode_id": item.episode.id,
@@ -268,7 +283,23 @@ def create_source_bible_task(db: Session, *, project_id: str, idempotency_key: s
         shots_artifact=shots,
     )
     provider = _provider_for_project(project)
-    fingerprint = _fingerprint_inputs(source, dialogue, shots, contexts, provider)
+    previous = db.scalar(
+        select(ArtifactNode)
+        .where(
+            ArtifactNode.project_id == project_id,
+            ArtifactNode.artifact_type == ArtifactType.SOURCE_BIBLE.value,
+        )
+        .order_by(ArtifactNode.revision.desc())
+        .limit(1)
+    )
+    fingerprint = _fingerprint_inputs(
+        source,
+        dialogue,
+        shots,
+        contexts,
+        provider,
+        previous.id if previous is not None else None,
+    )
     inputs = [source.id, dialogue.id]
     if shots is not None:
         inputs.append(shots.id)
@@ -447,7 +478,23 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
             shots_artifact=shots,
         )
         provider = _provider_for_project(project)
-        if task.input_fingerprint != _fingerprint_inputs(source, dialogue, shots, episode_contexts, provider):
+        previous = db.scalar(
+            select(ArtifactNode)
+            .where(
+                ArtifactNode.project_id == task.project_id,
+                ArtifactNode.artifact_type == ArtifactType.SOURCE_BIBLE.value,
+            )
+            .order_by(ArtifactNode.revision.desc())
+            .limit(1)
+        )
+        if task.input_fingerprint != _fingerprint_inputs(
+            source,
+            dialogue,
+            shots,
+            episode_contexts,
+            provider,
+            previous.id if previous is not None else None,
+        ):
             raise AppError("STALE_ARTIFACT_INPUT", "P7 输入 fingerprint 或 Provider 已变化，请重新创建任务", status_code=409)
 
     episodes: list[SourceBibleEpisode] = []
@@ -675,7 +722,23 @@ def _publish(
         shots_artifact=shots,
     )
     current_provider = _provider_for_project(project)
-    if task.input_fingerprint != _fingerprint_inputs(source, dialogue, shots, contexts, current_provider):
+    previous = db.scalar(
+        select(ArtifactNode)
+        .where(
+            ArtifactNode.project_id == task.project_id,
+            ArtifactNode.artifact_type == ArtifactType.SOURCE_BIBLE.value,
+        )
+        .order_by(ArtifactNode.revision.desc())
+        .limit(1)
+    )
+    if task.input_fingerprint != _fingerprint_inputs(
+        source,
+        dialogue,
+        shots,
+        contexts,
+        current_provider,
+        previous.id if previous is not None else None,
+    ):
         raise AppError("STALE_ARTIFACT_INPUT", "P7 发布时 Provider 或输入 fingerprint 已变化", status_code=409)
     artifact = publish_validated_task_artifact(
         db,
