@@ -25,20 +25,30 @@ const options: Array<{
   badge: string
   description: string
   detail: string
+  recommended?: string
 }> = [
   {
     value: 'DOUBAO_SEED_2_1_PRO_API',
     title: 'Doubao Seed 2.1 Pro',
     badge: '火山引擎 API',
-    description: '国内云端调用，完整 Episode 通过方舟 Files API 进入整集多模态理解。',
-    detail: '适合直接生产验收；需要后端配置 AI_DRAMA_P7_DOUBAO_API_KEY。',
+    description: '国内云端生产档。完整 Episode 通过方舟 Files API 进入整集多模态理解。',
+    detail: '适合无需本地 GPU 的生产验收；需要后端配置 AI_DRAMA_P7_DOUBAO_API_KEY。',
+    recommended: '云端推荐',
   },
   {
-    value: 'QWEN3_VL_LOCAL',
-    title: 'Qwen3-VL-30B-A3B-Thinking',
+    value: 'QWEN3_8_27B_LOCAL',
+    title: 'Qwen3.8-27B',
     badge: '本地 / 局域网 vLLM',
-    description: '应用连接你自己的 OpenAI-compatible vLLM 服务，完整 Episode 通过本地 file:// 路径读取。',
-    detail: '模型权重不进入 Web 后端进程；GPU、量化和 tensor parallel 由本地推理服务自行配置。',
+    description: '本地高质量档。新一代原生视觉语言模型，直接读取完整 Episode 的 file:// 路径。',
+    detail: '模型权重不进入 Web 后端进程；GPU、量化和 tensor parallel 由 vLLM 服务自行配置。',
+    recommended: '本地推荐',
+  },
+  {
+    value: 'QWEN3_VL_8B_THINKING_LOCAL',
+    title: 'Qwen3-VL-8B-Thinking',
+    badge: '本地低显存',
+    description: '低显存兼容档。保留视频理解与推理能力，适合资源较小的单机部署。',
+    detail: '仍使用完整 Episode + CURRENT P6 Evidence；资源不足时优先选这一档。',
   },
 ]
 
@@ -47,7 +57,11 @@ async function load(): Promise<void> {
   errorMessage.value = ''
   try {
     project.value = await getProject(projectId.value)
-    selected.value = project.value.source_understanding_provider
+    const saved = project.value.source_understanding_provider
+    // Compatibility for projects saved during the short-lived two-provider build.
+    selected.value = saved === ('QWEN3_VL_LOCAL' as SourceUnderstandingProvider)
+      ? 'QWEN3_VL_8B_THINKING_LOCAL'
+      : saved
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'P7 模型设置读取失败'
   } finally {
@@ -82,10 +96,10 @@ onMounted(load)
     <div class="heading">
       <div>
         <span class="eyebrow">P7 模型设置</span>
-        <h2>整集多模态理解 Provider</h2>
+        <h2>整集多模态理解模型</h2>
         <p>模型只影响 Source Understanding；完整 Episode 仍是 Source Truth，P6 ASR/OCR 仍是 canonical 文字证据。</p>
       </div>
-      <span class="current">项目级设置</span>
+      <span class="current">项目级设置 · 三选一</span>
     </div>
 
     <p v-if="loading" class="muted">正在读取模型设置…</p>
@@ -106,6 +120,7 @@ onMounted(load)
               <strong>{{ option.title }}</strong>
               <span>{{ option.badge }}</span>
             </div>
+            <b v-if="option.recommended" class="recommend">{{ option.recommended }}</b>
             <p>{{ option.description }}</p>
             <small>{{ option.detail }}</small>
           </div>
@@ -113,8 +128,8 @@ onMounted(load)
       </div>
 
       <div class="save-row">
-        <span v-if="changed">切换 Provider 会使当前 SOURCE_BIBLE 及其 Story/Rhythm 失效，随后需要显式重新运行 P7。</span>
-        <span v-else>当前项目已使用所选 Provider。</span>
+        <span v-if="changed">切换模型会使当前 SOURCE_BIBLE 及其 Story/Rhythm 失效，随后需要显式重新运行 P7。</span>
+        <span v-else>当前项目已使用所选模型。</span>
         <button type="button" :disabled="!changed || saving" @click="saveProvider">
           {{ saving ? '正在保存…' : '保存模型选择' }}
         </button>
@@ -165,7 +180,8 @@ onMounted(load)
 }
 
 .current,
-.provider-title span {
+.provider-title span,
+.recommend {
   border-radius: 999px;
   padding: 5px 9px;
   background: #eef2f6;
@@ -174,9 +190,15 @@ onMounted(load)
   white-space: nowrap;
 }
 
+.recommend {
+  display: inline-block;
+  margin: 8px 0;
+  font-weight: 700;
+}
+
 .provider-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
   margin-top: 18px;
 }
@@ -237,14 +259,16 @@ button:disabled {
 .success { color: #19725c; }
 .muted { color: #667085; }
 
-/* P7SourceBiblePanel still has its old provider fallback display. The project-level selector above
-   is now authoritative, so hide that legacy line until the panel is refactored into the final UX. */
+/* Project-level selector above is authoritative. */
 :deep(.p7-panel .provider-line) {
   display: none;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 980px) {
   .provider-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
   .heading,
   .save-row { align-items: flex-start; flex-direction: column; }
   .provider-settings { margin: 16px; }
