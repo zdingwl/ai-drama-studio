@@ -2,9 +2,11 @@
 
 ## 1. 目标
 
-`shot-breakdown@1.0.0` 是 P8「带 Source Bible 的逐镜精细拉片」的 Professional Skill。
+`shot-breakdown@1.1.0` 是 P8「带 Source Bible 的逐镜精细拉片」Professional Skill。
 
-它只负责把已经建立的整集原片知识落实到 **CURRENT P5 Shot Anchors** 上，生成正式 `SOURCE_SHOT_FACTS`。它不负责重新切镜、不负责重新听写、不负责重新建立整集故事，也不负责 P9 的最终人物/场景/道具身份归一。
+它负责把已经建立的整集原片知识落实到 **CURRENT P5 Shot Anchors** 上，生成正式 `SOURCE_SHOT_FACTS`。它不负责重新切镜、不负责重新听写、不负责重新建立整集故事，也不负责 P9 的最终人物 / Speaker / 场景 / 道具身份归一。
+
+P8 1.1 新增 **canonical utterance → CURRENT SOURCE_BIBLE character candidate** 的逐句说话人候选绑定，用于让用户在分镜表里直接看见“谁说的”。这是 provisional candidate hint，不是 P9 最终 Speaker Truth。
 
 ## 2. 权威输入
 
@@ -27,7 +29,7 @@ Provider 不输出 Shot start/end。服务端按照 `shot_number` 与 CURRENT P5
 
 服务端以 CURRENT P6 `SourceDialogueUtterance.start_us/end_us` 与 CURRENT P5 Anchor 做 overlap，得到本次 P8 的权威 Shot binding。
 
-Provider 只允许对服务端给出的 `overlapping_utterance_numbers` 标注：
+每个 Shot 的 `dialogue_annotations` 只允许标：
 
 - `DIALOGUE`
 - `VOICEOVER`
@@ -36,44 +38,63 @@ Provider 只允许对服务端给出的 `overlapping_utterance_numbers` 标注�
 
 Provider **不输出对白正文**。最终 `SOURCE_SHOT_FACTS.dialogue[].text` 由服务端直接复制 P6 canonical text，P8 不做转写、摘要、清洗或改写。
 
-### 3.3 P7 全局上下文权威
+### 3.3 P8 说话人候选绑定
+
+P8 1.1 允许 Provider 在 Episode 级 `dialogue_speakers[]` 中对每条 canonical utterance 输出：
+
+- `utterance_number`
+- `speaker_character_id: string | null`
+
+`speaker_character_id` 只能来自 CURRENT SOURCE_BIBLE 的 `character_id`。Provider 无权输出人物 label，也不能创建新 ID。
+
+如果无法可靠判断说话人，必须输出 `null`，由 UI 显示“未确认说话人”。
+
+同一条 canonical utterance 可能跨多个 Shot，因此 speaker candidate 属于 utterance，而不是 Shot。服务端只接受 **每条 canonical utterance 恰好一条 Episode 级 speaker annotation**，并把同一个 candidate 注入所有 Shot overlap。
+
+这不是 P9 最终 Speaker Attribution：P8 不做声纹聚类、跨 Episode speaker identity、SourceSpeaker 物化或最终人物身份 resolution。P9 仍需独立音视频证据做最终归一。
+
+### 3.4 P7 全局上下文权威
 
 每个 Shot 都必须在当前 Episode 的 Source Bible 全局上下文中解释。Provider 不能把 Shot 当成互不相干的小视频，再分别猜人物、关系和整集剧情。
 
-P8 的 `character/scene/prop` 只是引用 P7 candidate ID 的 **Shot-level binding**。不能创建新 ID，也不能声明稳定身份；最终 `IDENTITY_RESOLUTION / SCENE_RESOLUTION / PROP_RESOLUTION` 属于 P9。
+P8 的 `character/scene/prop` 是引用 P7 candidate ID 的 **Shot-level binding**；speaker candidate 同样只引用 P7 character candidate。不能创建新 ID，也不能声明 P9 最终稳定身份。
 
-### 3.4 Reference Clip 边界
+### 3.5 Reference Clip 边界
 
-Reference Clip 是 P5 派生的局部精看资产。它可以在后续 Provider 优化中用于核对某个 Shot 的细节，但不能替代完整 Episode 进入整集故事理解、ASR 或 Shot Boundary。
+Reference Clip 是 P5 派生的局部精看资产。它可以用于核对某个 Shot 的细节，但不能替代完整 Episode 进入整集故事理解、ASR、speaker candidate 判断或 Shot Boundary。
 
-P8 1.0 的默认 Provider 调用直接读取完整 Episode；Reference Clip 不作为整集请求输入。
+P8 1.1 默认 Provider 仍直接读取完整 Episode；Reference Clip 不作为整集请求输入。
 
 ## 4. Provider 输出语义
 
-每个 Shot 的 Provider semantic output 只包含：
+Episode 级 Provider semantic output：
 
-- `shot_number`
-- `visual_description`
-- `camera_language`
-  - `shot_size`
-  - `composition`
-  - `angle_or_type`
-  - `movement`
-  - `focal_length_dof`
-- `bindings`
-  - `character_ids`
-  - `scene_ids`
-  - `prop_ids`
-  - `unresolved_subject_notes`
-- `dialogue_annotations`
+- `shots[]`
+  - `shot_number`
+  - `visual_description`
+  - `camera_language`
+    - `shot_size`
+    - `composition`
+    - `angle_or_type`
+    - `movement`
+    - `focal_length_dof`
+  - `bindings`
+    - `character_ids`
+    - `scene_ids`
+    - `prop_ids`
+    - `unresolved_subject_notes`
+  - `dialogue_annotations`
+    - `utterance_number`
+    - `delivery`
+  - `sound_effects`
+  - `ambience`
+- `dialogue_speakers[]`
   - `utterance_number`
-  - `delivery`
-- `sound_effects`
-- `ambience`
+  - `speaker_character_id`
 
 Provider 不拥有 Shot 时间、canonical dialogue text、P7 candidate label 或 P6/P5 Artifact IDs 的写权限。
 
-## 5. 正式 `SOURCE_SHOT_FACTS` schema
+## 5. 正式 `SOURCE_SHOT_FACTS` schema 1.1
 
 正式内容由服务端组合：
 
@@ -91,21 +112,36 @@ Provider 不拥有 Shot 时间、canonical dialogue text、P7 candidate label �
     - Shot overlap time
     - canonical text / language
     - delivery
+    - `speaker: BoundSubjectRef | null`（P7 character candidate）
   - `sound_effects`
   - `ambience`
   - `visual_text_evidence_ids`
 
-这个数据形态对应 `docs/05` 实测的用户可读分镜表：镜头编号、源片段、时长、画面描述、镜头语言、绑定主体、对白/旁白、音效。
+这个数据形态对应 `docs/05` 实测的用户可读分镜表，并按 `docs/10` 增加逐句“说话人候选 + delivery + canonical text”。
 
 ## 6. Artifact / revision / fingerprint / provenance
 
-P8 正式 Source Truth 绑定契约固定为：
+P8 1.1 正式 Source Truth 绑定契约：
 
 ```text
-source-bible-shot-facts-v1
+source-bible-shot-facts-v2
 ```
 
-它表示 `SOURCE_SHOT_FACTS` 的 Shot 时间由 CURRENT P5 固化、对白正文由 CURRENT P6 固化、人物/场景/道具候选只能绑定 CURRENT P7，而逐镜视觉与导演语言必须直接观察完整 Episode。Provider 不拥有前三类权威事实的改写权。
+版本：
+
+```text
+shot-breakdown@1.1.0
+p8-shot-breakdown-v2
+SOURCE_SHOT_FACTS schema 1.1
+```
+
+它表示：
+
+- Shot 时间由 CURRENT P5 固化；
+- 对白正文由 CURRENT P6 固化；
+- 人物 / 场景 / 道具 / speaker candidate 只能引用 CURRENT P7；
+- 逐镜视觉、delivery、声音与 provisional speaker candidate 必须直接观察完整 Episode；
+- Provider 无权把 provisional candidate 升格成 P9 最终 Speaker Truth。
 
 每次成功发布生成新的 `SOURCE_SHOT_FACTS` Artifact revision，并持久化 `SourceShotFactsRevision`。
 
@@ -131,6 +167,8 @@ Artifact Graph 关系：
 
 任何上游正式 revision 被替换时，已有 P8 结果必须保留为历史，但从 CURRENT 变为 STALE。
 
+P8 1.0 → 1.1 是正式 schema / Skill / Prompt 变化，旧 `SOURCE_SHOT_FACTS` 必须 STALE；P5/P6/P7 保持 CURRENT，用户显式重跑 P8 生成带 speaker candidate 的新 revision。
+
 ## 7. API 与任务边界
 
 - `POST /projects/{project_id}/commands/shot-breakdown`：显式创建真实重任务；
@@ -144,4 +182,4 @@ Provider 调用统一使用 `dispatch_provider_call()`；`ProviderJob` 必须先
 
 代码、自动测试和 UI 完成不等于 Capability AVAILABLE。
 
-只有对真实短剧完成 `docs/04` 与 `docs/08` 中 P8 人工验收，确认 Shot Boundary、canonical dialogue、Source Bible binding、镜头语言和声音描述都符合真实原片后，才允许把 `SHOT_BREAKDOWN` 从 `PLANNED` 改为 `AVAILABLE`。
+只有对真实短剧完成 `docs/04`、`docs/08` 与 `docs/10` 的 P8 人工验收，确认 Shot Boundary、canonical dialogue、speaker candidate、Source Bible binding、镜头语言和声音描述都符合真实原片后，才允许把 `SHOT_BREAKDOWN` 从 `PLANNED` 改为 `AVAILABLE`。
