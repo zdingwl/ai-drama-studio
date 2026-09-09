@@ -1,13 +1,15 @@
 import json
-import time
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
+from arkruntime import Ark
 
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.projects.enums import SourceUnderstandingProvider
 from app.understanding.schemas import EpisodeUnderstandingSemantic
 
 
@@ -40,54 +42,70 @@ class SourceEpisodeUnderstandingProvider(Protocol):
     def analyze(self, payload: EpisodeUnderstandingInput) -> EpisodeUnderstandingProviderResult: ...
 
 
-def _iter_file(path: Path, chunk_size: int = 4 * 1024 * 1024):
-    with path.open("rb") as stream:
-        while True:
-            chunk = stream.read(chunk_size)
-            if not chunk:
-                break
-            yield chunk
-
-
-def _gemini_response_schema() -> dict:
+def _clean_json_schema(value: Any) -> Any:
+    """Keep a conservative JSON-Schema subset suitable for model prompting."""
+    if isinstance(value, list):
+        return [_clean_json_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
     allowed = {
-        "$id", "$defs", "$ref", "$anchor", "type", "format", "title", "description", "enum",
-        "items", "prefixItems", "minItems", "maxItems", "minimum", "maximum", "anyOf", "oneOf",
-        "properties", "additionalProperties", "required",
+        "$defs",
+        "$ref",
+        "type",
+        "title",
+        "description",
+        "enum",
+        "const",
+        "items",
+        "minItems",
+        "maxItems",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "anyOf",
+        "oneOf",
+        "properties",
+        "additionalProperties",
+        "required",
     }
-
-    def clean(value):
-        if isinstance(value, list):
-            return [clean(item) for item in value]
-        if not isinstance(value, dict):
-            return value
-        result = {}
-        for key, nested in value.items():
-            if key not in allowed:
-                continue
-            if key in {"properties", "$defs"}:
-                result[key] = {name: clean(schema) for name, schema in nested.items()}
-            else:
-                result[key] = clean(nested)
-        return result
-
-    return clean(EpisodeUnderstandingSemantic.model_json_schema())
+    cleaned: dict[str, Any] = {}
+    for key, nested in value.items():
+        if key not in allowed:
+            continue
+        if key in {"properties", "$defs"}:
+            cleaned[key] = {name: _clean_json_schema(schema) for name, schema in nested.items()}
+        else:
+            cleaned[key] = _clean_json_schema(nested)
+    return cleaned
 
 
-def _extract_response_text(response: dict) -> str:
-    candidates = response.get("candidates") or []
-    if not candidates:
-        raise ValueError("Gemini response did not contain candidates")
-    parts = ((candidates[0].get("content") or {}).get("parts") or [])
-    text = "".join(str(part.get("text") or "") for part in parts if part.get("text"))
-    if not text.strip():
-        raise ValueError("Gemini response did not contain text")
-    return text
+def _response_schema() -> dict:
+    return _clean_json_schema(EpisodeUnderstandingSemantic.model_json_schema())
+
+
+def _json_text(text: str) -> str:
+    value = text.strip()
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", value, flags=re.IGNORECASE | re.DOTALL)
+    if fence:
+        value = fence.group(1).strip()
+    if value.startswith("{") and value.endswith("}"):
+        return value
+    start = value.find("{")
+    end = value.rfind("}")
+    if start >= 0 and end > start:
+        return value[start : end + 1]
+    raise ValueError("P7 provider response did not contain a JSON object")
+
+
+def _parse_semantic(text: str) -> EpisodeUnderstandingSemantic:
+    return EpisodeUnderstandingSemantic.model_validate_json(_json_text(text))
 
 
 def _prompt(payload: EpisodeUnderstandingInput) -> str:
     evidence_json = json.dumps(payload.evidence_payload, ensure_ascii=False, separators=(",", ":"))
     shot_json = json.dumps(payload.shot_hints, ensure_ascii=False, separators=(",", ":"))
+    schema_json = json.dumps(_response_schema(), ensure_ascii=False, separators=(",", ":"))
     return f"""你正在执行 AI Drama Studio P7「整集多模态原片理解」。
 
 硬约束：
@@ -97,7 +115,7 @@ def _prompt(payload: EpisodeUnderstandingInput) -> str:
 4. Shot Anchors 只是可选定位提示。timed_script / story beat 的时间窗口是语义窗口，允许重叠，绝不能假装是精确 Shot Boundary。
 5. 不要根据视频音轨自行补写对白；对白事实以 Source Evidence 为准。可利用非语言声音辅助理解情绪，但不得形成新的 canonical 文本事实。
 6. 所有时间使用微秒，范围必须位于 0 到 {payload.duration_us} 之间。
-7. 输出必须严格符合给定 JSON Schema，不要输出 Markdown、解释或额外字段。
+7. 只输出一个 JSON object，不要输出 Markdown、解释或额外文本。JSON 必须符合末尾 Schema。
 8. 内容使用与原片相适应的自然中文表达；人物名无法确认时使用稳定候选名（如“女主候选”），不要伪造身份。
 
 Episode:
@@ -112,19 +130,44 @@ CURRENT Source Evidence:
 
 Optional Shot Anchor hints（只用于定位/去歧义，不是语义分段边界）:
 {shot_json}
+
+Output JSON Schema:
+{schema_json}
 """
 
 
-class GeminiSourceEpisodeUnderstandingProvider:
-    provider_name = "google-gemini"
+def _ark_response_text(response: Any) -> str:
+    direct = getattr(response, "output_text", None)
+    if isinstance(direct, str) and direct.strip():
+        return direct
+    chunks: list[str] = []
+    for item in getattr(response, "output", None) or []:
+        item_type = getattr(item, "type", None) if not isinstance(item, dict) else item.get("type")
+        if item_type != "message":
+            continue
+        content = getattr(item, "content", None) if not isinstance(item, dict) else item.get("content")
+        for part in content or []:
+            part_type = getattr(part, "type", None) if not isinstance(part, dict) else part.get("type")
+            if part_type != "output_text":
+                continue
+            text = getattr(part, "text", None) if not isinstance(part, dict) else part.get("text")
+            if text:
+                chunks.append(str(text))
+    if not chunks:
+        raise ValueError("Ark response did not contain output_text")
+    return "".join(chunks)
+
+
+class DoubaoSeedSourceEpisodeUnderstandingProvider:
+    provider_name = "volcengine-ark"
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.model_name = settings.p7_gemini_model
-        if settings.p7_gemini_api_key is None or not settings.p7_gemini_api_key.get_secret_value().strip():
+        self.model_name = settings.p7_doubao_model
+        if settings.p7_doubao_api_key is None or not settings.p7_doubao_api_key.get_secret_value().strip():
             raise AppError(
                 "P7_PROVIDER_NOT_CONFIGURED",
-                "P7 Gemini Provider 尚未配置 AI_DRAMA_P7_GEMINI_API_KEY",
+                "火山引擎 P7 Provider 尚未配置 AI_DRAMA_P7_DOUBAO_API_KEY",
                 status_code=409,
             )
 
@@ -133,122 +176,137 @@ class GeminiSourceEpisodeUnderstandingProvider:
         return {
             "provider": self.provider_name,
             "model": self.model_name,
-            "base_url": self.settings.p7_gemini_base_url,
-            "video_input": "FILES_API_FULL_EPISODE",
-            "structured_output": "JSON_SCHEMA",
+            "mode": "CLOUD_API",
+            "base_url": self.settings.p7_doubao_base_url,
+            "video_input": "ARK_FILES_API_FULL_EPISODE",
+            "video_fps": self.settings.p7_doubao_video_fps,
+            "structured_output": "JSON_SCHEMA_PROMPT_PLUS_SERVER_VALIDATION",
             "prompt_version": "p7-source-bible-v1",
         }
 
     @property
     def _api_key(self) -> str:
-        assert self.settings.p7_gemini_api_key is not None
-        return self.settings.p7_gemini_api_key.get_secret_value()
-
-    def _wait_until_active(self, client: httpx.Client, file_info: dict) -> dict:
-        current = file_info
-        deadline = time.monotonic() + self.settings.p7_gemini_processing_timeout_seconds
-        while str(current.get("state") or "ACTIVE").upper() == "PROCESSING":
-            if time.monotonic() >= deadline:
-                raise TimeoutError("Gemini file processing timed out")
-            time.sleep(self.settings.p7_gemini_poll_interval_seconds)
-            name = str(current.get("name") or "")
-            if not name:
-                raise ValueError("Gemini upload response missing file name")
-            response = client.get(
-                f"{self.settings.p7_gemini_base_url.rstrip('/')}/v1beta/{name}",
-                headers={"x-goog-api-key": self._api_key},
-            )
-            response.raise_for_status()
-            current = response.json()
-        if str(current.get("state") or "ACTIVE").upper() not in {"ACTIVE", "STATE_UNSPECIFIED"}:
-            raise ValueError(f"Gemini file processing failed: {current.get('state')}")
-        return current
+        assert self.settings.p7_doubao_api_key is not None
+        return self.settings.p7_doubao_api_key.get_secret_value()
 
     def analyze(self, payload: EpisodeUnderstandingInput) -> EpisodeUnderstandingProviderResult:
-        base_url = self.settings.p7_gemini_base_url.rstrip("/")
-        size_bytes = payload.source_path.stat().st_size
-        timeout = httpx.Timeout(self.settings.p7_gemini_request_timeout_seconds)
-        file_name: str | None = None
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            start = client.post(
-                f"{base_url}/upload/v1beta/files",
-                headers={
-                    "x-goog-api-key": self._api_key,
-                    "X-Goog-Upload-Protocol": "resumable",
-                    "X-Goog-Upload-Command": "start",
-                    "X-Goog-Upload-Header-Content-Length": str(size_bytes),
-                    "X-Goog-Upload-Header-Content-Type": payload.mime_type,
-                    "Content-Type": "application/json",
-                },
-                json={"file": {"display_name": payload.source_filename[:512]}},
+        client = Ark(
+            api_key=self._api_key,
+            base_url=self.settings.p7_doubao_base_url,
+            timeout=self.settings.p7_doubao_request_timeout_seconds,
+            max_retries=2,
+        )
+        uploaded_file_id: str | None = None
+        try:
+            with payload.source_path.open("rb") as stream:
+                uploaded = client.files.create(file=stream, purpose="user_data")
+            uploaded_file_id = str(getattr(uploaded, "id", "") or "")
+            if not uploaded_file_id:
+                raise ValueError("Ark file upload did not return a file id")
+            client.files.wait_for_processing(
+                uploaded_file_id,
+                max_wait_seconds=self.settings.p7_doubao_request_timeout_seconds,
             )
-            start.raise_for_status()
-            upload_url = start.headers.get("x-goog-upload-url")
-            if not upload_url:
-                raise ValueError("Gemini resumable upload URL missing")
-            upload = client.post(
-                upload_url,
-                headers={
-                    "Content-Length": str(size_bytes),
-                    "X-Goog-Upload-Offset": "0",
-                    "X-Goog-Upload-Command": "upload, finalize",
-                },
-                content=_iter_file(payload.source_path),
-            )
-            upload.raise_for_status()
-            upload_payload = upload.json()
-            file_info = upload_payload.get("file") or upload_payload
-            file_info = self._wait_until_active(client, file_info)
-            file_name = str(file_info.get("name") or "") or None
-            file_uri = str(file_info.get("uri") or "")
-            file_mime = str(file_info.get("mimeType") or file_info.get("mime_type") or payload.mime_type)
-            if not file_uri:
-                raise ValueError("Gemini upload response missing file URI")
-
-            try:
-                response = client.post(
-                    f"{base_url}/v1beta/models/{self.model_name}:generateContent",
-                    headers={"x-goog-api-key": self._api_key, "Content-Type": "application/json"},
-                    json={
-                        "contents": [
+            response = client.responses.create(
+                model=self.model_name,
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
                             {
-                                "role": "user",
-                                "parts": [
-                                    {"fileData": {"mimeType": file_mime, "fileUri": file_uri}},
-                                    {"text": _prompt(payload)},
-                                ],
-                            }
+                                "type": "input_video",
+                                "file_id": uploaded_file_id,
+                                "fps": self.settings.p7_doubao_video_fps,
+                            },
+                            {"type": "input_text", "text": _prompt(payload)},
                         ],
-                        "generationConfig": {
-                            "temperature": 0.2,
-                            "maxOutputTokens": 32768,
-                            "responseMimeType": "application/json",
-                            "responseJsonSchema": _gemini_response_schema(),
-                        },
-                    },
-                )
-                response.raise_for_status()
-                text = _extract_response_text(response.json())
-                semantic = EpisodeUnderstandingSemantic.model_validate_json(text)
-                return EpisodeUnderstandingProviderResult(semantic=semantic, remote_job_id=file_name)
-            finally:
-                if file_name:
-                    try:
-                        client.delete(
-                            f"{base_url}/v1beta/{file_name}",
-                            headers={"x-goog-api-key": self._api_key},
-                        )
-                    except httpx.HTTPError:
-                        pass
+                    }
+                ],
+                thinking={"type": "enabled"},
+            )
+            semantic = _parse_semantic(_ark_response_text(response))
+            response_id = str(getattr(response, "id", "") or "") or None
+            return EpisodeUnderstandingProviderResult(semantic=semantic, remote_job_id=response_id)
+        finally:
+            if uploaded_file_id:
+                try:
+                    client.files.delete(uploaded_file_id)
+                except Exception:
+                    # Cleanup must not turn a valid SOURCE_BIBLE result into a failed task.
+                    pass
 
 
-def build_source_episode_understanding_provider(settings: Settings) -> SourceEpisodeUnderstandingProvider:
-    provider = settings.p7_understanding_provider.strip().lower()
-    if provider == "gemini":
-        return GeminiSourceEpisodeUnderstandingProvider(settings)
+class LocalQwenSourceEpisodeUnderstandingProvider:
+    provider_name = "qwen3-vl-local-vllm"
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.model_name = settings.p7_qwen_local_model
+
+    @property
+    def profile(self) -> dict:
+        return {
+            "provider": self.provider_name,
+            "model": self.model_name,
+            "mode": "LOCAL_OPENAI_COMPATIBLE",
+            "base_url": self.settings.p7_qwen_local_base_url,
+            "video_input": "VLLM_FILE_URL_FULL_EPISODE",
+            "structured_output": "JSON_SCHEMA_PROMPT_PLUS_SERVER_VALIDATION",
+            "prompt_version": "p7-source-bible-v1",
+        }
+
+    def analyze(self, payload: EpisodeUnderstandingInput) -> EpisodeUnderstandingProviderResult:
+        source_uri = payload.source_path.resolve().as_uri()
+        headers = {"Content-Type": "application/json"}
+        if self.settings.p7_qwen_local_api_key is not None:
+            key = self.settings.p7_qwen_local_api_key.get_secret_value().strip()
+            if key:
+                headers["Authorization"] = f"Bearer {key}"
+        timeout = httpx.Timeout(self.settings.p7_qwen_local_request_timeout_seconds)
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(
+                f"{self.settings.p7_qwen_local_base_url.rstrip('/')}/chat/completions",
+                headers=headers,
+                json={
+                    "model": self.model_name,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "video_url", "video_url": {"url": source_uri}},
+                                {"type": "text", "text": _prompt(payload)},
+                            ],
+                        }
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": 32768,
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+        choices = body.get("choices") or []
+        if not choices:
+            raise ValueError("Local Qwen response did not contain choices")
+        message = choices[0].get("message") or {}
+        text = message.get("content")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("Local Qwen response did not contain final content")
+        semantic = _parse_semantic(text)
+        response_id = str(body.get("id") or "") or None
+        return EpisodeUnderstandingProviderResult(semantic=semantic, remote_job_id=response_id)
+
+
+def build_source_episode_understanding_provider(
+    settings: Settings,
+    selection: SourceUnderstandingProvider,
+) -> SourceEpisodeUnderstandingProvider:
+    if selection == SourceUnderstandingProvider.DOUBAO_SEED_2_1_PRO_API:
+        return DoubaoSeedSourceEpisodeUnderstandingProvider(settings)
+    if selection == SourceUnderstandingProvider.QWEN3_VL_LOCAL:
+        return LocalQwenSourceEpisodeUnderstandingProvider(settings)
     raise AppError(
         "P7_PROVIDER_UNSUPPORTED",
         "当前 P7 Provider 未实现",
         status_code=422,
-        details={"provider": settings.p7_understanding_provider},
+        details={"provider": str(selection)},
     )
