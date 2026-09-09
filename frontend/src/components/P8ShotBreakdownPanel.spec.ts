@@ -40,6 +40,8 @@ const currentSourceBible: SourceBibleRead = {
   rhythm_skeleton_artifact_id: 'rhythm-current',
 }
 
+const speaker = { id: 'char-lead', label: '未命名女性A' }
+
 const breakdown: ShotBreakdownRead = {
   project_id: 'project-p8',
   status: 'CURRENT',
@@ -47,7 +49,7 @@ const breakdown: ShotBreakdownRead = {
   revision: 1,
   input_fingerprint: 'p8-fingerprint',
   content: {
-    schema_version: '1.0',
+    schema_version: '1.1',
     title: '逐镜精细拉片',
     episodes: [
       {
@@ -86,6 +88,7 @@ const breakdown: ShotBreakdownRead = {
                 text: '这句话跨过两个镜头。',
                 language: 'zh',
                 delivery: 'DIALOGUE',
+                speaker,
               },
             ],
             sound_effects: ['轻微衣物摩擦声'],
@@ -123,6 +126,7 @@ const breakdown: ShotBreakdownRead = {
                 text: '这句话跨过两个镜头。',
                 language: 'zh',
                 delivery: 'OFFSCREEN',
+                speaker,
               },
             ],
             sound_effects: [],
@@ -163,11 +167,11 @@ const breakdown: ShotBreakdownRead = {
     ],
     provider: 'volcengine-ark',
     model: 'doubao-seed-2-1-pro-260628',
-    prompt_version: 'p8-shot-breakdown-v1',
-    schema_version: '1.0',
+    prompt_version: 'p8-shot-breakdown-v2',
+    schema_version: '1.1',
     professional_skill_id: 'shot-breakdown',
-    professional_skill_version: '1.0.0',
-    source_truth_contract: 'source-bible-shot-facts-v1',
+    professional_skill_version: '1.1.0',
+    source_truth_contract: 'source-bible-shot-facts-v2',
     generated_by_task_id: 'task-p8-1',
     supersedes_artifact_id: null,
   },
@@ -208,7 +212,7 @@ afterEach(() => {
 })
 
 describe('P8ShotBreakdownPanel', () => {
-  it('renders the product storyboard table with playable P5 source thumbnails', async () => {
+  it('renders the product storyboard rows with playable P5 thumbnails and speaker names', async () => {
     const wrapper = await mountPanel()
     const text = wrapper.text()
 
@@ -226,12 +230,26 @@ describe('P8ShotBreakdownPanel', () => {
     expect(text).toContain('这句话跨过两个镜头。')
     expect(wrapper.get('[data-testid="p8-source-bible-preflight"]').text()).toContain('CURRENT · rev 4')
     expect(wrapper.get('[data-testid="p8-source-bible-preflight"]').text()).toContain('P8 前置已就绪')
-    expect(wrapper.findAll('.dialogue-line')).toHaveLength(2)
-    expect(wrapper.findAll('.dialogue-line')[0]?.text()).toContain('对白')
-    expect(wrapper.findAll('.dialogue-line')[1]?.text()).toContain('画外对白')
+    const dialogueLines = wrapper.findAll('.dialogue-line')
+    expect(dialogueLines).toHaveLength(2)
+    expect(dialogueLines[0]?.text()).toContain('未命名女性A')
+    expect(dialogueLines[0]?.text()).toContain('对白')
+    expect(dialogueLines[1]?.text()).toContain('未命名女性A')
+    expect(dialogueLines[1]?.text()).toContain('画外对白')
 
     const thumbnail = wrapper.findAll('.shot-media-button img')[0]
     expect(thumbnail?.attributes('src')).toBe('/api/v3/projects/project-p8/episodes/episode-1/shot-boundary/shots/shot-anchor-1/thumbnail')
+    wrapper.unmount()
+  })
+
+  it('shows an explicit unconfirmed speaker instead of guessing from visible characters', async () => {
+    const noSpeaker = structuredClone(breakdown)
+    const line = noSpeaker.content?.episodes[0]?.shots[0]?.dialogue[0]
+    if (line) line.speaker = null
+    vi.mocked(shotApi.getShotBreakdown).mockResolvedValue(noSpeaker)
+
+    const wrapper = await mountPanel()
+    expect(wrapper.findAll('.dialogue-line')[0]?.text()).toContain('说话人未确认')
     wrapper.unmount()
   })
 
