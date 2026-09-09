@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     p6_ocr_provider: str = "rapidocr"
     p6_ocr_sample_interval_ms: int = 500
     p6_ocr_min_confidence: float = 0.45
+    p7_understanding_provider: str = "gemini"
+    p7_gemini_api_key: SecretStr | None = None
+    p7_gemini_model: str = "gemini-3.8-flash"
+    p7_gemini_base_url: str = "https://generativelanguage.googleapis.com"
+    p7_gemini_request_timeout_seconds: float = 900.0
+    p7_gemini_processing_timeout_seconds: float = 900.0
+    p7_gemini_poll_interval_seconds: float = 2.0
 
     @model_validator(mode="after")
     def anchor_runtime_paths(self) -> "Settings":
@@ -62,6 +69,12 @@ class Settings(BaseSettings):
             raise ValueError("p6_ocr_sample_interval_ms must be >= 100")
         if not 0 <= self.p6_ocr_min_confidence <= 1:
             raise ValueError("p6_ocr_min_confidence must be between 0 and 1")
+        if self.p7_gemini_request_timeout_seconds <= 0:
+            raise ValueError("p7_gemini_request_timeout_seconds must be positive")
+        if self.p7_gemini_processing_timeout_seconds <= 0:
+            raise ValueError("p7_gemini_processing_timeout_seconds must be positive")
+        if self.p7_gemini_poll_interval_seconds <= 0:
+            raise ValueError("p7_gemini_poll_interval_seconds must be positive")
         return self
 
     def ensure_runtime_directories(self) -> None:
