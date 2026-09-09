@@ -19,23 +19,37 @@ branch_labels = None
 depends_on = None
 
 
-_P7_DERIVED_TYPES = (
-    "SOURCE_BIBLE",
-    "STORY_SKELETON",
-    "RHYTHM_SKELETON",
-)
-
-
 def upgrade() -> None:
     artifact_nodes = sa.table(
         "artifact_nodes",
+        sa.column("id", sa.String()),
         sa.column("artifact_type", sa.String()),
         sa.column("validity", sa.String()),
         sa.column("is_current", sa.Boolean()),
     )
+    artifact_edges = sa.table(
+        "artifact_edges",
+        sa.column("source_node_id", sa.String()),
+        sa.column("target_node_id", sa.String()),
+    )
+
+    source_bible_ids = sa.select(artifact_nodes.c.id).where(
+        artifact_nodes.c.artifact_type == "SOURCE_BIBLE"
+    )
+    p7_descendant_ids = sa.select(artifact_edges.c.target_node_id).where(
+        artifact_edges.c.source_node_id.in_(source_bible_ids)
+    )
+
+    # Only invalidate the P7 SOURCE_BIBLE chain. STORY_SKELETON / RHYTHM_SKELETON artifacts
+    # produced by unrelated project flows must remain untouched.
     op.execute(
         artifact_nodes.update()
-        .where(artifact_nodes.c.artifact_type.in_(_P7_DERIVED_TYPES))
+        .where(
+            sa.or_(
+                artifact_nodes.c.id.in_(source_bible_ids),
+                artifact_nodes.c.id.in_(p7_descendant_ids),
+            )
+        )
         .where(artifact_nodes.c.is_current.is_(True))
         .values(validity="STALE", is_current=False)
     )
