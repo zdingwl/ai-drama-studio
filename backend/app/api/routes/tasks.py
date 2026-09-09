@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.session import get_db
 from app.evidence.service import is_p6_source_evidence_task, run_p6_source_evidence_task
 from app.preprocessing.service import is_p5_shot_boundary_task, run_p5_shot_boundary_task
-from app.shot_breakdown.service import P8_TASK_TYPE, run_p8_shot_breakdown_task
+from app.shot_breakdown.service_v2 import P8_TASK_TYPE, run_p8_shot_breakdown_task
 from app.understanding.evidence_reference_runtime import run_p7_source_bible_task
 from app.understanding.service import P7_TASK_TYPE
 from app.workflow.p4_acceptance import (
