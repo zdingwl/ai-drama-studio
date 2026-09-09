@@ -8,7 +8,10 @@ export type ProjectType =
 
 export type SceneStrategy = 'KEEP' | 'LOCALIZE' | 'MIXED'
 export type AudioPolicy = 'KEEP_SOURCE_AUDIO' | 'REGENERATE_AUDIO'
-export type SourceUnderstandingProvider = 'DOUBAO_SEED_2_1_PRO_API' | 'QWEN3_VL_LOCAL'
+export type SourceUnderstandingProvider =
+  | 'DOUBAO_SEED_2_1_PRO_API'
+  | 'QWEN3_8_27B_LOCAL'
+  | 'QWEN3_VL_8B_THINKING_LOCAL'
 export type PlanStepStatus = 'COMPLETED' | 'READY' | 'BLOCKED_DEPENDENCY' | 'WAITING_CAPABILITY'
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 export type ShotBoundaryResultStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
