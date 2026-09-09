@@ -52,12 +52,16 @@ class Settings(BaseSettings):
     p7_doubao_request_timeout_seconds: float = 1800.0
     p7_doubao_video_fps: float = 1.0
 
-    # P7 models B/C: user-operated local/shared vLLM OpenAI-compatible service.
-    # Both read the complete immutable Episode through a local file:// URL. The vLLM service must
-    # share the Episode path and allow local media access.
-    p7_qwen_local_base_url: str = "http://127.0.0.1:8000/v1"
-    p7_qwen_local_api_key: SecretStr | None = None
+    # P7 model B: Qwen3.8-27B on a user-operated local/shared vLLM service.
+    p7_qwen38_local_base_url: str = "http://127.0.0.1:8000/v1"
+    p7_qwen38_local_api_key: SecretStr | None = None
     p7_qwen38_local_model: str = "Qwen/Qwen3.8-27B"
+
+    # P7 model C: Qwen3-VL-8B-Thinking on a second local/shared vLLM service.
+    # Keeping a separate endpoint lets both models stay loaded at the same time. A multi-model proxy
+    # may intentionally point both settings to the same URL.
+    p7_qwen3_vl_8b_local_base_url: str = "http://127.0.0.1:8001/v1"
+    p7_qwen3_vl_8b_local_api_key: SecretStr | None = None
     p7_qwen3_vl_8b_local_model: str = "Qwen/Qwen3-VL-8B-Thinking"
     p7_qwen_local_request_timeout_seconds: float = 3600.0
 
@@ -85,8 +89,12 @@ class Settings(BaseSettings):
             raise ValueError("p7_doubao_video_fps must be between 0.1 and 10")
         if self.p7_qwen_local_request_timeout_seconds <= 0:
             raise ValueError("p7_qwen_local_request_timeout_seconds must be positive")
-        if not self.p7_qwen_local_base_url.startswith(("http://", "https://")):
-            raise ValueError("p7_qwen_local_base_url must be http(s)")
+        for name, value in (
+            ("p7_qwen38_local_base_url", self.p7_qwen38_local_base_url),
+            ("p7_qwen3_vl_8b_local_base_url", self.p7_qwen3_vl_8b_local_base_url),
+        ):
+            if not value.startswith(("http://", "https://")):
+                raise ValueError(f"{name} must be http(s)")
         if not self.p7_qwen38_local_model.strip():
             raise ValueError("p7_qwen38_local_model must not be empty")
         if not self.p7_qwen3_vl_8b_local_model.strip():
