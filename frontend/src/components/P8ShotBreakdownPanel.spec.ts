@@ -208,26 +208,30 @@ afterEach(() => {
 })
 
 describe('P8ShotBreakdownPanel', () => {
-  it('renders the Seko-like shot table with P5/P6/P7 boundaries visible', async () => {
+  it('renders the product storyboard table with playable P5 source thumbnails', async () => {
     const wrapper = await mountPanel()
     const text = wrapper.text()
 
-    expect(text).toContain('镜头')
-    expect(text).toContain('源片段 / 时长')
+    expect(text).toContain('逐镜分镜表')
+    expect(text).toContain('镜头编号')
+    expect(text).toContain('源片段')
+    expect(text).toContain('时长')
     expect(text).toContain('画面描述')
     expect(text).toContain('镜头语言')
     expect(text).toContain('绑定主体')
     expect(text).toContain('对白 / 旁白')
-    expect(text).toContain('音效 / 环境声')
+    expect(text).toContain('音效')
     expect(text).toContain('未命名女性A')
     expect(text).toContain('室内会面空间')
     expect(text).toContain('这句话跨过两个镜头。')
-    expect(text).toContain('source-bible-shot-facts-v1')
     expect(wrapper.get('[data-testid="p8-source-bible-preflight"]').text()).toContain('CURRENT · rev 4')
     expect(wrapper.get('[data-testid="p8-source-bible-preflight"]').text()).toContain('P8 前置已就绪')
     expect(wrapper.findAll('.dialogue-line')).toHaveLength(2)
-    expect(wrapper.findAll('.dialogue-line')[0]?.text()).toContain('P6 #3')
+    expect(wrapper.findAll('.dialogue-line')[0]?.text()).toContain('对白')
     expect(wrapper.findAll('.dialogue-line')[1]?.text()).toContain('画外对白')
+
+    const thumbnail = wrapper.findAll('.shot-media-button img')[0]
+    expect(thumbnail?.attributes('src')).toBe('/api/v3/projects/project-p8/episodes/episode-1/shot-boundary/shots/shot-anchor-1/thumbnail')
     wrapper.unmount()
   })
 
@@ -252,10 +256,10 @@ describe('P8ShotBreakdownPanel', () => {
       finished_at: null,
     })
 
-    const runButton = wrapper.findAll('button').find((button) => button.text().includes('重新运行逐镜精细拉片'))
-    expect(runButton).toBeTruthy()
-    expect(runButton?.attributes('disabled')).toBeUndefined()
-    await runButton?.trigger('click')
+    const runButton = wrapper.get('.primary-action')
+    expect(runButton.text()).toContain('重新分析')
+    expect(runButton.attributes('disabled')).toBeUndefined()
+    await runButton.trigger('click')
     await flushPromises()
 
     expect(shotApi.startShotBreakdown).toHaveBeenCalledTimes(1)
@@ -278,13 +282,12 @@ describe('P8ShotBreakdownPanel', () => {
 
     const preflight = wrapper.get('[data-testid="p8-source-bible-preflight"]')
     expect(preflight.text()).toContain('NOT_BUILT')
-    expect(preflight.text()).toContain('P8 暂不可运行')
-    expect(preflight.text()).toContain('请先在上方 P7')
+    expect(preflight.text()).toContain('请先在上方「源作概览分析」')
+    expect(wrapper.get('.dependency-alert').text()).toContain('暂不可运行')
 
-    const runButton = wrapper.findAll('button').find((button) => button.text().includes('逐镜精细拉片'))
-    expect(runButton).toBeTruthy()
-    expect(runButton?.attributes('disabled')).toBeDefined()
-    await runButton?.trigger('click')
+    const runButton = wrapper.get('.primary-action')
+    expect(runButton.attributes('disabled')).toBeDefined()
+    await runButton.trigger('click')
     await flushPromises()
     expect(shotApi.startShotBreakdown).not.toHaveBeenCalled()
     wrapper.unmount()
@@ -315,7 +318,7 @@ describe('P8ShotBreakdownPanel', () => {
 
     const video = wrapper.get('.preview-dialog video')
     expect(video.attributes('src')).toBe('/api/v3/projects/project-p8/episodes/episode-1/shot-boundary/shots/shot-anchor-1/reference-clip')
-    expect(wrapper.get('.preview-dialog').text()).toContain('只用于当前 Shot 的局部人工核对')
+    expect(wrapper.get('.preview-dialog').text()).toContain('源片段用于当前镜头的局部核对')
     wrapper.unmount()
   })
 })
