@@ -20,7 +20,8 @@ from app.understanding.schemas import (
 
 
 P7_PROFESSIONAL_SKILL_ID = "source-video-understanding"
-P7_GROUNDING_CONTRACT = "grounded-source-truth-v1"
+P7_GROUNDING_CONTRACT = "grounded-source-truth-v2"
+P7_PROMPT_VERSION = "p7-source-bible-v2"
 
 
 @dataclass(frozen=True)
@@ -115,6 +116,18 @@ def _json_text(text: str) -> str:
     raise ValueError("P7 provider response did not contain a JSON object")
 
 
+def _require_support_level(
+    label: str,
+    grounding: ClaimGrounding,
+    allowed: set[ClaimSupportLevel],
+) -> None:
+    if grounding.support_level not in allowed:
+        allowed_text = "/".join(sorted(item.value for item in allowed))
+        raise ValueError(
+            f"{label} must use support_level {allowed_text}; got {grounding.support_level.value}"
+        )
+
+
 def _validate_grounding(
     label: str,
     grounding: ClaimGrounding,
@@ -142,17 +155,23 @@ def validate_episode_understanding_grounding(
     semantic: EpisodeUnderstandingSemantic,
     payload: EpisodeUnderstandingInput,
 ) -> None:
-    """Validate claim-level grounding before semantic output can enter SOURCE_BIBLE.
+    """Fail closed when publishable source claims are not grounded.
 
-    This is intentionally provider-side because the provider has the exact Episode evidence payload
-    used for this call. The later service validation remains the final Artifact guardrail.
+    `UNKNOWN` is not an escape hatch for populated source-fact fields. Production providers must
+    ground source background, character identities, relationships, scenes and story events as FACT.
+    A prop's story function may be an explicitly supported INFERENCE; when it is UNKNOWN the
+    story_function itself must be omitted. Every referenced Evidence ID must belong to the exact
+    CURRENT Episode Evidence payload used for this call.
     """
     dialogue_ids = {str(item.get("id")) for item in payload.evidence_payload.get("dialogue", []) if item.get("id")}
     visual_ids = {str(item.get("id")) for item in payload.evidence_payload.get("visual_text", []) if item.get("id")}
 
     analysis = semantic.overall_analysis
-    if len(analysis.world_rule_groundings) != len(analysis.world_rules):
-        raise ValueError("world_rules must have one world_rule_groundings item per rule")
+    _require_support_level(
+        "overall_analysis.story_background",
+        analysis.story_background_grounding,
+        {ClaimSupportLevel.FACT},
+    )
     _validate_grounding(
         "overall_analysis.story_background",
         analysis.story_background_grounding,
@@ -160,9 +179,15 @@ def validate_episode_understanding_grounding(
         dialogue_ids=dialogue_ids,
         visual_ids=visual_ids,
     )
+
+    if len(analysis.world_rule_groundings) != len(analysis.world_rules):
+        raise ValueError("world_rules must have one world_rule_groundings item per rule")
     for index, grounding in enumerate(analysis.world_rule_groundings):
-        if grounding.support_level != ClaimSupportLevel.FACT:
-            raise ValueError(f"world_rules[{index}] must be FACT, otherwise omit it from world_rules")
+        _require_support_level(
+            f"overall_analysis.world_rules[{index}]",
+            grounding,
+            {ClaimSupportLevel.FACT},
+        )
         _validate_grounding(
             f"overall_analysis.world_rules[{index}]",
             grounding,
@@ -172,6 +197,11 @@ def validate_episode_understanding_grounding(
         )
 
     for character in semantic.characters:
+        _require_support_level(
+            f"character[{character.character_id}].identity",
+            character.identity_grounding,
+            {ClaimSupportLevel.FACT},
+        )
         _validate_grounding(
             f"character[{character.character_id}].identity",
             character.identity_grounding,
@@ -179,33 +209,62 @@ def validate_episode_understanding_grounding(
             dialogue_ids=dialogue_ids,
             visual_ids=visual_ids,
         )
+
     for relation in semantic.relationships:
+        label = f"relationship[{relation.source_character_id}->{relation.target_character_id}]"
+        _require_support_level(label, relation.grounding, {ClaimSupportLevel.FACT})
         _validate_grounding(
-            f"relationship[{relation.source_character_id}->{relation.target_character_id}]",
+            label,
             relation.grounding,
             payload=payload,
             dialogue_ids=dialogue_ids,
             visual_ids=visual_ids,
         )
+
     for scene in semantic.scenes:
+        label = f"scene[{scene.scene_id}]"
+        _require_support_level(label, scene.grounding, {ClaimSupportLevel.FACT})
         _validate_grounding(
-            f"scene[{scene.scene_id}]",
+            label,
             scene.grounding,
             payload=payload,
             dialogue_ids=dialogue_ids,
             visual_ids=visual_ids,
         )
+
     for prop in semantic.key_props:
+        appearance_label = f"prop[{prop.prop_id}].appearance"
+        _require_support_level(appearance_label, prop.appearance_grounding, {ClaimSupportLevel.FACT})
         _validate_grounding(
-            f"prop[{prop.prop_id}].story_function",
+            appearance_label,
+            prop.appearance_grounding,
+            payload=payload,
+            dialogue_ids=dialogue_ids,
+            visual_ids=visual_ids,
+        )
+
+        function_label = f"prop[{prop.prop_id}].story_function"
+        if prop.story_function is None:
+            _require_support_level(function_label, prop.story_function_grounding, {ClaimSupportLevel.UNKNOWN})
+        else:
+            _require_support_level(
+                function_label,
+                prop.story_function_grounding,
+                {ClaimSupportLevel.FACT, ClaimSupportLevel.INFERENCE},
+            )
+        _validate_grounding(
+            function_label,
             prop.story_function_grounding,
             payload=payload,
             dialogue_ids=dialogue_ids,
             visual_ids=visual_ids,
         )
+
     for event in semantic.story_events:
+        label = f"story_event[{event.event_id}]"
+        _require_support_level(label, event.grounding, {ClaimSupportLevel.FACT})
         _validate_grounding(
-            f"story_event[{event.event_id}]",
+            label,
             event.grounding,
             payload=payload,
             dialogue_ids=dialogue_ids,
@@ -231,17 +290,19 @@ def _prompt(payload: EpisodeUnderstandingInput) -> str:
 Professional Skill 执行规则：
 {skill_rules}
 
-Grounding 输出约定：
+Grounding 输出约定（{P7_GROUNDING_CONTRACT}）：
 1. support_level 只能是 FACT / INFERENCE / UNKNOWN。
 2. FACT 必须至少包含一个 CURRENT dialogue_evidence_id、CURRENT visual_text_evidence_id，或完整 Episode 中明确的 video_time_ranges。
-3. INFERENCE 可以引用支持它的 Evidence / 视频时间，但必须保持“推断”身份，不能在其他字段中偷换成客观事实。
-4. UNKNOWN 表示原片无法可靠确认；不要为了让内容完整而补写。
-5. story_background_grounding 必须说明 story_background 中历史/关系性事实的可信等级。
-6. world_rules 不是社会常识列表。每条 world_rule 必须是本作品内部已确认 FACT，并在 world_rule_groundings 中按相同索引提供依据；如果没有，两个数组都输出空数组。
-7. character.identity_grounding 用于姓名/身份等事实；人物性格与剧情功能属于分析，不要伪装成身份事实。
-8. relationship.grounding 用于夫妻/亲属/邻居/同事/婚姻年限等关系事实。
-9. prop.story_function_grounding 如果没有明确依据，使用 UNKNOWN，并把 story_function 写成“未确认明确剧情功能”。
-10. scene / story_event grounding 可使用完整 Episode 视频时间窗口作为直接视觉依据。
+3. INFERENCE 也必须给出支持它的 Evidence / 视频时间，并保持“推断”身份；不得在别的字段里偷换成客观事实。
+4. UNKNOWN 不得携带 Evidence / 视频依据，也不是已填写事实字段的通行证；UNKNOWN 只能用于可省略的未确认 claim，不能与确定性事实正文同时发布。
+5. story_background 只写本 Episode 可以确认的背景事实；story_background_grounding 必须是 FACT。无法确认的人物历史直接不要写。
+6. world_rules 不是社会常识列表。每条 world_rule 必须是本作品内部已确认 FACT，并在 world_rule_groundings 中按相同索引提供依据；没有明确内部规则时两个数组都输出空数组。
+7. 每个 character.identity_grounding 必须是 FACT；姓名/身份优先引用 CURRENT OCR / dialogue，或给出身份卡所在的明确 video_time_ranges。无法确认真实姓名时可以用“未命名角色A”等稳定候选标签，但仍要用视频时间证明该角色确实存在。
+8. 每个 relationship.grounding 必须是 FACT。夫妻/亲属/邻居/同事/婚姻年限/赘婿等关系如果没有直接依据，就不要创建这条关系。
+9. scene.grounding 与 story_event.grounding 必须是 FACT，可使用完整 Episode 视频时间窗口作为直接视觉依据。
+10. 道具 appearance_state 是可见事实，appearance_grounding 必须是 FACT；story_function 若明确可确认则 FACT，若只能合理解释则 INFERENCE 并明确保持推断语气；若无法确认则 story_function=null 且 story_function_grounding=UNKNOWN。禁止用垃圾袋、服装等普通物件硬补事件因果。
+11. timed_script 是语义剧情窗口，不是 Shot Boundary；Story / Rhythm 只总结原片真实存在的叙事和节奏。
+12. P7 不输出逐镜景别、构图、运镜、焦距、逐镜主体绑定或逐镜音效；这些属于 P8。
 
 Episode:
 - episode_id: {payload.episode_id}
@@ -311,8 +372,8 @@ class DoubaoSeedSourceEpisodeUnderstandingProvider:
             "base_url": self.settings.p7_doubao_base_url,
             "video_input": "ARK_FILES_API_FULL_EPISODE",
             "video_fps": self.settings.p7_doubao_video_fps,
-            "structured_output": "JSON_SCHEMA_PROMPT_PLUS_GROUNDING_PLUS_SERVER_VALIDATION",
-            "prompt_version": "p7-source-bible-v1",
+            "structured_output": "JSON_SCHEMA_PROMPT_PLUS_GROUNDING_V2_PLUS_SERVER_VALIDATION",
+            "prompt_version": P7_PROMPT_VERSION,
             "professional_skill_id": skill.id,
             "professional_skill_version": skill.version,
             "grounding_contract": P7_GROUNDING_CONTRACT,
@@ -397,8 +458,8 @@ class LocalQwenSourceEpisodeUnderstandingProvider:
             "mode": "LOCAL_OPENAI_COMPATIBLE",
             "base_url": self.base_url,
             "video_input": "VLLM_FILE_URL_FULL_EPISODE",
-            "structured_output": "JSON_SCHEMA_PROMPT_PLUS_GROUNDING_PLUS_SERVER_VALIDATION",
-            "prompt_version": "p7-source-bible-v1",
+            "structured_output": "JSON_SCHEMA_PROMPT_PLUS_GROUNDING_V2_PLUS_SERVER_VALIDATION",
+            "prompt_version": P7_PROMPT_VERSION,
             "professional_skill_id": skill.id,
             "professional_skill_version": skill.version,
             "grounding_contract": P7_GROUNDING_CONTRACT,
