@@ -6,6 +6,8 @@ import P8ShotBreakdownPanel from './P8ShotBreakdownPanel.vue'
 import * as projectApi from '@/features/projects/api'
 import * as shotApi from '@/features/projects/shotBreakdown'
 import type { ShotBreakdownRead } from '@/features/projects/shotBreakdown'
+import * as sourceBibleApi from '@/features/projects/sourceBible'
+import type { SourceBibleRead } from '@/features/projects/sourceBible'
 
 vi.mock('@/features/projects/api', () => ({
   getProject: vi.fn(),
@@ -21,6 +23,22 @@ vi.mock('@/features/projects/shotBreakdown', async () => {
     startShotBreakdown: vi.fn(),
   }
 })
+
+vi.mock('@/features/projects/sourceBible', () => ({
+  getSourceBible: vi.fn(),
+}))
+
+const currentSourceBible: SourceBibleRead = {
+  project_id: 'project-p8',
+  status: 'CURRENT',
+  artifact_id: 'source-bible-current',
+  revision: 4,
+  input_fingerprint: 'source-bible-current-fingerprint',
+  content: null,
+  provenance: null,
+  story_skeleton_artifact_id: 'story-current',
+  rhythm_skeleton_artifact_id: 'rhythm-current',
+}
 
 const breakdown: ShotBreakdownRead = {
   project_id: 'project-p8',
@@ -155,7 +173,7 @@ const breakdown: ShotBreakdownRead = {
   },
 }
 
-async function mountPanel() {
+async function mountPanel(sourceBible: SourceBibleRead = currentSourceBible) {
   vi.mocked(projectApi.getProject).mockResolvedValue({
     id: 'project-p8',
     project_type: 'REPLICA',
@@ -172,6 +190,7 @@ async function mountPanel() {
       supersedes_artifact_id: null,
     },
   ])
+  vi.mocked(sourceBibleApi.getSourceBible).mockResolvedValue(sourceBible)
 
   const router = createRouter({
     history: createMemoryHistory(),
@@ -204,6 +223,8 @@ describe('P8ShotBreakdownPanel', () => {
     expect(text).toContain('室内会面空间')
     expect(text).toContain('这句话跨过两个镜头。')
     expect(text).toContain('source-bible-shot-facts-v1')
+    expect(wrapper.get('[data-testid="p8-source-bible-preflight"]').text()).toContain('CURRENT · rev 4')
+    expect(wrapper.get('[data-testid="p8-source-bible-preflight"]').text()).toContain('P8 前置已就绪')
     expect(wrapper.findAll('.dialogue-line')).toHaveLength(2)
     expect(wrapper.findAll('.dialogue-line')[0]?.text()).toContain('P6 #3')
     expect(wrapper.findAll('.dialogue-line')[1]?.text()).toContain('画外对白')
@@ -233,11 +254,57 @@ describe('P8ShotBreakdownPanel', () => {
 
     const runButton = wrapper.findAll('button').find((button) => button.text().includes('重新运行逐镜精细拉片'))
     expect(runButton).toBeTruthy()
+    expect(runButton?.attributes('disabled')).toBeUndefined()
     await runButton?.trigger('click')
     await flushPromises()
 
     expect(shotApi.startShotBreakdown).toHaveBeenCalledTimes(1)
     expect(shotApi.startShotBreakdown).toHaveBeenCalledWith('project-p8', expect.stringContaining('p8-shot-breakdown-'))
+    wrapper.unmount()
+  })
+
+  it('blocks P8 and explains the P7 recovery path when SOURCE_BIBLE is NOT_BUILT', async () => {
+    const wrapper = await mountPanel({
+      project_id: 'project-p8',
+      status: 'NOT_BUILT',
+      artifact_id: null,
+      revision: null,
+      input_fingerprint: null,
+      content: null,
+      provenance: null,
+      story_skeleton_artifact_id: null,
+      rhythm_skeleton_artifact_id: null,
+    })
+
+    const preflight = wrapper.get('[data-testid="p8-source-bible-preflight"]')
+    expect(preflight.text()).toContain('NOT_BUILT')
+    expect(preflight.text()).toContain('P8 暂不可运行')
+    expect(preflight.text()).toContain('请先在上方 P7')
+
+    const runButton = wrapper.findAll('button').find((button) => button.text().includes('逐镜精细拉片'))
+    expect(runButton).toBeTruthy()
+    expect(runButton?.attributes('disabled')).toBeDefined()
+    await runButton?.trigger('click')
+    await flushPromises()
+    expect(shotApi.startShotBreakdown).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('distinguishes a STALE P7 revision from a never-built SOURCE_BIBLE', async () => {
+    const wrapper = await mountPanel({
+      ...currentSourceBible,
+      status: 'STALE',
+      artifact_id: 'source-bible-stale',
+      revision: 3,
+      input_fingerprint: 'source-bible-stale-fingerprint',
+      story_skeleton_artifact_id: null,
+      rhythm_skeleton_artifact_id: null,
+    })
+
+    const preflight = wrapper.get('[data-testid="p8-source-bible-preflight"]')
+    expect(preflight.text()).toContain('STALE · rev 3')
+    expect(preflight.text()).toContain('已失效')
+    expect(preflight.text()).toContain('重新运行整集原片理解')
     wrapper.unmount()
   })
 

@@ -12,12 +12,14 @@ import {
   type ShotBreakdownRevisionSummary,
   type SourceShotFact,
 } from '@/features/projects/shotBreakdown'
+import { getSourceBible, type SourceBibleRead } from '@/features/projects/sourceBible'
 import type { ProjectRead, TaskRead } from '@/features/projects/types'
 
 const route = useRoute()
 const projectId = computed(() => String(route.params.id ?? ''))
 const project = ref<ProjectRead | null>(null)
 const result = ref<ShotBreakdownRead | null>(null)
+const sourceBible = ref<SourceBibleRead | null>(null)
 const revisions = ref<ShotBreakdownRevisionSummary[]>([])
 const activeTask = ref<TaskRead | null>(null)
 const loading = ref(true)
@@ -28,11 +30,26 @@ let pollTimer: number | null = null
 
 const visible = computed(() => project.value?.project_type === 'REPLICA' || project.value?.project_type === 'REDRAW')
 const taskActive = computed(() => activeTask.value?.status === 'queued' || activeTask.value?.status === 'running')
+const sourceBibleReady = computed(() => sourceBible.value?.status === 'CURRENT')
 const statusText = computed(() => {
   if (!result.value) return '读取中'
   if (result.value.status === 'CURRENT') return `CURRENT · rev ${result.value.revision}`
   if (result.value.status === 'STALE') return `STALE · rev ${result.value.revision}`
   return 'NOT_BUILT · 尚未生成'
+})
+const sourceBibleStatusText = computed(() => {
+  if (!sourceBible.value) return '正在读取 P7 状态…'
+  if (sourceBible.value.status === 'CURRENT') return `CURRENT · rev ${sourceBible.value.revision}`
+  if (sourceBible.value.status === 'STALE') {
+    return `STALE${sourceBible.value.revision == null ? '' : ` · rev ${sourceBible.value.revision}`} · 该 P7 revision 已失效，不能作为 P8 输入`
+  }
+  return 'NOT_BUILT · 尚未生成正式 P7 SOURCE_BIBLE'
+})
+const sourceBibleRecoveryText = computed(() => {
+  if (!sourceBible.value || sourceBible.value.status === 'CURRENT') return ''
+  return sourceBible.value.status === 'STALE'
+    ? '请先在上方 P7「源作概览分析」重新运行整集原片理解，生成新的 CURRENT SOURCE_BIBLE。'
+    : '请先在上方 P7「源作概览分析」运行整集原片理解，待 SOURCE_BIBLE 变为 CURRENT。'
 })
 
 const deliveryText: Record<DialogueDelivery, string> = {
@@ -83,12 +100,14 @@ function stopPolling(): void {
 }
 
 async function refreshResult(): Promise<void> {
-  const [current, history] = await Promise.all([
+  const [current, history, bible] = await Promise.all([
     getShotBreakdown(projectId.value),
     listShotBreakdownRevisions(projectId.value),
+    getSourceBible(projectId.value),
   ])
   result.value = current
   revisions.value = history
+  sourceBible.value = bible
 }
 
 function startPolling(taskId: string): void {
@@ -133,6 +152,10 @@ async function load(): Promise<void> {
 
 async function runP8(): Promise<void> {
   if (taskActive.value) return
+  if (!sourceBibleReady.value) {
+    errorMessage.value = `P8 前置未就绪：${sourceBibleStatusText.value}。${sourceBibleRecoveryText.value}`
+    return
+  }
   starting.value = true
   errorMessage.value = ''
   try {
@@ -175,6 +198,20 @@ onBeforeUnmount(stopPolling)
           <span>镜头时间只认 P5；对白正文只认 P6 canonical Evidence；人物、场景、道具只能绑定 P7 candidate；逐镜视觉、镜头语言和声音描述必须直接观察完整 Episode。Reference Clip 只用于下面的局部人工核对。</span>
         </div>
 
+        <div
+          v-if="sourceBible"
+          class="prerequisite"
+          :class="sourceBibleReady ? 'ready' : 'blocked'"
+          data-testid="p8-source-bible-preflight"
+        >
+          <div>
+            <strong>P7 SOURCE_BIBLE</strong>
+            <span>{{ sourceBibleStatusText }}</span>
+            <small v-if="!sourceBibleReady">{{ sourceBibleRecoveryText }}</small>
+          </div>
+          <b>{{ sourceBibleReady ? 'P8 前置已就绪' : 'P8 暂不可运行' }}</b>
+        </div>
+
         <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
         <p v-if="loading" class="muted">正在读取 P8 状态…</p>
 
@@ -186,7 +223,12 @@ onBeforeUnmount(stopPolling)
               <span>{{ result?.provenance?.model ?? '待真实调用' }}</span>
             </div>
             <div class="actions">
-              <button type="button" :disabled="starting || taskActive" @click="runP8">
+              <button
+                type="button"
+                :disabled="starting || taskActive || !sourceBibleReady"
+                :title="sourceBibleReady ? '' : sourceBibleRecoveryText"
+                @click="runP8"
+              >
                 {{ starting ? '正在提交…' : result?.status === 'CURRENT' ? '重新运行逐镜精细拉片' : '运行逐镜精细拉片' }}
               </button>
               <button class="secondary" type="button" :disabled="taskActive" @click="refreshResult">刷新结果</button>
@@ -297,7 +339,7 @@ onBeforeUnmount(stopPolling)
 
           <div v-else class="empty-state">
             <strong>还没有逐镜精细拉片结果</strong>
-            <span>P8 是真实重任务，页面打开不会自动调用模型。先确保 P5 / P6 / P7 都有 CURRENT 正式结果，再显式运行。</span>
+            <span>P8 是真实重任务，页面打开不会自动调用模型。只有 P7 SOURCE_BIBLE 为 CURRENT 时才能显式运行；P5 / P6 的硬前置仍由服务端再次校验。</span>
           </div>
 
           <details v-if="result?.provenance" class="provenance">
@@ -389,6 +431,23 @@ onBeforeUnmount(stopPolling)
 }
 .principle strong { color: #4539c8; font-size: 13px; }
 .principle span { color: #555a6e; font-size: 13px; line-height: 1.65; }
+
+.prerequisite {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid;
+  border-radius: 11px;
+}
+.prerequisite > div { display: grid; gap: 3px; }
+.prerequisite strong { font-size: 12px; }
+.prerequisite span { font-size: 13px; }
+.prerequisite small { font-size: 12px; line-height: 1.5; }
+.prerequisite > b { white-space: nowrap; font-size: 12px; }
+.prerequisite.ready { border-color: #cce8d7; background: #f0faf4; color: #246b43; }
+.prerequisite.blocked { border-color: #f2d5b8; background: #fff7eb; color: #8a5819; }
 
 .toolbar, .task-strip, .episode-heading {
   display: flex;
@@ -519,7 +578,7 @@ onBeforeUnmount(stopPolling)
 .preview-dialog header button { background: #ececf4; color: #34374a; }
 
 @media (max-width: 900px) {
-  .p8-panel > details > summary, .toolbar, .task-strip { align-items: flex-start; flex-direction: column; }
+  .p8-panel > details > summary, .toolbar, .task-strip, .prerequisite { align-items: flex-start; flex-direction: column; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .provenance-grid { grid-template-columns: 1fr; }
 }
