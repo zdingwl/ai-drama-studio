@@ -44,20 +44,20 @@ class Settings(BaseSettings):
     p6_ocr_sample_interval_ms: int = 500
     p6_ocr_min_confidence: float = 0.45
 
-    # P7 defaults to a provider that is directly reachable from mainland China.
-    p7_understanding_provider: str = "qwen"
-    p7_qwen_api_key: SecretStr | None = None
-    p7_qwen_model: str = "qwen3-vl-flash"
-    p7_qwen_video_fps: float = 2.0
-    p7_qwen_local_file_max_bytes: int = 100 * 1024 * 1024
+    # P7 Provider 1: Volcengine Ark / Doubao Seed 2.1 Pro. The project stores only the provider choice.
+    # Credentials stay server-side and never enter Project/Artifact/ProviderJob payloads.
+    p7_doubao_api_key: SecretStr | None = None
+    p7_doubao_model: str = "doubao-seed-2-1-pro-260628"
+    p7_doubao_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    p7_doubao_request_timeout_seconds: float = 1800.0
+    p7_doubao_video_fps: float = 1.0
 
-    # Gemini remains available as an optional provider for environments that can reach it.
-    p7_gemini_api_key: SecretStr | None = None
-    p7_gemini_model: str = "gemini-3.8-flash"
-    p7_gemini_base_url: str = "https://generativelanguage.googleapis.com"
-    p7_gemini_request_timeout_seconds: float = 900.0
-    p7_gemini_processing_timeout_seconds: float = 900.0
-    p7_gemini_poll_interval_seconds: float = 2.0
+    # P7 Provider 2: user-operated local/shared vLLM OpenAI-compatible service.
+    # The vLLM service must share the immutable Episode path and allow local media access.
+    p7_qwen_local_base_url: str = "http://127.0.0.1:8000/v1"
+    p7_qwen_local_api_key: SecretStr | None = None
+    p7_qwen_local_model: str = "Qwen/Qwen3-VL-235B-A22B-Thinking"
+    p7_qwen_local_request_timeout_seconds: float = 3600.0
 
     @model_validator(mode="after")
     def anchor_runtime_paths(self) -> "Settings":
@@ -77,16 +77,14 @@ class Settings(BaseSettings):
             raise ValueError("p6_ocr_sample_interval_ms must be >= 100")
         if not 0 <= self.p6_ocr_min_confidence <= 1:
             raise ValueError("p6_ocr_min_confidence must be between 0 and 1")
-        if not 0.1 <= self.p7_qwen_video_fps <= 10:
-            raise ValueError("p7_qwen_video_fps must be between 0.1 and 10")
-        if self.p7_qwen_local_file_max_bytes <= 0:
-            raise ValueError("p7_qwen_local_file_max_bytes must be positive")
-        if self.p7_gemini_request_timeout_seconds <= 0:
-            raise ValueError("p7_gemini_request_timeout_seconds must be positive")
-        if self.p7_gemini_processing_timeout_seconds <= 0:
-            raise ValueError("p7_gemini_processing_timeout_seconds must be positive")
-        if self.p7_gemini_poll_interval_seconds <= 0:
-            raise ValueError("p7_gemini_poll_interval_seconds must be positive")
+        if self.p7_doubao_request_timeout_seconds <= 0:
+            raise ValueError("p7_doubao_request_timeout_seconds must be positive")
+        if not 0.1 <= self.p7_doubao_video_fps <= 10:
+            raise ValueError("p7_doubao_video_fps must be between 0.1 and 10")
+        if self.p7_qwen_local_request_timeout_seconds <= 0:
+            raise ValueError("p7_qwen_local_request_timeout_seconds must be positive")
+        if not self.p7_qwen_local_base_url.startswith(("http://", "https://")):
+            raise ValueError("p7_qwen_local_base_url must be http(s)")
         return self
 
     def ensure_runtime_directories(self) -> None:
