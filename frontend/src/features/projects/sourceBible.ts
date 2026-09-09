@@ -86,7 +86,8 @@ export interface PropProfile {
   name: string
   time_ranges: TimeRange[]
   appearance_state: string
-  story_function: string
+  appearance_grounding: ClaimGrounding
+  story_function: string | null
   story_function_grounding: ClaimGrounding
 }
 
@@ -178,6 +179,9 @@ export interface SourceBibleProvenance {
   model: string | null
   prompt_version: string
   schema_version: string
+  professional_skill_id: string | null
+  professional_skill_version: string | null
+  grounding_contract: string | null
   generated_by_task_id: string | null
   edit_parent_artifact_id: string | null
 }
