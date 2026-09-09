@@ -22,9 +22,13 @@ from app.sources.models import Episode, SourceAsset
 from app.sources.storage import resolve_source_asset_path
 from app.understanding.models import SourceBibleRevision
 from app.understanding.providers import (
+    P7_GROUNDING_CONTRACT,
+    P7_PROFESSIONAL_SKILL_ID,
+    P7_PROMPT_VERSION,
     EpisodeUnderstandingInput,
     SourceEpisodeUnderstandingProvider,
     build_source_episode_understanding_provider,
+    validate_episode_understanding_grounding,
 )
 from app.understanding.schemas import (
     MaterialBaseline,
@@ -49,8 +53,8 @@ from app.workflow.task_service import (
 from app.workflow.worker import TaskExecutionContext
 
 P7_TASK_TYPE = "P7_SOURCE_BIBLE"
-P7_PROFILE_VERSION = "p7-source-bible-v1"
-P7_SCHEMA_VERSION = "1.0"
+P7_PROFILE_VERSION = P7_PROMPT_VERSION
+P7_SCHEMA_VERSION = "1.1"
 
 
 @dataclass(frozen=True)
@@ -495,6 +499,15 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
         semantic = dispatched.value
         if not hasattr(semantic, "timed_script"):
             raise AppError("SOURCE_BIBLE_PROVIDER_OUTPUT_INVALID", "P7 Provider 返回了无效结构", status_code=502)
+        try:
+            validate_episode_understanding_grounding(semantic, provider_input)
+        except ValueError as exc:
+            raise AppError(
+                "SOURCE_BIBLE_GROUNDING_INVALID",
+                "P7 Provider 输出未通过 Source Truth grounding 校验",
+                status_code=422,
+                details={"reason": str(exc)[:500]},
+            ) from exc
         episodes.append(_compose_episode(episode_context, semantic))
         provider_jobs.append(
             {
@@ -511,6 +524,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
             progress_percent=5 + int(index / total * 80),
         )
 
+    provider_profile = provider.profile
     content = SourceBibleContent(schema_version=P7_SCHEMA_VERSION, episodes=episodes)
     provenance = SourceBibleProvenance(
         source_video_artifact_id=source.id,
@@ -532,6 +546,9 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
         model=provider.model_name,
         prompt_version=P7_PROFILE_VERSION,
         schema_version=P7_SCHEMA_VERSION,
+        professional_skill_id=str(provider_profile.get("professional_skill_id") or P7_PROFESSIONAL_SKILL_ID),
+        professional_skill_version=str(provider_profile.get("professional_skill_version") or "") or None,
+        grounding_contract=str(provider_profile.get("grounding_contract") or P7_GROUNDING_CONTRACT),
         generated_by_task_id=task.id,
     )
     return content, provenance
@@ -679,6 +696,9 @@ def _publish(
             "provider": provenance.provider,
             "model": provenance.model,
             "source_understanding_provider": project.source_understanding_provider.value,
+            "professional_skill_id": provenance.professional_skill_id,
+            "professional_skill_version": provenance.professional_skill_version,
+            "grounding_contract": provenance.grounding_contract,
             "editable": True,
             "document_title": "源作概览分析",
         },
