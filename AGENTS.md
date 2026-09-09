@@ -12,9 +12,11 @@
 6. `docs/05_Seko源作概览画布节点实测.md`
 7. `docs/06_P7整集原片理解ProfessionalSkill与Grounding验收.md`
 8. `docs/07_P7最终验收与ProviderReadiness.md`
-9. 当前相关代码与测试
+9. `docs/08_P8逐镜精细拉片ProfessionalSkill与数据契约.md`
+10. `docs/09_P6CanonicalEvidenceV2与P8最终验收整改.md`
+11. 当前相关代码与测试
 
-**阶段状态以编号更高、日期更新的状态文档为准。** `docs/07` 已记录 P7 最终验收；旧文档中“P7 待验收 / P6-P7 未开发”等历史描述不得覆盖当前 `main` 事实。
+**阶段状态以编号更高、日期更新的状态文档为准。** `docs/07` 记录 P7 最终验收，`docs/08` 记录 P8 正式契约，`docs/09` 记录 P8 最终人工验收暴露的 P6 canonical Evidence v2 整改。旧文档中“P8 尚未开始 / P7 待验收 / P6-P7 未开发”等历史描述不得覆盖当前 `main` 事实。
 
 历史分支只能做参考，不能覆盖 V3 当前规划。
 
@@ -87,6 +89,14 @@ P7 的正式 Professional Skill：
 skills/professional/episode-understanding/SKILL.md
 skills/professional/episode-understanding/manifest.json
 source-video-understanding@1.1.0
+```
+
+P8 的正式 Professional Skill：
+
+```text
+skills/professional/shot-breakdown/SKILL.md
+skills/professional/shot-breakdown/manifest.json
+shot-breakdown@1.0.0
 ```
 
 Provider Prompt 必须执行 Professional Skill 规则，但 Professional Skill 本身不等于 Prompt。
@@ -173,6 +183,7 @@ Shot Anchors         ASR Evidence      OCR Evidence
 - `SOURCE_DIALOGUE_EVIDENCE` 不得依赖 `SHOT_ANCHORS` 才能开始；
 - ASR 不得按每个 Reference Clip 分开识别后拼句子；
 - OCR 可以读取 Shot Anchors 作为抽帧提示，但完整 Episode 时间轴仍是 Source Truth；
+- P6 canonical dialogue 必须保守分段；没有明确连续证据时不得仅因相邻 segment 时间接近就跨段合并；
 - P7 整集理解必须读取完整 Episode；
 - 先整集理解，再逐 Shot 精细拉片；
 - 禁止先逐 Shot 猜完整剧情，再拼整集理解。
@@ -234,6 +245,8 @@ SOURCE_DIALOGUE_EVIDENCE
 EPISODE_UNDERSTANDING
 STORY_RHYTHM
 ```
+
+其中 `SOURCE_DIALOGUE_EVIDENCE` 的能力状态保持 `AVAILABLE`，但 P8 最终人工验收发现旧 `p6-source-evidence-v1` canonical merge 质量不足；当前主线正在以 `p6-source-evidence-v2 / segment-preserving-dialogue-v2` 对同一真实短剧重新验收。部署 `0012_p6_canonical_evidence_v2` 后旧 P6/P7/P8 正式结果必须 STALE，不能继续作为 CURRENT 使用。
 
 仍为 `PLANNED`：
 
@@ -300,9 +313,9 @@ P2 Project + Skill Kernel  ✅
 P3 SourceAsset + 输入系统  ✅
 P4 Task / ProviderJob      ✅
 P5 镜头技术锚点            ✅（真实 Episode 人工验收通过）
-P6 Source Evidence         ✅（真实短剧 ASR + OCR 人工验收通过）
-P7 整集多模态原片理解      ✅（真实 Doubao + Grounding v2 + SOURCE_BIBLE 人工验收通过）
-P8 逐镜精细拉片            ⏸ 下一阶段，尚未开始
+P6 Source Evidence         🔁（能力已 AVAILABLE；canonical Evidence v2 真实样例质量复验中）
+P7 整集多模态原片理解      ✅（真实 Doubao + Grounding v2 + SOURCE_BIBLE 人工验收通过；P6 v2 后需重跑恢复 CURRENT）
+P8 逐镜精细拉片            🔁（工程/程序真实数据验收通过；最终音画人工验收被 P6 v1 对白质量阻塞）
 ```
 
 P7 最终验收基线：
@@ -314,16 +327,26 @@ SOURCE_BIBLE schema 1.1
 grounded-source-truth-v2
 ```
 
-真实验收确认：
+P8 工程基线：
 
-- 完整 Episode 作为 Source Truth；
-- CURRENT P6 Evidence 作为 canonical 文字事实；
-- world rules 不再社会泛化；
-- 未确认道具剧情作用保持 UNKNOWN / null；
-- SOURCE_BIBLE 用户可读、Evidence 可追溯、revision / provenance / CURRENT / STALE 正确；
-- `EPISODE_UNDERSTANDING` 与 `STORY_RHYTHM` 已 `AVAILABLE`。
+```text
+shot-breakdown@1.0.0
+SOURCE_SHOT_FACTS schema 1.0
+source-bible-shot-facts-v1
+```
 
-新聊天进入 P8 前必须重新读取当前 `main` 和全部手册，尤其 `docs/07_P7最终验收与ProviderReadiness.md`。
+P8 当前最终验收恢复链：
+
+```text
+0012 migration
+→ 旧 P6/P7/P8 STALE
+→ 真实 P6 v2
+→ P7 重跑
+→ P8 重跑
+→ 28 Shot 最终逐镜音画人工验收
+```
+
+只有最后一步通过后，才允许把 `SHOT_BREAKDOWN` 从 `PLANNED` 改为 `AVAILABLE`。在此之前禁止进入 P9。
 
 P8 固定输入契约：
 
@@ -334,12 +357,12 @@ CURRENT SOURCE_BIBLE
 +
 CURRENT SHOT_ANCHORS
 +
-需要时读取 CURRENT canonical Source Evidence
+CURRENT canonical Source Evidence
 ↓
 逐镜精细拉片
 ```
 
-P8 不能重新从零猜整集故事；Shot 时间优先来自 P5；对白正文来自 P6 canonical Evidence。
+P8 不能重新从零猜整集故事；Shot 时间只来自 P5；对白正文来自 P6 canonical Evidence；P8 不得为了修正文质量而自行重听写。
 
 ---
 
