@@ -86,6 +86,9 @@ def _response_schema() -> dict:
 
 def _json_text(text: str) -> str:
     value = text.strip()
+    # Thinking models may expose raw <think> blocks when the local vLLM server is not launched with
+    # a reasoning parser. P7 only persists the final structured answer, never hidden reasoning.
+    value = re.sub(r"<think>.*?</think>", "", value, flags=re.IGNORECASE | re.DOTALL).strip()
     fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", value, flags=re.IGNORECASE | re.DOTALL)
     if fence:
         value = fence.group(1).strip()
@@ -174,6 +177,7 @@ class DoubaoSeedSourceEpisodeUnderstandingProvider:
     @property
     def profile(self) -> dict:
         return {
+            "selection": SourceUnderstandingProvider.DOUBAO_SEED_2_1_PRO_API.value,
             "provider": self.provider_name,
             "model": self.model_name,
             "mode": "CLOUD_API",
@@ -237,15 +241,23 @@ class DoubaoSeedSourceEpisodeUnderstandingProvider:
 
 
 class LocalQwenSourceEpisodeUnderstandingProvider:
-    provider_name = "qwen3-vl-local-vllm"
+    provider_name = "qwen-local-vllm"
 
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        selection: SourceUnderstandingProvider,
+        model_name: str,
+    ):
         self.settings = settings
-        self.model_name = settings.p7_qwen_local_model
+        self.selection = selection
+        self.model_name = model_name
 
     @property
     def profile(self) -> dict:
         return {
+            "selection": self.selection.value,
             "provider": self.provider_name,
             "model": self.model_name,
             "mode": "LOCAL_OPENAI_COMPATIBLE",
@@ -302,8 +314,18 @@ def build_source_episode_understanding_provider(
 ) -> SourceEpisodeUnderstandingProvider:
     if selection == SourceUnderstandingProvider.DOUBAO_SEED_2_1_PRO_API:
         return DoubaoSeedSourceEpisodeUnderstandingProvider(settings)
-    if selection == SourceUnderstandingProvider.QWEN3_VL_LOCAL:
-        return LocalQwenSourceEpisodeUnderstandingProvider(settings)
+    if selection == SourceUnderstandingProvider.QWEN3_8_27B_LOCAL:
+        return LocalQwenSourceEpisodeUnderstandingProvider(
+            settings,
+            selection=selection,
+            model_name=settings.p7_qwen38_local_model,
+        )
+    if selection == SourceUnderstandingProvider.QWEN3_VL_8B_THINKING_LOCAL:
+        return LocalQwenSourceEpisodeUnderstandingProvider(
+            settings,
+            selection=selection,
+            model_name=settings.p7_qwen3_vl_8b_local_model,
+        )
     raise AppError(
         "P7_PROVIDER_UNSUPPORTED",
         "当前 P7 Provider 未实现",
