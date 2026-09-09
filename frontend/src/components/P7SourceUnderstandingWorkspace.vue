@@ -4,16 +4,24 @@ import { useRoute } from 'vue-router'
 
 import P7SourceBiblePanel from '@/components/P7SourceBiblePanel.vue'
 import { getProject, updateProject } from '@/features/projects/api'
+import {
+  getP7RuntimeConfig,
+  updateP7RuntimeConfig,
+  type P7RuntimeConfig,
+} from '@/features/projects/sourceBible'
 import type { ProjectRead, SourceUnderstandingProvider } from '@/features/projects/types'
 
 const route = useRoute()
 const projectId = computed(() => String(route.params.id ?? ''))
 const project = ref<ProjectRead | null>(null)
 const selected = ref<SourceUnderstandingProvider>('DOUBAO_SEED_2_1_PRO_API')
+const runtimeDraft = ref<P7RuntimeConfig | null>(null)
 const loading = ref(true)
 const saving = ref(false)
+const runtimeSaving = ref(false)
 const errorMessage = ref('')
 const savedMessage = ref('')
+const runtimeSavedMessage = ref('')
 const panelKey = ref(0)
 
 const visible = computed(() => project.value?.project_type === 'REPLICA' || project.value?.project_type === 'REDRAW')
@@ -32,7 +40,7 @@ const options: Array<{
     title: 'Doubao Seed 2.1 Pro',
     badge: '火山引擎 API',
     description: '国内云端生产档。完整 Episode 通过方舟 Files API 进入整集多模态理解。',
-    detail: '适合无需本地 GPU 的生产验收；需要后端配置 AI_DRAMA_P7_DOUBAO_API_KEY。',
+    detail: '运行时 API Key / Model / Base URL 可在下方直接配置并保存到本机 backend/.env。',
     recommended: '云端推荐',
   },
   {
@@ -56,7 +64,12 @@ async function load(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
   try {
-    project.value = await getProject(projectId.value)
+    const [loadedProject, runtime] = await Promise.all([
+      getProject(projectId.value),
+      getP7RuntimeConfig(),
+    ])
+    project.value = loadedProject
+    runtimeDraft.value = JSON.parse(JSON.stringify(runtime)) as P7RuntimeConfig
     const saved = project.value.source_understanding_provider
     // Compatibility for projects saved during the short-lived two-provider build.
     selected.value = saved === ('QWEN3_VL_LOCAL' as SourceUnderstandingProvider)
@@ -85,6 +98,22 @@ async function saveProvider(): Promise<void> {
     errorMessage.value = error instanceof Error ? error.message : 'P7 模型设置保存失败'
   } finally {
     saving.value = false
+  }
+}
+
+async function saveRuntimeConfig(): Promise<void> {
+  if (!runtimeDraft.value || runtimeSaving.value) return
+  runtimeSaving.value = true
+  errorMessage.value = ''
+  runtimeSavedMessage.value = ''
+  try {
+    const saved = await updateP7RuntimeConfig(runtimeDraft.value)
+    runtimeDraft.value = JSON.parse(JSON.stringify(saved)) as P7RuntimeConfig
+    runtimeSavedMessage.value = '运行时连接已保存到本机 backend/.env，并已立即加载。API Key 不进入数据库、Artifact、ProviderJob 或 Git。'
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'P7 运行时连接保存失败'
+  } finally {
+    runtimeSaving.value = false
   }
 }
 
@@ -134,6 +163,108 @@ onMounted(load)
           {{ saving ? '正在保存…' : '保存模型选择' }}
         </button>
       </div>
+
+      <details class="runtime-config" open>
+        <summary>
+          <div>
+            <strong>本机运行时连接配置</strong>
+            <span>开发 / 人工验收入口 · 明文保存在本机 backend/.env</span>
+          </div>
+        </summary>
+
+        <div v-if="runtimeDraft" class="runtime-body">
+          <p class="runtime-note">
+            这里是本地运行工具配置，不属于 Project 业务数据。保存后后端立即使用新值；刷新页面会直接回显当前明文配置。
+          </p>
+          <p v-if="runtimeSavedMessage" class="success">{{ runtimeSavedMessage }}</p>
+
+          <div class="runtime-grid">
+            <article class="runtime-card">
+              <header>
+                <strong>Doubao Seed 2.1 Pro</strong>
+                <span>火山引擎 Ark</span>
+              </header>
+              <label>
+                <span>Ark API Key</span>
+                <input
+                  v-model="runtimeDraft.doubao.api_key"
+                  data-testid="doubao-api-key"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="填入火山方舟 API Key"
+                />
+              </label>
+              <label>
+                <span>Model / Endpoint ID</span>
+                <input v-model="runtimeDraft.doubao.model" data-testid="doubao-model" type="text" spellcheck="false" />
+              </label>
+              <label>
+                <span>Base URL</span>
+                <input v-model="runtimeDraft.doubao.base_url" data-testid="doubao-base-url" type="text" spellcheck="false" />
+              </label>
+              <div class="runtime-pair">
+                <label>
+                  <span>Video FPS</span>
+                  <input v-model.number="runtimeDraft.doubao.video_fps" type="number" min="0.1" max="10" step="0.1" />
+                </label>
+                <label>
+                  <span>Timeout / 秒</span>
+                  <input v-model.number="runtimeDraft.doubao.request_timeout_seconds" type="number" min="1" step="1" />
+                </label>
+              </div>
+            </article>
+
+            <article class="runtime-card">
+              <header>
+                <strong>Qwen3.8-27B</strong>
+                <span>本地 vLLM</span>
+              </header>
+              <label>
+                <span>Base URL</span>
+                <input v-model="runtimeDraft.qwen38.base_url" type="text" spellcheck="false" />
+              </label>
+              <label>
+                <span>Model</span>
+                <input v-model="runtimeDraft.qwen38.model" type="text" spellcheck="false" />
+              </label>
+              <label>
+                <span>API Key（可选）</span>
+                <input v-model="runtimeDraft.qwen38.api_key" type="text" autocomplete="off" spellcheck="false" />
+              </label>
+            </article>
+
+            <article class="runtime-card">
+              <header>
+                <strong>Qwen3-VL-8B-Thinking</strong>
+                <span>本地 vLLM</span>
+              </header>
+              <label>
+                <span>Base URL</span>
+                <input v-model="runtimeDraft.qwen3_vl_8b.base_url" type="text" spellcheck="false" />
+              </label>
+              <label>
+                <span>Model</span>
+                <input v-model="runtimeDraft.qwen3_vl_8b.model" type="text" spellcheck="false" />
+              </label>
+              <label>
+                <span>API Key（可选）</span>
+                <input v-model="runtimeDraft.qwen3_vl_8b.api_key" type="text" autocomplete="off" spellcheck="false" />
+              </label>
+            </article>
+          </div>
+
+          <div class="runtime-footer">
+            <label>
+              <span>本地 Qwen 请求超时 / 秒</span>
+              <input v-model.number="runtimeDraft.qwen_request_timeout_seconds" type="number" min="1" step="1" />
+            </label>
+            <button type="button" :disabled="runtimeSaving" data-testid="save-runtime-config" @click="saveRuntimeConfig">
+              {{ runtimeSaving ? '正在保存运行时配置…' : '保存运行时连接配置' }}
+            </button>
+          </div>
+        </div>
+      </details>
     </template>
   </section>
 
@@ -152,7 +283,9 @@ onMounted(load)
 
 .heading,
 .provider-title,
-.save-row {
+.save-row,
+.runtime-card header,
+.runtime-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -165,7 +298,8 @@ onMounted(load)
 }
 
 .heading p,
-.provider-card p {
+.provider-card p,
+.runtime-note {
   margin: 0;
   color: #5d6875;
   line-height: 1.6;
@@ -181,7 +315,8 @@ onMounted(load)
 
 .current,
 .provider-title span,
-.recommend {
+.recommend,
+.runtime-card header span {
   border-radius: 999px;
   padding: 5px 9px;
   background: #eef2f6;
@@ -196,7 +331,8 @@ onMounted(load)
   font-weight: 700;
 }
 
-.provider-grid {
+.provider-grid,
+.runtime-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
@@ -234,6 +370,65 @@ onMounted(load)
   font-size: 13px;
 }
 
+.runtime-config {
+  margin-top: 20px;
+  border-top: 1px solid #e6eaf0;
+  padding-top: 18px;
+}
+
+.runtime-config summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.runtime-config summary::-webkit-details-marker { display: none; }
+.runtime-config summary div { display: flex; flex-direction: column; gap: 3px; }
+.runtime-config summary span { color: #7a8491; font-size: 12px; }
+.runtime-body { margin-top: 14px; }
+.runtime-note { font-size: 13px; }
+
+.runtime-card {
+  padding: 16px;
+  border: 1px solid #dce3ea;
+  border-radius: 14px;
+  background: #fafbfc;
+}
+
+.runtime-card header { margin-bottom: 14px; }
+.runtime-card label,
+.runtime-footer label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  color: #596575;
+  font-size: 12px;
+}
+
+.runtime-card input,
+.runtime-footer input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cfd6df;
+  border-radius: 9px;
+  padding: 9px 10px;
+  background: #fff;
+  color: #202a36;
+  font: inherit;
+}
+
+.runtime-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.runtime-footer {
+  margin-top: 16px;
+  align-items: flex-end;
+}
+.runtime-footer label { width: min(320px, 100%); margin-top: 0; }
+
 button {
   flex: 0 0 auto;
   border: 0;
@@ -265,12 +460,15 @@ button:disabled {
 }
 
 @media (max-width: 980px) {
-  .provider-grid { grid-template-columns: 1fr; }
+  .provider-grid,
+  .runtime-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {
   .heading,
-  .save-row { align-items: flex-start; flex-direction: column; }
+  .save-row,
+  .runtime-footer { align-items: flex-start; flex-direction: column; }
   .provider-settings { margin: 16px; }
+  .runtime-pair { grid-template-columns: 1fr; }
 }
 </style>
