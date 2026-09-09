@@ -67,6 +67,7 @@ def update_project(db: Session, project_id: str, payload: ProjectUpdate) -> Proj
     if not actual_changes:
         return project
 
+    provider_changed = "source_understanding_provider" in actual_changes
     for field, value in actual_changes.items():
         setattr(project, field, value)
 
@@ -80,4 +81,18 @@ def update_project(db: Session, project_id: str, payload: ProjectUpdate) -> Proj
     db.add(project)
     db.commit()
     db.refresh(project)
+
+    if provider_changed:
+        # The selected provider is part of P7 source-understanding semantics. A result produced by
+        # another provider must not remain CURRENT under the new project setting. This propagates
+        # STALE to Story/Rhythm through the Artifact Graph while leaving P6 evidence untouched.
+        from app.artifacts.service import invalidate_current_artifact_type
+        from app.skills.models import ArtifactType
+
+        invalidate_current_artifact_type(
+            db,
+            project_id=project_id,
+            artifact_type=ArtifactType.SOURCE_BIBLE,
+        )
+        db.refresh(project)
     return project
