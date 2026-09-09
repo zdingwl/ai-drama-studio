@@ -38,6 +38,10 @@ class ShotSubjectBindingsSemantic(_StrictProviderModel):
 class ShotDialogueAnnotationSemantic(_StrictProviderModel):
     utterance_number: int = Field(ge=1)
     delivery: DialogueDelivery = DialogueDelivery.UNKNOWN
+
+
+class DialogueSpeakerSemantic(_StrictProviderModel):
+    utterance_number: int = Field(ge=1)
     speaker_character_id: str | None = Field(default=None, min_length=1, max_length=80)
 
 
@@ -60,12 +64,16 @@ class SourceShotSemantic(_StrictProviderModel):
 
 class EpisodeShotBreakdownSemantic(_StrictProviderModel):
     shots: list[SourceShotSemantic] = Field(min_length=1, max_length=5000)
+    dialogue_speakers: list[DialogueSpeakerSemantic] = Field(default_factory=list, max_length=5000)
 
     @model_validator(mode="after")
-    def unique_shot_numbers(self) -> "EpisodeShotBreakdownSemantic":
-        numbers = [item.shot_number for item in self.shots]
-        if len(numbers) != len(set(numbers)):
+    def unique_episode_members(self) -> "EpisodeShotBreakdownSemantic":
+        shot_numbers = [item.shot_number for item in self.shots]
+        if len(shot_numbers) != len(set(shot_numbers)):
             raise ValueError("shot_number must be unique")
+        utterance_numbers = [item.utterance_number for item in self.dialogue_speakers]
+        if len(utterance_numbers) != len(set(utterance_numbers)):
+            raise ValueError("dialogue_speakers utterance_number must be unique per episode")
         return self
 
 
