@@ -33,6 +33,9 @@ class SourceUnderstandingProvider(StrEnum):
     QWEN3_8_27B_LOCAL = "QWEN3_8_27B_LOCAL"
     # Local lower-footprint compatibility option.
     QWEN3_VL_8B_THINKING_LOCAL = "QWEN3_VL_8B_THINKING_LOCAL"
+    # Compatibility only for projects saved during the short-lived two-provider implementation.
+    # It resolves to the same 8B model and is intentionally not exposed by the UI.
+    QWEN3_VL_LOCAL = "QWEN3_VL_LOCAL"
 
 
 VIDEO_PROJECT_TYPES = frozenset(
