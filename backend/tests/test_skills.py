@@ -35,6 +35,29 @@ def test_skill_detail_contains_real_manual_and_replica_constraints(client: TestC
     assert detail["version"] == "1.0.0"
 
 
+def test_professional_skill_api_exposes_episode_understanding_manual(client: TestClient) -> None:
+    listed = client.get("/api/v3/skills/professional")
+    assert listed.status_code == 200
+    ids = {item["id"] for item in listed.json()}
+    assert "source-video-understanding" in ids
+
+    response = client.get("/api/v3/skills/professional/source-video-understanding")
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["version"] == "1.0.0"
+    assert detail["required_inputs"] == ["SOURCE_VIDEO", "SOURCE_DIALOGUE"]
+    assert "EPISODE_UNDERSTANDING" in detail["required_capabilities"]
+    assert "宁可 UNKNOWN" in "\n".join(detail["provider_rules"])
+    assert "完整 Episode" in detail["manual"]
+    assert "P8" in detail["manual"]
+
+
+def test_missing_professional_skill_returns_404(client: TestClient) -> None:
+    response = client.get("/api/v3/skills/professional/not-found")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "PROFESSIONAL_SKILL_NOT_FOUND"
+
+
 def test_capability_registry_is_business_oriented_and_does_not_fake_availability(client: TestClient) -> None:
     response = client.get("/api/v3/skills/capabilities")
     assert response.status_code == 200
