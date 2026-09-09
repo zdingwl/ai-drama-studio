@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.session import get_db
 from app.evidence.service import is_p6_source_evidence_task, run_p6_source_evidence_task
 from app.preprocessing.service import is_p5_shot_boundary_task, run_p5_shot_boundary_task
+from app.understanding.evidence_reference_runtime import run_p7_source_bible_task
+from app.understanding.service import P7_TASK_TYPE
 from app.workflow.p4_acceptance import (
     P4AcceptanceScenario,
     build_p4_acceptance_payload,
@@ -47,6 +49,8 @@ def _schedule_task_if_needed(
         background_tasks.add_task(run_p5_shot_boundary_task, session_factory, task.id)
     elif is_p6_source_evidence_task(task):
         background_tasks.add_task(run_p6_source_evidence_task, session_factory, task.id)
+    elif task.task_type == P7_TASK_TYPE:
+        background_tasks.add_task(run_p7_source_bible_task, session_factory, task.id)
 
 
 @router.post(
