@@ -4,6 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, status
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
+from app.understanding.runtime_config import P7RuntimeConfig, get_p7_runtime_config, update_p7_runtime_config
 from app.understanding.schemas import SourceBibleEditCommand, SourceBibleRead, SourceBibleRevisionSummary
 from app.understanding.service import (
     create_source_bible_task,
@@ -25,6 +26,16 @@ def _request_session_factory(db: Session) -> sessionmaker[Session]:
         expire_on_commit=False,
         class_=Session,
     )
+
+
+@router.get("/source-understanding/runtime-config", response_model=P7RuntimeConfig)
+def get_source_understanding_runtime_config_route() -> P7RuntimeConfig:
+    return get_p7_runtime_config()
+
+
+@router.put("/source-understanding/runtime-config", response_model=P7RuntimeConfig)
+def update_source_understanding_runtime_config_route(payload: P7RuntimeConfig) -> P7RuntimeConfig:
+    return update_p7_runtime_config(payload)
 
 
 @router.post(
