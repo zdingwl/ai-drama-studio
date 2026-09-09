@@ -16,7 +16,7 @@
 10. `docs/09_P6CanonicalEvidenceV2与P8最终验收整改.md`
 11. 当前相关代码与测试
 
-**阶段状态以编号更高、日期更新的状态文档为准。** `docs/07` 记录 P7 最终验收，`docs/08` 记录 P8 正式契约，`docs/09` 记录 P8 最终人工验收暴露的 P6 canonical Evidence v2 整改。旧文档中“P8 尚未开始 / P7 待验收 / P6-P7 未开发”等历史描述不得覆盖当前 `main` 事实。
+**阶段状态以编号更高、日期更新的状态文档为准。** `docs/07` 记录 P7 最终验收，`docs/08` 记录 P8 正式契约，`docs/09` 记录 P6 canonical Evidence v2 整改及真实 P6 v2 → P7 → P8 恢复验收结果。旧文档中“P8 尚未开始 / P7 待验收 / P6-P7 未开发”等历史描述不得覆盖当前 `main` 事实。
 
 历史分支只能做参考，不能覆盖 V3 当前规划。
 
@@ -246,7 +246,7 @@ EPISODE_UNDERSTANDING
 STORY_RHYTHM
 ```
 
-其中 `SOURCE_DIALOGUE_EVIDENCE` 的能力状态保持 `AVAILABLE`，但 P8 最终人工验收发现旧 `p6-source-evidence-v1` canonical merge 质量不足；当前主线正在以 `p6-source-evidence-v2 / segment-preserving-dialogue-v2` 对同一真实短剧重新验收。部署 `0012_p6_canonical_evidence_v2` 后旧 P6/P7/P8 正式结果必须 STALE，不能继续作为 CURRENT 使用。
+`SOURCE_DIALOGUE_EVIDENCE` 已完成 `p6-source-evidence-v2 / segment-preserving-dialogue-v2` 同一真实短剧恢复复验：旧 v1 多人超长 canonical merge 根因已消失，P7/P8 也已基于新 CURRENT P6 恢复。仍有少量 residual ASR 质量项需要在最终 28 Shot 音画人工验收中确认，但不得由 P7/P8 静默覆盖 canonical text。
 
 仍为 `PLANNED`：
 
@@ -313,9 +313,9 @@ P2 Project + Skill Kernel  ✅
 P3 SourceAsset + 输入系统  ✅
 P4 Task / ProviderJob      ✅
 P5 镜头技术锚点            ✅（真实 Episode 人工验收通过）
-P6 Source Evidence         🔁（能力已 AVAILABLE；canonical Evidence v2 真实样例质量复验中）
-P7 整集多模态原片理解      ✅（真实 Doubao + Grounding v2 + SOURCE_BIBLE 人工验收通过；P6 v2 后需重跑恢复 CURRENT）
-P8 逐镜精细拉片            🔁（工程/程序真实数据验收通过；最终音画人工验收被 P6 v1 对白质量阻塞）
+P6 Source Evidence         ✅（能力 AVAILABLE；v2 真实恢复与分段整改通过）
+P7 整集多模态原片理解      ✅（真实 Doubao + Grounding v2；已基于 P6 v2 恢复 CURRENT rev4）
+P8 逐镜精细拉片            🔁（工程/真实数据库/真实 Provider/P6 v2 恢复链通过；仅剩最终 28 Shot 音画人工验收）
 ```
 
 P7 最终验收基线：
@@ -335,18 +335,20 @@ SOURCE_SHOT_FACTS schema 1.0
 source-bible-shot-facts-v1
 ```
 
-P8 当前最终验收恢复链：
+P8 当前最终状态：
 
 ```text
-0012 migration
-→ 旧 P6/P7/P8 STALE
-→ 真实 P6 v2
-→ P7 重跑
-→ P8 重跑
-→ 28 Shot 最终逐镜音画人工验收
+P6 v2 SOURCE_DIALOGUE rev2       CURRENT
+P7 SOURCE_BIBLE rev4             CURRENT
+P5 SHOT_ANCHORS rev1             CURRENT
+P8 SOURCE_SHOT_FACTS rev2        CURRENT
+
+28/28 程序一致性                PASS
+真实 Doubao Provider             PASS
+最终用户逐镜音画人工验收          PENDING
 ```
 
-只有最后一步通过后，才允许把 `SHOT_BREAKDOWN` 从 `PLANNED` 改为 `AVAILABLE`。在此之前禁止进入 P9。
+只有最终 28 Shot 音画人工验收通过后，才允许评估把 `SHOT_BREAKDOWN` 从 `PLANNED` 改为 `AVAILABLE`。在此之前禁止进入 P9。
 
 P8 固定输入契约：
 
