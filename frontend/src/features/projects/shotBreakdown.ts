@@ -29,6 +29,7 @@ export interface CanonicalDialogueBinding {
   text: string
   language: string | null
   delivery: DialogueDelivery
+  speaker?: BoundSubjectRef | null
 }
 
 export interface SourceShotBindings {
