@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.projects.enums import SourceUnderstandingProvider
 from app.projects.models import Project
 from app.skills.models import ArtifactType
+from app.understanding.evidence_reference_runtime import run_p7_source_bible_task
 from app.understanding.runtime_config import P7RuntimeConfig, get_p7_runtime_config, update_p7_runtime_config
 from app.understanding.schemas import SourceBibleEditCommand, SourceBibleRead, SourceBibleRevisionSummary
 from app.understanding.service import (
@@ -16,7 +17,6 @@ from app.understanding.service import (
     edit_source_bible,
     get_source_bible,
     list_source_bible_revisions,
-    run_p7_source_bible_task,
 )
 from app.workflow.schemas import TaskRead
 from app.workflow.task_service import task_to_read
