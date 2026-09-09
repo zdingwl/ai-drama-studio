@@ -7,6 +7,7 @@ import type {
   ProjectCreatePayload,
   ProjectExecutionPlan,
   ProjectRead,
+  ProjectUpdatePayload,
   TaskRead,
 } from './types'
 
@@ -25,6 +26,13 @@ export function createProject(payload: ProjectCreatePayload): Promise<ProjectRea
 
 export function getProject(projectId: string): Promise<ProjectRead> {
   return apiRequest<ProjectRead>(`/projects/${projectId}`)
+}
+
+export function updateProject(projectId: string, payload: ProjectUpdatePayload): Promise<ProjectRead> {
+  return apiRequest<ProjectRead>(`/projects/${projectId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
 }
 
 export function getProjectPlan(projectId: string): Promise<ProjectExecutionPlan> {
