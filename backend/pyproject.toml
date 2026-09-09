@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
   "alembic>=1.16,<2",
   "av>=18,<19",
+  "dashscope>=1.27.3,<2",
   "fastapi>=0.116,<1",
   "faster-whisper>=1.2.1,<2",
   "httpx>=0.28,<1",
