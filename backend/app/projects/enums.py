@@ -27,8 +27,12 @@ class AudioPolicy(StrEnum):
 
 
 class SourceUnderstandingProvider(StrEnum):
+    # Cloud production option.
     DOUBAO_SEED_2_1_PRO_API = "DOUBAO_SEED_2_1_PRO_API"
-    QWEN3_VL_LOCAL = "QWEN3_VL_LOCAL"
+    # Local high-quality option.
+    QWEN3_8_27B_LOCAL = "QWEN3_8_27B_LOCAL"
+    # Local lower-footprint compatibility option.
+    QWEN3_VL_8B_THINKING_LOCAL = "QWEN3_VL_8B_THINKING_LOCAL"
 
 
 VIDEO_PROJECT_TYPES = frozenset(
