@@ -1,0 +1,91 @@
+{
+  "id": "source-video-understanding",
+  "name": "整集原片理解",
+  "version": "1.0.0",
+  "category": "source-understanding",
+  "description": "基于完整 Episode、CURRENT Source Evidence 与可选 Shot Anchors，建立可追溯的 SOURCE_BIBLE、Story Skeleton 与 Rhythm Skeleton；严格区分 Source Truth、分析推断与未知项。",
+  "when_to_use": [
+    "REPLICA / REDRAW 已有完整 SOURCE_VIDEO 与 CURRENT Source Evidence，需要形成整集源作概览分析"
+  ],
+  "when_not_to_use": [
+    "逐 Shot 精细镜头语言分析",
+    "目标版本本土化或改编",
+    "仅用 Reference Clip 猜整集剧情",
+    "重新转写并覆盖 canonical ASR/OCR"
+  ],
+  "required_inputs": ["SOURCE_VIDEO", "SOURCE_DIALOGUE"],
+  "optional_inputs": ["SHOT_ANCHORS"],
+  "readable_artifacts": ["SOURCE_VIDEO", "SOURCE_DIALOGUE", "SHOT_ANCHORS"],
+  "required_capabilities": ["EPISODE_UNDERSTANDING", "STORY_RHYTHM"],
+  "manual_path": "episode-understanding/SKILL.md",
+  "steps": [
+    {
+      "id": "establish_source_truth",
+      "phase": "理解",
+      "title": "建立 Source Truth",
+      "description": "确认完整 Episode 为最高层原片事实源，CURRENT P6 Evidence 为 canonical 文字事实源，Shot Anchors 只用于可选定位。",
+      "capabilities": ["EPISODE_UNDERSTANDING"],
+      "requires": ["SOURCE_VIDEO", "SOURCE_DIALOGUE"],
+      "produces": []
+    },
+    {
+      "id": "episode_semantics",
+      "phase": "理解",
+      "title": "整集语义理解",
+      "description": "从完整 Episode 建立时间化剧情、人物、关系、场景、道具、事件和情绪状态，不按 Shot 独立猜剧情。",
+      "capabilities": ["EPISODE_UNDERSTANDING"],
+      "requires": ["SOURCE_VIDEO", "SOURCE_DIALOGUE"],
+      "produces": ["SOURCE_BIBLE"]
+    },
+    {
+      "id": "story_rhythm",
+      "phase": "理解",
+      "title": "故事与节奏骨架",
+      "description": "从整集理解中提炼 Story Skeleton 与 Rhythm Skeleton，保留 Hook、冲突、升级、反转、关系变化、情绪峰值和 Cliffhanger 的真实顺序。",
+      "capabilities": ["STORY_RHYTHM"],
+      "requires": ["SOURCE_BIBLE"],
+      "produces": ["STORY_SKELETON", "RHYTHM_SKELETON"]
+    },
+    {
+      "id": "grounding_validation",
+      "phase": "校验",
+      "title": "事实与推断校验",
+      "description": "对容易被合理补全的身份、关系、背景、世界规则和道具作用执行 FACT / INFERENCE / UNKNOWN 检查；FACT 必须存在 Evidence 或完整 Episode 时间依据。",
+      "capabilities": ["EPISODE_UNDERSTANDING"],
+      "requires": ["SOURCE_BIBLE", "SOURCE_DIALOGUE"],
+      "produces": ["SOURCE_BIBLE"]
+    }
+  ],
+  "fact_levels": ["FACT", "INFERENCE", "UNKNOWN"],
+  "provider_rules": [
+    "完整 Episode 是 Source Truth，必须直接理解完整时间轴，不得拆成 Reference Clip 后分别猜剧情再拼接。",
+    "CURRENT P6 dialogue / OCR 是 canonical 文字事实源，不得重新转写、润色或覆盖。",
+    "FACT 只能来自原片直接可见内容、CURRENT dialogue evidence、CURRENT visual text evidence；FACT 必须给出 Evidence ID 或完整 Episode 的视频时间窗口依据。",
+    "INFERENCE 必须保持推断身份，不能改写成人物历史、关系事实、事件原因或客观背景。",
+    "无法可靠确认时使用 UNKNOWN 或稳定候选名；宁可 UNKNOWN，也不要合理补全。",
+    "world_rules 只描述本作品内部已经成立并约束剧情的源作事实；禁止社会学泛化、刻板印象、道德训诫和法律结论；没有明确规则时输出空数组。",
+    "人物姓名、身份、夫妻/亲属/邻居/同事等关系、婚姻年限、职业与历史经历必须由原片或 Evidence 支持。",
+    "道具 appearance_state 可以记录直接视觉事实；story_function 没有明确依据时写未确认明确剧情功能，不得因为道具出现就补写因果。",
+    "timed_script 是语义剧情窗口，不是 Shot Boundary；允许跨多个 Shot 或轻微重叠。",
+    "Story / Rhythm 只总结原片真实存在的叙事与节奏，不为了凑结构创造不存在的反转、爽点或人物动机。",
+    "P7 不输出逐镜景别、构图、运镜、焦距、逐镜主体绑定或逐镜音效；这些属于 P8。",
+    "只输出符合 SOURCE_BIBLE Schema 的 JSON，不输出 Markdown、解释、推理过程或额外文本。"
+  ],
+  "output_contracts": ["SOURCE_BIBLE", "STORY_SKELETON", "RHYTHM_SKELETON"],
+  "completion_criteria": [
+    "完整 Episode 被直接消费",
+    "canonical Source Evidence 未被改写",
+    "SOURCE_BIBLE 的时间、Evidence 与人物引用合法",
+    "关键 source facts 有可追溯依据",
+    "Story / Rhythm 与完整 Episode 一致",
+    "没有明显片外补全、社会泛化或法律结论",
+    "结果可以作为 P8 的全局上下文"
+  ],
+  "failure_policy": [
+    "不存在的 Evidence ID 必须 fail closed",
+    "FACT 没有 Evidence / 视频时间依据必须 fail closed",
+    "Provider 输出结构不合法必须 fail closed",
+    "上游 Source / Evidence / Provider profile 变化必须拒绝发布旧任务结果",
+    "失败不得覆盖旧 CURRENT SOURCE_BIBLE"
+  ]
+}
