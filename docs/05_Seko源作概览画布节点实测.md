@@ -1,71 +1,68 @@
-# Seko 3.0「源作概览分析」画布节点实测
+# Seko 3.0「源作概览分析」与逐镜拉片实测
 
-> 日期：2026-09-08  
-> 证据等级：B — 项目使用者提供的可复核产品实测截图与对应文本内容。  
-> 用途：补充 `docs/03_Seko3.0_Skill架构逆向分析.md`，用于约束 AI Drama Studio V3 的 Source Understanding / Canvas / Artifact 设计。  
-> 边界：本文只记录外部可观察产品行为，不声称知道 Seko 私有内部实现、Prompt、模型或工具编排细节。
-
----
-
-# 1. 本次新增实测行为
-
-此前已经观察到：
-
-```text
-完整短剧视频写入画布
-→ Agent 调用「多模态分析」
-→ 返回素材基线 / 整体分析 / 时间化剧本 / 角色 / 场景 / 道具
-→ 建议写入画布
-```
-
-本次继续操作：
-
-```text
-点击「合规微调后重新写入画布」
-↓
-界面显示调用工具「文本节点创建」
-↓
-画布实际出现文本节点《源作概览分析》
-↓
-界面继续显示调用工具「读取节点详情」
-↓
-Agent 继续基于该节点推进后续工作
-```
-
-这说明在产品层可以确认：
-
-> **原片多模态理解结果不仅存在于聊天回复里，还会被物化成画布中的持久文本节点，并可以被 Agent 再次读取。**
-
-不能据此确认 Seko 的数据库表、Artifact 类型、节点存储格式或内部上下文注入方式。
+> 更新时间：2026-09-09  
+> 证据等级：B — 项目使用者提供的可复核产品实测截图与对应文本。  
+> 用途：约束 AI Drama Studio V3 Source Understanding / SOURCE_BIBLE / P8 分镜表的产品设计。  
+> 边界：只记录外部可观察产品行为，不声称知道 Seko 私有内部 Prompt、模型或工具编排。
 
 ---
 
-# 2. 《源作概览分析》节点实际内容结构
+# 1. 源作概览分析的可观察链路
 
-项目使用者导出的节点文本包含四个主块：
+实测可确认：
+
+```text
+完整短剧视频
+↓
+Agent 调用多模态分析
+↓
+返回素材基线 / 整体分析 / 时间化剧本 / 角色 / 场景 / 道具
+↓
+用户确认 / 微调
+↓
+调用文本节点创建
+↓
+画布生成《源作概览分析》
+↓
+后续调用读取节点详情
+↓
+继续下一项分析
+```
+
+产品层可确认：
+
+> 原片多模态理解结果会被物化为持久、可继续读取的业务节点，而不是只停留在聊天回复里。
+
+不能据此确认 Seko 的数据库表、Artifact 类型或内部上下文注入实现。
+
+---
+
+# 2. 《源作概览分析》可观察结构
+
+实测内容主要包括：
 
 ```text
 1. 素材基线
 2. 整体分析
-3. 完整原剧本
-4. 完整角色、场景和关键道具列表
+3. 时间化原剧本 / 剧情
+4. 角色 / 人物关系
+5. 场景
+6. 关键道具
 ```
 
 ## 2.1 素材基线
 
-可观察字段包括：
+可观察：
 
-- 有效内容起止时间；
+- 有效内容时间；
 - 总时长；
-- 画幅；
-- 有效画面；
-- 帧率 / 时间基准；
+- 画幅 / 帧率 / 时间基准；
 - 黑边 / 裁切 / 分屏；
-- 速度变化 / 快速剪辑描述。
+- 速度变化 / 快剪描述。
 
 ## 2.2 整体分析
 
-可观察内容包括：
+可观察：
 
 - 故事背景；
 - 类型；
@@ -75,9 +72,11 @@ Agent 继续基于该节点推进后续工作
 - 视听风格；
 - 节奏。
 
-## 2.3 完整原剧本
+V3 不能照搬“世界规则”字段做社会泛化；当前 Grounding v2 已限制为本片内部 FACT。
 
-节点包含从 `00:00` 到约 `01:06` 的时间化剧本，逐段组合：
+## 2.3 时间化原剧本
+
+实测节点从 00:00 到约 01:06 以剧情语义窗口组织：
 
 ```text
 时间窗口
@@ -85,230 +84,241 @@ Agent 继续基于该节点推进后续工作
 + 对白 / 旁白
 ```
 
-这些时间窗口存在重叠，因此它们属于语义 / 剧情时间窗口，不能当作精确 Shot Boundary。
+时间窗口可以跨多个 Shot，也可能存在语义重叠，因此不能当作 Shot Boundary。
 
-## 2.4 角色 / 场景 / 关键道具
+## 2.4 角色 / 场景 / 道具
 
-角色至少包含：
+角色可观察字段：名称、剧情功能、基准外观、状态。
 
-- 名称；
-- 剧情功能；
-- 基准外观；
-- 时间范围内状态。
+场景可观察字段：场景名称、时间范围、空间关系、环境细节。
 
-场景至少包含：
-
-- 场景名称；
-- 时间范围；
-- 空间关系；
-- 环境细节。
-
-关键道具至少包含：
-
-- 名称；
-- 时间范围；
-- 外观 / 状态；
-- 剧情功能或使用方式。
-
-这意味着该节点已经是一个完整的**业务可读 Source Understanding 文档**，而不是某个单一工具的 raw 输出。
+道具可观察字段：名称、时间范围、外观 / 状态、剧情功能或使用方式。
 
 ---
 
-# 3. 对 V3 Artifact 设计的直接结论
+# 3. V3 SOURCE_BIBLE 的对应语义
 
-V3 当前已有正式 ArtifactType：
+V3 正式定义：
 
 ```text
-SOURCE_VIDEO
-SOURCE_DIALOGUE
-SHOT_ANCHORS
-SOURCE_BIBLE
-STORY_SKELETON
-RHYTHM_SKELETON
-...
+SOURCE_BIBLE《源作概览分析》
+= 用户可读
+= 可编辑
+= 可版本化
+= 有 provenance
+= 有 CURRENT / STALE
 ```
 
-本次实测后，`SOURCE_BIBLE` 的产品语义正式定义为：
-
-> **《源作概览分析》：整集原片理解形成的用户可读、可编辑、可版本化正式 Source Understanding Artifact。**
-
-第一版至少应能表达：
+它不等于：
 
 ```text
-SOURCE_BIBLE
-├─ 素材基线
-├─ 整体分析
-├─ 时间化原剧本 / 剧情时间线
-├─ 人物候选与人物关系
-├─ 场景
-├─ 关键道具
-├─ 关键事件 / Story Beats
-└─ 对 Source Evidence 的 provenance 引用
-```
-
-`SOURCE_BIBLE` 不等于：
-
-```text
+ASR raw output
+OCR raw output
 SHOT_ANCHORS
-ASR raw segments
-OCR raw detections
-模型原始 response
+Provider 原始 response
 聊天消息
 ```
 
----
-
-# 4. Source Evidence 与画布文档必须分离
-
-本次实测尤其重要的一点是：用户点击的是：
-
-```text
-合规微调后重新写入画布
-```
-
-也就是说，画布中的《源作概览分析》文本可能经过平台合规修改。
-
-因此 V3 必须坚持：
-
-```text
-SOURCE_DIALOGUE / OCR Evidence
-= 原片实际说了什么 / 写了什么
-= canonical + provenance
-= 不被合规改写静默覆盖
-
-SOURCE_BIBLE / 源作概览分析
-= 对原片事实的业务理解和用户可读表达
-= 可以产生修订版本
-```
-
-禁止：
-
-```text
-合规微调 SOURCE_BIBLE
-→ 反写覆盖 SOURCE_DIALOGUE 原文
-```
-
-正确关系：
+正式关系：
 
 ```text
 SOURCE_VIDEO
 ├─ derives → SHOT_ANCHORS
 ├─ derives → SOURCE_DIALOGUE / OCR Evidence
-└─ + Evidence → SOURCE_BIBLE rev1
-
-用户修订 / 合规微调
-↓
-SOURCE_BIBLE rev2
-↓
-rev1 保留
-↓
-依赖 rev1 的逐镜拉片 / Source Snapshot / Target 结果进入 STALE
+└─ + Evidence → SOURCE_BIBLE
 ```
 
-如果只是展示层措辞调整、没有改变业务事实，后续可以通过结构化 diff / semantic fingerprint 优化无意义的全链重算；但第一版应优先 fail-safe，不能默默让旧下游继续冒充 CURRENT。
+Source Evidence 与 Source Understanding 必须分离；SOURCE_BIBLE 的编辑 / 合规表达不能反向覆盖 canonical ASR / OCR。
 
 ---
 
-# 5. Canvas 与 Artifact Graph 的关系进一步明确
+# 4. Canvas 与 Artifact Graph
 
-本次实测支持以下产品模式：
+Seko 可观察产品行为：
 
 ```text
-Agent 生成业务结果
+生成业务结果
 ↓
 写入画布节点
 ↓
 用户查看 / 修改
 ↓
-Agent 读取节点详情
+Agent 再读取节点
 ↓
 后续 Skill 继续工作
 ```
 
-V3 应吸收这个体验，但不能把 Canvas UI 当数据库真相。
-
-正式关系仍然是：
+V3 吸收该体验，但正式真相仍是：
 
 ```text
-SOURCE_BIBLE Artifact
-= 业务真相 / revision / provenance / CURRENT-STALE
+Artifact Graph / SourceBibleRevision
+= 业务真相
 
-Canvas Text Node
-= SOURCE_BIBLE 的可视化与编辑入口
+Canvas / 页面节点
+= 可视化与编辑入口
 ```
 
-未来画布节点必须引用正式 Artifact ID / revision，而不是把一份脱离 Artifact Graph 的 Markdown 文本当唯一真相。
+未来 Canvas 节点应引用 Artifact ID / revision，而不是把脱离 Artifact Graph 的 Markdown 当唯一真相。
 
 ---
 
-# 6. P7 的正式产品输出契约
+# 5. P7 最终产品输出契约
 
-P7「整集多模态原片理解」完成后，普通用户不应只看到一个“模型执行成功”。
+P7 完成后，用户必须能直接读到《源作概览分析》，而不是只看到“模型成功”。
 
-至少要看到一份正式《源作概览分析》：
+当前 V3 已实现并真实验收：
 
 ```text
 素材基线
 整体分析
-完整时间化原剧本
-角色与关系
+时间化原作剧情
+人物 / 关系
 场景
 关键道具
-Story / Rhythm
+Story / 关键事件
+Story Skeleton
+Rhythm Skeleton
+revision / provenance
 ```
 
 并满足：
 
-- `SOURCE_BIBLE` 有 revision；
-- 有 input fingerprint；
-- 记录完整 Episode 与 Source Evidence provenance；
-- CURRENT / STALE 正确；
-- 用户可读；
-- 用户可修改；
-- 修改走显式 Command；
-- 修改生成新 revision，不覆盖历史；
+- revision / fingerprint；
+- CURRENT / STALE；
+- 完整 Episode + Source Evidence provenance；
+- 用户可编辑且编辑生成新 revision；
 - 下游依赖正确 STALE；
-- GET / 打开页面不自动调用模型；
-- 普通 UI 不暴露 ASR/OCR raw 技术细节；
-- Source Evidence 原文仍可在专业核对模式中追溯。
+- GET 只读；
+- Evidence 可追溯但默认不淹没主文档；
+- Source Evidence 原文不被 SOURCE_BIBLE 改写。
+
+P7 最终验收见 `docs/07_P7最终验收与ProviderReadiness.md`。
 
 ---
 
-# 7. P8 与后续 Skill 的读取方式
+# 6. 新增实测：源作概览之后直接进入逐镜拉片
 
-P8 逐镜精细拉片不应该重新从零猜整集剧情。
+项目使用者继续实测后观察到：
 
-正确读取：
+```text
+《源作概览分析》
+↓
+读取节点详情
+↓
+逐镜拉片分析
+↓
+调用「分镜表」工具
+↓
+生成完整逐镜表
+```
+
+这进一步确认产品层存在两个不同业务结果：
+
+```text
+整集 Source Understanding
+!=
+逐镜 Shot Breakdown
+```
+
+因此 V3 保持：
+
+```text
+P7 = SOURCE_BIBLE / Story / Rhythm
+P8 = 逐镜精细拉片 / 分镜表
+```
+
+不能为了接近 Seko 外观而把 P7/P8 数据职责合并。
+
+---
+
+# 7. Seko 分镜表可观察列
+
+实测分镜表每行对应一个源镜头，页面可观察列包括：
+
+```text
+镜头编号
+源片段
+时长
+画面描述
+镜头语言
+绑定主体
+对白 / 旁白
+音效
+```
+
+其中“镜头语言”内部可观察到：
+
+```text
+景别
+构图
+镜头类型 / 角度
+运镜方法
+焦距 / 景深
+```
+
+“绑定主体”可观察到：
+
+```text
+角色
+场景
+道具
+```
+
+源片段以可播放缩略视频 / Reference Clip 方式展示。
+
+---
+
+# 8. 对 P8 的直接约束
+
+P8 正确输入：
 
 ```text
 完整 Episode
 +
-CURRENT SOURCE_BIBLE《源作概览分析》
+CURRENT SOURCE_BIBLE
 +
 CURRENT SHOT_ANCHORS
 +
-需要时读取 canonical Source Evidence
+需要时读取 CURRENT Source Evidence
 ↓
 逐镜精细拉片
 ```
 
-这与实测中“写入画布后再读取节点详情继续工作”的产品行为一致，但 V3 后端实际读取的正式对象应是 Artifact Graph 中的 CURRENT `SOURCE_BIBLE` revision。
+P8 不能：
+
+```text
+Shot 1 独立猜整集
+Shot 2 独立猜整集
+...
+→ 再拼剧情
+```
+
+V3 相比外部产品观察还必须额外坚持：
+
+- Shot start / end 优先使用 P5 SHOT_ANCHORS；
+- Reference Clip 只用于局部精看，不替代完整 Episode；
+- 对白正文来自 P6 canonical Evidence，P8 只做 Shot binding，不重新听写覆盖；
+- 人物 / 场景 / 道具绑定必须继承 CURRENT SOURCE_BIBLE 的全局知识；
+- P8 输出必须有 typed schema / revision / fingerprint / provenance / CURRENT / STALE。
 
 ---
 
-# 8. 当前开发边界
+# 9. 当前开发边界
 
-本次只校正架构和契约。
-
-当前 main 仍然没有实现：
+当前 `main` 已完成：
 
 ```text
-P6 ASR / OCR Provider
-P6 Source Dialogue Artifact
-P7 整集多模态 Provider
-P7 SOURCE_BIBLE 内容生成 / 编辑 API
-Canvas View
-P8 逐镜语义拉片
+P5 Shot Anchors ✅
+P6 Source Evidence ✅
+P7 SOURCE_BIBLE / Story / Rhythm ✅
 ```
 
-不能因为已经明确《源作概览分析》的目标结构，就把这些阶段写成已经开发完成。
+当前尚未实现：
+
+```text
+P8 逐镜精细拉片
+SHOT_BREAKDOWN capability
+最终逐镜分镜表 Artifact / domain schema
+```
+
+下一聊天可以正式开始 P8，但必须先重新读取当前 `main`、`AGENTS.md` 与 `docs/00~07`。
