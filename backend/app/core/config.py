@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     p6_ocr_sample_interval_ms: int = 500
     p6_ocr_min_confidence: float = 0.45
 
-    # P7 Provider 1: Volcengine Ark / Doubao Seed 2.1 Pro. The project stores only the provider choice.
+    # P7 model A: Volcengine Ark / Doubao Seed 2.1 Pro. The project stores only the model choice.
     # Credentials stay server-side and never enter Project/Artifact/ProviderJob payloads.
     p7_doubao_api_key: SecretStr | None = None
     p7_doubao_model: str = "doubao-seed-2-1-pro-260628"
@@ -52,12 +52,13 @@ class Settings(BaseSettings):
     p7_doubao_request_timeout_seconds: float = 1800.0
     p7_doubao_video_fps: float = 1.0
 
-    # P7 Provider 2: user-operated local/shared vLLM OpenAI-compatible service.
-    # 30B-A3B keeps Qwen3-VL video/reasoning capabilities at a much more practical local footprint than 235B.
-    # The vLLM service must share the immutable Episode path and allow local media access.
+    # P7 models B/C: user-operated local/shared vLLM OpenAI-compatible service.
+    # Both read the complete immutable Episode through a local file:// URL. The vLLM service must
+    # share the Episode path and allow local media access.
     p7_qwen_local_base_url: str = "http://127.0.0.1:8000/v1"
     p7_qwen_local_api_key: SecretStr | None = None
-    p7_qwen_local_model: str = "Qwen/Qwen3-VL-30B-A3B-Thinking"
+    p7_qwen38_local_model: str = "Qwen/Qwen3.8-27B"
+    p7_qwen3_vl_8b_local_model: str = "Qwen/Qwen3-VL-8B-Thinking"
     p7_qwen_local_request_timeout_seconds: float = 3600.0
 
     @model_validator(mode="after")
@@ -86,6 +87,10 @@ class Settings(BaseSettings):
             raise ValueError("p7_qwen_local_request_timeout_seconds must be positive")
         if not self.p7_qwen_local_base_url.startswith(("http://", "https://")):
             raise ValueError("p7_qwen_local_base_url must be http(s)")
+        if not self.p7_qwen38_local_model.strip():
+            raise ValueError("p7_qwen38_local_model must not be empty")
+        if not self.p7_qwen3_vl_8b_local_model.strip():
+            raise ValueError("p7_qwen3_vl_8b_local_model must not be empty")
         return self
 
     def ensure_runtime_directories(self) -> None:
