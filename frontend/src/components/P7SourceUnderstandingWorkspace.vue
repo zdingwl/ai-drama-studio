@@ -23,6 +23,9 @@ const errorMessage = ref('')
 const savedMessage = ref('')
 const runtimeSavedMessage = ref('')
 const panelKey = ref(0)
+const showDoubaoApiKey = ref(false)
+const showQwen38ApiKey = ref(false)
+const showQwen3Vl8bApiKey = ref(false)
 
 const visible = computed(() => project.value?.project_type === 'REPLICA' || project.value?.project_type === 'REDRAW')
 const changed = computed(() => Boolean(project.value && selected.value !== project.value.source_understanding_provider))
@@ -174,7 +177,7 @@ onMounted(load)
 
         <div v-if="runtimeDraft" class="runtime-body">
           <p class="runtime-note">
-            这里是本地运行工具配置，不属于 Project 业务数据。保存后后端立即使用新值；刷新页面会直接回显当前明文配置。
+            这里是本地运行工具配置，不属于 Project 业务数据。保存后后端立即使用新值；API Key 默认隐藏，点击“显示”可查看本机保存的原文。
           </p>
           <p v-if="runtimeSavedMessage" class="success">{{ runtimeSavedMessage }}</p>
 
@@ -186,14 +189,26 @@ onMounted(load)
               </header>
               <label>
                 <span>Ark API Key</span>
-                <input
-                  v-model="runtimeDraft.doubao.api_key"
-                  data-testid="doubao-api-key"
-                  type="text"
-                  autocomplete="off"
-                  spellcheck="false"
-                  placeholder="填入火山方舟 API Key"
-                />
+                <span class="secret-input">
+                  <input
+                    v-model="runtimeDraft.doubao.api_key"
+                    data-testid="doubao-api-key"
+                    :type="showDoubaoApiKey ? 'text' : 'password'"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="填入火山方舟 API Key"
+                  />
+                  <button
+                    type="button"
+                    class="secret-toggle"
+                    data-testid="toggle-doubao-api-key"
+                    :aria-label="showDoubaoApiKey ? '隐藏 Ark API Key' : '显示 Ark API Key'"
+                    :aria-pressed="showDoubaoApiKey"
+                    @click="showDoubaoApiKey = !showDoubaoApiKey"
+                  >
+                    {{ showDoubaoApiKey ? '隐藏' : '显示' }}
+                  </button>
+                </span>
               </label>
               <label>
                 <span>Model / Endpoint ID</span>
@@ -230,7 +245,25 @@ onMounted(load)
               </label>
               <label>
                 <span>API Key（可选）</span>
-                <input v-model="runtimeDraft.qwen38.api_key" type="text" autocomplete="off" spellcheck="false" />
+                <span class="secret-input">
+                  <input
+                    v-model="runtimeDraft.qwen38.api_key"
+                    data-testid="qwen38-api-key"
+                    :type="showQwen38ApiKey ? 'text' : 'password'"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <button
+                    type="button"
+                    class="secret-toggle"
+                    data-testid="toggle-qwen38-api-key"
+                    :aria-label="showQwen38ApiKey ? '隐藏 Qwen3.8 API Key' : '显示 Qwen3.8 API Key'"
+                    :aria-pressed="showQwen38ApiKey"
+                    @click="showQwen38ApiKey = !showQwen38ApiKey"
+                  >
+                    {{ showQwen38ApiKey ? '隐藏' : '显示' }}
+                  </button>
+                </span>
               </label>
             </article>
 
@@ -249,7 +282,25 @@ onMounted(load)
               </label>
               <label>
                 <span>API Key（可选）</span>
-                <input v-model="runtimeDraft.qwen3_vl_8b.api_key" type="text" autocomplete="off" spellcheck="false" />
+                <span class="secret-input">
+                  <input
+                    v-model="runtimeDraft.qwen3_vl_8b.api_key"
+                    data-testid="qwen3-vl-8b-api-key"
+                    :type="showQwen3Vl8bApiKey ? 'text' : 'password'"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <button
+                    type="button"
+                    class="secret-toggle"
+                    data-testid="toggle-qwen3-vl-8b-api-key"
+                    :aria-label="showQwen3Vl8bApiKey ? '隐藏 Qwen3-VL-8B API Key' : '显示 Qwen3-VL-8B API Key'"
+                    :aria-pressed="showQwen3Vl8bApiKey"
+                    @click="showQwen3Vl8bApiKey = !showQwen3Vl8bApiKey"
+                  >
+                    {{ showQwen3Vl8bApiKey ? '隐藏' : '显示' }}
+                  </button>
+                </span>
               </label>
             </article>
           </div>
@@ -415,6 +466,31 @@ onMounted(load)
   background: #fff;
   color: #202a36;
   font: inherit;
+}
+
+.secret-input {
+  position: relative;
+  display: block;
+}
+
+.secret-input input {
+  padding-right: 58px;
+}
+
+.secret-toggle {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  transform: translateY(-50%);
+  min-width: 44px;
+  border: 0;
+  border-radius: 7px;
+  padding: 5px 7px;
+  background: #eef2f6;
+  color: #405064;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .runtime-pair {
