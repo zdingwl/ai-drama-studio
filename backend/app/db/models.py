@@ -11,6 +11,7 @@ from app.evidence.models import (
 )
 from app.preprocessing.models import ShotAnchor, ShotBoundarySet
 from app.projects.models import Project
+from app.shot_breakdown.models import SourceShotFactsRevision
 from app.skills.plan_models import ProjectExecutionPlanRecord, ProjectExecutionPlanStepRecord
 from app.sources.models import Episode, SourceAsset, SourceDocument
 from app.understanding.models import SourceBibleRevision
@@ -34,6 +35,7 @@ __all__ = [
     "SourceDialogueUtterance",
     "SourceDocument",
     "SourceEvidenceSet",
+    "SourceShotFactsRevision",
     "SourceVisualTextSpan",
     "Task",
 ]

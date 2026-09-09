@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ShotBreakdownResultStatus(StrEnum):
@@ -16,7 +16,11 @@ class DialogueDelivery(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
-class CameraLanguage(BaseModel):
+class _StrictProviderModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class CameraLanguage(_StrictProviderModel):
     shot_size: str = Field(min_length=1, max_length=120)
     composition: str = Field(min_length=1, max_length=300)
     angle_or_type: str = Field(min_length=1, max_length=160)
@@ -24,26 +28,26 @@ class CameraLanguage(BaseModel):
     focal_length_dof: str = Field(min_length=1, max_length=240)
 
 
-class ShotSubjectBindingsSemantic(BaseModel):
-    character_ids: list[str] = Field(default_factory=list)
-    scene_ids: list[str] = Field(default_factory=list)
-    prop_ids: list[str] = Field(default_factory=list)
-    unresolved_subject_notes: list[str] = Field(default_factory=list)
+class ShotSubjectBindingsSemantic(_StrictProviderModel):
+    character_ids: list[str] = Field(default_factory=list, max_length=40)
+    scene_ids: list[str] = Field(default_factory=list, max_length=20)
+    prop_ids: list[str] = Field(default_factory=list, max_length=40)
+    unresolved_subject_notes: list[str] = Field(default_factory=list, max_length=40)
 
 
-class ShotDialogueAnnotationSemantic(BaseModel):
+class ShotDialogueAnnotationSemantic(_StrictProviderModel):
     utterance_number: int = Field(ge=1)
     delivery: DialogueDelivery = DialogueDelivery.UNKNOWN
 
 
-class SourceShotSemantic(BaseModel):
+class SourceShotSemantic(_StrictProviderModel):
     shot_number: int = Field(ge=1)
     visual_description: str = Field(min_length=1, max_length=1200)
     camera_language: CameraLanguage
     bindings: ShotSubjectBindingsSemantic = Field(default_factory=ShotSubjectBindingsSemantic)
-    dialogue_annotations: list[ShotDialogueAnnotationSemantic] = Field(default_factory=list)
-    sound_effects: list[str] = Field(default_factory=list)
-    ambience: list[str] = Field(default_factory=list)
+    dialogue_annotations: list[ShotDialogueAnnotationSemantic] = Field(default_factory=list, max_length=120)
+    sound_effects: list[str] = Field(default_factory=list, max_length=40)
+    ambience: list[str] = Field(default_factory=list, max_length=40)
 
     @model_validator(mode="after")
     def unique_dialogue_annotations(self) -> "SourceShotSemantic":
@@ -53,8 +57,8 @@ class SourceShotSemantic(BaseModel):
         return self
 
 
-class EpisodeShotBreakdownSemantic(BaseModel):
-    shots: list[SourceShotSemantic] = Field(default_factory=list)
+class EpisodeShotBreakdownSemantic(_StrictProviderModel):
+    shots: list[SourceShotSemantic] = Field(min_length=1, max_length=5000)
 
     @model_validator(mode="after")
     def unique_shot_numbers(self) -> "EpisodeShotBreakdownSemantic":
@@ -116,6 +120,12 @@ class SourceShotFact(BaseModel):
     def valid_anchor_range(self) -> "SourceShotFact":
         if self.end_us <= self.start_us or self.duration_us != self.end_us - self.start_us:
             raise ValueError("shot time range must exactly match the authoritative anchor")
+        utterance_ids = [item.utterance_id for item in self.dialogue]
+        if len(utterance_ids) != len(set(utterance_ids)):
+            raise ValueError("canonical dialogue binding must be unique per utterance")
+        for binding in self.dialogue:
+            if binding.overlap_start_us < self.start_us or binding.overlap_end_us > self.end_us:
+                raise ValueError("dialogue overlap must stay inside authoritative shot range")
         return self
 
 
@@ -123,13 +133,30 @@ class SourceShotFactsEpisode(BaseModel):
     episode_id: str
     episode_order: int = Field(ge=1)
     source_filename: str
-    shots: list[SourceShotFact] = Field(default_factory=list)
+    shots: list[SourceShotFact] = Field(min_length=1)
 
 
 class SourceShotFactsContent(BaseModel):
     schema_version: str = "1.0"
     title: str = "逐镜精细拉片"
-    episodes: list[SourceShotFactsEpisode] = Field(default_factory=list)
+    episodes: list[SourceShotFactsEpisode] = Field(min_length=1)
+
+
+class ShotBreakdownEpisodeInputProvenance(BaseModel):
+    episode_id: str
+    shot_boundary_set_id: str
+    shot_boundary_fingerprint: str
+    source_evidence_set_id: str
+    source_evidence_fingerprint: str
+
+
+class ShotBreakdownProviderJobProvenance(BaseModel):
+    provider_job_id: str
+    episode_id: str
+    provider: str
+    model: str
+    payload_fingerprint: str
+    remote_job_id: str | None = None
 
 
 class ShotBreakdownProvenance(BaseModel):
@@ -141,8 +168,8 @@ class ShotBreakdownProvenance(BaseModel):
     shot_anchors_fingerprint: str
     source_dialogue_artifact_id: str
     source_dialogue_fingerprint: str
-    episode_evidence_sets: list[dict] = Field(default_factory=list)
-    provider_jobs: list[dict] = Field(default_factory=list)
+    episode_inputs: list[ShotBreakdownEpisodeInputProvenance] = Field(default_factory=list)
+    provider_jobs: list[ShotBreakdownProviderJobProvenance] = Field(default_factory=list)
     provider: str | None = None
     model: str | None = None
     prompt_version: str

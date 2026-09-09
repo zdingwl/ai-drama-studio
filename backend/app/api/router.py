@@ -4,6 +4,7 @@ from app.api.routes.evidence import router as evidence_router
 from app.api.routes.health import router as health_router
 from app.api.routes.preprocessing import router as preprocessing_router
 from app.api.routes.projects import router as projects_router
+from app.api.routes.shot_breakdown import router as shot_breakdown_router
 from app.api.routes.skills import router as skills_router
 from app.api.routes.sources import router as sources_router
 from app.api.routes.tasks import router as tasks_router
@@ -17,4 +18,5 @@ api_router.include_router(sources_router)
 api_router.include_router(preprocessing_router)
 api_router.include_router(evidence_router)
 api_router.include_router(understanding_router)
+api_router.include_router(shot_breakdown_router)
 api_router.include_router(tasks_router)
