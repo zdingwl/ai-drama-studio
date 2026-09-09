@@ -1,7 +1,7 @@
 # P6 Canonical Evidence v2 与 P8 最终验收整改
 
 > 日期：2026-09-09  
-> 状态：工程实现完成；真实 P6 v2 → P7 → P8 恢复验收待执行  
+> 状态：工程实现完成；真实 P6 v2 → P7 → P8 恢复链已通过；最终 28 镜音画人工验收待执行  
 > 触发原因：P8 真实短剧程序验收通过，但最终人工逐镜音画检查发现 P6 canonical dialogue 存在过度合并与明显 ASR 错词，导致 P8 虽严格原样绑定 P6，仍无法作为最终可靠逐镜对白事实输入。
 
 ---
@@ -179,7 +179,7 @@ migration head      = 0012_p6_canonical_evidence_v2
 latest verified CI = V3 CI #292 PASS
 ```
 
-工程通过只证明代码与迁移契约成立，**不等于真实短剧的 P6 v2 内容质量已经通过**。真实质量仍必须在本机同一 Episode 上重新执行和人工核对。
+工程通过只证明代码与迁移契约成立，不等于真实短剧的内容质量已经通过；真实恢复链结果见下一节。
 
 ---
 
@@ -194,11 +194,160 @@ latest verified CI = V3 CI #292 PASS
 5. P8 28 Shot 的 dialogue / voiceover / offscreen binding 可用于后续制作；
 6. 最终人工音画逐镜验收通过。
 
-在以上验收通过前：
+前 1–5 项已在 2026-09-09 真实恢复链中完成程序与内容复核；第 6 项仍待用户逐镜播放原片 / Reference Clip 完成。
+
+在最终音画人工验收通过前：
 
 ```text
-SOURCE_DIALOGUE_EVIDENCE = AVAILABLE   （已有能力，但本次真实样例需 v2 质量复验）
+SOURCE_DIALOGUE_EVIDENCE = AVAILABLE
 SHOT_BREAKDOWN            = PLANNED
 ```
 
 禁止进入 P9，禁止提前把 `SHOT_BREAKDOWN` 改为 `AVAILABLE`。
+
+---
+
+# 9. 2026-09-09 真实恢复链结果
+
+真实项目：
+
+```text
+project_id = 99f7036f-cce8-4700-a717-683278107866
+Episode    = 货到付款惩治隔壁大妈-第01集.mp4
+时长       = 66.36 秒
+Shot       = 28
+Migration  = 0012_p6_canonical_evidence_v2
+```
+
+迁移后旧链正确失效：
+
+- `SOURCE_VIDEO rev1` / `SHOT_ANCHORS rev1` 保持 CURRENT；
+- 旧 `SourceEvidenceSet rev1` 不再 current；
+- `SOURCE_DIALOGUE rev1` STALE；
+- `SOURCE_BIBLE / STORY_SKELETON / RHYTHM_SKELETON rev1–3` STALE；
+- `SOURCE_SHOT_FACTS rev1` STALE；
+- Project current plan 清空。
+
+恢复完成后的 CURRENT：
+
+```text
+SOURCE_DIALOGUE rev2
+SOURCE_BIBLE rev4
+STORY_SKELETON rev4
+RHYTHM_SKELETON rev4
+SOURCE_SHOT_FACTS rev2
+```
+
+## 9.1 P6 v2
+
+真实 P6 结果：
+
+```text
+Raw ASR              = 56
+Canonical dialogue   = 56
+Canonical OCR        = 73
+ASR model            = large-v3-turbo
+Evidence profile     = p6-source-evidence-v2
+Canonical policy     = segment-preserving-dialogue-v2
+timeline_source      = FULL_EPISODE
+```
+
+与旧 v1 相比：
+
+```text
+v1: 50 raw → 8 canonical
+v2: 56 raw → 56 canonical
+```
+
+真实复核确认：
+
+- 00:00–00:15 多轮争执不再串成长 utterance；
+- 00:15–00:22 要钱、报数、辱骂、报警回应已分离；
+- 00:22–00:43 游戏喊话、徐然叙述、周宇回应已分离；
+- 最长 canonical 约 1.82 秒；
+- 不再存在约 20 秒的多人 canonical utterance；
+- P8 对话 overlap 已基于短 canonical utterance 正常工作。
+
+ASR 质量较 v1 有实质改善：
+
+- `这花就在走了` → `这花就在走廊`；
+- `一树花` → `一束花`；
+- `收电人` → 当前仍为 `收店人`，同时间 OCR 明确为 `收件人`；
+- `临包入住的坠须` → 当前为 `我拿拎包入住的坠绪`，同时间 OCR 为 `我那拎包入住的赘婿`。
+
+片尾另有两条极短重复 ASR：
+
+```text
+66.020–66.040  你还真去报警啊
+66.040–66.220  你还真去报警啊
+```
+
+当前定级：
+
+- MEDIUM：两处明显 ASR 错词，最终人工音画验收必须确认；
+- LOW：片尾两条极短重复 ASR，需人工确认是否为有效对白；
+- BLOCKER / HIGH：未发现。
+
+这些残余问题不得由 P7 / P8 静默改写 canonical text，也不得通过真实样例硬编码词表修正。
+
+## 9.2 P7 恢复
+
+真实 P7 已基于新 P6 rev2 重跑：
+
+```text
+SOURCE_BIBLE rev4      CURRENT
+STORY_SKELETON rev4    CURRENT
+RHYTHM_SKELETON rev4   CURRENT
+Provider               Doubao Seed 2.1 Pro / Volcengine Ark
+```
+
+P7 provenance 正确引用 CURRENT：
+
+- `SOURCE_VIDEO rev1`；
+- `SOURCE_DIALOGUE rev2`；
+- `SHOT_ANCHORS rev1`；
+- `SourceEvidenceSet rev2`。
+
+故事、人物、关系、场景、道具以及 Story / Rhythm 在新 Evidence 上仍成立。
+
+## 9.3 P8 恢复
+
+真实 P8 已基于新 CURRENT 上游重跑：
+
+```text
+SOURCE_SHOT_FACTS rev2 CURRENT
+旧 rev1                STALE
+```
+
+程序一致性结果：
+
+- 28/28 Shot 集合、编号、`shot_anchor_id` 完整；
+- 28/28 start / end / duration 与 P5 完全一致；
+- 28/28 dialogue overlap 集合一致；
+- dialogue text 与 P6 v2 canonical 逐字一致；
+- OCR evidence ID 全部属于 CURRENT P6；
+- character / scene / prop 全部属于 SOURCE_BIBLE rev4；
+- 越界 candidate = 0；
+- 引用 STALE 上游 = 0；
+- Task / Artifact fingerprint 一致；
+- provenance / ProviderJob / Artifact Graph / SUPERSEDES 完整；
+- orphan revision / relation = 0；
+- 同类型多个 CURRENT = 0。
+
+完整工程测试也再次通过：backend 104 tests、frontend 11 files / 38 tests、typecheck、production build 均 PASS。
+
+因此恢复链当前判定：
+
+```text
+P6 v2 真实恢复与分段整改      PASS
+P7 新 CURRENT 恢复            PASS
+P8 工程验收                   PASS
+P8 真实数据库一致性            PASS
+P8 真实 Provider 执行          PASS
+P8 最终用户逐镜音画人工验收     PENDING
+
+SHOT_BREAKDOWN = PLANNED
+P9             = 禁止进入
+```
+
+下一步只做最终 28 Shot 音画人工验收；在用户签字前不再扩大工程范围。
