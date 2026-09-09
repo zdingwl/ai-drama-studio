@@ -53,7 +53,10 @@ class FasterWhisperAsrProvider:
             "device": settings.p6_asr_device,
             "compute_type": settings.p6_asr_compute_type,
             "vad_filter": True,
+            "vad_min_silence_duration_ms": 500,
             "word_timestamps": True,
+            "beam_size": 5,
+            "condition_on_previous_text": True,
             "continuous_episode_input": True,
         }
         self._model = None
@@ -100,8 +103,10 @@ class FasterWhisperAsrProvider:
                 str(source_path),
                 language=language,
                 vad_filter=True,
+                vad_parameters={"min_silence_duration_ms": 500},
                 word_timestamps=True,
                 beam_size=5,
+                condition_on_previous_text=True,
             )
             output: list[AsrSegmentResult] = []
             detected_language = getattr(info, "language", None) or language
@@ -131,6 +136,7 @@ class FasterWhisperAsrProvider:
                             "seek": getattr(segment, "seek", None),
                             "avg_logprob": avg_logprob,
                             "no_speech_prob": getattr(segment, "no_speech_prob", None),
+                            "vad_min_silence_duration_ms": 500,
                         },
                     )
                 )
