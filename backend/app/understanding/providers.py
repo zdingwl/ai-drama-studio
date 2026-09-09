@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 import httpx
 from arkruntime import Ark
+from pydantic import SecretStr
 
 from app.core.config import Settings
 from app.core.errors import AppError
@@ -236,7 +237,6 @@ class DoubaoSeedSourceEpisodeUnderstandingProvider:
                 try:
                     client.files.delete(uploaded_file_id)
                 except Exception:
-                    # Cleanup must not turn a valid SOURCE_BIBLE result into a failed task.
                     pass
 
 
@@ -249,10 +249,14 @@ class LocalQwenSourceEpisodeUnderstandingProvider:
         *,
         selection: SourceUnderstandingProvider,
         model_name: str,
+        base_url: str,
+        api_key: SecretStr | None,
     ):
         self.settings = settings
         self.selection = selection
         self.model_name = model_name
+        self.base_url = base_url
+        self.api_key = api_key
 
     @property
     def profile(self) -> dict:
@@ -261,7 +265,7 @@ class LocalQwenSourceEpisodeUnderstandingProvider:
             "provider": self.provider_name,
             "model": self.model_name,
             "mode": "LOCAL_OPENAI_COMPATIBLE",
-            "base_url": self.settings.p7_qwen_local_base_url,
+            "base_url": self.base_url,
             "video_input": "VLLM_FILE_URL_FULL_EPISODE",
             "structured_output": "JSON_SCHEMA_PROMPT_PLUS_SERVER_VALIDATION",
             "prompt_version": "p7-source-bible-v1",
@@ -270,14 +274,14 @@ class LocalQwenSourceEpisodeUnderstandingProvider:
     def analyze(self, payload: EpisodeUnderstandingInput) -> EpisodeUnderstandingProviderResult:
         source_uri = payload.source_path.resolve().as_uri()
         headers = {"Content-Type": "application/json"}
-        if self.settings.p7_qwen_local_api_key is not None:
-            key = self.settings.p7_qwen_local_api_key.get_secret_value().strip()
+        if self.api_key is not None:
+            key = self.api_key.get_secret_value().strip()
             if key:
                 headers["Authorization"] = f"Bearer {key}"
         timeout = httpx.Timeout(self.settings.p7_qwen_local_request_timeout_seconds)
         with httpx.Client(timeout=timeout) as client:
             response = client.post(
-                f"{self.settings.p7_qwen_local_base_url.rstrip('/')}/chat/completions",
+                f"{self.base_url.rstrip('/')}/chat/completions",
                 headers=headers,
                 json={
                     "model": self.model_name,
@@ -319,12 +323,20 @@ def build_source_episode_understanding_provider(
             settings,
             selection=selection,
             model_name=settings.p7_qwen38_local_model,
+            base_url=settings.p7_qwen38_local_base_url,
+            api_key=settings.p7_qwen38_local_api_key,
         )
-    if selection == SourceUnderstandingProvider.QWEN3_VL_8B_THINKING_LOCAL:
+    if selection in {
+        SourceUnderstandingProvider.QWEN3_VL_8B_THINKING_LOCAL,
+        SourceUnderstandingProvider.QWEN3_VL_LOCAL,
+    }:
+        effective_selection = SourceUnderstandingProvider.QWEN3_VL_8B_THINKING_LOCAL
         return LocalQwenSourceEpisodeUnderstandingProvider(
             settings,
-            selection=selection,
+            selection=effective_selection,
             model_name=settings.p7_qwen3_vl_8b_local_model,
+            base_url=settings.p7_qwen3_vl_8b_local_base_url,
+            api_key=settings.p7_qwen3_vl_8b_local_api_key,
         )
     raise AppError(
         "P7_PROVIDER_UNSUPPORTED",
