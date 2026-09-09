@@ -46,7 +46,7 @@ class FakeOcrProvider:
 
 class FakeUnderstandingProvider:
     provider_name = "fake-multimodal"
-    model_name = "fake-full-episode-v1"
+    model_name = "fake-full-episode-v2"
 
     def __init__(self, factory: sessionmaker[Session], *, hallucinate_evidence: bool = False):
         self.factory = factory
@@ -60,7 +60,11 @@ class FakeUnderstandingProvider:
             "provider": self.provider_name,
             "model": self.model_name,
             "video_input": "FULL_EPISODE_FILE",
-            "structured_output": "JSON_SCHEMA",
+            "structured_output": "JSON_SCHEMA_GROUNDED_V2",
+            "prompt_version": "p7-source-bible-v2",
+            "professional_skill_id": "source-video-understanding",
+            "professional_skill_version": "1.1.0",
+            "grounding_contract": "grounded-source-truth-v2",
         }
 
     def analyze(self, payload: EpisodeUnderstandingInput) -> EpisodeUnderstandingProviderResult:
@@ -79,15 +83,29 @@ class FakeUnderstandingProvider:
         dialogue_ids = [item["id"] for item in payload.evidence_payload["dialogue"]]
         visual_ids = [item["id"] for item in payload.evidence_payload["visual_text"]]
         dialogue_ref = "invented-evidence-id" if self.hallucinate_evidence else dialogue_ids[0]
+        full_video_fact = {
+            "support_level": "FACT",
+            "video_time_ranges": [{"start_us": 0, "end_us": payload.duration_us}],
+        }
+        scene_event_fact = {
+            "support_level": "FACT",
+            "video_time_ranges": [{"start_us": 150_000, "end_us": 1_150_000}],
+        }
         semantic = EpisodeUnderstandingSemantic.model_validate(
             {
                 "effective_content_range": {"start_us": 0, "end_us": payload.duration_us},
                 "visual_format_notes": ["竖屏短剧，快节奏剪辑"],
                 "overall_analysis": {
                     "story_summary": "女主赴约后发现旧事再次牵动当前冲突。",
-                    "story_background": "现代都市，角色之间有未解决的三年前旧事。",
+                    "story_background": "现代都市会面场景，画面文字提示三年前的旧事与当前会面有关。",
+                    "story_background_grounding": {
+                        "support_level": "FACT",
+                        "visual_text_evidence_ids": visual_ids[:1],
+                        "video_time_ranges": [{"start_us": 0, "end_us": payload.duration_us}],
+                    },
                     "genre": ["都市", "情感"],
-                    "world_rules": ["现实都市环境"],
+                    "world_rules": [],
+                    "world_rule_groundings": [],
                     "narrative_structure": "以赴约为开端，通过旧事提示建立冲突。",
                     "audiovisual_style": "竖屏近景为主，反应镜头推动情绪。",
                     "rhythm_overview": "开场快速建立信息，中段留反应停顿。",
@@ -106,7 +124,8 @@ class FakeUnderstandingProvider:
                 "characters": [
                     {
                         "character_id": "char-female-lead",
-                        "name": "女主候选",
+                        "name": "未命名女性A",
+                        "identity_grounding": full_video_fact,
                         "story_function": "当前冲突的主要承受者与推进者。",
                         "appearance_baseline": "年轻女性，都市装束。",
                         "states": [
@@ -118,8 +137,9 @@ class FakeUnderstandingProvider:
                     },
                     {
                         "character_id": "char-counterpart",
-                        "name": "对手候选",
-                        "story_function": "抛出旧事并推动冲突。",
+                        "name": "未命名角色B",
+                        "identity_grounding": full_video_fact,
+                        "story_function": "与主角会面并推动当前信息交换。",
                         "appearance_baseline": "都市装束。",
                         "states": [],
                     },
@@ -128,8 +148,9 @@ class FakeUnderstandingProvider:
                     {
                         "source_character_id": "char-female-lead",
                         "target_character_id": "char-counterpart",
-                        "relationship": "存在旧日纠葛，当前关系紧张。",
-                        "change_summary": "见面后矛盾重新显性化。",
+                        "relationship": "当前同场会面的两名角色",
+                        "grounding": scene_event_fact,
+                        "change_summary": "会面后旧事相关信息被重新提起。",
                     }
                 ],
                 "scenes": [
@@ -139,6 +160,7 @@ class FakeUnderstandingProvider:
                         "time_ranges": [{"start_us": 0, "end_us": payload.duration_us}],
                         "spatial_relationship": "两名主要角色在同一会面空间对峙。",
                         "environment_details": "现代室内环境。",
+                        "grounding": full_video_fact,
                     }
                 ],
                 "key_props": [],
@@ -148,13 +170,19 @@ class FakeUnderstandingProvider:
                         "time_range": {"start_us": 150_000, "end_us": 1_150_000},
                         "summary": "两人见面并开始谈及旧事。",
                         "participants": ["char-female-lead", "char-counterpart"],
-                        "consequences": "旧矛盾被重新打开。",
+                        "consequences": "三年前的旧事成为当前会面的冲突信息。",
+                        "grounding": {
+                            "support_level": "FACT",
+                            "dialogue_evidence_ids": dialogue_ids[:1],
+                            "visual_text_evidence_ids": visual_ids[:1],
+                            "video_time_ranges": [{"start_us": 150_000, "end_us": 1_150_000}],
+                        },
                     }
                 ],
                 "emotion_timeline": [
                     {
                         "time_range": {"start_us": 150_000, "end_us": 1_150_000},
-                        "subject": "女主候选",
+                        "subject": "未命名女性A",
                         "emotion": "警惕",
                         "change": "从克制转向明显防御。",
                     }
@@ -326,12 +354,16 @@ def test_p7_uses_full_episode_provider_job_first_and_publishes_typed_artifacts(
     assert result.status_code == 200, result.text
     bible = result.json()
     assert bible["status"] == "CURRENT" and bible["revision"] == 1
-    assert bible["content"]["schema_version"] == "1.0"
+    assert bible["content"]["schema_version"] == "1.1"
     assert bible["content"]["episodes"][0]["material_baseline"]["episode_id"] == episode["id"]
     assert bible["content"]["episodes"][0]["timed_script"][0]["dialogue_evidence_ids"] == [evidence["dialogue"][0]["id"]]
     assert bible["provenance"]["source_dialogue_artifact_id"]
     assert bible["provenance"]["episode_evidence_sets"][0]["source_evidence_set_id"]
     assert len(bible["provenance"]["provider_jobs"]) == 1
+    assert bible["provenance"]["prompt_version"] == "p7-source-bible-v2"
+    assert bible["provenance"]["professional_skill_id"] == "source-video-understanding"
+    assert bible["provenance"]["professional_skill_version"] == "1.1.0"
+    assert bible["provenance"]["grounding_contract"] == "grounded-source-truth-v2"
     assert bible["story_skeleton_artifact_id"]
     assert bible["rhythm_skeleton_artifact_id"]
 
@@ -340,6 +372,7 @@ def test_p7_uses_full_episode_provider_job_first_and_publishes_typed_artifacts(
     assert {"SOURCE_BIBLE", "STORY_SKELETON", "RHYTHM_SKELETON"}.issubset(current_types)
     bible_node = next(node for node in graph["nodes"] if node["id"] == bible["artifact_id"])
     assert "content" not in bible_node["metadata_json"]
+    assert bible_node["metadata_json"]["grounding_contract"] == "grounded-source-truth-v2"
 
 
 def test_p7_rejects_hallucinated_evidence_reference_and_does_not_publish(
