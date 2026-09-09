@@ -1,9 +1,9 @@
 {
   "id": "source-video-understanding",
   "name": "整集原片理解",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "category": "source-understanding",
-  "description": "基于完整 Episode、CURRENT Source Evidence 与可选 Shot Anchors，建立可追溯的 SOURCE_BIBLE、Story Skeleton 与 Rhythm Skeleton；严格区分 Source Truth、分析推断与未知项。",
+  "description": "基于完整 Episode、CURRENT Source Evidence 与可选 Shot Anchors，建立可追溯的 SOURCE_BIBLE、Story Skeleton 与 Rhythm Skeleton；严格区分 Source Truth、分析推断与未知项，并禁止 UNKNOWN 承载确定性事实。",
   "when_to_use": [
     "REPLICA / REDRAW 已有完整 SOURCE_VIDEO 与 CURRENT Source Evidence，需要形成整集源作概览分析"
   ],
@@ -50,22 +50,25 @@
       "id": "grounding_validation",
       "phase": "校验",
       "title": "事实与推断校验",
-      "description": "对容易被合理补全的身份、关系、背景、世界规则和道具作用执行 FACT / INFERENCE / UNKNOWN 检查；FACT 必须存在 Evidence 或完整 Episode 时间依据。",
+      "description": "执行 grounded-source-truth-v2：FACT / INFERENCE 必须有支持，UNKNOWN 不得承载确定性正文；世界规则、人物身份、关系、场景与事件按可发布 Source Facts 强校验。",
       "capabilities": ["EPISODE_UNDERSTANDING"],
       "requires": ["SOURCE_BIBLE", "SOURCE_DIALOGUE"],
       "produces": ["SOURCE_BIBLE"]
     }
   ],
   "fact_levels": ["FACT", "INFERENCE", "UNKNOWN"],
+  "grounding_contract": "grounded-source-truth-v2",
   "provider_rules": [
     "完整 Episode 是 Source Truth，必须直接理解完整时间轴，不得拆成 Reference Clip 后分别猜剧情再拼接。",
     "CURRENT P6 dialogue / OCR 是 canonical 文字事实源，不得重新转写、润色或覆盖。",
-    "FACT 只能来自原片直接可见内容、CURRENT dialogue evidence、CURRENT visual text evidence；FACT 必须给出 Evidence ID 或完整 Episode 的视频时间窗口依据。",
-    "INFERENCE 必须保持推断身份，不能改写成人物历史、关系事实、事件原因或客观背景。",
-    "无法可靠确认时使用 UNKNOWN 或稳定候选名；宁可 UNKNOWN，也不要合理补全。",
-    "world_rules 只描述本作品内部已经成立并约束剧情的源作事实；禁止社会学泛化、刻板印象、道德训诫和法律结论；没有明确规则时输出空数组。",
-    "人物姓名、身份、夫妻/亲属/邻居/同事等关系、婚姻年限、职业与历史经历必须由原片或 Evidence 支持。",
-    "道具 appearance_state 可以记录直接视觉事实；story_function 没有明确依据时写未确认明确剧情功能，不得因为道具出现就补写因果。",
+    "FACT 与 INFERENCE 都必须给出 CURRENT Evidence ID 或完整 Episode 视频时间窗口依据；UNKNOWN 不得携带这些依据。",
+    "UNKNOWN 不是已填写事实字段的通行证：无法确认的可选 claim 应省略或置空，不能一边写确定性正文一边标 UNKNOWN。",
+    "story_background 只写本 Episode 可以确认的背景事实，grounding 必须为 FACT；无法确认的人物历史直接不要写。",
+    "world_rules 只描述本作品内部已经成立并约束剧情的源作事实；每条都必须与同索引 FACT grounding 一一对应；禁止社会学泛化、刻板印象、道德训诫和法律结论；没有明确规则时输出空数组。",
+    "每个 CharacterProfile 的 identity_grounding 必须为 FACT；真实姓名无法确认时可使用稳定未命名候选标签，但不能把猜测姓名当事实。",
+    "relationships 只发布有直接依据的 FACT 关系；夫妻/亲属/邻居/同事/婚姻年限/赘婿等如果没有直接依据则不创建该关系。",
+    "scene.grounding 与 story_event.grounding 必须为 FACT，并可使用完整 Episode 的明确视频时间范围作为直接视觉依据。",
+    "道具 appearance_state 必须有 appearance_grounding=FACT；story_function 可为 FACT 或有支持的 INFERENCE；无法确认时 story_function=null 且 story_function_grounding=UNKNOWN，禁止用普通生活道具硬补事件因果。",
     "timed_script 是语义剧情窗口，不是 Shot Boundary；允许跨多个 Shot 或轻微重叠。",
     "Story / Rhythm 只总结原片真实存在的叙事与节奏，不为了凑结构创造不存在的反转、爽点或人物动机。",
     "P7 不输出逐镜景别、构图、运镜、焦距、逐镜主体绑定或逐镜音效；这些属于 P8。",
@@ -77,13 +80,16 @@
     "canonical Source Evidence 未被改写",
     "SOURCE_BIBLE 的时间、Evidence 与人物引用合法",
     "关键 source facts 有可追溯依据",
+    "UNKNOWN 没有承载确定性事实",
     "Story / Rhythm 与完整 Episode 一致",
     "没有明显片外补全、社会泛化或法律结论",
     "结果可以作为 P8 的全局上下文"
   ],
   "failure_policy": [
     "不存在的 Evidence ID 必须 fail closed",
-    "FACT 没有 Evidence / 视频时间依据必须 fail closed",
+    "FACT / INFERENCE 没有 Evidence / 视频时间依据必须 fail closed",
+    "UNKNOWN 携带 Evidence 或承载确定性事实必须 fail closed",
+    "world_rules 与 groundings 数量不一致或任意 rule 不是 FACT 必须 fail closed",
     "Provider 输出结构不合法必须 fail closed",
     "上游 Source / Evidence / Provider profile 变化必须拒绝发布旧任务结果",
     "失败不得覆盖旧 CURRENT SOURCE_BIBLE"
