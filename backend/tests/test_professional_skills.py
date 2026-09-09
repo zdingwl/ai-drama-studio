@@ -34,7 +34,7 @@ def test_episode_understanding_skill_manual_and_provider_rules_preserve_source_t
 def test_shot_breakdown_professional_skill_is_machine_loadable() -> None:
     skill = get_professional_skill("shot-breakdown")
 
-    assert skill.version == "1.0.0"
+    assert skill.version == "1.1.0"
     assert skill.required_inputs == (
         ArtifactType.SOURCE_VIDEO,
         ArtifactType.SOURCE_BIBLE,
@@ -54,7 +54,10 @@ def test_shot_breakdown_skill_preserves_p5_p6_p7_authority_and_p9_boundary() -> 
     assert "CURRENT P5" in rules
     assert "CURRENT P6" in rules
     assert "CURRENT SOURCE_BIBLE" in rules
-    assert "不得输出 speaker attribution" in rules
+    assert "dialogue_speakers" in rules
+    assert "speaker_character_id" in rules
+    assert "provisional candidate hint" in rules
+    assert "不得创建 SourceSpeaker" in rules
     assert "Reference Clip" in rules
-    assert "source-bible-shot-facts-v1" in detail.manual
+    assert "source-bible-shot-facts-v2" in detail.manual
     assert "P9" in detail.manual
