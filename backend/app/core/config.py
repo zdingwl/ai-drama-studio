@@ -53,10 +53,11 @@ class Settings(BaseSettings):
     p7_doubao_video_fps: float = 1.0
 
     # P7 Provider 2: user-operated local/shared vLLM OpenAI-compatible service.
+    # 30B-A3B keeps Qwen3-VL video/reasoning capabilities at a much more practical local footprint than 235B.
     # The vLLM service must share the immutable Episode path and allow local media access.
     p7_qwen_local_base_url: str = "http://127.0.0.1:8000/v1"
     p7_qwen_local_api_key: SecretStr | None = None
-    p7_qwen_local_model: str = "Qwen/Qwen3-VL-235B-A22B-Thinking"
+    p7_qwen_local_model: str = "Qwen/Qwen3-VL-30B-A3B-Thinking"
     p7_qwen_local_request_timeout_seconds: float = 3600.0
 
     @model_validator(mode="after")
