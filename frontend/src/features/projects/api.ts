@@ -13,6 +13,12 @@ import type {
 
 export type P4AcceptanceScenario = 'success' | 'retry' | 'resume' | 'dedupe'
 
+type ProjectWithPlanPointer = ProjectRead & {
+  current_plan_id?: string | null
+}
+
+const projectReadInFlight = new Map<string, Promise<ProjectRead>>()
+
 export function listProjects(): Promise<ProjectRead[]> {
   return apiRequest<ProjectRead[]>('/projects')
 }
@@ -25,7 +31,30 @@ export function createProject(payload: ProjectCreatePayload): Promise<ProjectRea
 }
 
 export function getProject(projectId: string): Promise<ProjectRead> {
-  return apiRequest<ProjectRead>(`/projects/${projectId}`)
+  const inFlight = projectReadInFlight.get(projectId)
+  if (inFlight) return inFlight
+
+  let request: Promise<ProjectRead>
+  request = apiRequest<ProjectRead>(`/projects/${projectId}`).finally(() => {
+    if (projectReadInFlight.get(projectId) === request) {
+      projectReadInFlight.delete(projectId)
+    }
+  })
+  projectReadInFlight.set(projectId, request)
+  return request
+}
+
+export async function getProjectPlan(projectId: string): Promise<ProjectExecutionPlan | null> {
+  // ProjectRead already carries the persisted CURRENT plan pointer. When it is
+  // explicitly null, PLAN_NOT_COMPILED is an expected business state rather
+  // than an exceptional network request. Reuse the in-flight project read from
+  // workspace loading, keep GET read-only, and avoid a noisy /plan 404.
+  const project = await getProject(projectId) as ProjectWithPlanPointer
+  if (project.current_plan_id === null) return null
+
+  // `undefined` keeps compatibility with older/mock ProjectRead payloads that
+  // predate current_plan_id; those callers still use the canonical /plan GET.
+  return apiRequest<ProjectExecutionPlan>(`/projects/${projectId}/plan`)
 }
 
 export function updateProject(projectId: string, payload: ProjectUpdatePayload): Promise<ProjectRead> {
@@ -33,10 +62,6 @@ export function updateProject(projectId: string, payload: ProjectUpdatePayload):
     method: 'PATCH',
     body: JSON.stringify(payload),
   })
-}
-
-export function getProjectPlan(projectId: string): Promise<ProjectExecutionPlan> {
-  return apiRequest<ProjectExecutionPlan>(`/projects/${projectId}/plan`)
 }
 
 export function listProjectEpisodes(projectId: string): Promise<EpisodeRead[]> {
