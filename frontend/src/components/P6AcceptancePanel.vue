@@ -185,7 +185,7 @@ onBeforeUnmount(() => {
 
       <div class="panel-body">
         <p class="notice">
-          这里仅用于 P6 人工验收，不是普通用户独立流程。任务直接读取完整 Episode：ASR 连续读取整集音轨，OCR 扫描完整视频时间轴；Shot Anchors 只用于可选采样提示和对白投影。
+          这里仅用于 P6 人工验收，不是普通用户独立流程。任务直接读取完整 Episode：ASR 连续读取整集音轨，OCR 扫描完整视频时间轴；Shot Anchors 只用于可选采样提示和对白投影。高置信字幕与 ASR 发生小范围近似冲突时，只允许 P6 做可追溯的字幕证据裁决，绝不静默覆盖 raw ASR。
         </p>
 
         <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
@@ -221,30 +221,12 @@ onBeforeUnmount(() => {
 
           <template v-if="evidence">
             <div class="metrics">
-              <article>
-                <span>Evidence 状态</span>
-                <strong>{{ evidenceStatusText }}</strong>
-              </article>
-              <article>
-                <span>Episode revision</span>
-                <strong>{{ evidence.revision ?? '—' }}</strong>
-              </article>
-              <article>
-                <span>项目 Artifact revision</span>
-                <strong>{{ evidence.artifact_revision ?? '未发布' }}</strong>
-              </article>
-              <article>
-                <span>Canonical 对白</span>
-                <strong>{{ evidence.dialogue_count }}</strong>
-              </article>
-              <article>
-                <span>OCR 文本段</span>
-                <strong>{{ evidence.visual_text_count }}</strong>
-              </article>
-              <article>
-                <span>Raw ASR / OCR</span>
-                <strong>{{ evidence.raw_asr_segment_count }} / {{ evidence.raw_ocr_observation_count }}</strong>
-              </article>
+              <article><span>Evidence 状态</span><strong>{{ evidenceStatusText }}</strong></article>
+              <article><span>Episode revision</span><strong>{{ evidence.revision ?? '—' }}</strong></article>
+              <article><span>项目 Artifact revision</span><strong>{{ evidence.artifact_revision ?? '未发布' }}</strong></article>
+              <article><span>Canonical 对白</span><strong>{{ evidence.dialogue_count }}</strong></article>
+              <article><span>OCR 文本段</span><strong>{{ evidence.visual_text_count }}</strong></article>
+              <article><span>Raw ASR / OCR</span><strong>{{ evidence.raw_asr_segment_count }} / {{ evidence.raw_ocr_observation_count }}</strong></article>
             </div>
 
             <p v-if="evidence.status === 'CURRENT' && evidence.artifact_revision === null" class="artifact-note">
@@ -256,21 +238,38 @@ onBeforeUnmount(() => {
 
             <div class="acceptance-checklist">
               <strong>人工验收时重点看</strong>
-              <span>① 对白正文与原片连续语义是否一致；② 起止时间是否贴合说话；③ 跨 Shot 的一句话是否仍是一条 canonical dialogue；④ OCR 是否覆盖字幕、字卡等画面文字；⑤ Source 变化后旧结果是否变成 STALE。</span>
+              <span>① 对白正文与原片连续语义是否一致；② 起止时间是否贴合说话；③ 跨 Shot 的一句话是否仍是一条 canonical dialogue；④ 字幕校正是否确有同时间高置信 OCR 依据且保留 ASR 原文；⑤ Source 变化后旧结果是否变成 STALE。</span>
             </div>
 
             <section class="result-section">
               <div class="section-title">
                 <div>
                   <strong>Canonical 对白</strong>
-                  <span>Shot 列只表示时间投影，不复制或改写对白正文</span>
+                  <span>正文是 P6 正式 Source Evidence；发生字幕裁决时同时展示 ASR 原文和 OCR 依据</span>
                 </div>
                 <small>{{ evidence.dialogue.length }} 条</small>
               </div>
               <div v-if="evidence.dialogue.length" class="rows">
-                <article v-for="item in evidence.dialogue" :key="item.id" class="result-row">
+                <article
+                  v-for="item in evidence.dialogue"
+                  :key="item.id"
+                  class="result-row"
+                  :class="{ adjudicated: item.text_source === 'OCR_SUBTITLE_ADJUDICATED' }"
+                >
                   <div class="time">{{ formatTime(item.start_us) }} → {{ formatTime(item.end_us) }}</div>
-                  <p>{{ item.text }}</p>
+                  <div class="dialogue-copy">
+                    <div v-if="item.text_source === 'OCR_SUBTITLE_ADJUDICATED'" class="adjudication-heading">
+                      <span class="adjudication-badge">字幕校正</span>
+                      <small>OCR span {{ item.ocr_span_numbers.map((value) => `#${value}`).join(', ') }}</small>
+                    </div>
+                    <p>{{ item.text }}</p>
+                    <p v-if="item.text_source === 'OCR_SUBTITLE_ADJUDICATED' && item.asr_text" class="asr-original">
+                      ASR 原文：{{ item.asr_text }}
+                    </p>
+                    <p v-else-if="item.adjudication_reason === 'AMBIGUOUS_OCR_SUBTITLE_CANDIDATES'" class="evidence-conflict">
+                      字幕证据存在冲突，当前保留 ASR 正文，需人工核对。
+                    </p>
+                  </div>
                   <div class="meta">
                     <span>#{{ item.utterance_number }}</span>
                     <span v-if="item.language">{{ item.language }}</span>
@@ -312,22 +311,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.p6-acceptance-panel {
-  max-width: 1360px;
-  margin: 18px auto 0;
-  border: 1px dashed #c9c7d8;
-  border-radius: 16px;
-  background: #fff;
-}
-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 18px;
-  cursor: pointer;
-  list-style: none;
-}
+.p6-acceptance-panel { max-width: 1360px; margin: 18px auto 0; border: 1px dashed #c9c7d8; border-radius: 16px; background: #fff; }
+summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; cursor: pointer; list-style: none; }
 summary::-webkit-details-marker { display: none; }
 summary > div { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 summary strong { font-size: 13px; }
@@ -363,8 +348,15 @@ button:disabled { cursor: wait; opacity: .55; }
 .section-title span, .section-title small { color: #777771; font-size: 10px; }
 .rows { display: grid; gap: 6px; max-height: 360px; overflow: auto; padding-right: 3px; }
 .result-row { display: grid; grid-template-columns: 170px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 10px; border: 1px solid #e7e7e1; border-radius: 8px; background: #fff; }
+.result-row.adjudicated { border-color: #d9c7ff; background: #fcfaff; }
 .result-row .time { color: #666660; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; white-space: nowrap; }
 .result-row p { margin: 0; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+.dialogue-copy { display: grid; gap: 5px; min-width: 0; }
+.adjudication-heading { display: flex; align-items: center; gap: 7px; }
+.adjudication-heading small { color: #8067a8; font-size: 9px; }
+.adjudication-badge { padding: 2px 6px; border-radius: 5px; background: #efe7ff; color: #664796; font-size: 9px; font-weight: 800; }
+.result-row .asr-original { color: #77718a; font-size: 10px; }
+.result-row .evidence-conflict { color: #9a6414; font-size: 10px; }
 .meta { display: flex; justify-content: flex-end; gap: 5px; flex-wrap: wrap; max-width: 220px; }
 .meta span { padding: 2px 5px; border-radius: 5px; background: #f0f0ec; color: #686863; font-size: 9px; }
 @media (max-width: 980px) {
