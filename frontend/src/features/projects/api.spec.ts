@@ -1,6 +1,7 @@
+import { nextTick, watchEffect } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { getProject, getProjectPlan } from './api'
+import { getProject, getProjectPlan, listProjectTasks } from './api'
 
 function response(data: unknown, status = 200): Response {
   return {
@@ -65,5 +66,62 @@ describe('project plan reads', () => {
     expect(plan?.project_id).toBe('project-2')
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/plan'))).toHaveLength(1)
+  })
+})
+
+describe('project task reads', () => {
+  it('shares one reactive no-store task snapshot so sibling panels stay in sync', async () => {
+    const runningTask = {
+      id: 'task-live',
+      project_id: 'project-task-sync',
+      task_name: '整集多模态原片理解 / 源作概览分析',
+      progress_percent: 5,
+      status: 'running',
+      last_error: null,
+      attempt: 1,
+      max_attempts: 3,
+      can_retry: false,
+      can_cancel: true,
+      can_resume: false,
+      created_at: '2026-09-10T00:00:00Z',
+      started_at: '2026-09-10T00:00:01Z',
+      finished_at: null,
+    }
+    const finishedTask = {
+      ...runningTask,
+      progress_percent: 100,
+      status: 'succeeded',
+      can_cancel: false,
+      finished_at: '2026-09-10T00:00:30Z',
+    }
+    let reads = 0
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if (!url.endsWith('/api/v3/projects/project-task-sync/tasks')) {
+        throw new Error(`unexpected request: ${url}`)
+      }
+      reads += 1
+      expect(init?.cache).toBe('no-store')
+      return response(reads === 1 ? [runningTask] : [finishedTask])
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const workspaceSnapshot = await listProjectTasks('project-task-sync')
+    let observedProgress = -1
+    const stop = watchEffect(() => {
+      observedProgress = workspaceSnapshot[0]?.progress_percent ?? -1
+    })
+
+    expect(observedProgress).toBe(5)
+
+    const siblingPanelSnapshot = await listProjectTasks('project-task-sync')
+    await nextTick()
+
+    expect(siblingPanelSnapshot).toBe(workspaceSnapshot)
+    expect(workspaceSnapshot[0]?.status).toBe('succeeded')
+    expect(workspaceSnapshot[0]?.progress_percent).toBe(100)
+    expect(observedProgress).toBe(100)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    stop()
   })
 })

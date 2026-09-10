@@ -1,3 +1,5 @@
+import { reactive } from 'vue'
+
 import { apiRequest } from '@/lib/api'
 
 import type {
@@ -18,6 +20,16 @@ type ProjectWithPlanPointer = ProjectRead & {
 }
 
 const projectReadInFlight = new Map<string, Promise<ProjectRead>>()
+const projectTaskSnapshots = new Map<string, TaskRead[]>()
+
+function projectTaskSnapshot(projectId: string): TaskRead[] {
+  const existing = projectTaskSnapshots.get(projectId)
+  if (existing) return existing
+
+  const snapshot = reactive([] as TaskRead[]) as TaskRead[]
+  projectTaskSnapshots.set(projectId, snapshot)
+  return snapshot
+}
 
 export function listProjects(): Promise<ProjectRead[]> {
   return apiRequest<ProjectRead[]>('/projects')
@@ -102,8 +114,17 @@ export function startEpisodeSourceEvidence(
   })
 }
 
-export function listProjectTasks(projectId: string): Promise<TaskRead[]> {
-  return apiRequest<TaskRead[]>(`/projects/${projectId}/tasks`)
+export async function listProjectTasks(projectId: string): Promise<TaskRead[]> {
+  // P6/P7/P8 acceptance panels and the workspace task card are sibling views.
+  // Keep one reactive snapshot per project so any consumer that polls the
+  // canonical task endpoint updates every other consumer immediately. The GET
+  // is explicitly no-store because task progress is mutable runtime state.
+  const rows = await apiRequest<TaskRead[]>(`/projects/${projectId}/tasks`, {
+    cache: 'no-store',
+  })
+  const snapshot = projectTaskSnapshot(projectId)
+  snapshot.splice(0, snapshot.length, ...rows)
+  return snapshot
 }
 
 export function startP4AcceptanceTask(
