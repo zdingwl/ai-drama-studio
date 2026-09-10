@@ -1,0 +1,29 @@
+{
+  "id": "scene-resolution",
+  "name": "跨镜场景身份归一",
+  "version": "1.0.0",
+  "category": "source-understanding",
+  "description": "在完整 Episode Source Truth 上，把 P7/P8 scene candidate 与逐镜空间事实归一为稳定 SOURCE_SCENES，支持同地点跨 Shot 合并和同名不同地点拆分。",
+  "when_to_use": ["P8 SOURCE_SHOT_FACTS 已 CURRENT，需要建立稳定全局 Scene identity 时"],
+  "when_not_to_use": ["需要修改 Shot Boundary、生成 Target 场景或仅按名称去重时"],
+  "required_inputs": ["SOURCE_VIDEO", "SOURCE_BIBLE", "SOURCE_SHOT_FACTS", "SHOT_ANCHORS"],
+  "optional_inputs": ["SOURCE_DIALOGUE"],
+  "readable_artifacts": ["SOURCE_VIDEO", "SOURCE_BIBLE", "SOURCE_SHOT_FACTS", "SHOT_ANCHORS", "SOURCE_DIALOGUE"],
+  "required_capabilities": ["SCENE_RESOLUTION"],
+  "manual_path": "scene-resolution/SKILL.md",
+  "steps": [
+    {"id":"load_scene_observations","phase":"理解","title":"加载场景候选与逐镜空间事实","description":"汇总 P7 Scene candidates、P8 Shot bindings 与 P5 权威 Shot anchors。","capabilities":["SCENE_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_BIBLE","SOURCE_SHOT_FACTS","SHOT_ANCHORS"],"produces":[]},
+    {"id":"resolve_scene_identity","phase":"理解","title":"全集场景归一","description":"基于完整 Episode 的空间连续性与跨镜上下文进行 merge/split；同名不能作为唯一 merge key。","capabilities":["SCENE_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_BIBLE","SOURCE_SHOT_FACTS","SHOT_ANCHORS"],"produces":[]},
+    {"id":"publish_scenes","phase":"理解","title":"发布 SOURCE_SCENES","description":"校验每个 Shot 绑定仍指向 P5 anchor，发布稳定 Scene revision。","capabilities":["SCENE_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_BIBLE","SOURCE_SHOT_FACTS","SHOT_ANCHORS"],"produces":["SOURCE_SCENES"]}
+  ],
+  "fact_levels": ["P5_SHOT_BOUNDARY_AUTHORITY", "P7_SCENE_CANDIDATE", "P8_SHOT_SCENE_BINDING", "P9_STABLE_SCENE_IDENTITY"],
+  "provider_rules": [
+    "必须以完整 Episode 的空间事实和跨 Shot 连续性做全局归一。",
+    "同一真实地点允许跨 Shot/跨 Episode merge；同名但空间身份不同必须可 split。",
+    "不得修改 P5 start/end/duration，输出只引用 shot_anchor_id。",
+    "证据不足使用 UNKNOWN/UNRESOLVED，不按名称强归一。"
+  ],
+  "output_contracts": ["SOURCE_SCENES"],
+  "completion_criteria": ["每个 Shot 的 Scene binding 可追溯到合法 P5 anchor", "merge/split 有证据说明", "revision/fingerprint/provenance/Graph 完整"],
+  "failure_policy": ["引用未知 shot/candidate 时阻断", "上游 STALE 时阻断", "真实短剧人工验收前 capability 保持 PLANNED"]
+}
