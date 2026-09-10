@@ -1,6 +1,7 @@
 import { apiRequest } from '@/lib/api'
 
 export type SourceAnalysisState = 'NOT_READY' | 'RUNNING' | 'READY' | 'NEEDS_REFRESH' | 'FAILED'
+export type StoryboardDraftStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
 
 export interface SourceAnalysisStatusRead {
   project_id: string
@@ -62,6 +63,36 @@ export interface SourceScriptRead {
   props: SourceScriptEntity[]
 }
 
+export interface StoryboardShotOverride {
+  shot_anchor_id: string
+  visual_description: string
+  shot_size: string
+  composition: string
+  angle_or_type: string
+  movement: string
+  focal_length_dof: string
+}
+
+export interface StoryboardDraftRead {
+  project_id: string
+  status: StoryboardDraftStatus
+  revision: number | null
+  base_source_current: boolean
+  overrides: StoryboardShotOverride[]
+}
+
+export interface StoryboardShotEditPayload {
+  expected_revision: number | null
+  shot_anchor_id: string
+  reset_to_source?: boolean
+  visual_description?: string
+  shot_size?: string
+  composition?: string
+  angle_or_type?: string
+  movement?: string
+  focal_length_dof?: string
+}
+
 export function getSourceAnalysisStatus(projectId: string): Promise<SourceAnalysisStatusRead> {
   return apiRequest<SourceAnalysisStatusRead>(`/projects/${projectId}/source-analysis`, { cache: 'no-store' })
 }
@@ -75,4 +106,18 @@ export function startSourceAnalysis(projectId: string, idempotencyKey: string): 
 
 export function getSourceScript(projectId: string): Promise<SourceScriptRead> {
   return apiRequest<SourceScriptRead>(`/projects/${projectId}/source-script`, { cache: 'no-store' })
+}
+
+export function getStoryboardDraft(projectId: string): Promise<StoryboardDraftRead> {
+  return apiRequest<StoryboardDraftRead>(`/projects/${projectId}/storyboard-draft`, { cache: 'no-store' })
+}
+
+export function editStoryboardShot(
+  projectId: string,
+  payload: StoryboardShotEditPayload,
+): Promise<StoryboardDraftRead> {
+  return apiRequest<StoryboardDraftRead>(`/projects/${projectId}/storyboard-draft/commands/edit-shot`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
