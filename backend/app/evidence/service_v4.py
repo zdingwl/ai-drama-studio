@@ -16,8 +16,8 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
-# Import v3 first so the base lifecycle already includes the micro-duplicate admission guard.
-from app.evidence import service_v3 as _v3  # noqa: F401
+# Import v3 first so the base canonicalizer already includes the micro-duplicate admission guard.
+from app.evidence import service_v3 as _v3
 from app.evidence import service as _base
 from app.evidence.models import AsrEvidenceSegment, SourceDialogueUtterance, SourceEvidenceSet
 from app.evidence.providers import AsrSegmentResult
@@ -33,7 +33,10 @@ _MIN_OCR_CONFIDENCE = 0.85
 _MIN_SUBTITLE_CENTER_Y_RATIO = 0.55
 _MAX_LENGTH_DELTA = 2
 
-_PERSIST_V3 = _base._persist
+# service_v3 captured the unpatched persistence implementation before adding its own audit layer.
+# V4 deliberately calls that original persistence function so raw provenance has one coherent v4
+# policy value instead of being overwritten back to v3 by the adapter chain.
+_ORIGINAL_PERSIST = _v3._ORIGINAL_PERSIST
 _GET_V3 = _base.get_episode_source_evidence
 
 
@@ -98,6 +101,8 @@ def _temporal_overlap(start_a: int, end_a: int, start_b: int, end_b: int) -> int
 
 
 def _eligible_ocr_candidate(utterance, span, frame_height: int) -> tuple[int, int] | None:
+    if frame_height <= 0:
+        return None
     if span.confidence is None or span.confidence < _MIN_OCR_CONFIDENCE:
         return None
     center_y = _bbox_center_y(span.bbox)
@@ -146,8 +151,7 @@ def _adjudicate_dialogue_texts(dialogue, visual, frame_height: int):
                 continue
             candidates.setdefault(normalized, []).append((span_index + 1, span, distance, overlap_us))
 
-        # If high-confidence subtitle OCR independently agrees with ASR, do not let another noisy
-        # near-match rewrite it.
+        # Independent exact subtitle agreement protects the ASR text from another noisy near-match.
         if exact_span_numbers:
             corrected.append(utterance)
             audits[utterance_index] = DialogueTextAdjudication(
@@ -164,10 +168,10 @@ def _adjudicate_dialogue_texts(dialogue, visual, frame_height: int):
 
         if len(candidates) == 1:
             rows = next(iter(candidates.values()))
-            # Prefer highest confidence, then most temporal overlap. Same normalized OCR text is one
-            # candidate even if it was seen on multiple sampled frames.
+            # Same normalized subtitle text across multiple sampled frames is one candidate. Prefer
+            # the highest-confidence observation for preserved spelling/punctuation.
             chosen = max(rows, key=lambda item: (float(item[1].confidence or 0), item[3]))
-            span_number, span, distance, _ = chosen
+            _, span, distance, _ = chosen
             supporting = sorted(item[0] for item in rows)
             canonical = _base.CanonicalUtterance(
                 start_us=utterance.start_us,
@@ -221,22 +225,7 @@ def _persist_v4(
     visual,
     anchors,
 ):
-    if task.episode_id is None:
-        return _PERSIST_V3(
-            db,
-            set_id=set_id,
-            task=task,
-            source_id=source_id,
-            asr_profile=asr_profile,
-            ocr_profile=ocr_profile,
-            hints=hints,
-            asr=asr,
-            ocr=ocr,
-            dialogue=dialogue,
-            visual=visual,
-            anchors=anchors,
-        )
-    episode = db.get(Episode, task.episode_id)
+    episode = db.get(Episode, task.episode_id) if task.episode_id is not None else None
     frame_height = int(episode.height) if episode is not None else 0
     corrected_dialogue, audits = _adjudicate_dialogue_texts(dialogue, visual, frame_height)
 
@@ -245,10 +234,18 @@ def _persist_v4(
         for segment_index in dialogue[utterance_index].segment_indexes:
             audit_by_segment[segment_index] = decision
 
+    rejected = _v3._rejected_duplicate_micro_indexes(asr)
     annotated_asr: list[AsrSegmentResult] = []
     for segment_index, item in enumerate(asr):
         decision = audit_by_segment.get(segment_index)
-        provenance = dict(item.provenance)
+        provenance = {
+            **item.provenance,
+            "canonical_policy": P6_CANONICAL_POLICY,
+            "canonical_guard": P6_CANONICAL_GUARD,
+            "canonical_included": segment_index not in rejected,
+        }
+        if segment_index in rejected:
+            provenance["canonical_exclusion_reason"] = "IMPLAUSIBLE_ADJACENT_DUPLICATE_MICROSEGMENT"
         if decision is not None:
             provenance.update(
                 {
@@ -279,11 +276,12 @@ def _persist_v4(
         **hints,
         "canonical_dialogue_policy": P6_CANONICAL_POLICY,
         "canonical_guard": P6_CANONICAL_GUARD,
+        "canonical_excluded_asr_segment_count": len(rejected),
         "canonical_text_adjudication": P6_TEXT_ADJUDICATION_POLICY,
         "canonical_text_adjudicated_count": rewritten_count,
         "canonical_text_conflict_count": conflict_count,
     }
-    return _PERSIST_V3(
+    return _ORIGINAL_PERSIST(
         db,
         set_id=set_id,
         task=task,
@@ -329,9 +327,11 @@ def get_episode_source_evidence(db, project_id: str, episode_id: str):
         for row in utterance_rows
         for segment_id in (row.source_segment_ids_json or [])
     }
-    segments = list(
-        db.scalars(select(AsrEvidenceSegment).where(AsrEvidenceSegment.id.in_(segment_ids))).all()
-    ) if segment_ids else []
+    segments = (
+        list(db.scalars(select(AsrEvidenceSegment).where(AsrEvidenceSegment.id.in_(segment_ids))).all())
+        if segment_ids
+        else []
+    )
     segment_by_id = {row.id: row for row in segments}
 
     enriched = []
@@ -347,19 +347,31 @@ def get_episode_source_evidence(db, project_id: str, episode_id: str):
                 value
                 for value in provenances
                 if value.get("canonical_adjudication_policy") == P6_TEXT_ADJUDICATION_POLICY
-                and value.get("canonical_text_source") == "OCR_SUBTITLE_ADJUDICATED"
             ),
             None,
         )
+        text_source = str(audit.get("canonical_text_source") or "ASR") if audit else "ASR"
         enriched.append(
             item.model_copy(
                 update={
-                    "text_source": "OCR_SUBTITLE_ADJUDICATED" if audit else "ASR",
+                    "text_source": text_source,
                     "asr_text": str(audit.get("canonical_asr_text")) if audit else item.text,
-                    "ocr_text": str(audit.get("canonical_ocr_text")) if audit and audit.get("canonical_ocr_text") else None,
-                    "ocr_span_numbers": [int(value) for value in (audit.get("canonical_ocr_span_numbers") or [])] if audit else [],
-                    "adjudication_policy": str(audit.get("canonical_adjudication_policy")) if audit else None,
-                    "adjudication_reason": str(audit.get("canonical_adjudication_reason")) if audit else None,
+                    "ocr_text": (
+                        str(audit.get("canonical_ocr_text"))
+                        if audit and audit.get("canonical_ocr_text")
+                        else None
+                    ),
+                    "ocr_span_numbers": (
+                        [int(value) for value in (audit.get("canonical_ocr_span_numbers") or [])]
+                        if audit
+                        else []
+                    ),
+                    "adjudication_policy": (
+                        str(audit.get("canonical_adjudication_policy")) if audit else None
+                    ),
+                    "adjudication_reason": (
+                        str(audit.get("canonical_adjudication_reason")) if audit else None
+                    ),
                 }
             )
         )
