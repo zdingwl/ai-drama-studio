@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { getProject } from '@/features/projects/api'
@@ -10,6 +10,7 @@ import {
   getStoryboardDraft,
   startSourceAnalysis,
   type SourceAnalysisStatusRead,
+  type SourceAssetShotRef,
   type SourceScriptRead,
   type SourceScriptShot,
   type StoryboardDraftRead,
@@ -196,6 +197,15 @@ async function resetShot(shot: SourceScriptShot): Promise<void> {
   }
 }
 
+async function focusShot(shot: SourceAssetShotRef): Promise<void> {
+  activeTab.value = 'storyboard'
+  await nextTick()
+  const target = document.getElementById(`source-shot-${shot.shot_anchor_id}`)
+  target?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+  target?.classList.add('focused-shot')
+  window.setTimeout(() => target?.classList.remove('focused-shot'), 1600)
+}
+
 onMounted(load)
 onBeforeUnmount(stopPolling)
 </script>
@@ -250,7 +260,7 @@ onBeforeUnmount(stopPolling)
       <nav class="tabs">
         <button :class="{ active: activeTab === 'script' }" type="button" @click="activeTab = 'script'">原片剧本</button>
         <button :class="{ active: activeTab === 'storyboard' }" type="button" @click="activeTab = 'storyboard'">分镜</button>
-        <button :class="{ active: activeTab === 'assets' }" type="button" @click="activeTab = 'assets'">人物资产</button>
+        <button :class="{ active: activeTab === 'assets' }" type="button" @click="activeTab = 'assets'">人物 / 场景 / 道具</button>
       </nav>
 
       <div v-if="activeTab === 'script'" class="result-body" data-testid="source-script-view">
@@ -280,7 +290,7 @@ onBeforeUnmount(stopPolling)
         </div>
         <section v-for="scene in script.scenes" :key="`board-${scene.scene_number}-${scene.start_us}`" class="board-scene">
           <header><strong>场 {{ scene.scene_number }} · {{ scene.scene_name }}</strong><span>{{ scene.shots.length }} 镜</span></header>
-          <article v-for="shot in scene.shots" :key="shot.shot_anchor_id" class="shot-card">
+          <article v-for="shot in scene.shots" :id="`source-shot-${shot.shot_anchor_id}`" :key="shot.shot_anchor_id" class="shot-card">
             <button class="shot-media" type="button" :aria-label="`播放镜头 ${shot.shot_number} 原片段`" @click="previewShot = shot">
               <img :src="shot.thumbnail_url" :alt="`镜头 ${shot.shot_number} 缩略图`" loading="lazy" />
               <span>播放原片段</span>
@@ -317,9 +327,42 @@ onBeforeUnmount(stopPolling)
       </div>
 
       <div v-else class="assets" data-testid="source-assets-view">
-        <section><small>人物</small><div><span v-for="item in script.characters" :key="item.id">{{ item.name }}</span></div></section>
-        <section><small>场景</small><div><span v-for="scene in script.scenes" :key="scene.scene_number">{{ scene.scene_name }}</span></div></section>
-        <section><small>关键道具</small><div><span v-for="item in script.props" :key="item.id">{{ item.name }}</span></div></section>
+        <section>
+          <small>人物</small>
+          <article v-for="item in script.character_assets" :key="item.id" class="asset-card">
+            <button v-if="item.representative_frame" class="asset-frame" type="button" @click="focusShot(item.representative_frame)">
+              <img :src="item.representative_frame.thumbnail_url" :alt="`${item.name} 代表帧`" loading="lazy" />
+            </button>
+            <div class="asset-copy"><h3>{{ item.name }}</h3><p>{{ item.related_shots.length }} 个相关镜头 · {{ item.dialogue_count }} 句对白</p></div>
+            <ul v-if="item.source_facts.length"><li v-for="fact in item.source_facts" :key="fact">{{ fact }}</li></ul>
+            <div class="asset-shots"><button v-for="shot in item.related_shots" :key="shot.shot_anchor_id" type="button" @click="focusShot(shot)">#{{ String(shot.shot_number).padStart(3, '0') }}</button></div>
+          </article>
+          <p v-if="!script.character_assets.length" class="asset-empty">没有足够证据形成正式人物资产。</p>
+        </section>
+        <section>
+          <small>场景</small>
+          <article v-for="item in script.scene_assets" :key="item.id" class="asset-card">
+            <button v-if="item.representative_frame" class="asset-frame" type="button" @click="focusShot(item.representative_frame)">
+              <img :src="item.representative_frame.thumbnail_url" :alt="`${item.name} 代表帧`" loading="lazy" />
+            </button>
+            <div class="asset-copy"><h3>{{ item.name }}</h3><p>{{ item.shot_ranges.join(' · ') || '暂无明确镜头范围' }}</p></div>
+            <ul v-if="item.source_facts.length"><li v-for="fact in item.source_facts" :key="fact">{{ fact }}</li></ul>
+            <div class="asset-shots"><button v-for="shot in item.related_shots" :key="shot.shot_anchor_id" type="button" @click="focusShot(shot)">#{{ String(shot.shot_number).padStart(3, '0') }}</button></div>
+          </article>
+          <p v-if="!script.scene_assets.length" class="asset-empty">没有足够证据形成正式场景资产。</p>
+        </section>
+        <section>
+          <small>道具</small>
+          <article v-for="item in script.prop_assets" :key="item.id" class="asset-card">
+            <button v-if="item.representative_frame" class="asset-frame" type="button" @click="focusShot(item.representative_frame)">
+              <img :src="item.representative_frame.thumbnail_url" :alt="`${item.name} 代表帧`" loading="lazy" />
+            </button>
+            <div class="asset-copy"><h3>{{ item.name }}</h3><p>{{ item.related_shots.length }} 个明确绑定镜头</p></div>
+            <ul v-if="item.source_facts.length"><li v-for="fact in item.source_facts" :key="fact">{{ fact }}</li></ul>
+            <div class="asset-shots"><button v-for="shot in item.related_shots" :key="shot.shot_anchor_id" type="button" @click="focusShot(shot)">#{{ String(shot.shot_number).padStart(3, '0') }}</button></div>
+          </article>
+          <p v-if="!script.prop_assets.length" class="asset-empty">没有明确绑定证据的道具不会显示代表帧。</p>
+        </section>
       </div>
     </template>
 
@@ -364,7 +407,7 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 .scene { padding:28px 34px; border-bottom:1px solid #edf0f4; }.scene:last-child{border-bottom:0}.scene>header,.board-scene>header{display:flex;justify-content:space-between;gap:20px}.scene h3{margin:3px 0 0}.scene small,.scene-meta{color:#7b8492;font-size:11px}.scene-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.script-copy{max-width:820px;margin:18px auto 0}.action{color:#4e5969;line-height:1.8}.dialogue{max-width:560px;margin:18px auto}.dialogue strong{font-size:12px}.dialogue p{margin:6px 0 0;line-height:1.75}
 .draft-note { display:flex;justify-content:space-between;gap:16px;padding:14px 22px;background:#f7f8fa;color:#6a7484;font-size:12px }.draft-note strong{color:#273244}
 .board-scene{padding:22px;border-top:1px solid #edf0f4}.board-scene>header{margin-bottom:10px;color:#596579;font-size:12px}.shot-card{display:grid;grid-template-columns:168px 120px minmax(0,1fr) auto;gap:16px;padding:16px;margin-top:10px;border:1px solid #e3e7ed;border-radius:12px}.shot-media{position:relative;overflow:hidden;min-height:108px;padding:0;border:0;border-radius:9px;background:#111827;color:#fff;cursor:pointer}.shot-media img{display:block;width:100%;height:108px;object-fit:cover}.shot-media span{position:absolute;right:7px;bottom:7px;padding:4px 7px;border-radius:999px;background:rgba(17,24,39,.8);font-size:9px;font-weight:800}.shot-number{display:flex;flex-direction:column;gap:5px}.shot-number small,.camera-details small{color:#8490a0;font-size:10px}.shot-copy>p{margin:8px 0;line-height:1.65}.tags{display:flex;flex-wrap:wrap;gap:6px}.tags span,.tags em{padding:3px 8px;border-radius:999px;background:#f0f2f5;color:#596579;font-size:10px;font-style:normal}.tags em{background:#eaf6ed;color:#267a48}.camera-details{display:grid;gap:4px}.shot-dialogues{display:grid;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid #edf0f4}.shot-dialogues p{display:grid;grid-template-columns:auto 1fr;gap:8px;margin:0;font-size:11px;line-height:1.5}.shot-dialogues strong{color:#3c4657}.shot-actions{display:flex;flex-direction:column;gap:6px}.shot-actions button{border:1px solid #d8dee7;border-radius:8px;padding:7px 10px;background:#fff;font-size:11px;font-weight:800;cursor:pointer}
-.assets{display:grid;grid-template-columns:repeat(3,1fr)}.assets section{padding:28px;border-right:1px solid #edf0f4}.assets section:last-child{border-right:0}.assets section>small{display:block;margin-bottom:12px;color:#7b8492;font-weight:800}.assets section div{display:flex;flex-wrap:wrap;gap:8px}.assets section span{padding:7px 11px;border:1px solid #dfe4eb;border-radius:999px;font-size:12px}
+.assets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.assets>section{padding:22px;border-right:1px solid #edf0f4}.assets>section:last-child{border-right:0}.assets>section>small{display:block;margin-bottom:12px;color:#7b8492;font-weight:800}.asset-card{overflow:hidden;margin-bottom:12px;border:1px solid #e3e7ed;border-radius:12px}.asset-frame{display:block;width:100%;height:142px;padding:0;border:0;background:#eef1f5;cursor:pointer}.asset-frame img{display:block;width:100%;height:100%;object-fit:cover}.asset-copy{padding:12px 13px 8px}.asset-copy h3{margin:0;font-size:14px}.asset-copy p,.asset-empty{margin:5px 0 0;color:#768194;font-size:10px;line-height:1.5}.asset-card ul{margin:0 13px 10px;padding-left:18px;color:#5e6879;font-size:10px;line-height:1.55}.asset-shots{display:flex;flex-wrap:wrap;gap:5px;padding:0 13px 13px}.asset-shots button{border:1px solid #dbe1e8;border-radius:999px;padding:4px 7px;background:#fff;color:#4f5a6b;font-size:9px;cursor:pointer}.focused-shot{border-color:#5d76a5;box-shadow:0 0 0 3px rgba(93,118,165,.16)}
 .editor-backdrop{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:24px;background:rgba(16,24,40,.42)}.editor{width:min(720px,100%);max-height:calc(100vh - 48px);overflow:auto;padding:24px;border-radius:16px;background:#fff;box-shadow:0 28px 80px rgba(0,0,0,.2)}.editor>header{display:flex;justify-content:space-between;align-items:flex-start}.editor h3{margin:4px 0 0}.editor>header button{border:0;background:transparent;font-size:25px}.editor label{display:grid;gap:6px;margin-top:12px;color:#566172;font-size:11px;font-weight:800}.editor input,.editor textarea{box-sizing:border-box;width:100%;padding:10px 11px;border:1px solid #d8dee7;border-radius:9px;font:inherit;font-size:13px}.two-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.editor footer{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:22px;padding-top:16px;border-top:1px solid #edf0f4}.editor footer>span{color:#7b8492;font-size:11px}.editor footer div{display:flex;gap:8px}.editor footer button{padding:8px 13px;border:1px solid #d8dee7;border-radius:8px;background:#fff;font-weight:800}.editor footer .save{border-color:#172033;background:#172033;color:#fff}
 .clip-backdrop{position:fixed;inset:0;z-index:90;display:grid;place-items:center;padding:24px;background:rgba(16,24,40,.62)}.clip-player{width:min(760px,100%);padding:16px;border-radius:14px;background:#111827;color:#fff}.clip-player header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.clip-player button{border:0;background:transparent;color:#fff;font-size:24px;cursor:pointer}.clip-player video{display:block;width:100%;max-height:72vh;border-radius:9px;background:#000}
 @media(max-width:780px){.workspace-heading,.scene>header,.draft-note,.editor footer{flex-direction:column}.summary{grid-template-columns:repeat(2,1fr)}.shot-card,.assets,.two-columns{grid-template-columns:1fr}.shot-actions{flex-direction:row}.scene-meta{align-items:flex-start}.assets section{border-right:0;border-bottom:1px solid #edf0f4}}

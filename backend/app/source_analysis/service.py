@@ -596,3 +596,15 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
             for item in resolution.props.content.entities
         ],
     )
+
+
+# Compatibility import for callers that historically imported the composer from
+# this orchestration module. The canonical implementation lives in
+# source_analysis.script_service so product presentation has one source of truth.
+def compose_source_script(db: Session, project_id: str) -> SourceScriptRead:
+    from app.source_analysis.script_service import get_source_script as compose
+
+    return compose(db, project_id)
+
+
+get_source_script = compose_source_script

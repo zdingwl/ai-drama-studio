@@ -176,18 +176,18 @@ def test_source_script_splits_scene_runs_at_episode_boundaries_and_dedupes_dialo
     resolution = SimpleNamespace(
         characters=SimpleNamespace(
             content=SimpleNamespace(
-                entities=[SimpleNamespace(character_id="char-1", display_name="徐然", shot_anchor_ids=["shot-1", "shot-2", "shot-3"])],
+                entities=[SimpleNamespace(character_id="char-1", display_name="徐然", shot_anchor_ids=["shot-1", "shot-2", "shot-3"], notes=["手持手机"], evidence_refs=[])],
             )
         ),
         speakers=SimpleNamespace(
             content=SimpleNamespace(
-                entities=[SimpleNamespace(speaker_id="speaker-1", display_name="徐然", character_id="char-1")],
+                entities=[SimpleNamespace(speaker_id="speaker-1", display_name="徐然", character_id="char-1", utterance_ids=["utt-1"])],
                 attributions=[SimpleNamespace(utterance_id="utt-1", speaker_id="speaker-1", text="同一句 canonical 台词")],
             )
         ),
         scenes=SimpleNamespace(
             content=SimpleNamespace(
-                entities=[SimpleNamespace(scene_id="scene-home", display_name="徐然家客厅")],
+                entities=[SimpleNamespace(scene_id="scene-home", display_name="徐然家客厅", shot_anchor_ids=["shot-1", "shot-2", "shot-3"], notes=[], evidence_refs=[])],
                 assignments=[
                     SimpleNamespace(shot_anchor_id="shot-1", scene_id="scene-home"),
                     SimpleNamespace(shot_anchor_id="shot-2", scene_id="scene-home"),
@@ -195,7 +195,7 @@ def test_source_script_splits_scene_runs_at_episode_boundaries_and_dedupes_dialo
                 ],
             )
         ),
-        props=SimpleNamespace(content=SimpleNamespace(entities=[SimpleNamespace(prop_id="prop-1", display_name="手机")])),
+        props=SimpleNamespace(content=SimpleNamespace(entities=[SimpleNamespace(prop_id="prop-1", display_name="手机", shot_anchor_ids=["shot-2"], notes=[], evidence_refs=[])])),
     )
     monkeypatch.setattr(script_service, "get_shot_breakdown", lambda db, project_id: breakdown)
     monkeypatch.setattr(script_service, "get_source_resolution", lambda db, project_id: resolution)
@@ -210,6 +210,12 @@ def test_source_script_splits_scene_runs_at_episode_boundaries_and_dedupes_dialo
     assert result.scenes[0].shots[0].dialogues[0].speaker_name == "徐然"
     assert result.characters[0].name == "徐然"
     assert result.props[0].name == "手机"
+    assert result.character_assets[0].dialogue_count == 1
+    assert result.character_assets[0].source_facts == ["手持手机"]
+    assert [item.shot_number for item in result.character_assets[0].related_shots] == [1, 2, 3]
+    assert result.scene_assets[0].shot_ranges == ["第1集 #001–#002", "第2集 #003"]
+    assert result.prop_assets[0].representative_frame is not None
+    assert result.prop_assets[0].representative_frame.thumbnail_url.endswith("/shot-2/thumbnail")
 
 
 def test_source_script_action_summary_is_deterministic_and_does_not_treat_speaker_as_present(monkeypatch) -> None:

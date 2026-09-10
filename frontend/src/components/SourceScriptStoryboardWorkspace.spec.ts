@@ -79,6 +79,29 @@ const script: SourceScriptRead = {
   }],
   characters: [{ id: 'char-1', name: '徐然' }],
   props: [{ id: 'prop-1', name: '手机' }],
+  character_assets: [{
+    id: 'char-1',
+    name: '徐然',
+    related_shots: [{ episode_id: 'episode-1', episode_order: 1, shot_anchor_id: 'shot-1', shot_number: 1, thumbnail_url: '/thumb-1.jpg', reference_clip_url: '/clip-1.mp4' }],
+    dialogue_count: 1,
+    source_facts: ['手持手机'],
+    representative_frame: { episode_id: 'episode-1', episode_order: 1, shot_anchor_id: 'shot-1', shot_number: 1, thumbnail_url: '/thumb-1.jpg', reference_clip_url: '/clip-1.mp4' },
+  }],
+  scene_assets: [{
+    id: 'scene-1',
+    name: '徐然家客厅',
+    shot_ranges: ['#001'],
+    related_shots: [{ episode_id: 'episode-1', episode_order: 1, shot_anchor_id: 'shot-1', shot_number: 1, thumbnail_url: '/thumb-1.jpg', reference_clip_url: '/clip-1.mp4' }],
+    source_facts: [],
+    representative_frame: { episode_id: 'episode-1', episode_order: 1, shot_anchor_id: 'shot-1', shot_number: 1, thumbnail_url: '/thumb-1.jpg', reference_clip_url: '/clip-1.mp4' },
+  }],
+  prop_assets: [{
+    id: 'prop-1',
+    name: '手机',
+    related_shots: [{ episode_id: 'episode-1', episode_order: 1, shot_anchor_id: 'shot-1', shot_number: 1, thumbnail_url: '/thumb-1.jpg', reference_clip_url: '/clip-1.mp4' }],
+    source_facts: [],
+    representative_frame: { episode_id: 'episode-1', episode_order: 1, shot_anchor_id: 'shot-1', shot_number: 1, thumbnail_url: '/thumb-1.jpg', reference_clip_url: '/clip-1.mp4' },
+  }],
 }
 
 const emptyDraft: StoryboardDraftRead = {
@@ -104,7 +127,7 @@ async function mountWorkspace() {
   })
   await router.push('/projects/project-1')
   await router.isReady()
-  const wrapper = mount(SourceScriptStoryboardWorkspace, { global: { plugins: [router] } })
+  const wrapper = mount(SourceScriptStoryboardWorkspace, { attachTo: document.body, global: { plugins: [router] } })
   await flushPromises()
   return wrapper
 }
@@ -177,6 +200,23 @@ describe('SourceScriptStoryboardWorkspace', () => {
     expect(wrapper.find('[data-testid="storyboard-shot-editor"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('分镜草稿已保存')
     expect(wrapper.text()).toContain('已修改')
+    wrapper.unmount()
+  })
+
+  it('renders evidence-bound character, scene, and prop cards that can locate a source shot', async () => {
+    const wrapper = await mountWorkspace()
+    const assetsTab = wrapper.findAll('button').find((button) => button.text() === '人物 / 场景 / 道具')
+    await assetsTab!.trigger('click')
+
+    const assets = wrapper.get('[data-testid="source-assets-view"]')
+    expect(assets.text()).toContain('1 个相关镜头 · 1 句对白')
+    expect(assets.text()).toContain('手持手机')
+    expect(assets.text()).toContain('#001')
+    expect(assets.findAll('.asset-frame img')).toHaveLength(3)
+
+    await assets.find('.asset-shots button').trigger('click')
+    expect(wrapper.get('[data-testid="source-storyboard-view"]')).toBeTruthy()
+    expect(wrapper.get('#source-shot-shot-1').classes()).toContain('focused-shot')
     wrapper.unmount()
   })
 })

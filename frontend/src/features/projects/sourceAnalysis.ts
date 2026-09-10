@@ -59,6 +59,41 @@ export interface SourceScriptEntity {
   name: string
 }
 
+export interface SourceAssetShotRef {
+  episode_id: string
+  episode_order: number
+  shot_anchor_id: string
+  shot_number: number
+  thumbnail_url: string
+  reference_clip_url: string
+}
+
+export interface SourceCharacterAssetCard {
+  id: string
+  name: string
+  related_shots: SourceAssetShotRef[]
+  dialogue_count: number
+  source_facts: string[]
+  representative_frame: SourceAssetShotRef | null
+}
+
+export interface SourceSceneAssetCard {
+  id: string
+  name: string
+  shot_ranges: string[]
+  related_shots: SourceAssetShotRef[]
+  source_facts: string[]
+  representative_frame: SourceAssetShotRef | null
+}
+
+export interface SourcePropAssetCard {
+  id: string
+  name: string
+  related_shots: SourceAssetShotRef[]
+  source_facts: string[]
+  representative_frame: SourceAssetShotRef | null
+}
+
 export interface SourceScriptRead {
   project_id: string
   state: SourceAnalysisState
@@ -66,6 +101,9 @@ export interface SourceScriptRead {
   scenes: SourceScriptScene[]
   characters: SourceScriptEntity[]
   props: SourceScriptEntity[]
+  character_assets: SourceCharacterAssetCard[]
+  scene_assets: SourceSceneAssetCard[]
+  prop_assets: SourcePropAssetCard[]
 }
 
 export interface StoryboardShotOverride {

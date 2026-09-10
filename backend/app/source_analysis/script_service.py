@@ -4,7 +4,11 @@ from sqlalchemy.orm import Session
 
 from app.shot_breakdown.service_v2 import get_shot_breakdown
 from app.source_analysis.schemas import (
+    SourceAssetShotRef,
     SourceAnalysisState,
+    SourceCharacterAssetCard,
+    SourcePropAssetCard,
+    SourceSceneAssetCard,
     SourceScriptDialogue,
     SourceScriptEntity,
     SourceScriptRead,
@@ -69,6 +73,43 @@ def _action_summary(
     return normalized
 
 
+def _source_facts(entity: object) -> list[str]:
+    facts: list[str] = []
+    facts.extend(str(item).strip() for item in getattr(entity, "notes", []) if str(item).strip())
+    facts.extend(
+        str(ref.note).strip()
+        for ref in getattr(entity, "evidence_refs", [])
+        if getattr(ref, "note", None) and str(ref.note).strip()
+    )
+    return list(dict.fromkeys(facts))
+
+
+def _related_shots(entity: object, shot_refs: dict[str, SourceAssetShotRef]) -> list[SourceAssetShotRef]:
+    return sorted(
+        (shot_refs[shot_id] for shot_id in getattr(entity, "shot_anchor_ids", []) if shot_id in shot_refs),
+        key=lambda item: (item.episode_order, item.shot_number),
+    )
+
+
+def _shot_ranges(shots: list[SourceAssetShotRef], *, multi_episode: bool) -> list[str]:
+    if not shots:
+        return []
+    ranges: list[str] = []
+    start = previous = shots[0]
+    for item in shots[1:]:
+        contiguous = item.episode_id == previous.episode_id and item.shot_number == previous.shot_number + 1
+        if not contiguous:
+            prefix = f"第{start.episode_order}集 " if multi_episode else ""
+            suffix = f"#{start.shot_number:03d}" if start.shot_number == previous.shot_number else f"#{start.shot_number:03d}–#{previous.shot_number:03d}"
+            ranges.append(prefix + suffix)
+            start = item
+        previous = item
+    prefix = f"第{start.episode_order}集 " if multi_episode else ""
+    suffix = f"#{start.shot_number:03d}" if start.shot_number == previous.shot_number else f"#{start.shot_number:03d}–#{previous.shot_number:03d}"
+    ranges.append(prefix + suffix)
+    return ranges
+
+
 def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
     """Compose a deterministic, user-readable script from accepted Source Facts.
 
@@ -113,6 +154,23 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
     for character in resolution.characters.content.entities:
         for shot_id in character.shot_anchor_ids:
             characters_by_shot.setdefault(shot_id, set()).add(character.display_name)
+
+    shot_refs: dict[str, SourceAssetShotRef] = {}
+    for episode_index, episode in enumerate(breakdown.content.episodes, 1):
+        episode_order = int(getattr(episode, "episode_order", episode_index))
+        for fact in episode.shots:
+            base_url = (
+                f"/api/v3/projects/{project_id}/episodes/{episode.episode_id}/shot-boundary/"
+                f"shots/{fact.shot_anchor_id}"
+            )
+            shot_refs[fact.shot_anchor_id] = SourceAssetShotRef(
+                episode_id=episode.episode_id,
+                episode_order=episode_order,
+                shot_anchor_id=fact.shot_anchor_id,
+                shot_number=fact.shot_number,
+                thumbnail_url=f"{base_url}/thumbnail",
+                reference_clip_url=f"{base_url}/reference-clip",
+            )
 
     scenes: list[SourceScriptScene] = []
     seen_utterances: set[str] = set()
@@ -200,14 +258,8 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
                     angle_or_type=fact.camera_language.angle_or_type,
                     movement=fact.camera_language.movement,
                     focal_length_dof=fact.camera_language.focal_length_dof,
-                    thumbnail_url=(
-                        f"/api/v3/projects/{project_id}/episodes/{episode.episode_id}/shot-boundary/"
-                        f"shots/{fact.shot_anchor_id}/thumbnail"
-                    ),
-                    reference_clip_url=(
-                        f"/api/v3/projects/{project_id}/episodes/{episode.episode_id}/shot-boundary/"
-                        f"shots/{fact.shot_anchor_id}/reference-clip"
-                    ),
+                    thumbnail_url=shot_refs[fact.shot_anchor_id].thumbnail_url,
+                    reference_clip_url=shot_refs[fact.shot_anchor_id].reference_clip_url,
                     dialogues=shot_dialogues,
                 )
             )
@@ -215,6 +267,54 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
             names = set(current_scene.character_names)
             names.update(visible_names)
             current_scene.character_names = sorted(names)
+
+    character_assets: list[SourceCharacterAssetCard] = []
+    for entity in resolution.characters.content.entities:
+        related = _related_shots(entity, shot_refs)
+        dialogue_ids = {
+            utterance_id
+            for speaker in resolution.speakers.content.entities
+            if speaker.character_id == entity.character_id
+            for utterance_id in getattr(speaker, "utterance_ids", [])
+        }
+        character_assets.append(
+            SourceCharacterAssetCard(
+                id=entity.character_id,
+                name=entity.display_name,
+                related_shots=related,
+                dialogue_count=len(dialogue_ids),
+                source_facts=_source_facts(entity),
+                representative_frame=related[0] if related else None,
+            )
+        )
+
+    multi_episode = len(breakdown.content.episodes) > 1
+    scene_assets: list[SourceSceneAssetCard] = []
+    for entity in resolution.scenes.content.entities:
+        related = _related_shots(entity, shot_refs)
+        scene_assets.append(
+            SourceSceneAssetCard(
+                id=entity.scene_id,
+                name=entity.display_name,
+                shot_ranges=_shot_ranges(related, multi_episode=multi_episode),
+                related_shots=related,
+                source_facts=_source_facts(entity),
+                representative_frame=related[0] if related else None,
+            )
+        )
+
+    prop_assets: list[SourcePropAssetCard] = []
+    for entity in resolution.props.content.entities:
+        related = _related_shots(entity, shot_refs)
+        prop_assets.append(
+            SourcePropAssetCard(
+                id=entity.prop_id,
+                name=entity.display_name,
+                related_shots=related,
+                source_facts=_source_facts(entity),
+                representative_frame=related[0] if related else None,
+            )
+        )
 
     return SourceScriptRead(
         project_id=project_id,
@@ -229,4 +329,7 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
             SourceScriptEntity(id=item.prop_id, name=item.display_name)
             for item in resolution.props.content.entities
         ],
+        character_assets=character_assets,
+        scene_assets=scene_assets,
+        prop_assets=prop_assets,
     )

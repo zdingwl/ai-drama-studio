@@ -67,6 +67,41 @@ class SourceScriptEntity(BaseModel):
     name: str
 
 
+class SourceAssetShotRef(BaseModel):
+    episode_id: str
+    episode_order: int
+    shot_anchor_id: str
+    shot_number: int
+    thumbnail_url: str
+    reference_clip_url: str
+
+
+class SourceCharacterAssetCard(BaseModel):
+    id: str
+    name: str
+    related_shots: list[SourceAssetShotRef] = Field(default_factory=list)
+    dialogue_count: int = 0
+    source_facts: list[str] = Field(default_factory=list)
+    representative_frame: SourceAssetShotRef | None = None
+
+
+class SourceSceneAssetCard(BaseModel):
+    id: str
+    name: str
+    shot_ranges: list[str] = Field(default_factory=list)
+    related_shots: list[SourceAssetShotRef] = Field(default_factory=list)
+    source_facts: list[str] = Field(default_factory=list)
+    representative_frame: SourceAssetShotRef | None = None
+
+
+class SourcePropAssetCard(BaseModel):
+    id: str
+    name: str
+    related_shots: list[SourceAssetShotRef] = Field(default_factory=list)
+    source_facts: list[str] = Field(default_factory=list)
+    representative_frame: SourceAssetShotRef | None = None
+
+
 class SourceScriptRead(BaseModel):
     project_id: str
     state: SourceAnalysisState
@@ -74,6 +109,9 @@ class SourceScriptRead(BaseModel):
     scenes: list[SourceScriptScene] = Field(default_factory=list)
     characters: list[SourceScriptEntity] = Field(default_factory=list)
     props: list[SourceScriptEntity] = Field(default_factory=list)
+    character_assets: list[SourceCharacterAssetCard] = Field(default_factory=list)
+    scene_assets: list[SourceSceneAssetCard] = Field(default_factory=list)
+    prop_assets: list[SourcePropAssetCard] = Field(default_factory=list)
 
 
 class StoryboardDraftStatus(StrEnum):
