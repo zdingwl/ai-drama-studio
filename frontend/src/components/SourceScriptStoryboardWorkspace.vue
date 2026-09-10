@@ -259,7 +259,7 @@ onBeforeUnmount(stopPolling)
           </header>
           <div class="script-copy">
             <template v-for="shot in scene.shots" :key="shot.shot_anchor_id">
-              <p class="action">{{ shot.visual_description }}</p>
+              <p v-if="shot.action_summary" class="action">{{ shot.action_summary }}</p>
               <div v-for="dialogue in shot.dialogues" :key="dialogue.utterance_id" class="dialogue">
                 <strong>{{ dialogue.speaker_name }}</strong><p>{{ dialogue.text }}</p>
               </div>

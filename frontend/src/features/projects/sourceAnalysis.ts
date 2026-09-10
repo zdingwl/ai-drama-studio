@@ -30,6 +30,7 @@ export interface SourceScriptShot {
   start_us: number
   end_us: number
   duration_us: number
+  action_summary: string
   visual_description: string
   shot_size: string
   composition: string

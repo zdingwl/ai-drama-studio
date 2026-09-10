@@ -54,6 +54,7 @@ const script: SourceScriptRead = {
       start_us: 0,
       end_us: 2_000_000,
       duration_us: 2_000_000,
+      action_summary: '徐然站在客厅里看向门口。',
       visual_description: '徐然站在客厅里看向门口。',
       shot_size: '中景',
       composition: '人物居中',

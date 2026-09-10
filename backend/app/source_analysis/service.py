@@ -460,6 +460,8 @@ def _scene_name(scene_id: str | None, scene_names: dict[str, str]) -> str:
 
 
 def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
+    from app.source_analysis.script_service import _action_summary
+
     status = get_source_analysis_status(db, project_id)
     if status.state != SourceAnalysisState.READY:
         return SourceScriptRead(project_id=project_id, state=status.state, title="原片剧本")
@@ -517,6 +519,7 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
                     )
                 )
             current_scene = scenes[-1]
+            visible_names = characters_by_shot.get(fact.shot_anchor_id, set())
             shot_dialogues: list[SourceScriptDialogue] = []
             for dialogue in fact.dialogue:
                 if dialogue.utterance_id in seen_utterances:
@@ -533,7 +536,7 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
                         end_us=dialogue.utterance_end_us,
                         speaker_id=speaker_id,
                         speaker_name=speaker_name,
-                        text=attribution.text if attribution is not None else dialogue.text,
+                        text=dialogue.text,
                         delivery=_status_value(dialogue.delivery),
                     )
                 )
@@ -544,6 +547,17 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
                     start_us=fact.start_us,
                     end_us=fact.end_us,
                     duration_us=fact.duration_us,
+                    action_summary=_action_summary(
+                        fact.visual_description,
+                        visible_character_names=visible_names,
+                        camera_values=(
+                            fact.camera_language.shot_size,
+                            fact.camera_language.composition,
+                            fact.camera_language.angle_or_type,
+                            fact.camera_language.movement,
+                            fact.camera_language.focal_length_dof,
+                        ),
+                    ),
                     visual_description=fact.visual_description,
                     shot_size=fact.camera_language.shot_size,
                     composition=fact.camera_language.composition,
@@ -555,8 +569,7 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
             )
             current_scene.end_us = fact.end_us
             names = set(current_scene.character_names)
-            names.update(characters_by_shot.get(fact.shot_anchor_id, set()))
-            names.update(item.speaker_name for item in shot_dialogues if item.speaker_name != "未知说话人")
+            names.update(visible_names)
             current_scene.character_names = sorted(names)
 
     return SourceScriptRead(

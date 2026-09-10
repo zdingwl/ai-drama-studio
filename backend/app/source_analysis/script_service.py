@@ -1,3 +1,5 @@
+import re
+
 from sqlalchemy.orm import Session
 
 from app.shot_breakdown.service_v2 import get_shot_breakdown
@@ -21,6 +23,50 @@ def _scene_name(scene_id: str | None, scene_names: dict[str, str]) -> str:
     if scene_id is None:
         return "未识别场景"
     return scene_names.get(scene_id, "未命名场景")
+
+
+_DESCRIPTION_PARTS = re.compile(r"(?<=[。！？!?；;])\s*")
+_CAMERA_METADATA_PREFIX = re.compile(
+    r"^(?:景别|构图|镜头(?:语言|类型|角度|运动)?|机位|运镜|焦距|景深)\s*[:：]"
+)
+
+
+def _action_summary(
+    visual_description: str,
+    *,
+    visible_character_names: set[str],
+    camera_values: tuple[str, ...],
+) -> str:
+    """Conservatively reduce camera-only prose without inventing action.
+
+    Character-bearing clauses are safe presentation candidates because P9 already
+    binds those characters to this exact Shot. If the rule cannot isolate a
+    useful clause, the accepted P8 description is preserved verbatim (apart from
+    whitespace normalization).
+    """
+
+    normalized = " ".join(visual_description.split())
+    if not normalized:
+        return normalized
+    parts = [part.strip() for part in _DESCRIPTION_PARTS.split(normalized) if part.strip()]
+    camera_tokens = {" ".join(value.split()).rstrip("。！？!?；;，,") for value in camera_values if value.strip()}
+
+    def camera_only(part: str) -> bool:
+        plain = part.rstrip("。！？!?；;，,").strip()
+        return bool(_CAMERA_METADATA_PREFIX.match(plain)) or plain in camera_tokens
+
+    character_actions = [
+        part
+        for part in parts
+        if not camera_only(part) and any(name and name in part for name in visible_character_names)
+    ]
+    if character_actions:
+        return "".join(character_actions[:2])
+
+    non_camera = [part for part in parts if not camera_only(part)]
+    if non_camera and len(non_camera) < len(parts):
+        return "".join(non_camera)
+    return normalized
 
 
 def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
@@ -101,6 +147,7 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
                 )
             first_shot_in_episode = False
             current_scene = scenes[-1]
+            visible_names = characters_by_shot.get(fact.shot_anchor_id, set())
 
             shot_dialogues: list[SourceScriptDialogue] = []
             for dialogue in fact.dialogue:
@@ -122,7 +169,7 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
                         end_us=dialogue.utterance_end_us,
                         speaker_id=speaker_id,
                         speaker_name=speaker_name,
-                        text=attribution.text if attribution is not None else dialogue.text,
+                        text=dialogue.text,
                         delivery=_status_value(dialogue.delivery),
                     )
                 )
@@ -134,6 +181,17 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
                     start_us=fact.start_us,
                     end_us=fact.end_us,
                     duration_us=fact.duration_us,
+                    action_summary=_action_summary(
+                        fact.visual_description,
+                        visible_character_names=visible_names,
+                        camera_values=(
+                            fact.camera_language.shot_size,
+                            fact.camera_language.composition,
+                            fact.camera_language.angle_or_type,
+                            fact.camera_language.movement,
+                            fact.camera_language.focal_length_dof,
+                        ),
+                    ),
                     visual_description=fact.visual_description,
                     shot_size=fact.camera_language.shot_size,
                     composition=fact.camera_language.composition,
@@ -145,8 +203,7 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
             )
             current_scene.end_us = fact.end_us
             names = set(current_scene.character_names)
-            names.update(characters_by_shot.get(fact.shot_anchor_id, set()))
-            names.update(item.speaker_name for item in shot_dialogues if item.speaker_name != "未知说话人")
+            names.update(visible_names)
             current_scene.character_names = sorted(names)
 
     return SourceScriptRead(

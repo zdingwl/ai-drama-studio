@@ -87,14 +87,22 @@ def _camera():
     )
 
 
-def _fact(shot_id: str, number: int, start: int, end: int, *, dialogue=None):
+def _fact(
+    shot_id: str,
+    number: int,
+    start: int,
+    end: int,
+    *,
+    dialogue=None,
+    visual_description: str | None = None,
+):
     return SimpleNamespace(
         shot_anchor_id=shot_id,
         shot_number=number,
         start_us=start,
         end_us=end,
         duration_us=end - start,
-        visual_description=f"镜头 {number} 动作",
+        visual_description=visual_description or f"镜头 {number} 动作",
         camera_language=_camera(),
         dialogue=list(dialogue or []),
     )
@@ -202,6 +210,55 @@ def test_source_script_splits_scene_runs_at_episode_boundaries_and_dedupes_dialo
     assert result.scenes[0].shots[0].dialogues[0].speaker_name == "徐然"
     assert result.characters[0].name == "徐然"
     assert result.props[0].name == "手机"
+
+
+def test_source_script_action_summary_is_deterministic_and_does_not_treat_speaker_as_present(monkeypatch) -> None:
+    monkeypatch.setattr(
+        script_service,
+        "get_source_analysis_status",
+        lambda db, project_id: SimpleNamespace(state=SourceAnalysisState.READY),
+    )
+    breakdown = SimpleNamespace(
+        status="CURRENT",
+        content=SimpleNamespace(
+            title="原片剧本",
+            episodes=[SimpleNamespace(episode_id="episode-1", shots=[
+                _fact(
+                    "shot-1",
+                    1,
+                    0,
+                    800_000,
+                    dialogue=[_dialogue("utt-1", 1, "canonical 原文")],
+                    visual_description="居民楼里摆着鞋柜。徐然站在王桂香门口。镜头类型：平视。构图：人物居中。",
+                ),
+            ])],
+        ),
+    )
+    resolution = SimpleNamespace(
+        characters=SimpleNamespace(content=SimpleNamespace(entities=[
+            SimpleNamespace(character_id="char-xu", display_name="徐然", shot_anchor_ids=["shot-1"]),
+            SimpleNamespace(character_id="char-wang", display_name="王桂香", shot_anchor_ids=[]),
+        ])),
+        speakers=SimpleNamespace(content=SimpleNamespace(
+            entities=[SimpleNamespace(speaker_id="speaker-wang", display_name="王桂香", character_id="char-wang")],
+            attributions=[SimpleNamespace(utterance_id="utt-1", speaker_id="speaker-wang", text="不得覆盖 canonical")],
+        )),
+        scenes=SimpleNamespace(content=SimpleNamespace(
+            entities=[SimpleNamespace(scene_id="scene-hall", display_name="居民楼公共楼道")],
+            assignments=[SimpleNamespace(shot_anchor_id="shot-1", scene_id="scene-hall")],
+        )),
+        props=SimpleNamespace(content=SimpleNamespace(entities=[])),
+    )
+    monkeypatch.setattr(script_service, "get_shot_breakdown", lambda db, project_id: breakdown)
+    monkeypatch.setattr(script_service, "get_source_resolution", lambda db, project_id: resolution)
+
+    result = script_service.get_source_script(SimpleNamespace(), "project-1")
+
+    shot = result.scenes[0].shots[0]
+    assert shot.action_summary == "徐然站在王桂香门口。"
+    assert shot.visual_description.endswith("构图：人物居中。")
+    assert shot.dialogues[0].text == "canonical 原文"
+    assert result.scenes[0].character_names == ["徐然"]
 
 
 def test_storyboard_edit_contract_is_full_or_reset_and_working_copy_is_not_artifact() -> None:

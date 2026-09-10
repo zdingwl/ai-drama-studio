@@ -38,6 +38,7 @@ class SourceScriptShot(BaseModel):
     start_us: int
     end_us: int
     duration_us: int
+    action_summary: str
     visual_description: str
     shot_size: str
     composition: str
