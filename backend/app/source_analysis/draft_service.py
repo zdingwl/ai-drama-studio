@@ -12,7 +12,7 @@ from app.source_analysis.schemas import (
     StoryboardShotEditCommand,
     StoryboardShotOverride,
 )
-from app.source_analysis.service import get_source_script
+from app.source_analysis.script_service import get_source_script
 from app.source_snapshot.service import get_source_video_snapshot
 
 
