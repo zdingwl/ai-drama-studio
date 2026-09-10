@@ -4,7 +4,13 @@ import pytest
 
 from app.core.errors import AppError
 from app.skills.models import Capability
-from app.source_resolution.providers import P9_MAX_OUTPUT_TOKENS, _parse_semantic, _structured_text_config
+from app.source_resolution.providers import (
+    P9_MAX_OUTPUT_TOKENS,
+    P9_PROMPT_VERSION,
+    _parse_semantic,
+    _provider_json_schema,
+    _structured_text_config,
+)
 from app.workflow import provider_service
 from app.workflow.models import ProviderJobStatus
 from app.workflow.worker import _app_error_task_message
@@ -60,6 +66,15 @@ def _dispatch_failure(monkeypatch, exc: Exception):
     return captured.value, job, db
 
 
+def _string_schema(field_schema: dict) -> dict:
+    if field_schema.get("type") == "string":
+        return field_schema
+    for branch in field_schema.get("anyOf", []):
+        if branch.get("type") == "string":
+            return branch
+    raise AssertionError(f"string branch missing: {field_schema}")
+
+
 def test_scene_provider_invalid_output_gets_stage_specific_safe_error() -> None:
     raw_provider_text = "provider accidentally returned prose with secret-like-value"
 
@@ -81,6 +96,44 @@ def test_p9_ark_requests_strict_json_schema_output() -> None:
     status_enum = config["format"]["schema"]["$defs"]["ResolutionStatus"]["enum"]
     assert status_enum == ["RESOLVED", "UNKNOWN", "UNRESOLVED"]
     assert P9_MAX_OUTPUT_TOKENS == 65536
+    assert P9_PROMPT_VERSION == "p9-source-resolution-v6"
+
+
+def test_p9_prop_request_schema_matches_pydantic_string_guards() -> None:
+    schema = _provider_json_schema("prop-resolution")
+    defs = schema["$defs"]
+
+    group_key = defs["EntityGroupSemantic"]["properties"]["group_key"]
+    assert group_key["minLength"] == 1
+    assert group_key["maxLength"] == 96
+
+    evidence_note = _string_schema(defs["EvidenceRef"]["properties"]["note"])
+    assert evidence_note["maxLength"] == 400
+
+    observation_reason = _string_schema(defs["PropObservationSemantic"]["properties"]["reason"])
+    assert observation_reason["maxLength"] == 500
+
+    status_enum = defs["ResolutionStatus"]["enum"]
+    assert "MANUAL_CONFIRMED" not in status_enum
+
+
+def test_prop_provider_validation_hint_exposes_constraint_not_raw_text() -> None:
+    oversized_reason = "x" * 501
+    raw = (
+        '{"groups":[],"observations":['
+        '{"shot_anchor_id":"shot-1","source_candidate_id":"prop-1",'
+        '"group_key":null,"resolution_status":"UNRESOLVED","reason":"'
+        + oversized_reason
+        + '"}]}'
+    )
+
+    with pytest.raises(AppError) as captured:
+        _parse_semantic("prop-resolution", raw)
+
+    assert captured.value.code == "P9_PROP_PROVIDER_RESPONSE_INVALID"
+    assert "observations.0.reason:string_too_long" in captured.value.message
+    assert "max_length=500" in captured.value.message
+    assert oversized_reason not in captured.value.message
 
 
 def test_dispatch_preserves_authored_provider_app_error_after_marking_job_failed(monkeypatch) -> None:
