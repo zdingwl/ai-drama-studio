@@ -4,12 +4,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, status
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
-from app.evidence.schemas import EpisodeSourceEvidenceRead
-from app.evidence.service_v4 import (
-    create_source_evidence_task,
+from app.evidence.manual_adjudication import (
+    adjudicate_dialogue_manually,
     get_episode_source_evidence,
-    run_p6_source_evidence_task,
 )
+from app.evidence.schemas import DialogueManualAdjudicationCommand, EpisodeSourceEvidenceRead
+from app.evidence.service_v4 import create_source_evidence_task, run_p6_source_evidence_task
 from app.workflow.schemas import TaskRead
 from app.workflow.task_service import task_to_read
 
@@ -62,3 +62,24 @@ def get_source_evidence_route(
     db: Session = Depends(get_db),
 ) -> EpisodeSourceEvidenceRead:
     return get_episode_source_evidence(db, project_id, episode_id)
+
+
+@router.post(
+    "/projects/{project_id}/episodes/{episode_id}/source-evidence/commands/adjudicate-dialogue",
+    response_model=EpisodeSourceEvidenceRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def adjudicate_source_dialogue_route(
+    project_id: str,
+    episode_id: str,
+    command: DialogueManualAdjudicationCommand,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    db: Session = Depends(get_db),
+) -> EpisodeSourceEvidenceRead:
+    return adjudicate_dialogue_manually(
+        db,
+        project_id=project_id,
+        episode_id=episode_id,
+        command=command,
+        idempotency_key=idempotency_key,
+    )
