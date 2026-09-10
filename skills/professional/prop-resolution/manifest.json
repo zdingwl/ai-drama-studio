@@ -1,0 +1,30 @@
+{
+  "id": "prop-resolution",
+  "name": "关键道具实例归一",
+  "version": "1.0.0",
+  "category": "source-understanding",
+  "description": "在完整 Episode Source Truth 上，把 P7/P8 关键道具 candidate 与逐镜观察归一为稳定 SOURCE_PROPS，区分同类外观与同一具体实例。",
+  "when_to_use": ["P8 SOURCE_SHOT_FACTS 已 CURRENT，需要稳定追踪剧情关键道具实例时"],
+  "when_not_to_use": ["需要枚举所有背景物件、生成 Target 道具或仅按名称/颜色去重时"],
+  "required_inputs": ["SOURCE_VIDEO", "SOURCE_BIBLE", "SOURCE_SHOT_FACTS", "SHOT_ANCHORS"],
+  "optional_inputs": ["SOURCE_DIALOGUE"],
+  "readable_artifacts": ["SOURCE_VIDEO", "SOURCE_BIBLE", "SOURCE_SHOT_FACTS", "SHOT_ANCHORS", "SOURCE_DIALOGUE"],
+  "required_capabilities": ["PROP_RESOLUTION"],
+  "manual_path": "prop-resolution/SKILL.md",
+  "steps": [
+    {"id":"load_prop_observations","phase":"理解","title":"加载关键道具候选与逐镜观察","description":"汇总 P7 key prop candidates、P8 bindings 与 P5 anchors。","capabilities":["PROP_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_BIBLE","SOURCE_SHOT_FACTS","SHOT_ANCHORS"],"produces":[]},
+    {"id":"resolve_prop_instances","phase":"理解","title":"全集道具实例归一","description":"基于持有者、位置、连续动作、细节特征和时序连续性判断是否同一具体实例。","capabilities":["PROP_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_BIBLE","SOURCE_SHOT_FACTS","SHOT_ANCHORS"],"produces":[]},
+    {"id":"publish_props","phase":"理解","title":"发布 SOURCE_PROPS","description":"校验所有 candidate/shot 引用，保留未决实例并发布版本化 SOURCE_PROPS。","capabilities":["PROP_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_BIBLE","SOURCE_SHOT_FACTS","SHOT_ANCHORS"],"produces":["SOURCE_PROPS"]}
+  ],
+  "fact_levels": ["P7_PROP_CANDIDATE", "P8_SHOT_PROP_BINDING", "P9_STABLE_PROP_INSTANCE"],
+  "provider_rules": [
+    "只归一剧情相关道具，不把普通背景物件扩展成 P9 stable entity。",
+    "相似外观、同名、同类物件不能单独证明同一具体实例。",
+    "同一实例跨 Shot merge 必须有位置、持有者、动作或细节连续性证据。",
+    "证据不足使用 UNKNOWN/UNRESOLVED，不强制 merge。",
+    "不得修改 P5/P6/P7/P8 历史事实。"
+  ],
+  "output_contracts": ["SOURCE_PROPS"],
+  "completion_criteria": ["stable prop instance 可追溯到合法候选与 Shot", "相似不同实例可 split", "未决道具不被强归一"],
+  "failure_policy": ["引用未知 candidate/shot 时阻断", "上游 STALE 时阻断", "真实短剧人工验收前 capability 保持 PLANNED"]
+}
