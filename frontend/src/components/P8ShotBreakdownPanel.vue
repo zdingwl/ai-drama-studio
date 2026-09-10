@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { getProject, listProjectTasks } from '@/features/projects/api'
+import { dialogueContinuityText } from '@/features/projects/dialogueContinuity'
 import {
   getShotBreakdown,
   listShotBreakdownRevisions,
@@ -250,7 +251,7 @@ onBeforeUnmount(stopPolling)
       <template v-if="result?.content">
         <div class="result-summary">
           <div><span>{{ result.content.episodes.length }} 集</span><strong>{{ totalShots }} 镜头</strong></div>
-          <small>镜头时间来自 P5；对白正文来自 P6；说话人仅绑定 CURRENT P7 人物候选。</small>
+          <small>镜头时间来自 P5；对白正文来自 P6；同一 canonical utterance 跨镜时按 overlap 显示承接关系，不拆成两句。</small>
         </div>
 
         <!-- 产品语义索引：保留 docs/05 的八类信息，但不再硬塞成传统横向 table。 -->
@@ -330,6 +331,14 @@ onBeforeUnmount(stopPolling)
                         {{ line.speaker?.label ?? '说话人未确认' }}
                       </strong>
                       <span class="delivery" :class="`delivery-${line.delivery.toLowerCase()}`">{{ deliveryText[line.delivery] }}</span>
+                      <span
+                        v-if="dialogueContinuityText(line, shot)"
+                        class="continuity"
+                        :class="{ 'continuity-from-previous': line.utterance_start_us < shot.start_us }"
+                        :title="`同一条 canonical 对白 #${line.utterance_number}：整句 ${formatTime(line.utterance_start_us)} → ${formatTime(line.utterance_end_us)}；本镜 ${formatTime(line.overlap_start_us)} → ${formatTime(line.overlap_end_us)}`"
+                      >
+                        {{ dialogueContinuityText(line, shot) }}
+                      </span>
                     </div>
                     <p>{{ line.text }}</p>
                   </div>
@@ -428,7 +437,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .shot-main section,.shot-audio section { min-width: 0; }.shot-main h4,.shot-audio h4 { margin-bottom: 8px; color: #687184; font-size: 11px; letter-spacing: .04em; }
 .visual-block p { margin-bottom: 0; font-size: 14px; line-height: 1.75; }.camera-block dl { margin: 0; }.camera-block dl div { display: grid; grid-template-columns: 65px 1fr; gap: 8px; padding: 5px 0; border-bottom: 1px solid #f0f1f4; font-size: 12px; }.camera-block dt { color: #8a93a2; }.camera-block dd { margin: 0; line-height: 1.5; }
 .binding-block { grid-column: 1 / -1; padding-top: 12px; border-top: 1px solid #eef0f4; }.binding-grid { display: flex; flex-wrap: wrap; gap: 8px 15px; }.binding-grid > div { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }.binding-grid b { color: #8a93a2; font-size: 11px; }.binding-grid em { color: #a1a8b3; font-style: normal; }.entity-chip { padding: 4px 7px; border-radius: 7px; font-size: 11px; border: 1px solid #e0e4eb; }.character-chip { background: #f4f0ff; color: #624f9b; }.scene-chip { background: #edf8f2; color: #39765a; }.prop-chip { background: #fff5e8; color: #8c6127; }.unresolved-copy { margin: 8px 0 0; color: #9b6b32; font-size: 11px; }
-.shot-audio { padding-left: 16px; border-left: 1px solid #e8ebf0; }.dialogue-line { padding: 10px 0; border-bottom: 1px solid #eef0f4; }.dialogue-line:last-child { border-bottom: 0; }.dialogue-heading { gap: 7px; margin-bottom: 6px; }.speaker-name { color: #1d2430; font-size: 13px; }.speaker-name.unresolved { color: #8f98a8; }.delivery { padding: 3px 6px; border-radius: 5px; background: #eef4ff; color: #4e6b98; font-size: 10px; font-weight: 700; }.delivery-voiceover { background: #fff2d9; color: #8d601e; }.delivery-offscreen { background: #f4ecff; color: #72509e; }.delivery-unknown { background: #f0f1f3; color: #7c8490; }.dialogue-line p { margin: 0; font-size: 14px; line-height: 1.65; }.sound-block { margin-top: 18px; padding-top: 14px; border-top: 1px solid #eef0f4; }.sound-block div { margin-bottom: 8px; }.sound-block b { color: #8a93a2; font-size: 10px; }.sound-block p { margin: 2px 0 0; font-size: 12px; line-height: 1.5; }.empty-copy { color: #a1a8b3; }
+.shot-audio { padding-left: 16px; border-left: 1px solid #e8ebf0; }.dialogue-line { padding: 10px 0; border-bottom: 1px solid #eef0f4; }.dialogue-line:last-child { border-bottom: 0; }.dialogue-heading { gap: 7px; margin-bottom: 6px; flex-wrap: wrap; }.speaker-name { color: #1d2430; font-size: 13px; }.speaker-name.unresolved { color: #8f98a8; }.delivery { padding: 3px 6px; border-radius: 5px; background: #eef4ff; color: #4e6b98; font-size: 10px; font-weight: 700; }.delivery-voiceover { background: #fff2d9; color: #8d601e; }.delivery-offscreen { background: #f4ecff; color: #72509e; }.delivery-unknown { background: #f0f1f3; color: #7c8490; }.continuity { padding: 3px 6px; border-radius: 5px; background: #edf8f2; color: #39765a; font-size: 10px; font-weight: 700; }.continuity-from-previous { background: #f3f0ff; color: #66539a; }.dialogue-line p { margin: 0; font-size: 14px; line-height: 1.65; }.sound-block { margin-top: 18px; padding-top: 14px; border-top: 1px solid #eef0f4; }.sound-block div { margin-bottom: 8px; }.sound-block b { color: #8a93a2; font-size: 10px; }.sound-block p { margin: 2px 0 0; font-size: 12px; line-height: 1.5; }.empty-copy { color: #a1a8b3; }
 .technical-details { margin-top: 24px; border-top: 1px solid #eceef2; padding-top: 14px; color: #7b8495; font-size: 11px; }.technical-details summary { cursor: pointer; color: #505969; font-weight: 700; }.technical-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; margin-top: 12px; }.technical-grid span { display: grid; gap: 2px; }.technical-grid b { color: #9aa1ad; font-size: 9px; text-transform: uppercase; }
 .empty-state { padding: 50px 20px; text-align: center; color: #697386; }.empty-state strong { color: #303846; font-size: 17px; }
 .preview-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 28px; background: rgba(17,22,30,.72); }.preview-dialog { width: min(760px, 92vw); max-height: 92vh; padding: 16px; overflow: auto; border-radius: 16px; background: #fff; }.preview-dialog header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }.preview-dialog header div { display: grid; gap: 3px; }.preview-dialog header span { color: #7b8495; font-size: 11px; }.preview-dialog header button { border: 0; background: transparent; cursor: pointer; color: #6b7484; }.preview-dialog video { width: 100%; max-height: 70vh; border-radius: 10px; background: #000; }.preview-dialog > p { margin: 10px 0 0; color: #7b8495; font-size: 11px; }
