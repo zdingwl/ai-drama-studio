@@ -173,7 +173,7 @@ def _run(client: TestClient, project_id: str, episode_id: str, key: str) -> str:
     return task_id
 
 
-def test_p6_v3_canonical_dialogue_only_merges_explicit_continuation() -> None:
+def test_p6_v4_canonical_dialogue_only_merges_explicit_continuation() -> None:
     dialogue = _canonical_dialogue(
         [
             _segment(0, 250_000, "你好，"),
@@ -190,7 +190,7 @@ def test_p6_v3_canonical_dialogue_only_merges_explicit_continuation() -> None:
     ]
 
 
-def test_p6_v3_canonical_dialogue_does_not_merge_language_change() -> None:
+def test_p6_v4_canonical_dialogue_does_not_merge_language_change() -> None:
     dialogue = _canonical_dialogue(
         [
             _segment(0, 200_000, "继续，", "zh"),
@@ -241,8 +241,8 @@ def test_p6_get_is_read_only_and_asr_uses_full_episode_without_shots(
     assert evidence["validity"] == "CURRENT" and evidence["revision"] == 1
     assert evidence["metadata_json"]["complete"] is True
     assert evidence["metadata_json"]["episode_count"] == 1
-    assert evidence["metadata_json"]["evidence_profile"] == "p6-source-evidence-v3"
-    assert evidence["metadata_json"]["canonical_policy"] == "segment-preserving-dialogue-v3"
+    assert evidence["metadata_json"]["evidence_profile"] == "p6-source-evidence-v4"
+    assert evidence["metadata_json"]["canonical_policy"] == "segment-preserving-dialogue-v4"
     assert any(
         edge["source_node_id"] == source["id"]
         and edge["target_node_id"] == evidence["id"]
