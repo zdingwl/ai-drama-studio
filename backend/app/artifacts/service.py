@@ -23,6 +23,7 @@ _SOURCE_ARTIFACT_TYPES = {
     ArtifactType.RHYTHM_SKELETON,
     ArtifactType.SOURCE_SHOT_FACTS,
     ArtifactType.SOURCE_CHARACTERS,
+    ArtifactType.SOURCE_SPEAKERS,
     ArtifactType.SOURCE_SCENES,
     ArtifactType.SOURCE_PROPS,
     ArtifactType.SOURCE_VIDEO_SNAPSHOT,
