@@ -1,0 +1,233 @@
+from types import SimpleNamespace
+
+import pytest
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.artifacts.enums import ArtifactNamespace
+from app.artifacts.models import ArtifactNode
+from app.artifacts.service import create_artifact
+from app.skills.models import ArtifactType
+from app.source_analysis.models import SourceStoryboardDraftRevision
+from app.source_analysis.schemas import SourceAnalysisState, StoryboardShotEditCommand
+from app.source_analysis import script_service
+from app.source_analysis.service import SOURCE_ANALYSIS_TASK_TYPE, create_source_analysis_task
+from app.sources.enums import SourceAssetKind
+from app.sources.models import Episode, SourceAsset
+from app.workflow.models import Task, TaskStatus
+
+
+def _project(client: TestClient) -> dict:
+    response = client.post(
+        "/api/v3/projects",
+        json={
+            "name": "one-click-source-analysis",
+            "project_type": "REPLICA",
+            "source_language": "zh-CN",
+            "target_language": "en-US",
+            "target_region": "US",
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _seed_source(session_factory: sessionmaker[Session], project: dict) -> ArtifactNode:
+    with session_factory() as db:
+        asset = SourceAsset(
+            project_id=project["id"],
+            asset_kind=SourceAssetKind.VIDEO,
+            original_filename="episode.mp4",
+            mime_type="video/mp4",
+            size_bytes=1024,
+            sha256="a" * 64,
+            relative_path=f'{project["id"]}/source/episode.mp4',
+            immutable=True,
+        )
+        db.add(asset)
+        db.flush()
+        db.add(
+            Episode(
+                project_id=project["id"],
+                source_asset_id=asset.id,
+                episode_order=1,
+                duration_us=5_000_000,
+                width=1080,
+                height=1920,
+                codec_name="h264",
+                avg_frame_rate="25/1",
+                has_audio=True,
+                probe_json={},
+            )
+        )
+        db.commit()
+        source = create_artifact(
+            db,
+            project_id=project["id"],
+            artifact_type=ArtifactType.SOURCE_VIDEO,
+            namespace=ArtifactNamespace.SOURCE,
+            label="原片素材（1 集）",
+            input_fingerprint="b" * 64,
+            skill_id=project["root_skill_id"],
+            skill_version=project["root_skill_version"],
+            metadata_json={"episodes": []},
+        )
+        return source
+
+
+def _camera():
+    return SimpleNamespace(
+        shot_size="中景",
+        composition="双人构图",
+        angle_or_type="平视",
+        movement="固定",
+        focal_length_dof="标准焦段",
+    )
+
+
+def _fact(shot_id: str, number: int, start: int, end: int, *, dialogue=None):
+    return SimpleNamespace(
+        shot_anchor_id=shot_id,
+        shot_number=number,
+        start_us=start,
+        end_us=end,
+        duration_us=end - start,
+        visual_description=f"镜头 {number} 动作",
+        camera_language=_camera(),
+        dialogue=list(dialogue or []),
+    )
+
+
+def _dialogue(utterance_id: str, number: int, text: str):
+    return SimpleNamespace(
+        utterance_id=utterance_id,
+        utterance_number=number,
+        utterance_start_us=100,
+        utterance_end_us=200,
+        text=text,
+        delivery="DIALOGUE",
+    )
+
+
+def test_source_analysis_get_is_read_only_and_one_command_creates_one_master_task(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    project = _project(client)
+    source = _seed_source(session_factory, project)
+
+    response = client.get(f'/api/v3/projects/{project["id"]}/source-analysis')
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == "NOT_READY"
+
+    with session_factory() as db:
+        assert db.scalar(select(func.count(Task.id))) == 0
+        first = create_source_analysis_task(db, project_id=project["id"], idempotency_key="one-click-1")
+        assert first is not None
+        assert first.task_type == SOURCE_ANALYSIS_TASK_TYPE
+        assert first.task_name == "解析原片"
+        assert first.status == TaskStatus.QUEUED
+        assert first.input_artifact_ids_json == [source.id]
+        first_id = first.id
+
+    with session_factory() as db:
+        second = create_source_analysis_task(db, project_id=project["id"], idempotency_key="one-click-2")
+        assert second is not None
+        assert second.id == first_id
+        assert db.scalar(select(func.count(Task.id))) == 1
+
+
+def test_source_script_splits_scene_runs_at_episode_boundaries_and_dedupes_dialogue(monkeypatch) -> None:
+    monkeypatch.setattr(
+        script_service,
+        "get_source_analysis_status",
+        lambda db, project_id: SimpleNamespace(state=SourceAnalysisState.READY),
+    )
+    repeated = _dialogue("utt-1", 1, "同一句 canonical 台词")
+    breakdown = SimpleNamespace(
+        status="CURRENT",
+        content=SimpleNamespace(
+            title="原片剧本",
+            episodes=[
+                SimpleNamespace(
+                    episode_id="episode-1",
+                    shots=[
+                        _fact("shot-1", 1, 0, 1_000_000, dialogue=[repeated]),
+                        _fact("shot-2", 2, 1_000_000, 2_000_000, dialogue=[repeated]),
+                    ],
+                ),
+                SimpleNamespace(
+                    episode_id="episode-2",
+                    shots=[_fact("shot-3", 3, 0, 1_000_000)],
+                ),
+            ],
+        ),
+    )
+    resolution = SimpleNamespace(
+        characters=SimpleNamespace(
+            content=SimpleNamespace(
+                entities=[SimpleNamespace(character_id="char-1", display_name="徐然", shot_anchor_ids=["shot-1", "shot-2", "shot-3"])],
+            )
+        ),
+        speakers=SimpleNamespace(
+            content=SimpleNamespace(
+                entities=[SimpleNamespace(speaker_id="speaker-1", display_name="徐然", character_id="char-1")],
+                attributions=[SimpleNamespace(utterance_id="utt-1", speaker_id="speaker-1", text="同一句 canonical 台词")],
+            )
+        ),
+        scenes=SimpleNamespace(
+            content=SimpleNamespace(
+                entities=[SimpleNamespace(scene_id="scene-home", display_name="徐然家客厅")],
+                assignments=[
+                    SimpleNamespace(shot_anchor_id="shot-1", scene_id="scene-home"),
+                    SimpleNamespace(shot_anchor_id="shot-2", scene_id="scene-home"),
+                    SimpleNamespace(shot_anchor_id="shot-3", scene_id="scene-home"),
+                ],
+            )
+        ),
+        props=SimpleNamespace(content=SimpleNamespace(entities=[SimpleNamespace(prop_id="prop-1", display_name="手机")])),
+    )
+    monkeypatch.setattr(script_service, "get_shot_breakdown", lambda db, project_id: breakdown)
+    monkeypatch.setattr(script_service, "get_source_resolution", lambda db, project_id: resolution)
+
+    result = script_service.get_source_script(SimpleNamespace(), "project-1")
+
+    assert result.state == SourceAnalysisState.READY
+    assert len(result.scenes) == 2
+    assert [len(item.shots) for item in result.scenes] == [2, 1]
+    assert result.scenes[0].scene_name == "徐然家客厅"
+    assert sum(len(shot.dialogues) for scene in result.scenes for shot in scene.shots) == 1
+    assert result.scenes[0].shots[0].dialogues[0].speaker_name == "徐然"
+    assert result.characters[0].name == "徐然"
+    assert result.props[0].name == "手机"
+
+
+def test_storyboard_edit_contract_is_full_or_reset_and_working_copy_is_not_artifact() -> None:
+    with pytest.raises(ValidationError):
+        StoryboardShotEditCommand(
+            expected_revision=None,
+            shot_anchor_id="shot-1",
+            visual_description="只改了一半",
+        )
+
+    reset = StoryboardShotEditCommand(
+        expected_revision=1,
+        shot_anchor_id="shot-1",
+        reset_to_source=True,
+    )
+    assert reset.reset_to_source is True
+    assert SourceStoryboardDraftRevision.__tablename__ == "source_storyboard_draft_revisions"
+    assert "artifact_id" not in SourceStoryboardDraftRevision.__table__.columns
+    assert "source_snapshot_artifact_id" in SourceStoryboardDraftRevision.__table__.columns
+
+
+def test_source_analysis_product_routes_are_registered(client: TestClient) -> None:
+    schema = client.get("/openapi.json").json()
+    paths = schema["paths"]
+    assert "/api/v3/projects/{project_id}/source-analysis" in paths
+    assert "/api/v3/projects/{project_id}/commands/source-analysis" in paths
+    assert "/api/v3/projects/{project_id}/source-script" in paths
+    assert "/api/v3/projects/{project_id}/storyboard-draft" in paths
+    assert "/api/v3/projects/{project_id}/storyboard-draft/commands/edit-shot" in paths
