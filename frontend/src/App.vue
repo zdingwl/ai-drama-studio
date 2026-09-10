@@ -6,6 +6,7 @@ import P6AcceptancePanel from '@/components/P6AcceptancePanel.vue'
 import P7SourceUnderstandingWorkspace from '@/components/P7SourceUnderstandingWorkspace.vue'
 import P8ShotBreakdownPanel from '@/components/P8ShotBreakdownPanel.vue'
 import P9SourceResolutionPanel from '@/components/P9SourceResolutionPanel.vue'
+import P10SourceVideoSnapshotPanel from '@/components/P10SourceVideoSnapshotPanel.vue'
 
 const route = useRoute()
 </script>
@@ -17,5 +18,6 @@ const route = useRoute()
     <P7SourceUnderstandingWorkspace v-if="route.name === 'project-workspace'" />
     <P8ShotBreakdownPanel v-if="route.name === 'project-workspace'" />
     <P9SourceResolutionPanel v-if="route.name === 'project-workspace'" />
+    <P10SourceVideoSnapshotPanel v-if="route.name === 'project-workspace'" />
   </AppShell>
 </template>
