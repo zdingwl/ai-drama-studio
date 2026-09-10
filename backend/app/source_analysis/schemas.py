@@ -33,6 +33,7 @@ class SourceScriptDialogue(BaseModel):
 
 
 class SourceScriptShot(BaseModel):
+    episode_id: str
     shot_anchor_id: str
     shot_number: int
     start_us: int
@@ -45,11 +46,14 @@ class SourceScriptShot(BaseModel):
     angle_or_type: str
     movement: str
     focal_length_dof: str
+    thumbnail_url: str
+    reference_clip_url: str
     dialogues: list[SourceScriptDialogue] = Field(default_factory=list)
 
 
 class SourceScriptScene(BaseModel):
     scene_number: int
+    episode_id: str
     scene_id: str | None = None
     scene_name: str
     start_us: int

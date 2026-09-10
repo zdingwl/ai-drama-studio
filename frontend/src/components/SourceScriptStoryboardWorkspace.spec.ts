@@ -43,12 +43,14 @@ const script: SourceScriptRead = {
   title: '原片剧本',
   scenes: [{
     scene_number: 1,
+    episode_id: 'episode-1',
     scene_id: 'scene-1',
     scene_name: '徐然家客厅',
     start_us: 0,
     end_us: 2_000_000,
     character_names: ['徐然'],
     shots: [{
+      episode_id: 'episode-1',
       shot_anchor_id: 'shot-1',
       shot_number: 1,
       start_us: 0,
@@ -61,6 +63,8 @@ const script: SourceScriptRead = {
       angle_or_type: '平视',
       movement: '固定',
       focal_length_dof: '标准焦段',
+      thumbnail_url: '/api/v3/projects/project-1/episodes/episode-1/shot-boundary/shots/shot-1/thumbnail',
+      reference_clip_url: '/api/v3/projects/project-1/episodes/episode-1/shot-boundary/shots/shot-1/reference-clip',
       dialogues: [{
         utterance_id: 'utt-1',
         utterance_number: 1,
@@ -128,6 +132,16 @@ describe('SourceScriptStoryboardWorkspace', () => {
     const storyboardTab = wrapper.findAll('button').find((button) => button.text() === '分镜')
     expect(storyboardTab).toBeTruthy()
     await storyboardTab!.trigger('click')
+
+    expect(wrapper.get('.shot-media img').attributes('src')).toContain('/shot-1/thumbnail')
+    expect(wrapper.text()).toContain('2.00 秒')
+    expect(wrapper.text()).toContain('平视')
+    expect(wrapper.text()).toContain('标准焦段')
+    expect(wrapper.text()).toContain('你把东西放门口吧。')
+
+    await wrapper.get('.shot-media').trigger('click')
+    expect(wrapper.get('[data-testid="storyboard-reference-clip"] video').attributes('src')).toContain('/shot-1/reference-clip')
+    await wrapper.get('[data-testid="storyboard-reference-clip"] button').trigger('click')
 
     const editButton = wrapper.findAll('button').find((button) => button.text() === '编辑分镜')
     expect(editButton).toBeTruthy()

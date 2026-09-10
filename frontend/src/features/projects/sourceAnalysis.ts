@@ -25,6 +25,7 @@ export interface SourceScriptDialogue {
 }
 
 export interface SourceScriptShot {
+  episode_id: string
   shot_anchor_id: string
   shot_number: number
   start_us: number
@@ -37,11 +38,14 @@ export interface SourceScriptShot {
   angle_or_type: string
   movement: string
   focal_length_dof: string
+  thumbnail_url: string
+  reference_clip_url: string
   dialogues: SourceScriptDialogue[]
 }
 
 export interface SourceScriptScene {
   scene_number: number
+  episode_id: string
   scene_id: string | null
   scene_name: string
   start_us: number

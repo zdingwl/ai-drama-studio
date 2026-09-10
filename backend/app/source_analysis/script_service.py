@@ -137,6 +137,7 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
                 scenes.append(
                     SourceScriptScene(
                         scene_number=scene_number,
+                        episode_id=episode.episode_id,
                         scene_id=scene_id,
                         scene_name=_scene_name(scene_id, scene_names),
                         start_us=fact.start_us,
@@ -176,6 +177,7 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
 
             current_scene.shots.append(
                 SourceScriptShot(
+                    episode_id=episode.episode_id,
                     shot_anchor_id=fact.shot_anchor_id,
                     shot_number=fact.shot_number,
                     start_us=fact.start_us,
@@ -198,6 +200,14 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
                     angle_or_type=fact.camera_language.angle_or_type,
                     movement=fact.camera_language.movement,
                     focal_length_dof=fact.camera_language.focal_length_dof,
+                    thumbnail_url=(
+                        f"/api/v3/projects/{project_id}/episodes/{episode.episode_id}/shot-boundary/"
+                        f"shots/{fact.shot_anchor_id}/thumbnail"
+                    ),
+                    reference_clip_url=(
+                        f"/api/v3/projects/{project_id}/episodes/{episode.episode_id}/shot-boundary/"
+                        f"shots/{fact.shot_anchor_id}/reference-clip"
+                    ),
                     dialogues=shot_dialogues,
                 )
             )

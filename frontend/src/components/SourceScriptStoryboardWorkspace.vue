@@ -32,6 +32,7 @@ const errorMessage = ref('')
 const successMessage = ref('')
 const activeTab = ref<WorkspaceTab>('script')
 const editingShot = ref<StoryboardShotOverride | null>(null)
+const previewShot = ref<SourceScriptShot | null>(null)
 let pollTimer: number | null = null
 
 const visible = computed(() => project.value?.project_type === 'REPLICA' || project.value?.project_type === 'REDRAW')
@@ -56,6 +57,10 @@ function formatTime(us: number): string {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds - minutes * 60
   return `${String(minutes).padStart(2, '0')}:${seconds.toFixed(2).padStart(5, '0')}`
+}
+
+function formatDuration(us: number): string {
+  return `${(Math.max(0, us) / 1_000_000).toFixed(2)} 秒`
 }
 
 function stopPolling(): void {
@@ -276,15 +281,32 @@ onBeforeUnmount(stopPolling)
         <section v-for="scene in script.scenes" :key="`board-${scene.scene_number}-${scene.start_us}`" class="board-scene">
           <header><strong>场 {{ scene.scene_number }} · {{ scene.scene_name }}</strong><span>{{ scene.shots.length }} 镜</span></header>
           <article v-for="shot in scene.shots" :key="shot.shot_anchor_id" class="shot-card">
-            <div class="shot-number"><b>#{{ String(shot.shot_number).padStart(3, '0') }}</b><small>{{ formatTime(shot.start_us) }} – {{ formatTime(shot.end_us) }}</small></div>
+            <button class="shot-media" type="button" :aria-label="`播放镜头 ${shot.shot_number} 原片段`" @click="previewShot = shot">
+              <img :src="shot.thumbnail_url" :alt="`镜头 ${shot.shot_number} 缩略图`" loading="lazy" />
+              <span>播放原片段</span>
+            </button>
+            <div class="shot-number">
+              <b>#{{ String(shot.shot_number).padStart(3, '0') }}</b>
+              <small>{{ formatTime(shot.start_us) }} – {{ formatTime(shot.end_us) }}</small>
+              <small>{{ formatDuration(shot.duration_us) }}</small>
+            </div>
             <div class="shot-copy">
               <div class="tags">
                 <span>{{ effectiveShot(shot).shot_size || '景别未标注' }}</span>
+                <span v-if="effectiveShot(shot).angle_or_type">{{ effectiveShot(shot).angle_or_type }}</span>
                 <span v-if="effectiveShot(shot).movement">{{ effectiveShot(shot).movement }}</span>
                 <em v-if="draftByShot.has(shot.shot_anchor_id)">已修改</em>
               </div>
               <p>{{ effectiveShot(shot).visual_description }}</p>
-              <small v-if="effectiveShot(shot).composition">构图：{{ effectiveShot(shot).composition }}</small>
+              <div class="camera-details">
+                <small v-if="effectiveShot(shot).composition">构图：{{ effectiveShot(shot).composition }}</small>
+                <small v-if="effectiveShot(shot).focal_length_dof">焦段 / 景深：{{ effectiveShot(shot).focal_length_dof }}</small>
+              </div>
+              <div v-if="shot.dialogues.length" class="shot-dialogues">
+                <p v-for="dialogue in shot.dialogues" :key="dialogue.utterance_id">
+                  <strong>{{ dialogue.speaker_name }}</strong><span>{{ dialogue.text }}</span>
+                </p>
+              </div>
             </div>
             <div class="shot-actions">
               <button type="button" @click="openShotEditor(shot)">编辑分镜</button>
@@ -315,6 +337,13 @@ onBeforeUnmount(stopPolling)
         <footer><span>保存只修改工作草稿，原片分析保持只读。</span><div><button type="button" :disabled="savingShot" @click="closeShotEditor">取消</button><button class="save" type="submit" :disabled="savingShot">{{ savingShot ? '保存中…' : '保存修改' }}</button></div></footer>
       </form>
     </div>
+
+    <div v-if="previewShot" class="clip-backdrop" @click.self="previewShot = null">
+      <section class="clip-player" data-testid="storyboard-reference-clip">
+        <header><strong>镜头 #{{ String(previewShot.shot_number).padStart(3, '0') }} 原片段</strong><button type="button" @click="previewShot = null">×</button></header>
+        <video :src="previewShot.reference_clip_url" controls autoplay preload="metadata"></video>
+      </section>
+    </div>
   </section>
 </template>
 
@@ -334,8 +363,9 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 .result-body,.assets { border:1px solid #e1e6ed; border-top:0; border-radius:0 0 18px 18px; background:#fff; }
 .scene { padding:28px 34px; border-bottom:1px solid #edf0f4; }.scene:last-child{border-bottom:0}.scene>header,.board-scene>header{display:flex;justify-content:space-between;gap:20px}.scene h3{margin:3px 0 0}.scene small,.scene-meta{color:#7b8492;font-size:11px}.scene-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.script-copy{max-width:820px;margin:18px auto 0}.action{color:#4e5969;line-height:1.8}.dialogue{max-width:560px;margin:18px auto}.dialogue strong{font-size:12px}.dialogue p{margin:6px 0 0;line-height:1.75}
 .draft-note { display:flex;justify-content:space-between;gap:16px;padding:14px 22px;background:#f7f8fa;color:#6a7484;font-size:12px }.draft-note strong{color:#273244}
-.board-scene{padding:22px;border-top:1px solid #edf0f4}.board-scene>header{margin-bottom:10px;color:#596579;font-size:12px}.shot-card{display:grid;grid-template-columns:150px minmax(0,1fr) auto;gap:18px;padding:16px;margin-top:10px;border:1px solid #e3e7ed;border-radius:12px}.shot-number{display:flex;flex-direction:column;gap:5px}.shot-number small,.shot-copy>small{color:#8490a0;font-size:10px}.shot-copy p{margin:8px 0;line-height:1.65}.tags{display:flex;flex-wrap:wrap;gap:6px}.tags span,.tags em{padding:3px 8px;border-radius:999px;background:#f0f2f5;color:#596579;font-size:10px;font-style:normal}.tags em{background:#eaf6ed;color:#267a48}.shot-actions{display:flex;flex-direction:column;gap:6px}.shot-actions button{border:1px solid #d8dee7;border-radius:8px;padding:7px 10px;background:#fff;font-size:11px;font-weight:800;cursor:pointer}
+.board-scene{padding:22px;border-top:1px solid #edf0f4}.board-scene>header{margin-bottom:10px;color:#596579;font-size:12px}.shot-card{display:grid;grid-template-columns:168px 120px minmax(0,1fr) auto;gap:16px;padding:16px;margin-top:10px;border:1px solid #e3e7ed;border-radius:12px}.shot-media{position:relative;overflow:hidden;min-height:108px;padding:0;border:0;border-radius:9px;background:#111827;color:#fff;cursor:pointer}.shot-media img{display:block;width:100%;height:108px;object-fit:cover}.shot-media span{position:absolute;right:7px;bottom:7px;padding:4px 7px;border-radius:999px;background:rgba(17,24,39,.8);font-size:9px;font-weight:800}.shot-number{display:flex;flex-direction:column;gap:5px}.shot-number small,.camera-details small{color:#8490a0;font-size:10px}.shot-copy>p{margin:8px 0;line-height:1.65}.tags{display:flex;flex-wrap:wrap;gap:6px}.tags span,.tags em{padding:3px 8px;border-radius:999px;background:#f0f2f5;color:#596579;font-size:10px;font-style:normal}.tags em{background:#eaf6ed;color:#267a48}.camera-details{display:grid;gap:4px}.shot-dialogues{display:grid;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid #edf0f4}.shot-dialogues p{display:grid;grid-template-columns:auto 1fr;gap:8px;margin:0;font-size:11px;line-height:1.5}.shot-dialogues strong{color:#3c4657}.shot-actions{display:flex;flex-direction:column;gap:6px}.shot-actions button{border:1px solid #d8dee7;border-radius:8px;padding:7px 10px;background:#fff;font-size:11px;font-weight:800;cursor:pointer}
 .assets{display:grid;grid-template-columns:repeat(3,1fr)}.assets section{padding:28px;border-right:1px solid #edf0f4}.assets section:last-child{border-right:0}.assets section>small{display:block;margin-bottom:12px;color:#7b8492;font-weight:800}.assets section div{display:flex;flex-wrap:wrap;gap:8px}.assets section span{padding:7px 11px;border:1px solid #dfe4eb;border-radius:999px;font-size:12px}
 .editor-backdrop{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:24px;background:rgba(16,24,40,.42)}.editor{width:min(720px,100%);max-height:calc(100vh - 48px);overflow:auto;padding:24px;border-radius:16px;background:#fff;box-shadow:0 28px 80px rgba(0,0,0,.2)}.editor>header{display:flex;justify-content:space-between;align-items:flex-start}.editor h3{margin:4px 0 0}.editor>header button{border:0;background:transparent;font-size:25px}.editor label{display:grid;gap:6px;margin-top:12px;color:#566172;font-size:11px;font-weight:800}.editor input,.editor textarea{box-sizing:border-box;width:100%;padding:10px 11px;border:1px solid #d8dee7;border-radius:9px;font:inherit;font-size:13px}.two-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.editor footer{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:22px;padding-top:16px;border-top:1px solid #edf0f4}.editor footer>span{color:#7b8492;font-size:11px}.editor footer div{display:flex;gap:8px}.editor footer button{padding:8px 13px;border:1px solid #d8dee7;border-radius:8px;background:#fff;font-weight:800}.editor footer .save{border-color:#172033;background:#172033;color:#fff}
+.clip-backdrop{position:fixed;inset:0;z-index:90;display:grid;place-items:center;padding:24px;background:rgba(16,24,40,.62)}.clip-player{width:min(760px,100%);padding:16px;border-radius:14px;background:#111827;color:#fff}.clip-player header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.clip-player button{border:0;background:transparent;color:#fff;font-size:24px;cursor:pointer}.clip-player video{display:block;width:100%;max-height:72vh;border-radius:9px;background:#000}
 @media(max-width:780px){.workspace-heading,.scene>header,.draft-note,.editor footer{flex-direction:column}.summary{grid-template-columns:repeat(2,1fr)}.shot-card,.assets,.two-columns{grid-template-columns:1fr}.shot-actions{flex-direction:row}.scene-meta{align-items:flex-start}.assets section{border-right:0;border-bottom:1px solid #edf0f4}}
 </style>
