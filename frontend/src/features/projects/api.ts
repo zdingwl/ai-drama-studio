@@ -3,6 +3,7 @@ import { reactive } from 'vue'
 import { apiRequest } from '@/lib/api'
 
 import type {
+  DialogueManualAdjudicationPayload,
   EpisodeRead,
   EpisodeShotBoundaryRead,
   EpisodeSourceEvidenceRead,
@@ -112,6 +113,24 @@ export function startEpisodeSourceEvidence(
       'Idempotency-Key': idempotencyKey,
     },
   })
+}
+
+export function adjudicateEpisodeDialogue(
+  projectId: string,
+  episodeId: string,
+  payload: DialogueManualAdjudicationPayload,
+  idempotencyKey: string,
+): Promise<EpisodeSourceEvidenceRead> {
+  return apiRequest<EpisodeSourceEvidenceRead>(
+    `/projects/${projectId}/episodes/${episodeId}/source-evidence/commands/adjudicate-dialogue`,
+    {
+      method: 'POST',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify(payload),
+    },
+  )
 }
 
 export async function listProjectTasks(projectId: string): Promise<TaskRead[]> {
