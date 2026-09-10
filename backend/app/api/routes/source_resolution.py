@@ -4,14 +4,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, status
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
-from app.source_resolution.adjudication import adjudicate_source_resolution
+from app.source_resolution.adjudication_v2 import adjudicate_source_resolution
 from app.source_resolution.schemas import (
     ManualResolutionCommand,
     SourceResolutionKind,
     SourceResolutionRead,
     SourceResolutionRevisionSummary,
 )
-from app.source_resolution.service import (
+from app.source_resolution.service_v2 import (
     create_source_resolution_task,
     get_source_resolution,
     list_source_resolution_revisions,
