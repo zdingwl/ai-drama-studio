@@ -112,14 +112,14 @@ const emptyDraft: StoryboardDraftRead = {
   overrides: [],
 }
 
-async function mountWorkspace() {
+async function mountWorkspace(storyboardDraft: StoryboardDraftRead = emptyDraft) {
   vi.mocked(projectApi.getProject).mockResolvedValue({
     id: 'project-1',
     project_type: 'REPLICA',
   } as Awaited<ReturnType<typeof projectApi.getProject>>)
   vi.mocked(sourceAnalysisApi.getSourceAnalysisStatus).mockResolvedValue(readyStatus)
   vi.mocked(sourceAnalysisApi.getSourceScript).mockResolvedValue(script)
-  vi.mocked(sourceAnalysisApi.getStoryboardDraft).mockResolvedValue(emptyDraft)
+  vi.mocked(sourceAnalysisApi.getStoryboardDraft).mockResolvedValue(storyboardDraft)
 
   const router = createRouter({
     history: createMemoryHistory(),
@@ -200,6 +200,38 @@ describe('SourceScriptStoryboardWorkspace', () => {
     expect(wrapper.find('[data-testid="storyboard-shot-editor"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('分镜草稿已保存')
     expect(wrapper.text()).toContain('已修改')
+
+    const scriptTab = wrapper.findAll('button').find((button) => button.text() === '原片剧本')
+    await scriptTab!.trigger('click')
+    expect(wrapper.text()).toContain('徐然站在客厅里看向门口。')
+    expect(wrapper.text()).not.toContain('徐然拿起手机，转身走向门口。')
+    wrapper.unmount()
+  })
+
+  it('archives a stale draft without applying its overrides to the new source', async () => {
+    const staleDraft: StoryboardDraftRead = {
+      project_id: 'project-1',
+      status: 'STALE',
+      revision: 4,
+      base_source_current: true,
+      overrides: [{
+        shot_anchor_id: 'shot-1',
+        visual_description: '旧草稿不应出现在新原片结果中。',
+        shot_size: '特写',
+        composition: '旧构图',
+        angle_or_type: '旧角度',
+        movement: '旧运动',
+        focal_length_dof: '旧焦段',
+      }],
+    }
+    const wrapper = await mountWorkspace(staleDraft)
+    const storyboardTab = wrapper.findAll('button').find((button) => button.text() === '分镜')
+    await storyboardTab!.trigger('click')
+
+    expect(wrapper.text()).toContain('旧分镜草稿已归档')
+    expect(wrapper.text()).toContain('徐然站在客厅里看向门口。')
+    expect(wrapper.text()).not.toContain('旧草稿不应出现在新原片结果中。')
+    expect(wrapper.text()).not.toContain('已修改')
     wrapper.unmount()
   })
 

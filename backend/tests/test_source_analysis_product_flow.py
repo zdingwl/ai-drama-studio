@@ -378,6 +378,65 @@ def test_source_script_action_summary_is_deterministic_and_does_not_treat_speake
     assert result.scenes[0].character_names == ["徐然"]
 
 
+def test_source_script_splits_noncontiguous_scene_revisits_and_short_scenes(monkeypatch) -> None:
+    monkeypatch.setattr(
+        script_service,
+        "get_source_analysis_status",
+        lambda db, project_id: SimpleNamespace(state=SourceAnalysisState.READY),
+    )
+    breakdown = SimpleNamespace(
+        status="CURRENT",
+        content=SimpleNamespace(
+            title="原片剧本",
+            episodes=[
+                SimpleNamespace(
+                    episode_id="episode-1",
+                    shots=[
+                        _fact("shot-1", 1, 0, 1_000_000),
+                        _fact("shot-2", 2, 1_000_000, 1_800_000),
+                        _fact("shot-3", 3, 1_800_000, 3_000_000),
+                    ],
+                ),
+                SimpleNamespace(
+                    episode_id="episode-2",
+                    shots=[_fact("shot-4", 4, 0, 1_000_000)],
+                ),
+            ],
+        ),
+    )
+    resolution = SimpleNamespace(
+        characters=SimpleNamespace(content=SimpleNamespace(entities=[])),
+        speakers=SimpleNamespace(content=SimpleNamespace(entities=[], attributions=[])),
+        scenes=SimpleNamespace(
+            content=SimpleNamespace(
+                entities=[
+                    SimpleNamespace(scene_id="scene-a", display_name="客厅"),
+                    SimpleNamespace(scene_id="scene-b", display_name="楼道"),
+                ],
+                assignments=[
+                    SimpleNamespace(shot_anchor_id="shot-1", scene_id="scene-a"),
+                    SimpleNamespace(shot_anchor_id="shot-2", scene_id="scene-b"),
+                    SimpleNamespace(shot_anchor_id="shot-3", scene_id="scene-a"),
+                    SimpleNamespace(shot_anchor_id="shot-4", scene_id="scene-a"),
+                ],
+            )
+        ),
+        props=SimpleNamespace(content=SimpleNamespace(entities=[])),
+    )
+    monkeypatch.setattr(script_service, "get_shot_breakdown", lambda db, project_id: breakdown)
+    monkeypatch.setattr(script_service, "get_source_resolution", lambda db, project_id: resolution)
+
+    result = script_service.get_source_script(SimpleNamespace(), "project-1")
+
+    assert [(scene.episode_id, scene.scene_name) for scene in result.scenes] == [
+        ("episode-1", "客厅"),
+        ("episode-1", "楼道"),
+        ("episode-1", "客厅"),
+        ("episode-2", "客厅"),
+    ]
+    assert result.scenes[1].end_us - result.scenes[1].start_us == 800_000
+
+
 def test_storyboard_edit_contract_is_full_or_reset_and_working_copy_is_not_artifact() -> None:
     with pytest.raises(ValidationError):
         StoryboardShotEditCommand(
