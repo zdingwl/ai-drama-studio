@@ -16,9 +16,10 @@
 10. `docs/09_P6CanonicalEvidenceV2与P8最终验收整改.md`
 11. `docs/10_P8SpeakerCandidate与P6微段幻觉整改.md`
 12. `docs/11_P6字幕证据裁决与P8台词一致性整改.md`
-13. 当前相关代码与测试
+13. `docs/12_P6人工对白裁决与Canonical可编辑.md`
+14. 当前相关代码与测试
 
-**阶段状态以编号更高、日期更新的状态文档为准。** `docs/07` 记录 P7 最终验收，`docs/08` 记录 P8 初始正式契约，`docs/09` 记录 P6 canonical Evidence v2 整改及真实 P6 v2 → P7 → P8 恢复验收，`docs/10` 记录 P8 speaker candidate v2 与 P6 canonical micro-duplicate v3 整改，`docs/11` 记录 P6 v4 字幕证据显式裁决与 P8 台词一致性的当前整改。旧文档中“P8 尚未开始 / P7 待验收 / P6-P7 未开发 / P8 schema 1.0 / P6 v2 或 v3 是当前最终 canonical policy”等历史描述不得覆盖当前 `main` 事实。
+**阶段状态以编号更高、日期更新的状态文档为准。** `docs/07` 记录 P7 最终验收，`docs/08` 记录 P8 初始正式契约，`docs/09` 记录 P6 canonical Evidence v2 整改及真实 P6 v2 → P7 → P8 恢复验收，`docs/10` 记录 P8 speaker candidate v2 与 P6 canonical micro-duplicate v3 整改，`docs/11` 记录 P6 v4 字幕证据显式裁决与 P8 台词一致性整改，`docs/12` 记录 P6 canonical dialogue 的显式人工选择 / 修改与版本化规则。旧文档中“P8 尚未开始 / P7 待验收 / P6-P7 未开发 / P8 schema 1.0 / P6 v2 或 v3 是当前最终 canonical policy / P6 canonical 只能自动生成不可人工确认”等历史描述不得覆盖当前 `main` 事实。
 
 历史分支只能做参考，不能覆盖 V3 当前规划。
 
@@ -196,6 +197,7 @@ Shot Anchors         ASR Evidence      OCR Evidence
 - P6 canonical dialogue 必须保守分段；没有明确连续证据时不得仅因相邻 segment 时间接近就跨段合并；
 - P6 raw ASR Evidence 必须完整保留；canonical admission 可以拒绝通用规则判定为不可信的 ASR micro duplicate，但不得删除 raw provenance；
 - OCR 只有在 P6 Source Evidence 内部、经过版本化的严格时间重叠 / 高置信 / 字幕区域 / 近似文本裁决规则时，才允许成为 canonical dialogue 的正文依据；必须同时记录 ASR 原文、OCR 依据、policy 与 reason。任何 OCR/VLM/P7/P8 对 canonical dialogue 的静默覆盖均禁止；
+- 用户可以在 P6 Source Evidence 层对单条 canonical dialogue 显式选择 ASR、时间重叠的 CURRENT OCR span 或输入自定义文本；保存必须走显式 POST Command、生成新的 SourceEvidenceSet / SOURCE_DIALOGUE revision、保留 raw ASR/OCR，并让依赖旧 canonical revision 的 P7/P8 下游 STALE。GET / 页面刷新不得自动保存；
 - 同文案不等于同一 utterance，更不等于同一 speaker；禁止按字符串相同传播 P8 speaker candidate；
 - P7 整集理解必须读取完整 Episode；
 - 先整集理解，再逐 Shot 精细拉片；
@@ -212,7 +214,7 @@ Source Understanding
 = 这些事实在剧情、人物、关系、场景、事件和节奏上意味着什么
 ```
 
-P6 可以在 Source Evidence 层对 ASR 与 OCR 做可追溯的证据裁决；VLM / Agent / P7 / P8 / 安全过滤后的文本仍无权静默覆盖 canonical Evidence。
+P6 可以在 Source Evidence 层对 ASR 与 OCR 做可追溯的自动证据裁决，也可以接受用户显式的版本化人工裁决；raw Evidence 始终不被人工正文覆盖。VLM / Agent / P7 / P8 / 安全过滤后的文本仍无权静默覆盖 canonical Evidence。
 
 P7 Grounding：
 
@@ -259,7 +261,7 @@ EPISODE_UNDERSTANDING
 STORY_RHYTHM
 ```
 
-P6 当前工程 canonical 基线已升级为：
+P6 当前工程 canonical 自动基线：
 
 ```text
 p6-source-evidence-v4
@@ -268,7 +270,13 @@ adjacent-duplicate-microsegment-v1
 ocr-subtitle-near-match-v1
 ```
 
-v4 保留 v3 的完整 Episode 连续 ASR、保守分段、raw Evidence 保留与 micro-duplicate guard；新增严格、可审计的 OCR 字幕 near-match evidence adjudication。该升级部署后会使依赖旧 canonical set 的 P6/P7/P8 Artifact STALE，必须按 P6 → P7 → P8 显式恢复并完成真实音画复验；在恢复完成前不得把旧 CURRENT 结果冒充新基线验收结果。
+P6 当前显式人工增量契约：
+
+```text
+human-dialogue-adjudication-v1
+```
+
+v4 保留 v3 的完整 Episode 连续 ASR、保守分段、raw Evidence 保留与 micro-duplicate guard；新增严格、可审计的 OCR 字幕 near-match evidence adjudication。人工增量契约只允许用户显式确认/选择/修改 canonical text，不能改写 raw Evidence；每次保存产生新 revision。P6 canonical revision 改变会使依赖旧 canonical set 的 P7/P8 Artifact STALE，必须按 P6 → P7 → P8 显式恢复并完成真实音画复验；在恢复完成前不得把旧 CURRENT 结果冒充新基线验收结果。
 
 仍为 `PLANNED`：
 
@@ -335,9 +343,9 @@ P2 Project + Skill Kernel  ✅
 P3 SourceAsset + 输入系统  ✅
 P4 Task / ProviderJob      ✅
 P5 镜头技术锚点            ✅（真实 Episode 人工验收通过）
-P6 Source Evidence         🔁（能力既有验收 AVAILABLE；canonical v4 字幕证据裁决工程整改与真实恢复复验进行中）
-P7 整集多模态原片理解      ✅（能力 AVAILABLE；v4 P6 部署后需基于新 canonical Evidence 恢复 revision）
-P8 逐镜精细拉片            🔁（speaker candidate v2 已实现；等待 P6 v4 → P7 → P8 恢复与最终 28 Shot 音画人工验收）
+P6 Source Evidence         🔁（能力既有验收 AVAILABLE；canonical v4 + 人工对白裁决工程整改与真实恢复复验进行中）
+P7 整集多模态原片理解      ✅（能力 AVAILABLE；P6 canonical 新 revision 后需基于新 Evidence 恢复 revision）
+P8 逐镜精细拉片            🔁（speaker candidate v2 已实现；等待 P6 → P7 → P8 恢复与最终 28 Shot 音画人工验收）
 P9 身份/场景/道具归一       ⛔ 禁止进入
 ```
 
@@ -366,10 +374,11 @@ p6-source-evidence-v4
 segment-preserving-dialogue-v4
 adjacent-duplicate-microsegment-v1
 ocr-subtitle-near-match-v1
+human-dialogue-adjudication-v1
 migration head = 0015_p6_ocr_subtitle_v4
 ```
 
-本轮 v4 部署/迁移后的正确恢复状态应是：
+本轮 P6 canonical 变化后的正确恢复状态应是：
 
 ```text
 SOURCE_VIDEO / SHOT_ANCHORS         保持 CURRENT
@@ -400,7 +409,7 @@ CURRENT canonical Source Evidence
 逐镜精细拉片
 ```
 
-P8 不能重新从零猜整集故事；Shot 时间只来自 P5；对白正文来自 P6 canonical Evidence；P8 不得为了修正文质量而自行重听写或使用 OCR 覆盖。P8 speaker candidate 只能绑定具体 P6 utterance 到 CURRENT P7 character candidate，不能按相同文本跨 utterance 复制，更不能冒充 P9 最终 Speaker Truth。
+P8 不能重新从零猜整集故事；Shot 时间只来自 P5；对白正文来自 P6 canonical Evidence（包括已经正式发布的人工裁决 revision）；P8 不得为了修正文质量而自行重听写或使用 OCR 覆盖。P8 speaker candidate 只能绑定具体 P6 utterance 到 CURRENT P7 character candidate，不能按相同文本跨 utterance 复制，更不能冒充 P9 最终 Speaker Truth。
 
 ---
 
