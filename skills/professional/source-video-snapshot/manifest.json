@@ -1,0 +1,34 @@
+{
+  "id": "source-video-snapshot",
+  "name": "原片分析定稿",
+  "version": "1.0.0",
+  "category": "source-understanding",
+  "description": "不重新调用模型，把已经验收的 CURRENT P5~P9 Source Facts 确定性冻结为版本化 SOURCE_VIDEO_SNAPSHOT，作为后续 Target/Production 的正式 Source 边界。",
+  "when_to_use": ["P9 Character/Speaker/Scene/Prop 最终归一已经 CURRENT，需要把完整视频 Source Facts 显式定稿时"],
+  "when_not_to_use": ["任一 P5~P9 正式 Source Artifact 缺失或 STALE", "需要重新理解原片、修改 canonical Evidence 或进入 Target Localization 时"],
+  "required_inputs": ["SOURCE_VIDEO", "SHOT_ANCHORS", "SOURCE_DIALOGUE", "SOURCE_BIBLE", "STORY_SKELETON", "RHYTHM_SKELETON", "SOURCE_SHOT_FACTS", "SOURCE_CHARACTERS", "SOURCE_SPEAKERS", "SOURCE_SCENES", "SOURCE_PROPS"],
+  "optional_inputs": [],
+  "readable_artifacts": ["SOURCE_VIDEO", "SHOT_ANCHORS", "SOURCE_DIALOGUE", "SOURCE_BIBLE", "STORY_SKELETON", "RHYTHM_SKELETON", "SOURCE_SHOT_FACTS", "SOURCE_CHARACTERS", "SOURCE_SPEAKERS", "SOURCE_SCENES", "SOURCE_PROPS"],
+  "required_capabilities": ["SOURCE_SNAPSHOT"],
+  "manual_path": "source-video-snapshot/SKILL.md",
+  "steps": [
+    {"id":"load_current_source_chain","phase":"理解","title":"加载 CURRENT Source 链","description":"读取 SOURCE_VIDEO、P5/P6/P7/P8 与 P9 Character/Speaker/Scene/Prop 当前正式 revision。","capabilities":["SOURCE_SNAPSHOT"],"requires":["SOURCE_VIDEO","SHOT_ANCHORS","SOURCE_DIALOGUE","SOURCE_BIBLE","STORY_SKELETON","RHYTHM_SKELETON","SOURCE_SHOT_FACTS","SOURCE_CHARACTERS","SOURCE_SPEAKERS","SOURCE_SCENES","SOURCE_PROPS"],"produces":[]},
+    {"id":"validate_authoritative_facts","phase":"理解","title":"校验 Source authority","description":"确定性校验 P5 时间、P6 canonical/OCR、P7/P8/P9 provenance 与 CURRENT 输入一致；任何冲突 fail closed。","capabilities":["SOURCE_SNAPSHOT"],"requires":["SOURCE_VIDEO","SHOT_ANCHORS","SOURCE_DIALOGUE","SOURCE_BIBLE","STORY_SKELETON","RHYTHM_SKELETON","SOURCE_SHOT_FACTS","SOURCE_CHARACTERS","SOURCE_SPEAKERS","SOURCE_SCENES","SOURCE_PROPS"],"produces":[]},
+    {"id":"freeze_source_facts","phase":"理解","title":"冻结正式 Source Facts","description":"原样物化 P5/P6 与 P7/P8/P9 typed facts，不生成新剧情、身份或文字。","capabilities":["SOURCE_SNAPSHOT"],"requires":["SOURCE_VIDEO","SHOT_ANCHORS","SOURCE_DIALOGUE","SOURCE_BIBLE","STORY_SKELETON","RHYTHM_SKELETON","SOURCE_SHOT_FACTS","SOURCE_CHARACTERS","SOURCE_SPEAKERS","SOURCE_SCENES","SOURCE_PROPS"],"produces":[]},
+    {"id":"publish_snapshot","phase":"理解","title":"发布 SourceVideoSnapshot","description":"显式 Command 发布 revision/fingerprint/provenance/Artifact Graph 完整的 SOURCE_VIDEO_SNAPSHOT。","capabilities":["SOURCE_SNAPSHOT"],"requires":["SOURCE_VIDEO","SHOT_ANCHORS","SOURCE_DIALOGUE","SOURCE_BIBLE","STORY_SKELETON","RHYTHM_SKELETON","SOURCE_SHOT_FACTS","SOURCE_CHARACTERS","SOURCE_SPEAKERS","SOURCE_SCENES","SOURCE_PROPS"],"produces":["SOURCE_VIDEO_SNAPSHOT"]}
+  ],
+  "fact_levels": ["FULL_EPISODE_SOURCE_TRUTH", "P5_AUTHORITATIVE_SHOT_TIME", "P6_CANONICAL_SOURCE_EVIDENCE", "P7_P8_ACCEPTED_SOURCE_FACTS", "P9_STABLE_SOURCE_RESOLUTION", "P10_FROZEN_SOURCE_SNAPSHOT"],
+  "provider_rules": [
+    "P10 是确定性 freeze，不得调用 VLM、LLM、ASR、OCR、identity Provider，也不得创建 ProviderJob。",
+    "完整 Episode 永远是 Source Truth；不得修改 CURRENT P5 Shot start/end/duration。",
+    "CURRENT P6 canonical dialogue/OCR 必须原样冻结，P10 不得重听写、润色或自动纠错。",
+    "P7 SOURCE_BIBLE、P8 SOURCE_SHOT_FACTS、P9 四类 resolution 只读，历史 revision 不得回写。",
+    "SOURCE_SPEAKERS 必须作为独立正式输入和 typed section，不能从 SOURCE_CHARACTERS 隐式推导。",
+    "任一上游 CURRENT Artifact 或其 fingerprint 变化后旧 Snapshot 必须通过 Artifact Graph 变为 STALE。",
+    "GET 永远只读；只有显式 POST Command 才能发布 Snapshot。",
+    "P10 不创建或读取 Target 事实作为 Source 输入，禁止 Target/Production 反向写入 Source。"
+  ],
+  "output_contracts": ["SOURCE_VIDEO_SNAPSHOT"],
+  "completion_criteria": ["P5~P9 全部 CURRENT Source Facts 被 typed snapshot 原样冻结", "revision/fingerprint/provenance/Artifact Graph 完整", "SOURCE_SPEAKERS 独立冻结", "重复相同输入 POST 幂等", "GET 无副作用"],
+  "failure_policy": ["任一硬输入缺失、STALE 或 provenance 不一致时阻断发布", "任何 authority mismatch 不允许模型重算或服务端猜测修复", "真实短剧人工验收通过前 SOURCE_SNAPSHOT 保持 PLANNED", "P10 完成前不得进入 Target Localization / Target Bible"]
+}
