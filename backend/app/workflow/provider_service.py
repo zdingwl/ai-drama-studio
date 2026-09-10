@@ -131,6 +131,12 @@ def create_provider_job_before_remote(
     return job
 
 
+def _safe_provider_failure(exc: Exception) -> str:
+    if isinstance(exc, AppError):
+        return f"{exc.code}: {exc.message}"[:1000]
+    return f"Provider 请求失败（{type(exc).__name__}）"
+
+
 def dispatch_provider_call(
     db: Session,
     *,
@@ -162,14 +168,24 @@ def dispatch_provider_call(
         persisted = db.get(ProviderJob, job.id)
         if persisted is not None:
             persisted.status = ProviderJobStatus.FAILED
-            persisted.safe_error = f"Provider 请求失败（{type(exc).__name__}）"
+            persisted.safe_error = _safe_provider_failure(exc)
             persisted.finished_at = now
             persisted.updated_at = now
             db.add(persisted)
             db.commit()
             db.refresh(persisted)
             job = persisted
-        raise AppError("PROVIDER_REQUEST_FAILED", "Provider 请求失败", status_code=502) from exc
+        # Provider adapters are allowed to raise an authored AppError when they can safely
+        # distinguish a contract/response failure from transport failure. Preserve that code and
+        # message after the ProviderJob has been durably marked FAILED instead of collapsing every
+        # failure into PROVIDER_REQUEST_FAILED.
+        if isinstance(exc, AppError):
+            raise
+        raise AppError(
+            "PROVIDER_REQUEST_FAILED",
+            f"Provider 请求失败（{type(exc).__name__}）",
+            status_code=502,
+        ) from exc
 
     now = utc_now()
     persisted = db.get(ProviderJob, job.id)
