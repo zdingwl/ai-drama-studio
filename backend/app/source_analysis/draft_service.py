@@ -103,11 +103,16 @@ def edit_storyboard_draft(
         )
 
     valid_shot_ids = set(source_shots)
-    overrides = {
-        item.shot_anchor_id: item
-        for item in _parse_overrides(latest)
-        if item.shot_anchor_id in valid_shot_ids
-    }
+    latest_is_on_current_source = latest is not None and latest.source_snapshot_artifact_id == current_snapshot.id
+    overrides = (
+        {
+            item.shot_anchor_id: item
+            for item in _parse_overrides(latest)
+            if item.shot_anchor_id in valid_shot_ids
+        }
+        if latest_is_on_current_source
+        else {}
+    )
     if command.reset_to_source:
         overrides.pop(command.shot_anchor_id, None)
     else:
