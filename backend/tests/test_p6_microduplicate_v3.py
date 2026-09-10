@@ -10,9 +10,11 @@ from app.evidence.models import AsrEvidenceSegment, SourceEvidenceSet
 from app.evidence.providers import AsrSegmentResult, EvidenceProviders
 from app.evidence.service_v3 import (
     P6_CANONICAL_GUARD,
-    P6_CANONICAL_POLICY,
-    P6_PROFILE_VERSION,
     _canonical_dialogue,
+)
+from app.evidence.service_v4 import (
+    P6_CANONICAL_POLICY as CURRENT_P6_CANONICAL_POLICY,
+    P6_PROFILE_VERSION as CURRENT_P6_PROFILE_VERSION,
 )
 
 
@@ -126,7 +128,7 @@ def _video(path: Path) -> bytes:
     return path.read_bytes()
 
 
-def test_p6_v3_keeps_rejected_microsegments_as_auditable_raw_evidence(
+def test_p6_v4_keeps_v3_rejected_microsegments_as_auditable_raw_evidence(
     client: TestClient,
     tmp_path: Path,
     monkeypatch,
@@ -135,7 +137,7 @@ def test_p6_v3_keeps_rejected_microsegments_as_auditable_raw_evidence(
     project_response = client.post(
         "/api/v3/projects",
         json={
-            "name": "P6-v3-microduplicate",
+            "name": "P6-v4-microduplicate",
             "project_type": "REPLICA",
             "source_language": "zh-CN",
             "target_language": "en-US",
@@ -159,7 +161,7 @@ def test_p6_v3_keeps_rejected_microsegments_as_auditable_raw_evidence(
 
     started = client.post(
         f"/api/v3/projects/{project['id']}/episodes/{episode['id']}/commands/source-evidence",
-        headers={"Idempotency-Key": "p6-v3-microduplicate"},
+        headers={"Idempotency-Key": "p6-v4-microduplicate"},
     )
     assert started.status_code == 202, started.text
     task_id = started.json()["id"]
@@ -182,7 +184,7 @@ def test_p6_v3_keeps_rejected_microsegments_as_auditable_raw_evidence(
             )
         )
         assert evidence_set is not None
-        assert evidence_set.sampling_hints_json["canonical_dialogue_policy"] == P6_CANONICAL_POLICY
+        assert evidence_set.sampling_hints_json["canonical_dialogue_policy"] == CURRENT_P6_CANONICAL_POLICY
         assert evidence_set.sampling_hints_json["canonical_guard"] == P6_CANONICAL_GUARD
         assert evidence_set.sampling_hints_json["canonical_excluded_asr_segment_count"] == 2
         rows = list(
@@ -193,6 +195,7 @@ def test_p6_v3_keeps_rejected_microsegments_as_auditable_raw_evidence(
             ).all()
         )
         assert [row.provenance_json["canonical_included"] for row in rows] == [True, False, False]
+        assert all(row.provenance_json["canonical_policy"] == CURRENT_P6_CANONICAL_POLICY for row in rows)
         assert rows[1].provenance_json["canonical_exclusion_reason"] == (
             "IMPLAUSIBLE_ADJACENT_DUPLICATE_MICROSEGMENT"
         )
@@ -206,5 +209,5 @@ def test_p6_v3_keeps_rejected_microsegments_as_auditable_raw_evidence(
         for node in graph["nodes"]
         if node["artifact_type"] == "SOURCE_DIALOGUE" and node["is_current"]
     )
-    assert evidence["metadata_json"]["evidence_profile"] == P6_PROFILE_VERSION
-    assert evidence["metadata_json"]["canonical_policy"] == P6_CANONICAL_POLICY
+    assert evidence["metadata_json"]["evidence_profile"] == CURRENT_P6_PROFILE_VERSION
+    assert evidence["metadata_json"]["canonical_policy"] == CURRENT_P6_CANONICAL_POLICY
