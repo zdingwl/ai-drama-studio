@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
 from app.evidence.schemas import EpisodeSourceEvidenceRead
-from app.evidence.service_v3 import (
+from app.evidence.service_v4 import (
     create_source_evidence_task,
     get_episode_source_evidence,
     run_p6_source_evidence_task,
