@@ -7,6 +7,7 @@ from app.api.routes.projects import router as projects_router
 from app.api.routes.shot_breakdown import router as shot_breakdown_router
 from app.api.routes.skills import router as skills_router
 from app.api.routes.source_resolution import router as source_resolution_router
+from app.api.routes.source_snapshot import router as source_snapshot_router
 from app.api.routes.sources import router as sources_router
 from app.api.routes.tasks import router as tasks_router
 from app.api.routes.understanding import router as understanding_router
@@ -21,4 +22,5 @@ api_router.include_router(evidence_router)
 api_router.include_router(understanding_router)
 api_router.include_router(shot_breakdown_router)
 api_router.include_router(source_resolution_router)
+api_router.include_router(source_snapshot_router)
 api_router.include_router(tasks_router)
