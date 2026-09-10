@@ -6,13 +6,14 @@ from pydantic import ValidationError
 
 from app.artifacts.enums import ArtifactNamespace
 from app.artifacts.service import expected_namespace
+from app.core.errors import AppError
 from app.projects.enums import ProjectType
 from app.skills.capabilities import CAPABILITY_BY_ID
 from app.skills.models import ArtifactType, Capability, CapabilityAvailability
 from app.skills.professional import get_professional_skill, get_professional_skill_detail
 from app.skills.registry import get_root_skill
 from app.source_resolution.schemas import CharacterResolutionSemantic
-from app.source_resolution import service_v2
+from app.source_resolution import service, service_v2
 from app.workflow.models import TaskStatus
 
 
@@ -169,3 +170,13 @@ def test_p9_new_explicit_command_retries_identical_failed_business_task(monkeypa
     replay = service_v2.create_source_resolution_task(object(), project_id="project-1", idempotency_key="first-key")
     assert replay is failed
     assert calls == []
+
+
+def test_p9_command_fails_before_provider_when_migration_is_missing(monkeypatch) -> None:
+    db = SimpleNamespace(get_bind=lambda: object())
+    monkeypatch.setattr(service, "inspect", lambda _bind: SimpleNamespace(has_table=lambda _name: False))
+
+    with pytest.raises(AppError) as captured:
+        service._assert_p9_storage_ready(db)
+
+    assert captured.value.code == "P9_DATABASE_MIGRATION_REQUIRED"

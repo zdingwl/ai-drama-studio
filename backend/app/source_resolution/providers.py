@@ -20,9 +20,10 @@ from app.source_resolution.schemas import (
 )
 
 
-P9_PROMPT_VERSION = "p9-source-resolution-v1"
+P9_PROMPT_VERSION = "p9-source-resolution-v5"
 P9_SCHEMA_VERSION = "1.0"
 P9_SOURCE_TRUTH_CONTRACT = "full-episode-global-resolution-v1"
+P9_MAX_OUTPUT_TOKENS = 65536
 P9_SKILL_IDS = (
     "character-resolution",
     "speaker-attribution",
@@ -101,6 +102,34 @@ def _clean_json_schema(value: Any) -> Any:
         else:
             cleaned[key] = _clean_json_schema(nested)
     return cleaned
+
+
+def _structured_text_config(skill_id: str) -> dict[str, Any]:
+    model = _SEMANTIC_MODELS[skill_id]
+    schema = _clean_json_schema(model.model_json_schema())
+
+    def provider_only_statuses(value: Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                provider_only_statuses(item)
+            return
+        if not isinstance(value, dict):
+            return
+        enum_values = value.get("enum")
+        if isinstance(enum_values, list) and "MANUAL_CONFIRMED" in enum_values:
+            value["enum"] = [item for item in enum_values if item != "MANUAL_CONFIRMED"]
+        for nested in value.values():
+            provider_only_statuses(nested)
+
+    provider_only_statuses(schema)
+    return {
+        "format": {
+            "type": "json_schema",
+            "name": f"p9_{skill_id.replace('-', '_')}",
+            "schema": schema,
+            "strict": True,
+        }
+    }
 
 
 def _json_text(text: str) -> str:
@@ -188,8 +217,9 @@ def _prompt(skill_id: str, payload: ProjectResolutionInput) -> str:
 4. P6 canonical dialogue/OCR 只读；不得重新听写、改写、重编号或覆盖。
 5. UNKNOWN / UNRESOLVED 是正式允许结果；证据不足时不得为了填满字段强制 merge 或 attribution。
 6. 同名不等于同一实体，相似外观也不等于同一实体。
-7. 只允许引用输入 JSON 中真实存在的 shot_anchor_id、utterance_id、candidate id 或 P9 character_id；不得创造 evidence id。
+7. evidence_refs[].ref_id 只允许逐字复制输入 JSON 中真实存在的 episode_id、shot_anchor_id、utterance_id、OCR evidence id、candidate id 或 P9 character_id；不得创造 evidence id。全集级外观连续性请把对应 episode_id 同时填入 ref_id 与 episode_id，不得用自造的 appearance_consistency 标签充当 ref_id。
 8. 不输出 Target 内容，不创建 Snapshot。
+9. Provider 只能输出 RESOLVED、UNKNOWN 或 UNRESOLVED；MANUAL_CONFIRMED 仅由用户显式人工裁决产生，禁止输出。
 
 Professional Skill rules:
 {rules}
@@ -236,6 +266,22 @@ def _ark_response_text(response: Any) -> str:
     return "".join(chunks)
 
 
+def _assert_ark_response_completed(skill_id: str, response: Any) -> None:
+    status = str(getattr(response, "status", "") or "").lower()
+    if status != "incomplete":
+        return
+    incomplete_details = getattr(response, "incomplete_details", None)
+    reason = getattr(incomplete_details, "reason", None)
+    if reason is None and isinstance(incomplete_details, dict):
+        reason = incomplete_details.get("reason")
+    raise AppError(
+        _response_error_code(skill_id, "INCOMPLETE"),
+        f"{skill_id} Provider 输出未完成（{str(reason or 'unknown')}）",
+        status_code=502,
+        details={"professional_skill_id": skill_id, "incomplete_reason": str(reason or "unknown")},
+    )
+
+
 class DoubaoSeedSourceResolutionProvider:
     provider_name = "volcengine-ark"
 
@@ -265,6 +311,7 @@ class DoubaoSeedSourceResolutionProvider:
             "video_input": "ARK_FILES_API_ALL_FULL_EPISODES",
             "video_fps": self.video_fps,
             "structured_output": "STRICT_JSON_SCHEMA_PROMPT_PLUS_SERVER_VALIDATION",
+            "max_output_tokens": P9_MAX_OUTPUT_TOKENS,
             "prompt_version": P9_PROMPT_VERSION,
             "professional_skill_id": skill.id,
             "professional_skill_version": skill.version,
@@ -297,7 +344,10 @@ class DoubaoSeedSourceResolutionProvider:
                 model=self.model_name,
                 input=[{"role": "user", "content": content}],
                 thinking={"type": "enabled"},
+                text=_structured_text_config(professional_skill_id),
+                max_output_tokens=P9_MAX_OUTPUT_TOKENS,
             )
+            _assert_ark_response_completed(professional_skill_id, response)
             try:
                 response_text = _ark_response_text(response)
             except ValueError as exc:

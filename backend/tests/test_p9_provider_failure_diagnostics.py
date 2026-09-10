@@ -4,7 +4,7 @@ import pytest
 
 from app.core.errors import AppError
 from app.skills.models import Capability
-from app.source_resolution.providers import _parse_semantic
+from app.source_resolution.providers import P9_MAX_OUTPUT_TOKENS, _parse_semantic, _structured_text_config
 from app.workflow import provider_service
 from app.workflow.models import ProviderJobStatus
 from app.workflow.worker import _app_error_task_message
@@ -69,6 +69,18 @@ def test_scene_provider_invalid_output_gets_stage_specific_safe_error() -> None:
     assert captured.value.code == "P9_SCENE_PROVIDER_RESPONSE_INVALID"
     assert "scene-resolution" in captured.value.message
     assert "secret-like-value" not in captured.value.message
+
+
+def test_p9_ark_requests_strict_json_schema_output() -> None:
+    config = _structured_text_config("character-resolution")
+
+    assert config["format"]["type"] == "json_schema"
+    assert config["format"]["name"] == "p9_character_resolution"
+    assert config["format"]["strict"] is True
+    assert config["format"]["schema"]["type"] == "object"
+    status_enum = config["format"]["schema"]["$defs"]["ResolutionStatus"]["enum"]
+    assert status_enum == ["RESOLVED", "UNKNOWN", "UNRESOLVED"]
+    assert P9_MAX_OUTPUT_TOKENS == 65536
 
 
 def test_dispatch_preserves_authored_provider_app_error_after_marking_job_failed(monkeypatch) -> None:

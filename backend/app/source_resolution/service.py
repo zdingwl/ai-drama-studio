@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, inspect, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.artifacts.enums import ArtifactNamespace, ArtifactRelationType, ArtifactValidity
@@ -307,6 +307,7 @@ def _fingerprint_inputs(db: Session, inputs: P9Inputs, provider: SourceResolutio
 
 
 def create_source_resolution_task(db: Session, *, project_id: str, idempotency_key: str) -> Task:
+    _assert_p9_storage_ready(db)
     inputs = _load_inputs(db, project_id)
     project = get_project(db, project_id)
     provider = _provider_for_project(project)
@@ -329,6 +330,15 @@ def create_source_resolution_task(db: Session, *, project_id: str, idempotency_k
             max_attempts=3,
         ),
     )
+
+
+def _assert_p9_storage_ready(db: Session) -> None:
+    if not inspect(db.get_bind()).has_table(SourceResolutionRevision.__tablename__):
+        raise AppError(
+            "P9_DATABASE_MIGRATION_REQUIRED",
+            "P9 数据库迁移尚未应用，请先执行 alembic upgrade head",
+            status_code=503,
+        )
 
 
 def _assert_task_snapshot(db: Session, task: TaskWorkerRead | Task, inputs: P9Inputs, provider: SourceResolutionProvider) -> None:
@@ -968,7 +978,14 @@ def _publish_one(
             "document_title": _KIND_LABEL[kind],
         },
     )
-    _persist_revision(db, artifact=artifact, kind=kind, content=content, provenance=provenance)
+    try:
+        _persist_revision(db, artifact=artifact, kind=kind, content=content, provenance=provenance)
+    except Exception:
+        db.rollback()
+        if db.scalar(select(SourceResolutionRevision.id).where(SourceResolutionRevision.artifact_id == artifact.id)) is None:
+            db.delete(artifact)
+            db.commit()
+        raise
     for upstream_id, relation in (
         (inputs.source.id, ArtifactRelationType.DERIVED_FROM),
         (inputs.bible.id, ArtifactRelationType.USES),
@@ -1048,6 +1065,7 @@ def _publish_all(db: Session, *, task_id: str, result: P9ExecutionResult) -> dic
                 source_characters_artifact=published.get(SourceResolutionKind.CHARACTER) if kind == SourceResolutionKind.SPEAKER else None,
             )
     except Exception:
+        db.rollback()
         for artifact_type in _KIND_ARTIFACT.values():
             invalidate_current_artifact_type(db, project_id=task.project_id, artifact_type=artifact_type)
         raise

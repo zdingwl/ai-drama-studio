@@ -4,6 +4,16 @@
 >
 > 前置事实：P8 已完成真实人工验收并正式收口；`SHOT_BREAKDOWN = AVAILABLE`。P9 开发及自动化测试期间 `IDENTITY_RESOLUTION / SCENE_RESOLUTION / PROP_RESOLUTION` 继续保持 `PLANNED`，只有真实短剧 Provider、真实数据库和最终人工音画验收全部通过后才能另行评估 `AVAILABLE`。
 
+当前 P9 Provider 输出契约：
+
+```text
+prompt_version = p9-source-resolution-v5
+Ark Responses text.format = strict json_schema
+Ark Responses max_output_tokens = 65536
+```
+
+v2 要求云 Provider 在请求层启用严格 JSON Schema 输出，不能只依赖提示词要求 JSON。`evidence_refs[].ref_id` 必须逐字引用输入中已经存在的 Episode、Shot Anchor、P6 Evidence 或 P7 candidate ID；全集级视觉连续性只能使用对应 `episode_id` 作为 `ref_id`，不得创造诸如“appearance_consistency”的语义标签 ID。v3 进一步从 Provider 专用 JSON Schema 的状态枚举中移除 `MANUAL_CONFIRMED`；该状态只能由显式人工 POST Command 产生，Provider 请求层和服务端校验层都必须拒绝模型伪造人工确认。v4 为完整 Character / Speaker / Scene / Prop 批次显式提供 32768 output token 预算。v5 根据真实 Prop 响应的未完成风险将该预算提高到 65536，并要求显式识别 Ark Responses `incomplete` 状态，不得把未完成输出混报为普通 JSON 校验失败；该预算属于 Provider profile 并进入 Task fingerprint。
+
 ## 1. P9 目标与边界
 
 P9 把 P7/P8 的人物、说话人、场景、道具 candidate 收敛为稳定、版本化、可追溯的 Source identity。P9 不重新理解或改写原片，不修改 P5 Shot 时间，不重新听写 P6 canonical dialogue/OCR，不回写历史 P7 `SOURCE_BIBLE` 或 P8 `SOURCE_SHOT_FACTS` revision。
@@ -182,6 +192,7 @@ Command 必须携带 `expected_revision` 做乐观并发控制，携带人工理
 - GET 只读：读取 current/stale P9 aggregate、各类 revision history，不创建 Task、不调用 Provider、不发布 Artifact。
 - 自动执行顺序：Character -> Speaker -> Scene -> Prop。四个 Provider call 均在远程调用前先持久化 `ProviderJob`。
 - Provider 必须读取完整 Episode；允许把所有 Episode 的候选与跨 Episode summary 一并放入 prompt/context，禁止按 Shot 单独请求后简单拼接。
+- 云 Provider 必须使用 Responses API 的 strict JSON Schema structured output；解析与服务端 publication validation 继续双重 fail-closed。
 - 服务端验证所有返回的 `shot_anchor_id / utterance_id / P7 candidate id / P8 binding ref` 都来自当前硬输入；Provider 不能创造不存在的 Source evidence id。
 - 对置信不足的结果要求 Provider 返回 UNKNOWN/UNRESOLVED；服务端不得做“最高分兜底”。
 - 发布前重新核验 Task input artifact ids、fingerprint 与 Provider profile；变化则 fail closed。
