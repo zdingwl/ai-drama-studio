@@ -9,14 +9,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.artifacts.enums import ArtifactNamespace
 from app.artifacts.models import ArtifactNode
 from app.artifacts.service import create_artifact
+from app.core.errors import AppError
 from app.skills.models import ArtifactType
 from app.source_analysis.models import SourceStoryboardDraftRevision
 from app.source_analysis.schemas import SourceAnalysisState, StoryboardShotEditCommand
-from app.source_analysis import script_service, service as source_analysis_service
+from app.source_analysis import draft_service, script_service, service as source_analysis_service
 from app.source_analysis.service import SOURCE_ANALYSIS_TASK_TYPE, create_source_analysis_task
 from app.sources.enums import SourceAssetKind
 from app.sources.models import Episode, SourceAsset
-from app.workflow.models import Task, TaskStatus
+from app.workflow.models import ProviderJob, Task, TaskStatus
 
 
 def _project(client: TestClient) -> dict:
@@ -145,6 +146,38 @@ def test_source_analysis_get_is_read_only_and_one_command_creates_one_master_tas
         assert second is not None
         assert second.id == first_id
         assert db.scalar(select(func.count(Task.id))) == 1
+
+
+def test_source_script_and_storyboard_draft_gets_are_read_only(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    project = _project(client)
+    _seed_source(session_factory, project)
+
+    with session_factory() as db:
+        before = (
+            int(db.scalar(select(func.count(ArtifactNode.id))) or 0),
+            int(db.scalar(select(func.count(Task.id))) or 0),
+            int(db.scalar(select(func.count(ProviderJob.id))) or 0),
+            int(db.scalar(select(func.count(SourceStoryboardDraftRevision.id))) or 0),
+        )
+
+    script = client.get(f'/api/v3/projects/{project["id"]}/source-script')
+    draft = client.get(f'/api/v3/projects/{project["id"]}/storyboard-draft')
+
+    assert script.status_code == 200, script.text
+    assert script.json()["state"] == "NOT_READY"
+    assert draft.status_code == 200, draft.text
+    assert draft.json()["status"] == "NOT_BUILT"
+    with session_factory() as db:
+        after = (
+            int(db.scalar(select(func.count(ArtifactNode.id))) or 0),
+            int(db.scalar(select(func.count(Task.id))) or 0),
+            int(db.scalar(select(func.count(ProviderJob.id))) or 0),
+            int(db.scalar(select(func.count(SourceStoryboardDraftRevision.id))) or 0),
+        )
+    assert after == before
 
 
 def test_source_analysis_skips_current_snapshot_without_creating_task(
@@ -352,6 +385,15 @@ def test_storyboard_edit_contract_is_full_or_reset_and_working_copy_is_not_artif
             shot_anchor_id="shot-1",
             visual_description="只改了一半",
         )
+    with pytest.raises(ValidationError):
+        StoryboardShotEditCommand.model_validate(
+            {
+                "expected_revision": None,
+                "shot_anchor_id": "shot-1",
+                "reset_to_source": True,
+                "dialogue": "对白不可通过分镜草稿修改",
+            }
+        )
 
     reset = StoryboardShotEditCommand(
         expected_revision=1,
@@ -362,6 +404,108 @@ def test_storyboard_edit_contract_is_full_or_reset_and_working_copy_is_not_artif
     assert SourceStoryboardDraftRevision.__tablename__ == "source_storyboard_draft_revisions"
     assert "artifact_id" not in SourceStoryboardDraftRevision.__table__.columns
     assert "source_snapshot_artifact_id" in SourceStoryboardDraftRevision.__table__.columns
+
+
+def test_storyboard_draft_persists_resets_conflicts_and_stales_with_source(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
+    project = _project(client)
+    _seed_source(session_factory, project)
+    monkeypatch.setattr(
+        draft_service,
+        "get_source_video_snapshot",
+        lambda db, project_id: SimpleNamespace(status="CURRENT"),
+    )
+    source_shot = SimpleNamespace(
+        shot_anchor_id="shot-1",
+        visual_description="原始视觉描述",
+        shot_size="中景",
+        composition="人物居中",
+        angle_or_type="平视",
+        movement="固定",
+        focal_length_dof="标准焦段",
+    )
+    monkeypatch.setattr(
+        draft_service,
+        "get_source_script",
+        lambda db, project_id: SimpleNamespace(
+            scenes=[SimpleNamespace(shots=[source_shot])],
+        ),
+    )
+
+    with session_factory() as db:
+        first_snapshot = create_artifact(
+            db,
+            project_id=project["id"],
+            artifact_type=ArtifactType.SOURCE_VIDEO_SNAPSHOT,
+            namespace=ArtifactNamespace.SOURCE,
+            label="原片解析结果 rev1",
+            input_fingerprint="c" * 64,
+            skill_id=project["root_skill_id"],
+            skill_version=project["root_skill_version"],
+            metadata_json={},
+        )
+        edited = draft_service.edit_storyboard_draft(
+            db,
+            project_id=project["id"],
+            command=StoryboardShotEditCommand(
+                expected_revision=None,
+                shot_anchor_id="shot-1",
+                visual_description="修改后的视觉描述",
+                shot_size="近景",
+                composition="人物偏右",
+                angle_or_type="轻微仰拍",
+                movement="缓慢推进",
+                focal_length_dof="浅景深",
+            ),
+        )
+        assert edited.status.value == "CURRENT"
+        assert edited.revision == 1
+        assert edited.overrides[0].visual_description == "修改后的视觉描述"
+        refreshed = draft_service.get_storyboard_draft(db, project["id"])
+        assert refreshed == edited
+
+        with pytest.raises(AppError) as conflict:
+            draft_service.edit_storyboard_draft(
+                db,
+                project_id=project["id"],
+                command=StoryboardShotEditCommand(
+                    expected_revision=None,
+                    shot_anchor_id="shot-1",
+                    reset_to_source=True,
+                ),
+            )
+        assert conflict.value.code == "STORYBOARD_DRAFT_REVISION_CONFLICT"
+
+        reset = draft_service.edit_storyboard_draft(
+            db,
+            project_id=project["id"],
+            command=StoryboardShotEditCommand(
+                expected_revision=1,
+                shot_anchor_id="shot-1",
+                reset_to_source=True,
+            ),
+        )
+        assert reset.revision == 2
+        assert reset.overrides == []
+
+        create_artifact(
+            db,
+            project_id=project["id"],
+            artifact_type=ArtifactType.SOURCE_VIDEO_SNAPSHOT,
+            namespace=ArtifactNamespace.SOURCE,
+            label="原片解析结果 rev2",
+            input_fingerprint="d" * 64,
+            skill_id=project["root_skill_id"],
+            skill_version=project["root_skill_version"],
+            metadata_json={},
+        )
+        db.expire(first_snapshot)
+        stale = draft_service.get_storyboard_draft(db, project["id"])
+        assert stale.status.value == "STALE"
+        assert stale.revision == 2
 
 
 def test_source_analysis_product_routes_are_registered(client: TestClient) -> None:

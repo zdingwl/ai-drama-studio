@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class SourceAnalysisState(StrEnum):
@@ -139,6 +139,8 @@ class StoryboardDraftRead(BaseModel):
 
 
 class StoryboardShotEditCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     expected_revision: int | None = Field(default=None, ge=1)
     shot_anchor_id: str = Field(min_length=1, max_length=64)
     reset_to_source: bool = False
