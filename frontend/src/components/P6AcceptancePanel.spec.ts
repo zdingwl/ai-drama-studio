@@ -6,6 +6,7 @@ import * as projectApi from '@/features/projects/api'
 import P6AcceptancePanel from './P6AcceptancePanel.vue'
 
 vi.mock('@/features/projects/api', () => ({
+  adjudicateEpisodeDialogue: vi.fn(),
   getEpisodeSourceEvidence: vi.fn(),
   getProject: vi.fn(),
   listProjectEpisodes: vi.fn(),
@@ -63,7 +64,7 @@ const evidence = {
     text: '你好，世界。',
     language: 'zh',
     projected_shot_numbers: [1, 2],
-    text_source: 'ASR',
+    text_source: 'ASR' as const,
     asr_text: '你好，世界。',
     ocr_text: null,
     ocr_span_numbers: [],
@@ -123,6 +124,7 @@ describe('P6AcceptancePanel', () => {
     expect(wrapper.text()).toContain('你好，世界。')
     expect(wrapper.text()).toContain('Shot 1, 2')
     expect(wrapper.text()).toContain('画面字幕')
+    expect(wrapper.text()).toContain('人工确认 / 修改')
     expect(wrapper.text()).not.toContain('字幕校正')
     wrapper.unmount()
   })
@@ -135,7 +137,7 @@ describe('P6AcceptancePanel', () => {
       dialogue: [{
         ...evidence.dialogue[0],
         text: '乙阿姨',
-        text_source: 'OCR_SUBTITLE_ADJUDICATED',
+        text_source: 'OCR_SUBTITLE_ADJUDICATED' as const,
         asr_text: '甲阿姨',
         ocr_text: '乙阿姨',
         ocr_span_numbers: [3, 4],
@@ -150,6 +152,84 @@ describe('P6AcceptancePanel', () => {
     expect(text).toContain('乙阿姨')
     expect(text).toContain('ASR 原文：甲阿姨')
     expect(text).toContain('OCR span #3, #4')
+    wrapper.unmount()
+  })
+
+  it('lets the user explicitly choose or edit canonical dialogue and only saves on command', async () => {
+    vi.mocked(projectApi.getProject).mockResolvedValue(project)
+    vi.mocked(projectApi.listProjectEpisodes).mockResolvedValue([episode])
+    vi.mocked(projectApi.getEpisodeSourceEvidence).mockResolvedValue(evidence)
+    vi.mocked(projectApi.adjudicateEpisodeDialogue).mockResolvedValue({
+      ...evidence,
+      revision: 2,
+      artifact_revision: 2,
+      dialogue: [{
+        ...evidence.dialogue[0],
+        id: 'dialogue-2',
+        text: '人工确认后的台词',
+        text_source: 'USER_EDITED' as const,
+        adjudication_policy: 'human-dialogue-adjudication-v1',
+        adjudication_reason: 'USER_SELECTED_CUSTOM',
+      }],
+    })
+
+    const wrapper = await mountPanel()
+    const editButton = wrapper.findAll('button').find((button) => button.text().includes('人工确认 / 修改'))
+    expect(editButton).toBeTruthy()
+    await editButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('使用 ASR 原文')
+    expect(wrapper.text()).toContain('使用 OCR 字幕')
+    expect(wrapper.text()).toContain('自定义文本')
+    expect(projectApi.adjudicateEpisodeDialogue).not.toHaveBeenCalled()
+
+    const customRadio = wrapper.find('input[type="radio"][value="CUSTOM"]')
+    await customRadio.setValue(true)
+    const textarea = wrapper.find('textarea')
+    await textarea.setValue('人工确认后的台词')
+
+    const saveButton = wrapper.findAll('button').find((button) => button.text().includes('保存为新 revision'))
+    expect(saveButton).toBeTruthy()
+    await saveButton!.trigger('click')
+    await flushPromises()
+
+    expect(projectApi.adjudicateEpisodeDialogue).toHaveBeenCalledTimes(1)
+    expect(projectApi.adjudicateEpisodeDialogue).toHaveBeenCalledWith(
+      'project-1',
+      'episode-1',
+      {
+        expected_revision: 1,
+        utterance_id: 'dialogue-1',
+        choice: 'CUSTOM',
+        custom_text: '人工确认后的台词',
+      },
+      expect.stringContaining('p6-human-episode-1-dialogue-1-'),
+    )
+    expect(wrapper.text()).toContain('人工确认后的台词')
+    expect(wrapper.text()).toContain('人工确认')
+    expect(wrapper.text()).toContain('已保存为 P6 rev 2')
+    expect(wrapper.text()).toContain('P6 → P7 → P8')
+    wrapper.unmount()
+  })
+
+  it('cancels manual editing without creating a revision', async () => {
+    vi.mocked(projectApi.getProject).mockResolvedValue(project)
+    vi.mocked(projectApi.listProjectEpisodes).mockResolvedValue([episode])
+    vi.mocked(projectApi.getEpisodeSourceEvidence).mockResolvedValue(evidence)
+
+    const wrapper = await mountPanel()
+    const editButton = wrapper.findAll('button').find((button) => button.text().includes('人工确认 / 修改'))
+    await editButton!.trigger('click')
+    await flushPromises()
+
+    const cancelButton = wrapper.findAll('button').find((button) => button.text() === '取消')
+    expect(cancelButton).toBeTruthy()
+    await cancelButton!.trigger('click')
+    await flushPromises()
+
+    expect(projectApi.adjudicateEpisodeDialogue).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('保存为新 revision')
     wrapper.unmount()
   })
 
