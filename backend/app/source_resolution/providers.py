@@ -38,6 +38,13 @@ _SEMANTIC_MODELS: dict[str, type[BaseModel]] = {
     "prop-resolution": PropResolutionSemantic,
 }
 
+_SKILL_ERROR_NAMES = {
+    "character-resolution": "CHARACTER",
+    "speaker-attribution": "SPEAKER",
+    "scene-resolution": "SCENE",
+    "prop-resolution": "PROP",
+}
+
 
 @dataclass(frozen=True)
 class ResolutionEpisodeVideo:
@@ -109,11 +116,52 @@ def _json_text(text: str) -> str:
     raise ValueError("P9 provider response did not contain a JSON object")
 
 
+def _response_error_code(skill_id: str, suffix: str) -> str:
+    prefix = _SKILL_ERROR_NAMES.get(skill_id, "UNKNOWN")
+    return f"P9_{prefix}_PROVIDER_RESPONSE_{suffix}"
+
+
+def _validation_hint(exc: Exception) -> str:
+    errors_method = getattr(exc, "errors", None)
+    if callable(errors_method):
+        try:
+            errors = errors_method(include_url=False, include_input=False)
+        except TypeError:
+            errors = errors_method()
+        hints: list[str] = []
+        for item in errors[:3]:
+            loc = ".".join(str(part) for part in item.get("loc", ())) or "root"
+            error_type = str(item.get("type") or "invalid")
+            hints.append(f"{loc}:{error_type}")
+        if hints:
+            return ", ".join(hints)
+    return type(exc).__name__
+
+
 def _parse_semantic(skill_id: str, text: str) -> BaseModel:
     model = _SEMANTIC_MODELS.get(skill_id)
     if model is None:
         raise AppError("P9_SKILL_UNSUPPORTED", "未知 P9 Professional Skill", status_code=500)
-    return model.model_validate_json(_json_text(text))
+    try:
+        return model.model_validate_json(_json_text(text))
+    except Exception as exc:
+        if isinstance(exc, AppError):
+            raise
+        raise AppError(
+            _response_error_code(skill_id, "INVALID"),
+            f"{skill_id} Provider 返回结果未通过 P9 数据契约校验（{_validation_hint(exc)}）",
+            status_code=502,
+            details={"professional_skill_id": skill_id, "error_type": type(exc).__name__},
+        ) from exc
+
+
+def _empty_response_error(skill_id: str) -> AppError:
+    return AppError(
+        _response_error_code(skill_id, "EMPTY"),
+        f"{skill_id} Provider 未返回可用的结构化文本",
+        status_code=502,
+        details={"professional_skill_id": skill_id},
+    )
 
 
 def _prompt(skill_id: str, payload: ProjectResolutionInput) -> str:
@@ -250,7 +298,11 @@ class DoubaoSeedSourceResolutionProvider:
                 input=[{"role": "user", "content": content}],
                 thinking={"type": "enabled"},
             )
-            semantic = _parse_semantic(professional_skill_id, _ark_response_text(response))
+            try:
+                response_text = _ark_response_text(response)
+            except ValueError as exc:
+                raise _empty_response_error(professional_skill_id) from exc
+            semantic = _parse_semantic(professional_skill_id, response_text)
             response_id = str(getattr(response, "id", "") or "") or None
             return ResolutionProviderResult(semantic=semantic, remote_job_id=response_id)
         finally:
@@ -321,10 +373,10 @@ class LocalQwenSourceResolutionProvider:
             body = response.json()
         choices = body.get("choices") or []
         if not choices:
-            raise ValueError("Local Qwen response did not contain choices")
+            raise _empty_response_error(professional_skill_id)
         text = (choices[0].get("message") or {}).get("content")
         if not isinstance(text, str) or not text.strip():
-            raise ValueError("Local Qwen response did not contain final content")
+            raise _empty_response_error(professional_skill_id)
         return ResolutionProviderResult(
             semantic=_parse_semantic(professional_skill_id, text),
             remote_job_id=str(body.get("id") or "") or None,
