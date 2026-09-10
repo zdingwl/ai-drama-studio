@@ -15,7 +15,7 @@ import {
   type StoryboardDraftRead,
   type StoryboardShotOverride,
 } from '@/features/projects/sourceAnalysis'
-import { VIDEO_PROJECT_TYPES, type ProjectRead } from '@/features/projects/types'
+import type { ProjectRead } from '@/features/projects/types'
 
 type WorkspaceTab = 'script' | 'storyboard' | 'assets'
 
@@ -34,9 +34,13 @@ const activeTab = ref<WorkspaceTab>('script')
 const editingShot = ref<StoryboardShotOverride | null>(null)
 let pollTimer: number | null = null
 
-const visible = computed(() => Boolean(project.value && VIDEO_PROJECT_TYPES.has(project.value.project_type)))
+const visible = computed(() => project.value?.project_type === 'REPLICA' || project.value?.project_type === 'REDRAW')
 const isReady = computed(() => status.value?.state === 'READY' && script.value?.state === 'READY')
-const draftByShot = computed(() => new Map((draft.value?.overrides ?? []).map((item) => [item.shot_anchor_id, item])))
+const draftByShot = computed(() => new Map(
+  draft.value?.status === 'CURRENT'
+    ? draft.value.overrides.map((item) => [item.shot_anchor_id, item] as const)
+    : [],
+))
 const sceneCount = computed(() => script.value?.scenes.length ?? 0)
 const shotCount = computed(() => script.value?.scenes.reduce((sum, scene) => sum + scene.shots.length, 0) ?? 0)
 
@@ -255,7 +259,7 @@ onBeforeUnmount(stopPolling)
           </header>
           <div class="script-copy">
             <template v-for="shot in scene.shots" :key="shot.shot_anchor_id">
-              <p class="action">{{ effectiveShot(shot).visual_description }}</p>
+              <p class="action">{{ shot.visual_description }}</p>
               <div v-for="dialogue in shot.dialogues" :key="dialogue.utterance_id" class="dialogue">
                 <strong>{{ dialogue.speaker_name }}</strong><p>{{ dialogue.text }}</p>
               </div>
@@ -266,8 +270,8 @@ onBeforeUnmount(stopPolling)
 
       <div v-else-if="activeTab === 'storyboard'" class="result-body" data-testid="source-storyboard-view">
         <div class="draft-note">
-          <strong>{{ draft?.overrides.length ? `分镜编辑草稿 r${draft.revision}` : '原片分镜' }}</strong>
-          <span>直接修改保存为工作草稿，不覆盖原片事实。</span>
+          <strong>{{ draft?.status === 'STALE' ? '旧分镜草稿已归档' : draft?.overrides.length ? `分镜编辑草稿 r${draft.revision}` : '原片分镜' }}</strong>
+          <span>{{ draft?.status === 'STALE' ? '原片结果已更新，旧草稿不会自动套用；新的修改会从当前原片分镜开始。' : '直接修改保存为工作草稿，不覆盖原片事实。' }}</span>
         </div>
         <section v-for="scene in script.scenes" :key="`board-${scene.scene_number}-${scene.start_us}`" class="board-scene">
           <header><strong>场 {{ scene.scene_number }} · {{ scene.scene_name }}</strong><span>{{ scene.shots.length }} 镜</span></header>
