@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 import AppShell from '@/components/AppShell.vue'
@@ -7,17 +8,24 @@ import P7SourceUnderstandingWorkspace from '@/components/P7SourceUnderstandingWo
 import P8ShotBreakdownPanel from '@/components/P8ShotBreakdownPanel.vue'
 import P9SourceResolutionPanel from '@/components/P9SourceResolutionPanel.vue'
 import SourceResultApprovalBar from '@/components/SourceResultApprovalBar.vue'
+import SourceScriptStoryboardWorkspace from '@/components/SourceScriptStoryboardWorkspace.vue'
 
 const route = useRoute()
+const isProjectWorkspace = computed(() => route.name === 'project-workspace')
+const debugMode = computed(() => route.query.debug === '1')
 </script>
 
 <template>
   <AppShell>
     <RouterView />
-    <P6AcceptancePanel v-if="route.name === 'project-workspace'" />
-    <P7SourceUnderstandingWorkspace v-if="route.name === 'project-workspace'" />
-    <P8ShotBreakdownPanel v-if="route.name === 'project-workspace'" />
-    <P9SourceResolutionPanel v-if="route.name === 'project-workspace'" />
-    <SourceResultApprovalBar v-if="route.name === 'project-workspace'" />
+    <SourceScriptStoryboardWorkspace v-if="isProjectWorkspace" />
+
+    <template v-if="isProjectWorkspace && debugMode">
+      <P6AcceptancePanel />
+      <P7SourceUnderstandingWorkspace />
+      <P8ShotBreakdownPanel />
+      <P9SourceResolutionPanel />
+      <SourceResultApprovalBar />
+    </template>
   </AppShell>
 </template>
