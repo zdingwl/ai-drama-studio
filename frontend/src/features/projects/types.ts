@@ -16,6 +16,13 @@ export type PlanStepStatus = 'COMPLETED' | 'READY' | 'BLOCKED_DEPENDENCY' | 'WAI
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 export type ShotBoundaryResultStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
 export type SourceEvidenceResultStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
+export type DialogueTextSource =
+  | 'ASR'
+  | 'OCR_SUBTITLE_ADJUDICATED'
+  | 'USER_ASR_SELECTED'
+  | 'USER_OCR_SELECTED'
+  | 'USER_EDITED'
+export type ManualDialogueChoice = 'ASR' | 'OCR' | 'CUSTOM'
 
 export interface ProjectTypeOption {
   value: ProjectType
@@ -182,12 +189,20 @@ export interface DialogueUtteranceRead {
   text: string
   language: string | null
   projected_shot_numbers: number[]
-  text_source: 'ASR' | 'OCR_SUBTITLE_ADJUDICATED' | string
+  text_source: DialogueTextSource
   asr_text: string | null
   ocr_text: string | null
   ocr_span_numbers: number[]
   adjudication_policy: string | null
   adjudication_reason: string | null
+}
+
+export interface DialogueManualAdjudicationPayload {
+  expected_revision: number
+  utterance_id: string
+  choice: ManualDialogueChoice
+  ocr_span_number?: number | null
+  custom_text?: string | null
 }
 
 export interface VisualTextSpanRead {
