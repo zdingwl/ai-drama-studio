@@ -19,6 +19,26 @@ frozen-accepted-source-facts-v1
 SOURCE_SNAPSHOT = PLANNED
 ```
 
+## 产品呈现边界
+
+P10 是 **Internal Engineering Slice**，不是新的用户 Product Stage。
+
+普通用户始终只看到“原片理解”及其直接结果：剧情、人物、说话人、场景、道具、对白、Story/Rhythm 与逐镜拉片。不得把 P10 再做成一个独立结果大面板，也不得要求用户理解 `SourceVideoSnapshot / Artifact / fingerprint / provenance / frozen inputs`。
+
+允许在原片理解结果末尾提供一个轻量确认状态：
+
+```text
+尚未确认当前原片分析结果
+当前原片分析结果已确认
+原片分析结果已有更新，请重新确认
+```
+
+确认动作仍必须是显式 POST；页面加载和刷新只能 GET，不能自动发布 Snapshot。
+
+技术字段继续完整保留在 API、typed domain、Artifact Graph、自动测试与开发/排障入口中，但不能作为普通用户的主结果展示。
+
+详细产品呈现决定见 `docs/20_P10产品呈现整改_取消独立阶段.md`。
+
 ## Source Truth
 
 完整 Episode 永远是最高层 Source Truth。
@@ -53,7 +73,9 @@ P10 严禁：
 - 把 P8 provisional candidate 当新最终 truth；
 - 把 Speaker 合并进 Character；
 - 读取 Target / Production Artifact 来决定 Source Snapshot；
-- GET 自动定稿或重算。
+- GET 自动定稿或重算；
+- 把 P10 暴露成普通用户必须理解的独立产品阶段；
+- 在普通结果页重复渲染 P5~P9 已经展示过的内容。
 
 ## 执行方法
 
@@ -100,7 +122,7 @@ Snapshot 只新增版本边界、引用和 provenance，不新增语义事实。
 - Professional Skill / schema / source-truth contract；
 - 前一 Snapshot id/fingerprint（发布新 revision 时）。
 
-相同 CURRENT Source 链重复点击定稿必须幂等返回当前 Snapshot，不制造无意义 revision。
+相同 CURRENT Source 链重复点击确认必须幂等返回当前 Snapshot，不制造无意义 revision。
 
 ## Artifact Graph
 
@@ -142,4 +164,4 @@ P10 第一版是同步的轻量确定性 Command，不创建 Task / ProviderJob�
 
 Snapshot 只允许位于 `SOURCE` namespace。Target / Production 可以依赖 CURRENT Snapshot，但不得反向写入或作为 P10 输入。
 
-P10 真实人工验收通过前，不开始 Target Localization / Target Bible 正式实现。
+P10 新产品呈现完成真实人工验收前，不开始 Target Localization / Target Bible 正式实现。
