@@ -830,5 +830,5 @@ def test_p8_new_source_bible_revision_stales_old_and_new_p8_supersedes_it(
     )
 
 
-def test_p8_capability_remains_planned_until_real_manual_acceptance() -> None:
-    assert CAPABILITY_BY_ID[Capability.SHOT_BREAKDOWN].availability == CapabilityAvailability.PLANNED
+def test_p8_capability_is_available_after_real_manual_acceptance() -> None:
+    assert CAPABILITY_BY_ID[Capability.SHOT_BREAKDOWN].availability == CapabilityAvailability.AVAILABLE
