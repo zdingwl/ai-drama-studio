@@ -63,6 +63,12 @@ const evidence = {
     text: '你好，世界。',
     language: 'zh',
     projected_shot_numbers: [1, 2],
+    text_source: 'ASR',
+    asr_text: '你好，世界。',
+    ocr_text: null,
+    ocr_span_numbers: [],
+    adjudication_policy: null,
+    adjudication_reason: null,
   }],
   visual_text: [{
     id: 'visual-1',
@@ -117,6 +123,33 @@ describe('P6AcceptancePanel', () => {
     expect(wrapper.text()).toContain('你好，世界。')
     expect(wrapper.text()).toContain('Shot 1, 2')
     expect(wrapper.text()).toContain('画面字幕')
+    expect(wrapper.text()).not.toContain('字幕校正')
+    wrapper.unmount()
+  })
+
+  it('shows audited subtitle correction and the original ASR text together', async () => {
+    vi.mocked(projectApi.getProject).mockResolvedValue(project)
+    vi.mocked(projectApi.listProjectEpisodes).mockResolvedValue([episode])
+    vi.mocked(projectApi.getEpisodeSourceEvidence).mockResolvedValue({
+      ...evidence,
+      dialogue: [{
+        ...evidence.dialogue[0],
+        text: '乙阿姨',
+        text_source: 'OCR_SUBTITLE_ADJUDICATED',
+        asr_text: '甲阿姨',
+        ocr_text: '乙阿姨',
+        ocr_span_numbers: [3, 4],
+        adjudication_policy: 'ocr-subtitle-near-match-v1',
+        adjudication_reason: 'HIGH_CONFIDENCE_TEMPORAL_SUBTITLE_NEAR_MATCH',
+      }],
+    })
+
+    const wrapper = await mountPanel()
+    const text = wrapper.text()
+    expect(text).toContain('字幕校正')
+    expect(text).toContain('乙阿姨')
+    expect(text).toContain('ASR 原文：甲阿姨')
+    expect(text).toContain('OCR span #3, #4')
     wrapper.unmount()
   })
 
