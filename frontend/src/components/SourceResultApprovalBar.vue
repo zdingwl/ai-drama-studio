@@ -21,11 +21,10 @@ const successMessage = ref('')
 
 const visible = computed(() => project.value?.project_type === 'REPLICA' || project.value?.project_type === 'REDRAW')
 const status = computed(() => snapshot.value?.status ?? 'NOT_BUILT')
+const needsConfirmation = computed(() => status.value !== 'CURRENT')
 const buttonText = computed(() => {
   if (confirming.value) return '正在确认…'
-  if (status.value === 'NOT_BUILT') return '确认当前原片分析结果'
-  if (status.value === 'STALE') return '重新确认当前结果'
-  return '重新确认当前结果'
+  return status.value === 'STALE' ? '重新确认当前结果' : '确认当前原片分析结果'
 })
 
 const statusTitle = computed(() => {
@@ -35,8 +34,8 @@ const statusTitle = computed(() => {
 })
 
 const statusDescription = computed(() => {
-  if (status.value === 'CURRENT') return '后续步骤会使用当前这套原片理解结果。'
-  if (status.value === 'STALE') return '上游结果发生过修改；确认后再供后续步骤使用。'
+  if (status.value === 'CURRENT') return '后续步骤会直接使用上面这套原片理解结果。'
+  if (status.value === 'STALE') return '上面的原片理解结果发生过修改；重新确认后再供后续步骤使用。'
   return '确认只保存当前结果版本，不会重新分析原片，也不会再次调用模型。'
 })
 
@@ -58,16 +57,13 @@ async function load(): Promise<void> {
 }
 
 async function confirmCurrentResult(): Promise<void> {
-  if (confirming.value || loading.value) return
+  if (confirming.value || loading.value || !needsConfirmation.value) return
   confirming.value = true
   errorMessage.value = ''
   successMessage.value = ''
   try {
-    const previousRevision = snapshot.value?.revision ?? null
     snapshot.value = await finalizeSourceVideoSnapshot(projectId.value)
-    successMessage.value = snapshot.value.revision === previousRevision
-      ? '当前结果没有变化，已保持原有确认版本。'
-      : '当前原片分析结果已确认。'
+    successMessage.value = '当前原片分析结果已确认。'
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '当前原片分析结果确认失败'
   } finally {
@@ -94,6 +90,7 @@ onMounted(load)
     </div>
 
     <button
+      v-if="needsConfirmation"
       type="button"
       :disabled="loading || confirming"
       data-testid="source-result-confirm"
