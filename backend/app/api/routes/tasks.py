@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.evidence.service_v4 import is_p6_source_evidence_task, run_p6_source_evidence_task
 from app.preprocessing.service import is_p5_shot_boundary_task, run_p5_shot_boundary_task
 from app.shot_breakdown.service_v2 import P8_TASK_TYPE, run_p8_shot_breakdown_task
+from app.source_analysis.service import SOURCE_ANALYSIS_TASK_TYPE, run_source_analysis_task
 from app.source_resolution.service_v2 import P9_TASK_TYPE, run_p9_source_resolution_task
 from app.understanding.evidence_reference_runtime import run_p7_source_bible_task
 from app.understanding.service import P7_TASK_TYPE
@@ -57,6 +58,8 @@ def _schedule_task_if_needed(
         background_tasks.add_task(run_p8_shot_breakdown_task, session_factory, task.id)
     elif task.task_type == P9_TASK_TYPE:
         background_tasks.add_task(run_p9_source_resolution_task, session_factory, task.id)
+    elif task.task_type == SOURCE_ANALYSIS_TASK_TYPE:
+        background_tasks.add_task(run_source_analysis_task, session_factory, task.id)
 
 
 @router.post(
