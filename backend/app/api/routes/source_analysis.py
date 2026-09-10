@@ -11,10 +11,10 @@ from app.source_analysis.schemas import (
     StoryboardDraftRead,
     StoryboardShotEditCommand,
 )
+from app.source_analysis.script_service import get_source_script
 from app.source_analysis.service import (
     create_source_analysis_task,
     get_source_analysis_status,
-    get_source_script,
     run_source_analysis_task,
 )
 
