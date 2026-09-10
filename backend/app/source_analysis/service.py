@@ -1,0 +1,575 @@
+import hashlib
+import json
+from collections.abc import Callable
+from uuid import uuid4
+
+from sqlalchemy import func, select, update
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.artifacts.enums import ArtifactValidity
+from app.artifacts.models import ArtifactNode
+from app.core.errors import AppError
+from app.core.time import utc_now
+from app.evidence.manual_adjudication import get_episode_source_evidence
+from app.evidence.service_v4 import create_source_evidence_task, run_p6_source_evidence_task
+from app.preprocessing.service import create_shot_boundary_task, get_episode_shot_boundary, run_p5_shot_boundary_task
+from app.projects.enums import VIDEO_PROJECT_TYPES
+from app.projects.service import get_project
+from app.shot_breakdown.service_v2 import create_shot_breakdown_task, get_shot_breakdown, run_p8_shot_breakdown_task
+from app.skills.models import ArtifactType
+from app.source_analysis.schemas import (
+    SourceAnalysisState,
+    SourceAnalysisStatusRead,
+    SourceScriptDialogue,
+    SourceScriptEntity,
+    SourceScriptRead,
+    SourceScriptScene,
+    SourceScriptShot,
+)
+from app.source_resolution.service_v2 import create_source_resolution_task, get_source_resolution, run_p9_source_resolution_task
+from app.source_snapshot.service import finalize_source_video_snapshot, get_source_video_snapshot
+from app.sources.models import Episode
+from app.understanding.evidence_reference_runtime import run_p7_source_bible_task
+from app.understanding.service import create_source_bible_task, get_source_bible
+from app.workflow.models import Task, TaskStatus
+from app.workflow.schemas import TaskCommandCreate, TaskWorkerRead
+from app.workflow.task_service import (
+    TaskCancelled,
+    create_task_from_command,
+    mark_task_failed,
+    mark_task_succeeded,
+    resume_task,
+    retry_task,
+)
+from app.workflow.worker import TaskExecutionContext
+
+
+SOURCE_ANALYSIS_TASK_TYPE = "SOURCE_ANALYSIS_PIPELINE"
+
+
+def _sha(payload: object) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _status_value(value: object) -> str:
+    return str(getattr(value, "value", value))
+
+
+def _current_artifact(db: Session, project_id: str, artifact_type: ArtifactType) -> ArtifactNode | None:
+    return db.scalar(
+        select(ArtifactNode).where(
+            ArtifactNode.project_id == project_id,
+            ArtifactNode.artifact_type == artifact_type.value,
+            ArtifactNode.validity == ArtifactValidity.CURRENT,
+            ArtifactNode.is_current.is_(True),
+        )
+    )
+
+
+def _latest_pipeline_task(db: Session, project_id: str) -> Task | None:
+    return db.scalar(
+        select(Task)
+        .where(Task.project_id == project_id, Task.task_type == SOURCE_ANALYSIS_TASK_TYPE)
+        .order_by(Task.created_at.desc(), Task.id.desc())
+        .limit(1)
+    )
+
+
+def _pipeline_input_fingerprint(db: Session, project_id: str, source: ArtifactNode) -> str:
+    project = get_project(db, project_id)
+    latest = _latest_pipeline_task(db, project_id)
+    restart_after_cancelled = latest.id if latest is not None and latest.status == TaskStatus.CANCELLED else None
+    return _sha(
+        {
+            "task": SOURCE_ANALYSIS_TASK_TYPE,
+            "source_video": [source.id, source.input_fingerprint],
+            "project_type": project.project_type.value,
+            "source_language": project.source_language,
+            "source_understanding_provider": project.source_understanding_provider.value,
+            "restart_after_cancelled": restart_after_cancelled,
+        }
+    )
+
+
+def _pipeline_message(task: Task | None, state: SourceAnalysisState) -> str:
+    if state == SourceAnalysisState.READY:
+        return "原片解析完成，可以直接查看剧本和分镜。"
+    if state == SourceAnalysisState.RUNNING:
+        stage = str((task.checkpoint_json or {}).get("stage_label") or "正在解析原片") if task else "正在解析原片"
+        return stage
+    if state == SourceAnalysisState.NEEDS_REFRESH:
+        return "原片分析结果已有更新，需要重新解析后再继续。"
+    if state == SourceAnalysisState.FAILED:
+        return task.last_error or "原片解析失败，请重试。" if task else "原片解析失败，请重试。"
+    return "上传原片后即可开始解析。"
+
+
+def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisStatusRead:
+    project = get_project(db, project_id)
+    if project.project_type not in VIDEO_PROJECT_TYPES:
+        raise AppError("SOURCE_ANALYSIS_NOT_ALLOWED", "当前项目类型不执行原片解析", status_code=422)
+
+    latest = _latest_pipeline_task(db, project_id)
+    if latest is not None and latest.status in {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.INTERRUPTED}:
+        state = SourceAnalysisState.RUNNING
+        stage = str((latest.checkpoint_json or {}).get("stage_label") or "正在解析原片")
+        return SourceAnalysisStatusRead(
+            project_id=project_id,
+            state=state,
+            progress_percent=latest.progress_percent,
+            current_stage=stage,
+            task_id=latest.id,
+            can_retry=False,
+            message=_pipeline_message(latest, state),
+        )
+
+    snapshot = get_source_video_snapshot(db, project_id)
+    if _status_value(snapshot.status) == "CURRENT":
+        return SourceAnalysisStatusRead(
+            project_id=project_id,
+            state=SourceAnalysisState.READY,
+            progress_percent=100,
+            current_stage="解析完成",
+            task_id=latest.id if latest is not None else None,
+            can_retry=False,
+            message=_pipeline_message(latest, SourceAnalysisState.READY),
+        )
+    if latest is not None and latest.status == TaskStatus.FAILED:
+        return SourceAnalysisStatusRead(
+            project_id=project_id,
+            state=SourceAnalysisState.FAILED,
+            progress_percent=latest.progress_percent,
+            current_stage=str((latest.checkpoint_json or {}).get("stage_label") or "解析失败"),
+            task_id=latest.id,
+            can_retry=latest.attempt < latest.max_attempts,
+            message=_pipeline_message(latest, SourceAnalysisState.FAILED),
+        )
+    if _status_value(snapshot.status) == "STALE":
+        return SourceAnalysisStatusRead(
+            project_id=project_id,
+            state=SourceAnalysisState.NEEDS_REFRESH,
+            progress_percent=0,
+            current_stage=None,
+            task_id=latest.id if latest is not None else None,
+            can_retry=False,
+            message=_pipeline_message(latest, SourceAnalysisState.NEEDS_REFRESH),
+        )
+    return SourceAnalysisStatusRead(
+        project_id=project_id,
+        state=SourceAnalysisState.NOT_READY,
+        progress_percent=0,
+        current_stage=None,
+        task_id=latest.id if latest is not None else None,
+        can_retry=False,
+        message=_pipeline_message(latest, SourceAnalysisState.NOT_READY),
+    )
+
+
+def create_source_analysis_task(db: Session, *, project_id: str, idempotency_key: str) -> Task | None:
+    project = get_project(db, project_id)
+    if project.project_type not in VIDEO_PROJECT_TYPES:
+        raise AppError("SOURCE_ANALYSIS_NOT_ALLOWED", "当前项目类型不执行原片解析", status_code=422)
+    source = _current_artifact(db, project_id, ArtifactType.SOURCE_VIDEO)
+    if source is None:
+        raise AppError("SOURCE_VIDEO_REQUIRED", "请先上传原片视频", status_code=409)
+    episode_count = int(db.scalar(select(func.count(Episode.id)).where(Episode.project_id == project_id)) or 0)
+    if episode_count <= 0:
+        raise AppError("SOURCE_VIDEO_REQUIRED", "请先上传至少一个原片 Episode", status_code=409)
+
+    snapshot = get_source_video_snapshot(db, project_id)
+    if _status_value(snapshot.status) == "CURRENT":
+        return None
+
+    latest = _latest_pipeline_task(db, project_id)
+    if latest is not None and latest.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
+        return latest
+    if latest is not None and latest.status == TaskStatus.FAILED and latest.attempt < latest.max_attempts:
+        return retry_task(db, project_id, latest.id)
+    if latest is not None and latest.status == TaskStatus.INTERRUPTED and latest.attempt < latest.max_attempts:
+        return resume_task(db, project_id, latest.id)
+
+    payload = TaskCommandCreate(
+        task_type=SOURCE_ANALYSIS_TASK_TYPE,
+        task_name="解析原片",
+        input_fingerprint=_pipeline_input_fingerprint(db, project_id, source),
+        input_artifact_ids=[source.id],
+        max_attempts=3,
+    )
+    return create_task_from_command(
+        db,
+        project_id=project_id,
+        payload=payload,
+        idempotency_key=idempotency_key,
+    )
+
+
+def _claim_pipeline_task(db: Session, task_id: str, *, worker_id: str) -> Task | None:
+    task = db.get(Task, task_id)
+    if (
+        task is None
+        or task.task_type != SOURCE_ANALYSIS_TASK_TYPE
+        or task.status != TaskStatus.QUEUED
+        or task.attempt >= task.max_attempts
+    ):
+        return None
+    now = utc_now()
+    result = db.execute(
+        update(Task)
+        .where(
+            Task.id == task_id,
+            Task.task_type == SOURCE_ANALYSIS_TASK_TYPE,
+            Task.status == TaskStatus.QUEUED,
+            Task.attempt < Task.max_attempts,
+        )
+        .values(
+            status=TaskStatus.RUNNING,
+            attempt=Task.attempt + 1,
+            worker_id=worker_id,
+            heartbeat_at=now,
+            started_at=func.coalesce(Task.started_at, now),
+            finished_at=None,
+            updated_at=now,
+        )
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        return None
+    db.commit()
+    claimed = db.get(Task, task_id)
+    if claimed is None:
+        return None
+    db.refresh(claimed)
+    return claimed
+
+
+def _child_idempotency_key(parent_task_id: str, stage: str, episode_id: str | None = None) -> str:
+    suffix = f"-{episode_id}" if episode_id else ""
+    return f"source-analysis-{parent_task_id}-{stage}{suffix}"[:128]
+
+
+def _ensure_child_succeeded(
+    context: TaskExecutionContext,
+    *,
+    child: Task,
+    runner: Callable[[sessionmaker[Session], str], None],
+) -> None:
+    with context.session_factory() as db:
+        current = db.get(Task, child.id)
+        if current is None:
+            raise AppError("SOURCE_ANALYSIS_CHILD_MISSING", "原片解析子任务不存在", status_code=500)
+        if current.status == TaskStatus.FAILED and current.attempt < current.max_attempts:
+            current = retry_task(db, current.project_id, current.id)
+        elif current.status == TaskStatus.INTERRUPTED and current.attempt < current.max_attempts:
+            current = resume_task(db, current.project_id, current.id)
+        if current.status == TaskStatus.SUCCEEDED:
+            return
+        if current.status in {TaskStatus.CANCELLED, TaskStatus.FAILED}:
+            raise AppError(
+                "SOURCE_ANALYSIS_CHILD_FAILED",
+                current.last_error or f"{current.task_name}失败",
+                status_code=409,
+            )
+    runner(context.session_factory, child.id)
+    with context.session_factory() as db:
+        finished = db.get(Task, child.id)
+        if finished is None or finished.status != TaskStatus.SUCCEEDED:
+            raise AppError(
+                "SOURCE_ANALYSIS_CHILD_FAILED",
+                finished.last_error if finished is not None and finished.last_error else f"{child.task_name}失败",
+                status_code=409,
+            )
+
+
+def _episode_ids(db: Session, project_id: str) -> list[str]:
+    return list(
+        db.scalars(
+            select(Episode.id)
+            .where(Episode.project_id == project_id)
+            .order_by(Episode.episode_order.asc(), Episode.created_at.asc())
+        ).all()
+    )
+
+
+def _execute_pipeline(context: TaskExecutionContext, task: TaskWorkerRead) -> None:
+    with context.session_factory() as db:
+        source = _current_artifact(db, task.project_id, ArtifactType.SOURCE_VIDEO)
+        if source is None or source.id not in task.input_artifact_ids_json:
+            raise AppError("STALE_ARTIFACT_INPUT", "原片已变化，请重新开始解析", status_code=409)
+        episode_ids = _episode_ids(db, task.project_id)
+    if not episode_ids:
+        raise AppError("SOURCE_VIDEO_REQUIRED", "没有可解析的原片 Episode", status_code=409)
+
+    total_episodes = len(episode_ids)
+    for index, episode_id in enumerate(episode_ids, 1):
+        context.checkpoint(
+            {"stage": "shot_boundary", "stage_label": f"正在建立镜头结构（{index}/{total_episodes}）"},
+            progress_percent=2 + int((index - 1) / total_episodes * 18),
+        )
+        with context.session_factory() as db:
+            current = get_episode_shot_boundary(db, task.project_id, episode_id)
+            if _status_value(current.status) != "CURRENT":
+                child = create_shot_boundary_task(
+                    db,
+                    project_id=task.project_id,
+                    episode_id=episode_id,
+                    idempotency_key=_child_idempotency_key(task.id, "p5", episode_id),
+                )
+            else:
+                child = None
+        if child is not None:
+            _ensure_child_succeeded(context, child=child, runner=run_p5_shot_boundary_task)
+
+    for index, episode_id in enumerate(episode_ids, 1):
+        context.checkpoint(
+            {"stage": "source_evidence", "stage_label": f"正在识别对白和画面文字（{index}/{total_episodes}）"},
+            progress_percent=22 + int((index - 1) / total_episodes * 23),
+        )
+        with context.session_factory() as db:
+            current = get_episode_source_evidence(db, task.project_id, episode_id)
+            if _status_value(current.status) != "CURRENT":
+                child = create_source_evidence_task(
+                    db,
+                    project_id=task.project_id,
+                    episode_id=episode_id,
+                    idempotency_key=_child_idempotency_key(task.id, "p6", episode_id),
+                )
+            else:
+                child = None
+        if child is not None:
+            _ensure_child_succeeded(context, child=child, runner=run_p6_source_evidence_task)
+
+    context.checkpoint(
+        {"stage": "episode_understanding", "stage_label": "正在理解整集剧情和人物关系"},
+        progress_percent=48,
+    )
+    with context.session_factory() as db:
+        current_bible = get_source_bible(db, task.project_id)
+        if _status_value(current_bible.status) != "CURRENT":
+            child = create_source_bible_task(
+                db,
+                project_id=task.project_id,
+                idempotency_key=_child_idempotency_key(task.id, "p7"),
+            )
+        else:
+            child = None
+    if child is not None:
+        _ensure_child_succeeded(context, child=child, runner=run_p7_source_bible_task)
+
+    context.checkpoint(
+        {"stage": "shot_breakdown", "stage_label": "正在整理逐镜动作和镜头语言"},
+        progress_percent=68,
+    )
+    with context.session_factory() as db:
+        current_breakdown = get_shot_breakdown(db, task.project_id)
+        if _status_value(current_breakdown.status) != "CURRENT":
+            child = create_shot_breakdown_task(
+                db,
+                project_id=task.project_id,
+                idempotency_key=_child_idempotency_key(task.id, "p8"),
+            )
+        else:
+            child = None
+    if child is not None:
+        _ensure_child_succeeded(context, child=child, runner=run_p8_shot_breakdown_task)
+
+    context.checkpoint(
+        {"stage": "source_resolution", "stage_label": "正在统一人物、说话人、场景和道具"},
+        progress_percent=84,
+    )
+    with context.session_factory() as db:
+        current_resolution = get_source_resolution(db, task.project_id)
+        resolution_ready = all(
+            _status_value(section.status) == "CURRENT"
+            for section in (
+                current_resolution.characters,
+                current_resolution.speakers,
+                current_resolution.scenes,
+                current_resolution.props,
+            )
+        )
+        if not resolution_ready:
+            child = create_source_resolution_task(
+                db,
+                project_id=task.project_id,
+                idempotency_key=_child_idempotency_key(task.id, "p9"),
+            )
+        else:
+            child = None
+    if child is not None:
+        _ensure_child_succeeded(context, child=child, runner=run_p9_source_resolution_task)
+
+    context.checkpoint(
+        {"stage": "publish", "stage_label": "正在整理最终剧本和分镜结果"},
+        progress_percent=96,
+    )
+    with context.session_factory() as db:
+        snapshot = finalize_source_video_snapshot(db, task.project_id)
+        if _status_value(snapshot.status) != "CURRENT":
+            raise AppError("SOURCE_ANALYSIS_PUBLICATION_FAILED", "原片结果未能形成当前正式版本", status_code=409)
+
+
+def run_source_analysis_task(session_factory: sessionmaker[Session], task_id: str) -> None:
+    worker_id = f"source-analysis-{uuid4()}"
+    with session_factory() as db:
+        claimed = _claim_pipeline_task(db, task_id, worker_id=worker_id)
+        if claimed is None:
+            return
+        task_snapshot = TaskWorkerRead.model_validate(claimed)
+    context = TaskExecutionContext(
+        session_factory=session_factory,
+        task_id=task_snapshot.id,
+        worker_id=worker_id,
+    )
+    try:
+        _execute_pipeline(context, task_snapshot)
+    except TaskCancelled:
+        return
+    except AppError as exc:
+        with session_factory() as db:
+            current = db.get(Task, task_snapshot.id)
+            if current is not None and current.status == TaskStatus.RUNNING and current.worker_id == worker_id:
+                mark_task_failed(
+                    db,
+                    task_snapshot.id,
+                    worker_id=worker_id,
+                    safe_error=f"原片解析失败：{exc.message}",
+                )
+        return
+    except Exception as exc:
+        with session_factory() as db:
+            current = db.get(Task, task_snapshot.id)
+            if current is not None and current.status == TaskStatus.RUNNING and current.worker_id == worker_id:
+                mark_task_failed(
+                    db,
+                    task_snapshot.id,
+                    worker_id=worker_id,
+                    safe_error=f"原片解析失败（{type(exc).__name__}）",
+                )
+        return
+    with session_factory() as db:
+        current = db.get(Task, task_snapshot.id)
+        if current is not None and current.status == TaskStatus.RUNNING and current.worker_id == worker_id:
+            mark_task_succeeded(db, task_snapshot.id, worker_id=worker_id)
+
+
+def _scene_name(scene_id: str | None, scene_names: dict[str, str]) -> str:
+    if scene_id is None:
+        return "未识别场景"
+    return scene_names.get(scene_id, "未命名场景")
+
+
+def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
+    status = get_source_analysis_status(db, project_id)
+    if status.state != SourceAnalysisState.READY:
+        return SourceScriptRead(project_id=project_id, state=status.state, title="原片剧本")
+
+    breakdown = get_shot_breakdown(db, project_id)
+    resolution = get_source_resolution(db, project_id)
+    if (
+        _status_value(breakdown.status) != "CURRENT"
+        or breakdown.content is None
+        or resolution.characters.content is None
+        or resolution.speakers.content is None
+        or resolution.scenes.content is None
+        or resolution.props.content is None
+    ):
+        return SourceScriptRead(project_id=project_id, state=SourceAnalysisState.NEEDS_REFRESH, title="原片剧本")
+
+    scene_names = {item.scene_id: item.display_name for item in resolution.scenes.content.entities}
+    assignment_by_shot = {
+        item.shot_anchor_id: item
+        for item in resolution.scenes.content.assignments
+    }
+    character_names = {item.character_id: item.display_name for item in resolution.characters.content.entities}
+    speaker_names = {item.speaker_id: item.display_name for item in resolution.speakers.content.entities}
+    speaker_character_names = {
+        item.speaker_id: character_names.get(item.character_id or "") or item.display_name
+        for item in resolution.speakers.content.entities
+    }
+    attribution_by_utterance = {
+        item.utterance_id: item
+        for item in resolution.speakers.content.attributions
+    }
+    characters_by_shot: dict[str, set[str]] = {}
+    for character in resolution.characters.content.entities:
+        for shot_id in character.shot_anchor_ids:
+            characters_by_shot.setdefault(shot_id, set()).add(character.display_name)
+
+    scenes: list[SourceScriptScene] = []
+    seen_utterances: set[str] = set()
+    scene_number = 0
+    for episode in breakdown.content.episodes:
+        for fact in episode.shots:
+            assignment = assignment_by_shot.get(fact.shot_anchor_id)
+            scene_id = assignment.scene_id if assignment is not None else None
+            if not scenes or scenes[-1].scene_id != scene_id:
+                scene_number += 1
+                scenes.append(
+                    SourceScriptScene(
+                        scene_number=scene_number,
+                        scene_id=scene_id,
+                        scene_name=_scene_name(scene_id, scene_names),
+                        start_us=fact.start_us,
+                        end_us=fact.end_us,
+                        character_names=[],
+                        shots=[],
+                    )
+                )
+            current_scene = scenes[-1]
+            shot_dialogues: list[SourceScriptDialogue] = []
+            for dialogue in fact.dialogue:
+                if dialogue.utterance_id in seen_utterances:
+                    continue
+                seen_utterances.add(dialogue.utterance_id)
+                attribution = attribution_by_utterance.get(dialogue.utterance_id)
+                speaker_id = attribution.speaker_id if attribution is not None else None
+                speaker_name = speaker_character_names.get(speaker_id or "") or speaker_names.get(speaker_id or "") or "未知说话人"
+                shot_dialogues.append(
+                    SourceScriptDialogue(
+                        utterance_id=dialogue.utterance_id,
+                        utterance_number=dialogue.utterance_number,
+                        start_us=dialogue.utterance_start_us,
+                        end_us=dialogue.utterance_end_us,
+                        speaker_id=speaker_id,
+                        speaker_name=speaker_name,
+                        text=attribution.text if attribution is not None else dialogue.text,
+                        delivery=_status_value(dialogue.delivery),
+                    )
+                )
+            current_scene.shots.append(
+                SourceScriptShot(
+                    shot_anchor_id=fact.shot_anchor_id,
+                    shot_number=fact.shot_number,
+                    start_us=fact.start_us,
+                    end_us=fact.end_us,
+                    duration_us=fact.duration_us,
+                    visual_description=fact.visual_description,
+                    shot_size=fact.camera_language.shot_size,
+                    composition=fact.camera_language.composition,
+                    angle_or_type=fact.camera_language.angle_or_type,
+                    movement=fact.camera_language.movement,
+                    focal_length_dof=fact.camera_language.focal_length_dof,
+                    dialogues=shot_dialogues,
+                )
+            )
+            current_scene.end_us = fact.end_us
+            names = set(current_scene.character_names)
+            names.update(characters_by_shot.get(fact.shot_anchor_id, set()))
+            names.update(item.speaker_name for item in shot_dialogues if item.speaker_name != "未知说话人")
+            current_scene.character_names = sorted(names)
+
+    return SourceScriptRead(
+        project_id=project_id,
+        state=SourceAnalysisState.READY,
+        title=breakdown.content.title or "原片剧本",
+        scenes=scenes,
+        characters=[
+            SourceScriptEntity(id=item.character_id, name=item.display_name)
+            for item in resolution.characters.content.entities
+        ],
+        props=[
+            SourceScriptEntity(id=item.prop_id, name=item.display_name)
+            for item in resolution.props.content.entities
+        ],
+    )
