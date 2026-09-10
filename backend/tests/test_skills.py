@@ -60,17 +60,18 @@ def test_missing_professional_skill_returns_404(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "PROFESSIONAL_SKILL_NOT_FOUND"
 
 
-def test_capability_registry_is_business_oriented_and_reflects_validated_p7_readiness(client: TestClient) -> None:
+def test_capability_registry_reflects_validated_p7_and_p8_readiness(client: TestClient) -> None:
     response = client.get("/api/v3/skills/capabilities")
     assert response.status_code == 200
     capabilities = {item["id"]: item for item in response.json()}
     assert "EPISODE_UNDERSTANDING" in capabilities
     assert "STORY_RHYTHM" in capabilities
+    assert "SHOT_BREAKDOWN" in capabilities
     assert "VIDEO_GENERATION" in capabilities
     assert capabilities["EPISODE_UNDERSTANDING"]["availability"] == "AVAILABLE"
     assert capabilities["STORY_RHYTHM"]["availability"] == "AVAILABLE"
     assert capabilities["STORY_RHYTHM"]["title"] == "故事与节奏"
-    assert capabilities["SHOT_BREAKDOWN"]["availability"] == "PLANNED"
+    assert capabilities["SHOT_BREAKDOWN"]["availability"] == "AVAILABLE"
     assert capabilities["VIDEO_GENERATION"]["availability"] == "PLANNED"
 
 
