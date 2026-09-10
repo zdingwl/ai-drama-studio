@@ -58,12 +58,13 @@ async function mountBar(value: SourceVideoSnapshotRead = notBuilt) {
 afterEach(() => vi.clearAllMocks())
 
 describe('SourceResultApprovalBar', () => {
-  it('loads read-only and hides internal P10 vocabulary', async () => {
+  it('loads read-only, stays passive when confirmed, and hides internal P10 vocabulary', async () => {
     const wrapper = await mountBar(current)
 
     expect(snapshotApi.finalizeSourceVideoSnapshot).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('当前原片分析结果已确认')
-    expect(wrapper.text()).toContain('后续步骤会使用当前这套原片理解结果')
+    expect(wrapper.text()).toContain('后续步骤会直接使用上面这套原片理解结果')
+    expect(wrapper.find('[data-testid="source-result-confirm"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('P10')
     expect(wrapper.text()).not.toContain('SourceVideoSnapshot')
     expect(wrapper.text()).not.toContain('Frozen Inputs')
@@ -72,7 +73,7 @@ describe('SourceResultApprovalBar', () => {
     wrapper.unmount()
   })
 
-  it('confirms only after an explicit click', async () => {
+  it('confirms only after an explicit click when no result boundary exists yet', async () => {
     const wrapper = await mountBar()
 
     expect(wrapper.text()).toContain('当前原片分析结果尚未确认')
@@ -86,28 +87,17 @@ describe('SourceResultApprovalBar', () => {
     expect(snapshotApi.finalizeSourceVideoSnapshot).toHaveBeenCalledTimes(1)
     expect(snapshotApi.finalizeSourceVideoSnapshot).toHaveBeenCalledWith('project-result')
     expect(wrapper.text()).toContain('当前原片分析结果已确认')
-    expect(wrapper.text()).toContain('当前原片分析结果已确认。')
+    expect(wrapper.find('[data-testid="source-result-confirm"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('translates stale snapshot state into a user-facing re-confirm message', async () => {
+  it('translates stale snapshot state into a user-facing re-confirm action', async () => {
     const wrapper = await mountBar({ ...current, status: 'STALE' })
 
     expect(wrapper.text()).toContain('原片分析结果已有更新，请重新确认')
-    expect(wrapper.text()).toContain('上游结果发生过修改')
+    expect(wrapper.text()).toContain('上面的原片理解结果发生过修改')
     expect(wrapper.get('[data-testid="source-result-confirm"]').text()).toBe('重新确认当前结果')
     expect(snapshotApi.finalizeSourceVideoSnapshot).not.toHaveBeenCalled()
-    wrapper.unmount()
-  })
-
-  it('keeps an unchanged source chain on the same confirmation version', async () => {
-    const wrapper = await mountBar(current)
-    vi.mocked(snapshotApi.finalizeSourceVideoSnapshot).mockResolvedValue(current)
-
-    await wrapper.get('[data-testid="source-result-confirm"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('当前结果没有变化，已保持原有确认版本')
     wrapper.unmount()
   })
 })
