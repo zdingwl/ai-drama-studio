@@ -1,6 +1,6 @@
 """Invalidate Source Understanding outputs built before P6 subtitle adjudication v4.
 
-Revision ID: 0015_p6_ocr_subtitle_adjudication_v4
+Revision ID: 0015_p6_ocr_subtitle_v4
 Revises: 0014_p6_microduplicate_guard_v3
 Create Date: 2026-09-10
 
@@ -14,7 +14,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0015_p6_ocr_subtitle_adjudication_v4"
+revision = "0015_p6_ocr_subtitle_v4"
 down_revision = "0014_p6_microduplicate_guard_v3"
 branch_labels = None
 depends_on = None
