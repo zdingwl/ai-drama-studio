@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SourceEvidenceResultStatus(StrEnum):
@@ -17,6 +17,12 @@ class DialogueUtteranceRead(BaseModel):
     text: str
     language: str | None
     projected_shot_numbers: list[int]
+    text_source: str = "ASR"
+    asr_text: str | None = None
+    ocr_text: str | None = None
+    ocr_span_numbers: list[int] = Field(default_factory=list)
+    adjudication_policy: str | None = None
+    adjudication_reason: str | None = None
 
 
 class VisualTextSpanRead(BaseModel):
