@@ -14,9 +14,10 @@
 8. `docs/07_P7最终验收与ProviderReadiness.md`
 9. `docs/08_P8逐镜精细拉片ProfessionalSkill与数据契约.md`
 10. `docs/09_P6CanonicalEvidenceV2与P8最终验收整改.md`
-11. 当前相关代码与测试
+11. `docs/10_P8SpeakerCandidate与P6微段幻觉整改.md`
+12. 当前相关代码与测试
 
-**阶段状态以编号更高、日期更新的状态文档为准。** `docs/07` 记录 P7 最终验收，`docs/08` 记录 P8 正式契约，`docs/09` 记录 P6 canonical Evidence v2 整改及真实 P6 v2 → P7 → P8 恢复验收结果。旧文档中“P8 尚未开始 / P7 待验收 / P6-P7 未开发”等历史描述不得覆盖当前 `main` 事实。
+**阶段状态以编号更高、日期更新的状态文档为准。** `docs/07` 记录 P7 最终验收，`docs/08` 记录 P8 初始正式契约，`docs/09` 记录 P6 canonical Evidence v2 整改及真实 P6 v2 → P7 → P8 恢复验收，`docs/10` 记录 P8 speaker candidate v2 与 P6 canonical micro-duplicate v3 的最新整改。旧文档中“P8 尚未开始 / P7 待验收 / P6-P7 未开发 / P8 schema 1.0 / P6 v2 是当前最终 canonical policy”等历史描述不得覆盖当前 `main` 事实。
 
 历史分支只能做参考，不能覆盖 V3 当前规划。
 
@@ -96,7 +97,15 @@ P8 的正式 Professional Skill：
 ```text
 skills/professional/shot-breakdown/SKILL.md
 skills/professional/shot-breakdown/manifest.json
-shot-breakdown@1.0.0
+shot-breakdown@1.1.0
+```
+
+P8 当前运行契约：
+
+```text
+p8-shot-breakdown-v2
+SOURCE_SHOT_FACTS schema 1.1
+source-bible-shot-facts-v2
 ```
 
 Provider Prompt 必须执行 Professional Skill 规则，但 Professional Skill 本身不等于 Prompt。
@@ -184,6 +193,8 @@ Shot Anchors         ASR Evidence      OCR Evidence
 - ASR 不得按每个 Reference Clip 分开识别后拼句子；
 - OCR 可以读取 Shot Anchors 作为抽帧提示，但完整 Episode 时间轴仍是 Source Truth；
 - P6 canonical dialogue 必须保守分段；没有明确连续证据时不得仅因相邻 segment 时间接近就跨段合并；
+- P6 raw ASR Evidence 必须完整保留；canonical admission 可以拒绝通用规则判定为不可信的 ASR micro duplicate，但不得删除 raw provenance、不得依赖 OCR/VLM/P7/P8 文本进行静默纠错；
+- 同文案不等于同一 utterance，更不等于同一 speaker；禁止按字符串相同传播 P8 speaker candidate；
 - P7 整集理解必须读取完整 Episode；
 - 先整集理解，再逐 Shot 精细拉片；
 - 禁止先逐 Shot 猜完整剧情，再拼整集理解。
@@ -238,7 +249,7 @@ Replica 默认目标：
 
 业务 Skill 只依赖 capability，不依赖具体模型名。
 
-当前已真实验收并 `AVAILABLE`：
+当前已完成既有真实验收并维持 `AVAILABLE` 的能力：
 
 ```text
 SOURCE_DIALOGUE_EVIDENCE
@@ -246,7 +257,15 @@ EPISODE_UNDERSTANDING
 STORY_RHYTHM
 ```
 
-`SOURCE_DIALOGUE_EVIDENCE` 已完成 `p6-source-evidence-v2 / segment-preserving-dialogue-v2` 同一真实短剧恢复复验：旧 v1 多人超长 canonical merge 根因已消失，P7/P8 也已基于新 CURRENT P6 恢复。仍有少量 residual ASR 质量项需要在最终 28 Shot 音画人工验收中确认，但不得由 P7/P8 静默覆盖 canonical text。
+P6 当前工程 canonical 基线已升级为：
+
+```text
+p6-source-evidence-v3
+segment-preserving-dialogue-v3
+adjacent-duplicate-microsegment-v1
+```
+
+v3 保留 v2 的保守分段和完整 Episode 连续 ASR 架构，只新增“相邻同文案 + 物理不可信 micro duration”canonical admission guard。raw ASR 仍完整保存。该升级部署后会使依赖旧 canonical set 的 P6/P7/P8 Artifact STALE，必须按 P6 → P7 → P8 显式恢复并完成真实音画复验；在恢复完成前不得把旧 CURRENT 结果冒充新基线验收结果。
 
 仍为 `PLANNED`：
 
@@ -313,9 +332,10 @@ P2 Project + Skill Kernel  ✅
 P3 SourceAsset + 输入系统  ✅
 P4 Task / ProviderJob      ✅
 P5 镜头技术锚点            ✅（真实 Episode 人工验收通过）
-P6 Source Evidence         ✅（能力 AVAILABLE；v2 真实恢复与分段整改通过）
-P7 整集多模态原片理解      ✅（真实 Doubao + Grounding v2；已基于 P6 v2 恢复 CURRENT rev4）
-P8 逐镜精细拉片            🔁（工程/真实数据库/真实 Provider/P6 v2 恢复链通过；仅剩最终 28 Shot 音画人工验收）
+P6 Source Evidence         🔁（能力既有验收 AVAILABLE；canonical v3 micro-duplicate guard 工程整改与真实恢复复验进行中）
+P7 整集多模态原片理解      ✅（能力 AVAILABLE；v3 P6 部署后需基于新 canonical Evidence 恢复 revision）
+P8 逐镜精细拉片            🔁（speaker candidate v2 已实现；等待 P6 v3 → P7 → P8 恢复与最终 28 Shot 音画人工验收）
+P9 身份/场景/道具归一       ⛔ 禁止进入
 ```
 
 P7 最终验收基线：
@@ -327,25 +347,37 @@ SOURCE_BIBLE schema 1.1
 grounded-source-truth-v2
 ```
 
-P8 工程基线：
+P8 当前工程基线：
 
 ```text
-shot-breakdown@1.0.0
-SOURCE_SHOT_FACTS schema 1.0
-source-bible-shot-facts-v1
+shot-breakdown@1.1.0
+p8-shot-breakdown-v2
+SOURCE_SHOT_FACTS schema 1.1
+source-bible-shot-facts-v2
 ```
 
-P8 当前最终状态：
+P6 当前工程基线：
 
 ```text
-P6 v2 SOURCE_DIALOGUE rev2       CURRENT
-P7 SOURCE_BIBLE rev4             CURRENT
-P5 SHOT_ANCHORS rev1             CURRENT
-P8 SOURCE_SHOT_FACTS rev2        CURRENT
+p6-source-evidence-v3
+segment-preserving-dialogue-v3
+adjacent-duplicate-microsegment-v1
+migration head = 0014_p6_microduplicate_guard_v3
+```
 
-28/28 程序一致性                PASS
-真实 Doubao Provider             PASS
-最终用户逐镜音画人工验收          PENDING
+本轮 v3 部署/迁移后的正确恢复状态应是：
+
+```text
+SOURCE_VIDEO / SHOT_ANCHORS         保持 CURRENT
+旧 SOURCE_DIALOGUE                  STALE
+旧 SOURCE_BIBLE / Story / Rhythm    STALE
+旧 SOURCE_SHOT_FACTS                STALE
+↓
+显式 P6 → P7 → P8 重跑
+↓
+生成新 CURRENT revision
+↓
+继续最终 28 Shot 音画人工验收
 ```
 
 只有最终 28 Shot 音画人工验收通过后，才允许评估把 `SHOT_BREAKDOWN` 从 `PLANNED` 改为 `AVAILABLE`。在此之前禁止进入 P9。
@@ -364,7 +396,7 @@ CURRENT canonical Source Evidence
 逐镜精细拉片
 ```
 
-P8 不能重新从零猜整集故事；Shot 时间只来自 P5；对白正文来自 P6 canonical Evidence；P8 不得为了修正文质量而自行重听写。
+P8 不能重新从零猜整集故事；Shot 时间只来自 P5；对白正文来自 P6 canonical Evidence；P8 不得为了修正文质量而自行重听写。P8 speaker candidate 只能绑定具体 P6 utterance 到 CURRENT P7 character candidate，不能按相同文本跨 utterance 复制，更不能冒充 P9 最终 Speaker Truth。
 
 ---
 
