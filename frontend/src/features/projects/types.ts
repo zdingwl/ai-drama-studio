@@ -182,6 +182,12 @@ export interface DialogueUtteranceRead {
   text: string
   language: string | null
   projected_shot_numbers: number[]
+  text_source: 'ASR' | 'OCR_SUBTITLE_ADJUDICATED' | string
+  asr_text: string | null
+  ocr_text: string | null
+  ocr_span_numbers: number[]
+  adjudication_policy: string | null
+  adjudication_reason: string | null
 }
 
 export interface VisualTextSpanRead {
