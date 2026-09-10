@@ -17,15 +17,44 @@ const debugMode = computed(() => route.query.debug === '1')
 
 <template>
   <AppShell>
-    <RouterView />
-    <SourceScriptStoryboardWorkspace v-if="isProjectWorkspace" />
+    <div :class="{ 'product-mode': isProjectWorkspace && !debugMode }">
+      <RouterView />
+      <SourceScriptStoryboardWorkspace v-if="isProjectWorkspace" />
 
-    <template v-if="isProjectWorkspace && debugMode">
-      <P6AcceptancePanel />
-      <P7SourceUnderstandingWorkspace />
-      <P8ShotBreakdownPanel />
-      <P9SourceResolutionPanel />
-      <SourceResultApprovalBar />
-    </template>
+      <template v-if="isProjectWorkspace && debugMode">
+        <P6AcceptancePanel />
+        <P7SourceUnderstandingWorkspace />
+        <P8ShotBreakdownPanel />
+        <P9SourceResolutionPanel />
+        <SourceResultApprovalBar />
+      </template>
+    </div>
   </AppShell>
 </template>
+
+<style>
+/*
+ * Product mode exposes one source-analysis action and the resulting script / storyboard.
+ * The existing P5-P10 engineering surfaces stay available at ?debug=1 for acceptance
+ * and diagnostics without making ordinary users operate the internal pipeline.
+ */
+.product-mode .analysis-principle,
+.product-mode .evidence-grid,
+.product-mode .technical-details,
+.product-mode .task-section,
+.product-mode .acceptance-section,
+.product-mode .plan-section,
+.product-mode .plan-empty,
+.product-mode .project-stage {
+  display: none !important;
+}
+
+.product-mode .project-meta span:nth-child(n + 2),
+.product-mode .understanding-section .section-note {
+  display: none;
+}
+
+.product-mode .understanding-section {
+  margin-bottom: 0;
+}
+</style>
