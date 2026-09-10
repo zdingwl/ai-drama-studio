@@ -12,7 +12,7 @@ from app.artifacts.service import create_artifact
 from app.skills.models import ArtifactType
 from app.source_analysis.models import SourceStoryboardDraftRevision
 from app.source_analysis.schemas import SourceAnalysisState, StoryboardShotEditCommand
-from app.source_analysis import script_service
+from app.source_analysis import script_service, service as source_analysis_service
 from app.source_analysis.service import SOURCE_ANALYSIS_TASK_TYPE, create_source_analysis_task
 from app.sources.enums import SourceAssetKind
 from app.sources.models import Episode, SourceAsset
@@ -145,6 +145,84 @@ def test_source_analysis_get_is_read_only_and_one_command_creates_one_master_tas
         assert second is not None
         assert second.id == first_id
         assert db.scalar(select(func.count(Task.id))) == 1
+
+
+def test_source_analysis_skips_current_snapshot_without_creating_task(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
+    project = _project(client)
+    _seed_source(session_factory, project)
+    monkeypatch.setattr(
+        source_analysis_service,
+        "get_source_video_snapshot",
+        lambda db, project_id: SimpleNamespace(status="CURRENT"),
+    )
+
+    with session_factory() as db:
+        task = create_source_analysis_task(db, project_id=project["id"], idempotency_key="already-current")
+        assert task is None
+        assert db.scalar(select(func.count(Task.id))) == 0
+
+
+def test_source_analysis_schedules_new_pipeline_after_success_becomes_stale(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
+    project = _project(client)
+    _seed_source(session_factory, project)
+    monkeypatch.setattr(
+        source_analysis_service,
+        "get_source_video_snapshot",
+        lambda db, project_id: SimpleNamespace(status="STALE"),
+    )
+
+    with session_factory() as db:
+        first = create_source_analysis_task(db, project_id=project["id"], idempotency_key="pipeline-first")
+        assert first is not None
+        first.status = TaskStatus.SUCCEEDED
+        first.attempt = 1
+        db.commit()
+        first_id = first.id
+
+    with session_factory() as db:
+        second = create_source_analysis_task(db, project_id=project["id"], idempotency_key="pipeline-after-stale")
+        assert second is not None
+        assert second.id != first_id
+        assert second.status == TaskStatus.QUEUED
+        assert db.scalar(select(func.count(Task.id))) == 2
+
+
+def test_source_analysis_child_failure_fails_top_level_task(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
+    project = _project(client)
+    _seed_source(session_factory, project)
+    monkeypatch.setattr(
+        source_analysis_service,
+        "get_source_video_snapshot",
+        lambda db, project_id: SimpleNamespace(status="NOT_BUILT"),
+    )
+    with session_factory() as db:
+        task = create_source_analysis_task(db, project_id=project["id"], idempotency_key="pipeline-fails")
+        assert task is not None
+        task_id = task.id
+
+    def fail_pipeline(context, task):
+        raise source_analysis_service.AppError("SOURCE_ANALYSIS_CHILD_FAILED", "对白识别失败", status_code=409)
+
+    monkeypatch.setattr(source_analysis_service, "_execute_pipeline", fail_pipeline)
+    source_analysis_service.run_source_analysis_task(session_factory, task_id)
+
+    with session_factory() as db:
+        failed = db.get(Task, task_id)
+        assert failed is not None
+        assert failed.status == TaskStatus.FAILED
+        assert failed.last_error == "原片解析失败：对白识别失败"
 
 
 def test_source_script_splits_scene_runs_at_episode_boundaries_and_dedupes_dialogue(monkeypatch) -> None:
