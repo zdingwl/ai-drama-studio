@@ -72,7 +72,7 @@ def test_replica_root_skill_exposes_p9_speaker_artifact_without_entering_p10() -
     assert source_finalize.produces == (ArtifactType.SOURCE_VIDEO_SNAPSHOT,)
 
 
-def test_p9_artifacts_are_source_namespace_and_capabilities_stay_planned() -> None:
+def test_p9_artifacts_are_source_namespace_and_accepted_capabilities_are_available() -> None:
     for artifact_type in (
         ArtifactType.SOURCE_CHARACTERS,
         ArtifactType.SOURCE_SPEAKERS,
@@ -81,9 +81,9 @@ def test_p9_artifacts_are_source_namespace_and_capabilities_stay_planned() -> No
     ):
         assert expected_namespace(artifact_type) == ArtifactNamespace.SOURCE
 
-    assert CAPABILITY_BY_ID[Capability.IDENTITY_RESOLUTION].availability == CapabilityAvailability.PLANNED
-    assert CAPABILITY_BY_ID[Capability.SCENE_RESOLUTION].availability == CapabilityAvailability.PLANNED
-    assert CAPABILITY_BY_ID[Capability.PROP_RESOLUTION].availability == CapabilityAvailability.PLANNED
+    assert CAPABILITY_BY_ID[Capability.IDENTITY_RESOLUTION].availability == CapabilityAvailability.AVAILABLE
+    assert CAPABILITY_BY_ID[Capability.SCENE_RESOLUTION].availability == CapabilityAvailability.AVAILABLE
+    assert CAPABILITY_BY_ID[Capability.PROP_RESOLUTION].availability == CapabilityAvailability.AVAILABLE
     assert CAPABILITY_BY_ID[Capability.SOURCE_SNAPSHOT].availability == CapabilityAvailability.PLANNED
 
 
