@@ -1,9 +1,9 @@
 # P6 人工对白裁决与 Canonical 可编辑
 
 > 日期：2026-09-10  
-> 状态：contract amendment，先设计后实现  
+> 状态：contract amendment，已实现并进入当前 P6 基线  
 > 优先级：高于 `docs/11_P6字幕证据裁决与P8台词一致性整改.md` 中“只展示自动裁决结果”的产品限制；不改变 P6 v4 自动裁决规则。  
-> 范围：P6 Source Evidence 的人工确认 / 选择 / 修改；不进入 P9。
+> 范围：P6 Source Evidence 的人工确认 / 选择 / 修改；不承担 P9 identity resolution。
 
 ---
 
@@ -189,9 +189,11 @@ ocr-subtitle-near-match-v1
 human-dialogue-adjudication-v1
 ```
 
-本功能不改变：
+P8 最终人工验收已于 2026-09-10 完成，最新状态以 `docs/13_P8最终验收与P9准入.md` 为准：
 
 ```text
-SHOT_BREAKDOWN = PLANNED
-禁止进入 P9
+SHOT_BREAKDOWN = AVAILABLE
+P9 = 可以开始
 ```
+
+本功能仍不承担 P9 identity / scene / prop resolution；P9 必须按 `docs/13` 重新设计新的 Professional Skill、typed schema 和验收门禁。
