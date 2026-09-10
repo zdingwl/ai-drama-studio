@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SourceAnalysisState(StrEnum):
@@ -69,3 +69,55 @@ class SourceScriptRead(BaseModel):
     scenes: list[SourceScriptScene] = Field(default_factory=list)
     characters: list[SourceScriptEntity] = Field(default_factory=list)
     props: list[SourceScriptEntity] = Field(default_factory=list)
+
+
+class StoryboardDraftStatus(StrEnum):
+    NOT_BUILT = "NOT_BUILT"
+    CURRENT = "CURRENT"
+    STALE = "STALE"
+
+
+class StoryboardShotOverride(BaseModel):
+    shot_anchor_id: str
+    visual_description: str = Field(min_length=1, max_length=4000)
+    shot_size: str = Field(max_length=240)
+    composition: str = Field(max_length=1000)
+    angle_or_type: str = Field(max_length=400)
+    movement: str = Field(max_length=800)
+    focal_length_dof: str = Field(max_length=800)
+
+
+class StoryboardDraftRead(BaseModel):
+    project_id: str
+    status: StoryboardDraftStatus
+    revision: int | None = None
+    base_source_current: bool
+    overrides: list[StoryboardShotOverride] = Field(default_factory=list)
+
+
+class StoryboardShotEditCommand(BaseModel):
+    expected_revision: int | None = Field(default=None, ge=1)
+    shot_anchor_id: str = Field(min_length=1, max_length=64)
+    reset_to_source: bool = False
+    visual_description: str | None = Field(default=None, min_length=1, max_length=4000)
+    shot_size: str | None = Field(default=None, max_length=240)
+    composition: str | None = Field(default=None, max_length=1000)
+    angle_or_type: str | None = Field(default=None, max_length=400)
+    movement: str | None = Field(default=None, max_length=800)
+    focal_length_dof: str | None = Field(default=None, max_length=800)
+
+    @model_validator(mode="after")
+    def validate_edit(self) -> "StoryboardShotEditCommand":
+        if self.reset_to_source:
+            return self
+        fields = (
+            self.visual_description,
+            self.shot_size,
+            self.composition,
+            self.angle_or_type,
+            self.movement,
+            self.focal_length_dof,
+        )
+        if any(value is None for value in fields):
+            raise ValueError("保存分镜草稿时必须提交完整的可编辑镜头字段")
+        return self
