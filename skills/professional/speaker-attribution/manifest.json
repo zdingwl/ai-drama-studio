@@ -1,0 +1,30 @@
+{
+  "id": "speaker-attribution",
+  "name": "说话人归因与人物映射",
+  "version": "1.0.0",
+  "category": "source-understanding",
+  "description": "以完整 Episode 与 CURRENT canonical Source Dialogue 为事实，结合 P8 provisional speaker candidate 和 CURRENT SOURCE_CHARACTERS，建立稳定 SOURCE_SPEAKERS 与可空 Speaker→Character 映射。",
+  "when_to_use": ["人物 identity 已建立，需要把 canonical utterance 跨 Shot 归入稳定 Speaker，并在证据足够时映射 Character 时"],
+  "when_not_to_use": ["需要重新 ASR、改写对白、把 P8 speaker candidate 直接当 final truth 时"],
+  "required_inputs": ["SOURCE_VIDEO", "SOURCE_BIBLE", "SOURCE_SHOT_FACTS", "SHOT_ANCHORS", "SOURCE_DIALOGUE", "SOURCE_CHARACTERS"],
+  "optional_inputs": [],
+  "readable_artifacts": ["SOURCE_VIDEO", "SOURCE_BIBLE", "SOURCE_SHOT_FACTS", "SHOT_ANCHORS", "SOURCE_DIALOGUE", "SOURCE_CHARACTERS"],
+  "required_capabilities": ["IDENTITY_RESOLUTION"],
+  "manual_path": "speaker-attribution/SKILL.md",
+  "steps": [
+    {"id":"load_utterances","phase":"理解","title":"加载 canonical utterance 与人物 identity","description":"读取 CURRENT P6 utterance、P8 provisional candidate 和 CURRENT SOURCE_CHARACTERS。","capabilities":["IDENTITY_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_BIBLE","SOURCE_SHOT_FACTS","SHOT_ANCHORS","SOURCE_DIALOGUE","SOURCE_CHARACTERS"],"produces":[]},
+    {"id":"attribute_speakers","phase":"理解","title":"全集说话人归因","description":"直接观看完整 Episode，以 utterance 为单位跨 Shot 归入 Speaker identity，并把 Speaker→Character 作为可空独立关系。","capabilities":["IDENTITY_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_DIALOGUE","SOURCE_CHARACTERS"],"produces":[]},
+    {"id":"publish_speakers","phase":"理解","title":"发布 SOURCE_SPEAKERS","description":"校验 utterance 集合、candidate 引用和 Character 映射，发布可版本化 Speaker Truth。","capabilities":["IDENTITY_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_DIALOGUE","SOURCE_CHARACTERS"],"produces":["SOURCE_SPEAKERS"]}
+  ],
+  "fact_levels": ["P6_CANONICAL_UTTERANCE", "P8_PROVISIONAL_SPEAKER_CANDIDATE", "P9_STABLE_SPEAKER_IDENTITY", "P9_OPTIONAL_CHARACTER_LINK"],
+  "provider_rules": [
+    "P6 canonical utterance id/text/time 不得改写、重听写或重编号。",
+    "P8 speaker candidate 只是 provisional hint，不能直接提升为 final Speaker Truth。",
+    "Speaker 与 Character 分层；speaker.character_id 可以为 null，不默认一一对应。",
+    "同一 canonical utterance 跨多个 Shot 仍是一次归因；相同文本但不同 utterance 不得自动传播 identity。",
+    "证据不足必须 UNKNOWN/UNRESOLVED。"
+  ],
+  "output_contracts": ["SOURCE_SPEAKERS"],
+  "completion_criteria": ["每条 CURRENT canonical utterance 恰好有一个 attribution record", "所有 Character link 均引用 CURRENT SOURCE_CHARACTERS 或为 null", "P6 正文与时间零差异"],
+  "failure_policy": ["漏/增/重复 utterance 时阻断", "引用 STALE Character 或未知 id 时阻断", "真实短剧人工验收前 capability 保持 PLANNED"]
+}
