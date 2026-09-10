@@ -20,7 +20,7 @@ from app.source_resolution.schemas import (
 )
 
 
-P9_PROMPT_VERSION = "p9-source-resolution-v5"
+P9_PROMPT_VERSION = "p9-source-resolution-v6"
 P9_SCHEMA_VERSION = "1.0"
 P9_SOURCE_TRUTH_CONTRACT = "full-episode-global-resolution-v1"
 P9_MAX_OUTPUT_TOKENS = 65536
@@ -44,6 +44,42 @@ _SKILL_ERROR_NAMES = {
     "speaker-attribution": "SPEAKER",
     "scene-resolution": "SCENE",
     "prop-resolution": "PROP",
+}
+
+# Keep the request-level JSON Schema aligned with the Pydantic contract that parses the
+# provider response afterwards. P9 v5 intentionally used a small allowlist inherited from
+# older prompt-only schemas, but it dropped Pydantic string guards such as maxLength. That
+# meant Ark could return output that satisfied the request schema but was then rejected by
+# the server-side model (most visibly on verbose Prop reasons/evidence notes).
+_JSON_SCHEMA_KEYS = {
+    "$defs",
+    "$ref",
+    "type",
+    "title",
+    "description",
+    "enum",
+    "const",
+    "items",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "format",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minProperties",
+    "maxProperties",
+    "anyOf",
+    "oneOf",
+    "allOf",
+    "properties",
+    "additionalProperties",
+    "required",
 }
 
 
@@ -84,18 +120,20 @@ class SourceResolutionProvider(Protocol):
 
 
 def _clean_json_schema(value: Any) -> Any:
+    """Retain only JSON-Schema keywords accepted by the provider contract.
+
+    Unlike the pre-v6 helper, this deliberately preserves Pydantic string/collection/
+    numeric constraints so the remote strict schema cannot be weaker than the local parser.
+    Defaults and presentation-only metadata outside the allowlist remain omitted.
+    """
+
     if isinstance(value, list):
         return [_clean_json_schema(item) for item in value]
     if not isinstance(value, dict):
         return value
-    allowed = {
-        "$defs", "$ref", "type", "title", "description", "enum", "const", "items",
-        "minItems", "maxItems", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
-        "anyOf", "oneOf", "properties", "additionalProperties", "required",
-    }
     cleaned: dict[str, Any] = {}
     for key, nested in value.items():
-        if key not in allowed:
+        if key not in _JSON_SCHEMA_KEYS:
             continue
         if key in {"properties", "$defs"}:
             cleaned[key] = {name: _clean_json_schema(schema) for name, schema in nested.items()}
@@ -104,8 +142,10 @@ def _clean_json_schema(value: Any) -> Any:
     return cleaned
 
 
-def _structured_text_config(skill_id: str) -> dict[str, Any]:
-    model = _SEMANTIC_MODELS[skill_id]
+def _provider_json_schema(skill_id: str) -> dict[str, Any]:
+    model = _SEMANTIC_MODELS.get(skill_id)
+    if model is None:
+        raise AppError("P9_SKILL_UNSUPPORTED", "未知 P9 Professional Skill", status_code=500)
     schema = _clean_json_schema(model.model_json_schema())
 
     def provider_only_statuses(value: Any) -> None:
@@ -122,11 +162,15 @@ def _structured_text_config(skill_id: str) -> dict[str, Any]:
             provider_only_statuses(nested)
 
     provider_only_statuses(schema)
+    return schema
+
+
+def _structured_text_config(skill_id: str) -> dict[str, Any]:
     return {
         "format": {
             "type": "json_schema",
             "name": f"p9_{skill_id.replace('-', '_')}",
-            "schema": schema,
+            "schema": _provider_json_schema(skill_id),
             "strict": True,
         }
     }
@@ -161,7 +205,15 @@ def _validation_hint(exc: Exception) -> str:
         for item in errors[:3]:
             loc = ".".join(str(part) for part in item.get("loc", ())) or "root"
             error_type = str(item.get("type") or "invalid")
-            hints.append(f"{loc}:{error_type}")
+            ctx = item.get("ctx") if isinstance(item, dict) else None
+            safe_ctx: list[str] = []
+            if isinstance(ctx, dict):
+                for key in ("min_length", "max_length", "limit_value", "ge", "le"):
+                    value = ctx.get(key)
+                    if isinstance(value, (str, int, float, bool)):
+                        safe_ctx.append(f"{key}={value}")
+            suffix = f"[{','.join(safe_ctx)}]" if safe_ctx else ""
+            hints.append(f"{loc}:{error_type}{suffix}")
         if hints:
             return ", ".join(hints)
     return type(exc).__name__
@@ -195,7 +247,6 @@ def _empty_response_error(skill_id: str) -> AppError:
 
 def _prompt(skill_id: str, payload: ProjectResolutionInput) -> str:
     skill = get_professional_skill(skill_id)
-    model = _SEMANTIC_MODELS[skill_id]
     rules = "\n".join(f"{index}. {rule}" for index, rule in enumerate(skill.provider_rules, 1))
     episode_summary = [
         {
@@ -207,6 +258,7 @@ def _prompt(skill_id: str, payload: ProjectResolutionInput) -> str:
         }
         for item in payload.episodes
     ]
+    provider_schema = _provider_json_schema(skill_id)
     return f"""你正在执行 AI Drama Studio P9 Professional Skill：{skill.name}（{skill.id}@{skill.version}）。
 这是 Speaker / Character / Scene / Prop 最终归一阶段，不是 P8 逐镜拉片，也不是 P10 SourceVideoSnapshot。
 
@@ -220,6 +272,7 @@ def _prompt(skill_id: str, payload: ProjectResolutionInput) -> str:
 7. evidence_refs[].ref_id 只允许逐字复制输入 JSON 中真实存在的 episode_id、shot_anchor_id、utterance_id、OCR evidence id、candidate id 或 P9 character_id；不得创造 evidence id。全集级外观连续性请把对应 episode_id 同时填入 ref_id 与 episode_id，不得用自造的 appearance_consistency 标签充当 ref_id。
 8. 不输出 Target 内容，不创建 Snapshot。
 9. Provider 只能输出 RESOLVED、UNKNOWN 或 UNRESOLVED；MANUAL_CONFIRMED 仅由用户显式人工裁决产生，禁止输出。
+10. 所有字符串长度必须遵守下方请求级 JSON Schema；尤其 reason / evidence note 不得超过 schema 的 maxLength。不要输出超长解释，把必要依据压缩到允许长度内。
 
 Professional Skill rules:
 {rules}
@@ -240,7 +293,7 @@ CURRENT SOURCE_CHARACTERS（仅 speaker-attribution 使用；其他 skill 可为
 {json.dumps(payload.source_characters, ensure_ascii=False, separators=(",", ":")) if payload.source_characters is not None else "null"}
 
 只输出一个符合下列 JSON Schema 的 object，不输出 Markdown、解释或思考过程：
-{json.dumps(_clean_json_schema(model.model_json_schema()), ensure_ascii=False, separators=(",", ":"))}
+{json.dumps(provider_schema, ensure_ascii=False, separators=(",", ":"))}
 """
 
 
