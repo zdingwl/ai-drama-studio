@@ -125,7 +125,7 @@ describe('P6AcceptancePanel', () => {
     expect(wrapper.text()).toContain('Shot 1, 2')
     expect(wrapper.text()).toContain('画面字幕')
     expect(wrapper.text()).toContain('人工确认 / 修改')
-    expect(wrapper.text()).not.toContain('字幕校正')
+    expect(wrapper.find('.adjudication-badge').exists()).toBe(false)
     wrapper.unmount()
   })
 
