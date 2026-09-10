@@ -1,7 +1,7 @@
 # P8 Speaker Candidate 与 P6 微段幻觉整改
 
 > 日期：2026-09-10  
-> 状态：整改决策已确认，工程实现与真实恢复验收进行中  
+> 状态：工程实现与自动 CI 已通过；等待本机 P6 → P7 → P8 真实恢复及 28 Shot 人工验收  
 > 优先级：高于 `docs/09_P6CanonicalEvidenceV2与P8最终验收整改.md` 中与本次内容冲突的历史状态描述。
 
 ---
@@ -76,6 +76,7 @@ source-bible-shot-facts-v2
 ```text
 P6 profile       = p6-source-evidence-v3
 canonical policy = segment-preserving-dialogue-v3
+canonical guard  = adjacent-duplicate-microsegment-v1
 ```
 
 v2 的“默认保留 raw segment 边界、仅明确 continuation 才合并”原则完全保留。
@@ -84,14 +85,15 @@ v3 只新增一条通用 canonical admission guard：
 
 > **相邻 ASR segment 若 normalized text 完全相同，并且其中存在与文本信息量相比持续时间物理上不可信的 micro segment，则不可信 micro segment 不得进入 canonical SourceDialogueUtterance；若相邻两个重复 segment 都不可信，则两者都只保留为 raw ASR Evidence，不物化为 canonical dialogue。**
 
-实现必须满足：
+实现满足：
 
 1. 只根据 ASR 自己的 `start_us / end_us / text` 做通用判断；
 2. 必须同时要求“相邻近距离 + normalized text 完全相同 + micro duration 不可信”，不能只凭短时长删除；
 3. 短促的单字 / 双字感叹、真实快速对白不能因为单独很短就被过滤；
 4. raw `AsrEvidenceSegment` 永远保留，provenance 标记该 segment 是否进入 canonical；
 5. canonical filter 不产生新文本、不使用 OCR 文本、不使用 P7/P8 semantic text；
-6. 被过滤的 raw segment 不产生 `SourceDialogueUtterance`，自然也不产生 Shot projection / P8 dialogue binding。
+6. 被过滤的 raw segment 不产生 `SourceDialogueUtterance`，自然也不产生 Shot projection / P8 dialogue binding；
+7. P6 首次执行以及统一 Task retry/resume 都显式走 `service_v3`，不依赖 Python module import 顺序碰巧生效。
 
 这条规则解决的是“ASR 原始输出存在明显不可能成立的重复微段”这一类通用质量问题，不是针对本样例的词表纠错。
 
@@ -136,9 +138,9 @@ P6 真实连续 ASR + OCR 重跑
 
 ---
 
-# 6. 自动回归门槛
+# 6. 自动回归结果
 
-至少新增以下测试：
+当前已覆盖：
 
 - 正常短 segment 不因为“短”本身被删除；
 - 合理重复短词不因文本重复本身被删除；
@@ -148,8 +150,26 @@ P6 真实连续 ASR + OCR 重跑
 - canonical dialogue count 不包含被过滤 segment；
 - `canonical_included` provenance 可审计；
 - P6 profile / canonical policy 已进入 v3 fingerprint / Artifact metadata；
-- migration 0014 正确使旧 P6/P7/P8 与 Plan 失效，但不影响 SOURCE_VIDEO / SHOT_ANCHORS；
-- P8 speaker v2 仍不得按相同文本强制复制 candidate。
+- migration 0014 可从空库完整升级到 head；
+- P8 有独立回归：两个不同 `utterance_number` 即使正文完全相同，也允许一个绑定 `周宇`、另一个保持 `null`，禁止按字符串传播 speaker candidate；
+- P6 retry/resume 显式走 canonical v3 runtime。
+
+最新代码 CI（run #330）结果：
+
+```text
+backend
+- compile                PASS
+- FastAPI import         PASS
+- alembic upgrade head   PASS（包含 0014）
+- pytest                 PASS
+
+frontend
+- typecheck              PASS
+- unit test              PASS
+- build                  PASS
+```
+
+上一轮加入“同文案 speaker 独立性”回归后，backend 全量为 `112 passed`；#330 在此基础上只收紧 P6 retry/resume runtime 入口并再次全绿。
 
 ---
 
