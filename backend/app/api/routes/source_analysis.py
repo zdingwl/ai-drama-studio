@@ -4,7 +4,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, status
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
-from app.source_analysis.schemas import SourceAnalysisStatusRead, SourceScriptRead
+from app.source_analysis.draft_service import edit_storyboard_draft, get_storyboard_draft
+from app.source_analysis.schemas import (
+    SourceAnalysisStatusRead,
+    SourceScriptRead,
+    StoryboardDraftRead,
+    StoryboardShotEditCommand,
+)
 from app.source_analysis.service import (
     create_source_analysis_task,
     get_source_analysis_status,
@@ -45,3 +51,21 @@ def start_source_analysis_route(
 @router.get("/projects/{project_id}/source-script", response_model=SourceScriptRead)
 def get_source_script_route(project_id: str, db: Session = Depends(get_db)) -> SourceScriptRead:
     return get_source_script(db, project_id)
+
+
+@router.get("/projects/{project_id}/storyboard-draft", response_model=StoryboardDraftRead)
+def get_storyboard_draft_route(project_id: str, db: Session = Depends(get_db)) -> StoryboardDraftRead:
+    return get_storyboard_draft(db, project_id)
+
+
+@router.post(
+    "/projects/{project_id}/storyboard-draft/commands/edit-shot",
+    response_model=StoryboardDraftRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def edit_storyboard_draft_route(
+    project_id: str,
+    payload: StoryboardShotEditCommand,
+    db: Session = Depends(get_db),
+) -> StoryboardDraftRead:
+    return edit_storyboard_draft(db, project_id=project_id, command=payload)
