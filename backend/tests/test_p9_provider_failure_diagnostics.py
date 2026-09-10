@@ -4,6 +4,7 @@ import pytest
 
 from app.core.errors import AppError
 from app.skills.models import Capability
+from app.source_resolution import service_v2
 from app.source_resolution.providers import (
     P9_MAX_OUTPUT_TOKENS,
     P9_PROMPT_VERSION,
@@ -134,6 +135,22 @@ def test_prop_provider_validation_hint_exposes_constraint_not_raw_text() -> None
     assert "observations.0.reason:string_too_long" in captured.value.message
     assert "max_length=500" in captured.value.message
     assert oversized_reason not in captured.value.message
+
+
+def test_p9_custom_runner_error_message_keeps_safe_validation_hint() -> None:
+    error = AppError(
+        "P9_PROP_PROVIDER_RESPONSE_INVALID",
+        "prop-resolution Provider 返回结果未通过 P9 数据契约校验（observations.0.reason:string_too_long[max_length=500]）",
+        status_code=502,
+    )
+
+    message = service_v2._p9_task_error_message(error)
+
+    assert message == (
+        "P9 最终归一失败（P9_PROP_PROVIDER_RESPONSE_INVALID）："
+        "prop-resolution Provider 返回结果未通过 P9 数据契约校验"
+        "（observations.0.reason:string_too_long[max_length=500]）"
+    )
 
 
 def test_dispatch_preserves_authored_provider_app_error_after_marking_job_failed(monkeypatch) -> None:
