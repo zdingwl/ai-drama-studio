@@ -9,7 +9,7 @@ CAPABILITIES: tuple[CapabilityDefinition, ...] = (
     CapabilityDefinition(id=Capability.SOURCE_DIALOGUE_EVIDENCE, title="对白证据", description="形成带时间证据的原对白与画面文字。", category="source", availability=CapabilityAvailability.AVAILABLE),
     CapabilityDefinition(id=Capability.EPISODE_UNDERSTANDING, title="整集理解", description="理解整集故事、角色关系、场景、关键道具和事件。", category="source", availability=CapabilityAvailability.AVAILABLE),
     CapabilityDefinition(id=Capability.STORY_RHYTHM, title="故事与节奏", description="提取故事骨架、Hook、冲突、反转、爽点和节奏骨架。", category="source", availability=CapabilityAvailability.AVAILABLE),
-    CapabilityDefinition(id=Capability.SHOT_BREAKDOWN, title="逐镜拉片", description="在整集上下文中分析动作、表演和镜头语言。", category="source"),
+    CapabilityDefinition(id=Capability.SHOT_BREAKDOWN, title="逐镜拉片", description="在整集上下文中分析动作、表演和镜头语言。", category="source", availability=CapabilityAvailability.AVAILABLE),
     CapabilityDefinition(id=Capability.IDENTITY_RESOLUTION, title="人物归一", description="使用多证据把不同镜头中的人物归一为稳定角色。", category="source"),
     CapabilityDefinition(id=Capability.SCENE_RESOLUTION, title="场景归一", description="建立稳定场景资产并绑定镜头。", category="source"),
     CapabilityDefinition(id=Capability.PROP_RESOLUTION, title="道具归一", description="识别并归一剧情关键道具。", category="source"),
