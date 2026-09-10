@@ -75,6 +75,12 @@ def _finish_worker_failure(
         return mark_task_failed(db, task_id, safe_error=safe_error, worker_id=worker_id)
 
 
+def _app_error_task_message(exc: AppError) -> str:
+    """Expose only the authored safe AppError code/message, never raw exception details."""
+
+    return f"任务执行失败（{exc.code}）：{exc.message}"
+
+
 def run_worker_once(
     session_factory: sessionmaker[Session],
     registry: TaskHandlerRegistry,
@@ -114,7 +120,7 @@ def run_worker_once(
             session_factory,
             task_id=task_snapshot.id,
             worker_id=worker_id,
-            safe_error=f"任务执行失败（{exc.code}）",
+            safe_error=_app_error_task_message(exc),
         )
     except Exception as exc:
         return _finish_worker_failure(
