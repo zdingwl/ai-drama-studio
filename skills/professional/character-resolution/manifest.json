@@ -1,0 +1,30 @@
+{
+  "id": "character-resolution",
+  "name": "跨镜人物身份归一",
+  "version": "1.0.0",
+  "category": "source-understanding",
+  "description": "在完整 Episode Source Truth 上，结合 CURRENT SOURCE_BIBLE、SOURCE_SHOT_FACTS 与 SHOT_ANCHORS，把 P7/P8 人物 candidate 归一为稳定 SOURCE_CHARACTERS，并保留 UNKNOWN/UNRESOLVED。",
+  "when_to_use": ["P8 SOURCE_SHOT_FACTS 已 CURRENT，需要跨 Shot/跨 Episode 建立稳定人物 identity 时"],
+  "when_not_to_use": ["需要逐镜重新理解故事、修改 Shot 时间或生成 Target 人物时"],
+  "required_inputs": ["SOURCE_VIDEO", "SOURCE_BIBLE", "SOURCE_SHOT_FACTS", "SHOT_ANCHORS"],
+  "optional_inputs": ["SOURCE_DIALOGUE"],
+  "readable_artifacts": ["SOURCE_VIDEO", "SOURCE_BIBLE", "SOURCE_SHOT_FACTS", "SHOT_ANCHORS", "SOURCE_DIALOGUE"],
+  "required_capabilities": ["IDENTITY_RESOLUTION"],
+  "manual_path": "character-resolution/SKILL.md",
+  "steps": [
+    {"id":"load_candidates","phase":"理解","title":"加载全集人物候选与逐镜事实","description":"把 P7 人物候选、P8 出镜绑定和 P5 权威 Shot 锚点放入同一全集上下文。","capabilities":["IDENTITY_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_BIBLE","SOURCE_SHOT_FACTS","SHOT_ANCHORS"],"produces":[]},
+    {"id":"resolve_global_identity","phase":"理解","title":"跨镜跨集人物归一","description":"以完整 Episode 直接观察为最高视觉事实，综合外观、动作、上下文与连续性做全局 grouping；证据不足保留 UNKNOWN/UNRESOLVED。","capabilities":["IDENTITY_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_BIBLE","SOURCE_SHOT_FACTS","SHOT_ANCHORS"],"produces":[]},
+    {"id":"publish_characters","phase":"理解","title":"发布稳定人物 Artifact","description":"服务端校验所有 candidate/shot 引用并发布版本化 SOURCE_CHARACTERS。","capabilities":["IDENTITY_RESOLUTION"],"requires":["SOURCE_VIDEO","SOURCE_BIBLE","SOURCE_SHOT_FACTS","SHOT_ANCHORS"],"produces":["SOURCE_CHARACTERS"]}
+  ],
+  "fact_levels": ["FULL_EPISODE_SOURCE_TRUTH", "P7_CHARACTER_CANDIDATE", "P8_SHOT_BINDING", "P9_STABLE_CHARACTER_IDENTITY"],
+  "provider_rules": [
+    "必须按全集批次归一，禁止每个 Shot 独立定 identity 后按名字拼接。",
+    "同名不能单独证明同一人物；相似外观不能单独证明同一人物。",
+    "P7/P8 candidate 只是输入线索，P9 stable character_id 是新身份层。",
+    "证据不足必须输出 UNKNOWN 或 UNRESOLVED，不得最高相似度强制归一。",
+    "不得修改 P5 Shot 时间、P6 canonical Evidence、P7/P8 历史 revision。"
+  ],
+  "output_contracts": ["SOURCE_CHARACTERS"],
+  "completion_criteria": ["所有 resolved identity 均可追溯到合法 candidate/shot evidence", "未决人物出现不会丢失", "revision/fingerprint/provenance/Artifact Graph 完整"],
+  "failure_policy": ["引用未知 candidate/shot 时阻断发布", "上游变为 STALE 时阻断", "真实短剧人工验收前 capability 保持 PLANNED"]
+}
