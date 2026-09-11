@@ -12,6 +12,7 @@ from app.target_assets.providers import (
 )
 from app.target_assets.schemas import (
     P13_PROMPT_VERSION,
+    P13_TARGET_ASSET_CONTRACT,
     ProviderCharacterAssetSemantic,
     ProviderPropAssetSemantic,
     ProviderSceneAssetSemantic,
@@ -28,7 +29,7 @@ def _chinese_review_semantic() -> TargetAssetsSemantic:
                 face_direction="东亚女性柔和椭圆脸，浅棕色杏仁眼，自然眉形与轻薄日常妆感，表情从克制不满逐步转为坚定。",
                 hair_direction="深栗色中长直发，中分并保持自然垂落，不做夸张卷发或高饱和挑染。",
                 body_direction="身形纤细、站姿自然挺直，动作克制稳定，做出决定后体态更明确有力量感。",
-                wardrobe_baseline="楼道场景使用白色露肩上衣与白色阔腿裤；居家场景使用简洁舒适的浅色家居服，避免随镜头随机换装。",
+                wardrobe_baseline="基础服装保持简洁、利落的都市休闲风格，以白色、浅灰和低饱和中性色为主，剪裁干净，饰品克制；具体 Scene/Shot variation 留给后续生产阶段。",
                 signature_visual_features=["深栗色中分直发", "自然轻妆", "小号珍珠耳钉", "克制而稳定的表情变化"],
                 continuity_constraints=["Lila Xu 的脸型、发际线、身材比例和主发型跨镜保持一致。"],
                 generation_guidance=["保持真实皮肤纹理与稳定面部几何；未来执行时可保留 iPhone 等目标地区实体写法。"],
@@ -44,7 +45,7 @@ def _chinese_review_semantic() -> TargetAssetsSemantic:
                 materials_palette=["浅米色乳胶漆墙面", "深棕色金属房门", "不锈钢电梯门", "浅灰色耐磨地材"],
                 fixed_landmarks=["502 门牌", "503 门牌", "不锈钢电梯", "绿色 EXIT 标识", "墙面消防报警装置"],
                 lighting_baseline="使用略偏冷的顶部公共照明，整体均匀，阴影柔和，不制造电影棚式强轮廓光。",
-                time_of_day_baseline="室内走廊主要由人工照明决定视觉基线，外部时段变化不应改变空间身份。",
+                time_of_day_baseline="公共走廊视觉身份主要由顶部人工照明决定；具体 Shot 的昼夜变化由后续 Storyboard / Shot context 决定。",
                 continuity_constraints=["502、503、电梯和 EXIT 标识的相对位置跨镜保持固定。"],
                 generation_guidance=["保持走廊消失点、门距和电梯位置稳定，目标地区专名 Austin 可保留英文。"],
                 negative_constraints=["避免改成豪华酒店走廊", "避免改变门牌和电梯拓扑", "避免随机增加大型装饰物"],
@@ -81,10 +82,11 @@ def _english_review_semantic() -> TargetAssetsSemantic:
     return semantic
 
 
-def test_p13_v2_prompt_separates_chinese_review_language_from_target_language() -> None:
-    assert P13_PROMPT_VERSION == "p13-replica-target-assets-v2"
+def test_p13_v3_prompt_separates_chinese_review_language_and_enforces_asset_local_scope() -> None:
+    assert P13_PROMPT_VERSION == "p13-replica-target-assets-v3"
+    assert P13_TARGET_ASSET_CONTRACT == "replica-target-visual-identity-v2"
     assert P13_REVIEW_LANGUAGE == "zh-CN"
-    assert P13_REVIEW_LANGUAGE_CONTRACT == "zh-cn-human-review-model-execution-separated-v1"
+    assert P13_REVIEW_LANGUAGE_CONTRACT == "zh-cn-human-review-asset-local-visual-v2"
 
     prompt = _prompt(
         TargetAssetsProviderInput(
@@ -99,6 +101,12 @@ def test_p13_v2_prompt_separates_chinese_review_language_from_target_language() 
     assert "不得因为 target_language=en-US 就把本次审核正文整体输出为英文" in prompt
     assert "Lila Xu" in prompt and "HEB" in prompt and "$19.99" in prompt
     assert "Generation Adapter" in prompt
+    assert "只能描述当前人物、场景或道具的视觉身份稳定性" in prompt
+    assert "Story Beat、镜头顺序、对白、节奏、Cliffhanger" in prompt
+    assert "wardrobe_baseline 是人物基础视觉身份，不是逐 Scene / 逐 Shot 换装计划" in prompt
+    assert "time_of_day_baseline 是场景视觉基线，不是剧情时间轴" in prompt
+    assert "不得根据 Scene 顺序、闪回或情绪自行推断" in prompt
+    assert "P13 不负责复述 preservation locks" in prompt
 
 
 def test_p13_review_language_accepts_chinese_explanations_with_target_region_proper_nouns() -> None:
@@ -113,13 +121,14 @@ def test_p13_review_language_rejects_english_dominant_provider_packet() -> None:
     assert captured.value.details["invalid_entities"][0]["asset_type"] == "CHARACTER"
 
 
-def test_p13_provider_profile_versions_chinese_review_behavior() -> None:
+def test_p13_provider_profile_versions_chinese_asset_local_review_behavior() -> None:
     profile = _profile(
         SourceUnderstandingProvider.DOUBAO_SEED_2_1_PRO_API,
         "volcengine-ark",
         "test-model",
         "CLOUD_API_TEXT_ONLY",
     )
-    assert profile["prompt_version"] == "p13-replica-target-assets-v2"
+    assert profile["prompt_version"] == "p13-replica-target-assets-v3"
+    assert profile["target_asset_contract"] == "replica-target-visual-identity-v2"
     assert profile["review_language"] == "zh-CN"
     assert profile["review_language_contract"] == P13_REVIEW_LANGUAGE_CONTRACT
