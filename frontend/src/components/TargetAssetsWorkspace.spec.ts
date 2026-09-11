@@ -147,9 +147,27 @@ const currentAssets: ReplicaTargetAssetsRead = {
   project_id: 'project-1',
   status: 'CURRENT',
   artifact_id: 'assets-1',
-  revision: 1,
+  revision: 2,
   input_fingerprint: 'f'.repeat(64),
   content,
+  provenance: {
+    professional_skill_version: '1.1.0',
+    prompt_version: 'p13-replica-target-assets-v3',
+    target_asset_contract: 'replica-target-visual-identity-v2',
+    review_contract: 'human-target-asset-approval-v1',
+  },
+}
+
+const legacyCurrentAssets: ReplicaTargetAssetsRead = {
+  ...currentAssets,
+  artifact_id: 'assets-legacy',
+  revision: 1,
+  provenance: {
+    professional_skill_version: '1.0.0',
+    prompt_version: 'p13-replica-target-assets-v2',
+    target_asset_contract: 'replica-target-visual-identity-v1',
+    review_contract: 'human-target-asset-approval-v1',
+  },
 }
 
 const pending: TargetAssetsCandidateRead = {
@@ -330,6 +348,7 @@ describe('TargetAssetsWorkspace', () => {
       reason: 'Looks consistent across character, scene and prop identity',
     })
     expect(wrapper.text()).toContain('正式目标资产已确认')
+    expect(wrapper.text()).not.toContain('当前正式目标资产来自旧版视觉身份合同')
     wrapper.unmount()
   })
 
@@ -353,11 +372,24 @@ describe('TargetAssetsWorkspace', () => {
     wrapper.unmount()
   })
 
-  it('offers explicit regeneration for formal assets rather than mutating them on load', async () => {
+  it('warns about a formal asset from the superseded visual contract without mutating it on load', async () => {
+    const wrapper = await mountWorkspace(currentBible, legacyCurrentAssets, [])
+
+    expect(targetAssetsApi.regenerateReplicaTargetAssets).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('正式资产来自旧审核合同，需要重新生成')
+    expect(wrapper.text()).toContain('当前正式目标资产来自旧版视觉身份合同')
+    expect(wrapper.text()).toContain('旧正式资产会保留历史，不会被页面自动改写')
+    expect(wrapper.findAll('button').some((item) => item.text() === '重新生成候选')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('offers explicit regeneration for current-contract formal assets rather than mutating them on load', async () => {
     const wrapper = await mountWorkspace(currentBible, currentAssets, [])
     expect(targetAssetsApi.regenerateReplicaTargetAssets).not.toHaveBeenCalled()
     expect(wrapper.findAll('button').some((item) => item.text() === '重新生成候选')).toBe(true)
     expect(wrapper.text()).toContain('rev 1')
+    expect(wrapper.text()).toContain('正式目标资产已确认')
+    expect(wrapper.text()).not.toContain('当前正式目标资产来自旧版视觉身份合同')
     wrapper.unmount()
   })
 
