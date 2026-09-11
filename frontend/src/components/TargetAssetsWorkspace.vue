@@ -183,7 +183,7 @@ onBeforeUnmount(clearPoll)
       <div>
         <p class="eyebrow">目标版本</p>
         <h2>目标资产</h2>
-        <p class="subtitle">把已确认的目标人物、场景和关键道具固化为跨镜可复用的视觉身份包。Target Bible 是语义真相，目标资产只负责视觉实现。</p>
+        <p class="subtitle">把已确认的目标人物、场景和关键道具固化为跨镜可复用的视觉身份包。已确认的目标设定是语义基线，目标资产只负责视觉实现。</p>
       </div>
       <div class="workspace-actions">
         <span class="status-pill" :class="result?.status?.toLowerCase()">{{ statusText }}</span>
@@ -199,14 +199,14 @@ onBeforeUnmount(clearPoll)
       </div>
     </div>
 
-    <p class="provider-note">当前 P13 v1 使用文字推理 Provider 形成正式视觉身份约束，尚未配置已验收的图片生成 Provider，因此不会伪造参考图。</p>
+    <p class="provider-note">当前版本先形成可审核的视觉身份约束，尚未接入已验收的参考图生成，因此不会显示或伪造参考图。</p>
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="loading" class="empty-state">正在读取目标资产…</p>
 
     <section v-if="pendingCandidate" class="review-panel">
       <div>
         <strong>候选版本 {{ pendingCandidate.generation_sequence }} · 待人工确认</strong>
-        <p>Provider 成功不会自动成为正式资产。请核对人物身份、场景布局、道具形态和连续性约束后再确认。</p>
+        <p>自动生成完成不会直接成为正式资产。请核对人物身份、场景布局、道具形态和连续性约束后再确认。</p>
       </div>
       <textarea v-model="reviewReason" rows="2" placeholder="填写本次确认或拒绝原因（必填）" />
       <div class="review-actions">
@@ -257,7 +257,7 @@ onBeforeUnmount(clearPoll)
     </template>
 
     <div v-else-if="!loading" class="empty-state">
-      <p v-if="p11Ready">目标设定已就绪。点击“生成目标资产”会创建待确认候选；页面刷新不会自动调用 Provider。</p>
+      <p v-if="p11Ready">目标设定已就绪。点击“生成目标资产”会创建待确认候选；页面刷新不会自动启动生成。</p>
       <p v-else>请先完成并保持当前有效的目标设定，再生成目标资产。</p>
     </div>
   </section>
