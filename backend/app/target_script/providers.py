@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -20,7 +21,38 @@ from app.target_script.schemas import (
 )
 
 
-P12_MAX_OUTPUT_TOKENS = 32768
+P12_MAX_OUTPUT_TOKENS = 65536
+
+_JSON_SCHEMA_KEYS = {
+    "$defs",
+    "$ref",
+    "type",
+    "title",
+    "description",
+    "enum",
+    "const",
+    "items",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "format",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minProperties",
+    "maxProperties",
+    "anyOf",
+    "oneOf",
+    "allOf",
+    "properties",
+    "additionalProperties",
+    "required",
+}
 
 
 @dataclass(frozen=True)
@@ -47,21 +79,87 @@ class TargetScriptProvider(Protocol):
     def localize(self, payload: TargetScriptProviderInput) -> TargetScriptProviderResult: ...
 
 
+def _clean_json_schema(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_clean_json_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    cleaned: dict[str, Any] = {}
+    for key, nested in value.items():
+        if key not in _JSON_SCHEMA_KEYS:
+            continue
+        if key in {"properties", "$defs"}:
+            cleaned[key] = {name: _clean_json_schema(schema) for name, schema in nested.items()}
+        else:
+            cleaned[key] = _clean_json_schema(nested)
+    return cleaned
+
+
+def _provider_json_schema(payload: TargetScriptProviderInput) -> dict[str, Any]:
+    schema = _clean_json_schema(TargetScriptSemantic.model_json_schema())
+    dialogue_schema = schema.get("properties", {}).get("dialogue", {})
+    expected_ids = [str(item["utterance_id"]) for item in payload.canonical_dialogue_manifest]
+    dialogue_schema["minItems"] = len(expected_ids)
+    dialogue_schema["maxItems"] = len(expected_ids)
+
+    utterance_id_schema = (
+        schema.get("$defs", {})
+        .get("ProviderLocalizedDialogue", {})
+        .get("properties", {})
+        .get("utterance_id", {})
+    )
+    if expected_ids:
+        utterance_id_schema["enum"] = expected_ids
+    return schema
+
+
+def _structured_text_config(payload: TargetScriptProviderInput) -> dict[str, Any]:
+    return {
+        "format": {
+            "type": "json_schema",
+            "name": "p12_target_script_localization",
+            "schema": _provider_json_schema(payload),
+            "strict": True,
+        }
+    }
+
+
 def _json_text(text: str) -> str:
-    value = text.strip()
-    if value.startswith("```"):
-        lines = value.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        value = "\n".join(lines).strip()
+    value = re.sub(r"<think>.*?</think>", "", text.strip(), flags=re.IGNORECASE | re.DOTALL).strip()
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", value, flags=re.IGNORECASE | re.DOTALL)
+    if fence:
+        value = fence.group(1).strip()
     if value.startswith("{") and value.endswith("}"):
         return value
     start, end = value.find("{"), value.rfind("}")
     if start >= 0 and end > start:
         return value[start : end + 1]
     raise AppError("P12_PROVIDER_RESPONSE_INVALID", "P12 Provider 未返回 JSON object", status_code=502)
+
+
+def _validation_hint(exc: Exception) -> str:
+    errors_method = getattr(exc, "errors", None)
+    if callable(errors_method):
+        try:
+            errors = errors_method(include_url=False, include_input=False)
+        except TypeError:
+            errors = errors_method()
+        hints: list[str] = []
+        for item in errors[:3]:
+            loc = ".".join(str(part) for part in item.get("loc", ())) or "root"
+            error_type = str(item.get("type") or "invalid")
+            ctx = item.get("ctx") if isinstance(item, dict) else None
+            safe_ctx: list[str] = []
+            if isinstance(ctx, dict):
+                for key in ("min_length", "max_length", "limit_value", "ge", "le"):
+                    value = ctx.get(key)
+                    if isinstance(value, (str, int, float, bool)):
+                        safe_ctx.append(f"{key}={value}")
+            suffix = f"[{','.join(safe_ctx)}]" if safe_ctx else ""
+            hints.append(f"{loc}:{error_type}{suffix}")
+        if hints:
+            return ", ".join(hints)
+    return type(exc).__name__
 
 
 def _parse(text: str) -> TargetScriptSemantic:
@@ -72,15 +170,20 @@ def _parse(text: str) -> TargetScriptSemantic:
     except Exception as exc:
         raise AppError(
             "P12_PROVIDER_RESPONSE_INVALID",
-            f"P12 Provider 返回结果未通过数据契约校验（{type(exc).__name__}）",
+            f"P12 Provider 返回结果未通过数据契约校验（{_validation_hint(exc)}）",
             status_code=502,
+            details={"error_type": type(exc).__name__},
         ) from exc
 
 
 def _prompt(payload: TargetScriptProviderInput) -> str:
     skill = get_professional_skill(P12_SKILL_ID)
     rules = "\n".join(f"{index}. {rule}" for index, rule in enumerate(skill.provider_rules, 1))
-    schema = TargetScriptSemantic.model_json_schema()
+    schema = _provider_json_schema(payload)
+    coverage = [
+        {"utterance_id": str(item["utterance_id"])}
+        for item in payload.canonical_dialogue_manifest
+    ]
     return f"""你正在执行 AI Drama Studio P12 Professional Skill：{skill.name}（{skill.id}@{skill.version}）。
 
 这是 Target Script / Localization 阶段。你只能把服务端给出的 canonical Source Dialogue 转换成目标语言对白，不得重新猜 Source 台词。
@@ -91,12 +194,13 @@ def _prompt(payload: TargetScriptProviderInput) -> str:
 
 最高规则：
 1. canonical_dialogue_manifest 中的 utterance_id / source_text / timing 是只读 Source Truth；禁止 ASR、OCR、口型猜词、剧情补词或修正 source_text。
-2. dialogue 必须与 manifest 中全部 utterance_id 一一完整覆盖，顺序一致；不得遗漏、重复、创造、合并或拆分 utterance。
+2. dialogue 必须与“强制覆盖清单”逐项一一完整覆盖，数量相同、顺序一致；utterance_id 必须逐字复制，不得遗漏、重复、创造、合并、拆分或截断。
 3. translation_text 是直接语义翻译；localization_text 是结合 Target Bible / Adaptation Plan 的文化、称谓、语气和自然表达本土化；final_target_dialogue 是本阶段最终对白。
 4. 不得为了“塞回原镜头”静默压缩对白。真实语音时长只属于后续 TTS / Timing。
 5. 不得输出或推断 Target Voice、TTS、Actual Speech Duration、Timing Plan、Target Storyboard、Generation、QC、Selection 或 Post 信息。
 6. 不得重排 Story Beat / Scene / Shot，不得修改 P11 preservation locks。
-7. 只输出符合 JSON Schema 的单个 object，不输出 Markdown、解释或思考过程。
+7. 所有字符串和数组长度必须遵守下方请求级 JSON Schema，不要输出 schema 之外的字段。
+8. 只输出符合 JSON Schema 的单个 object，不输出 Markdown、解释或思考过程。
 
 Professional Skill rules:
 {rules}
@@ -109,6 +213,9 @@ CURRENT TARGET_BIBLE：
 
 Canonical Source Dialogue manifest（source_* 字段全部只读）：
 {json.dumps(payload.canonical_dialogue_manifest, ensure_ascii=False, separators=(",", ":"))}
+
+强制覆盖清单（dialogue 必须按此顺序完整覆盖）：
+{json.dumps(coverage, ensure_ascii=False, separators=(",", ":"))}
 
 输出 JSON Schema：
 {json.dumps(schema, ensure_ascii=False, separators=(",", ":"))}
@@ -135,6 +242,22 @@ def _ark_response_text(response: Any) -> str:
     if not chunks:
         raise AppError("P12_PROVIDER_RESPONSE_EMPTY", "P12 Provider 未返回可用文本", status_code=502)
     return "".join(chunks)
+
+
+def _assert_ark_response_completed(response: Any) -> None:
+    status = str(getattr(response, "status", "") or "").lower()
+    if status != "incomplete":
+        return
+    details = getattr(response, "incomplete_details", None)
+    reason = getattr(details, "reason", None) if details is not None else None
+    if reason is None and isinstance(details, dict):
+        reason = details.get("reason")
+    raise AppError(
+        "P12_PROVIDER_RESPONSE_INCOMPLETE",
+        f"P12 Provider 输出未完成（{str(reason or 'unknown')}）",
+        status_code=502,
+        details={"incomplete_reason": str(reason or "unknown")},
+    )
 
 
 def _profile(selection: SourceUnderstandingProvider, provider: str, model: str, mode: str) -> dict:
@@ -175,7 +298,8 @@ class DoubaoTargetScriptProvider:
             "CLOUD_API_TEXT_ONLY",
         )
         profile["base_url"] = self.settings.p7_doubao_base_url
-        profile["structured_output"] = "PYDANTIC_JSON_SCHEMA_PLUS_SERVER_VALIDATION"
+        profile["structured_output"] = "STRICT_JSON_SCHEMA_PROMPT_PLUS_SERVER_VALIDATION"
+        profile["max_output_tokens"] = P12_MAX_OUTPUT_TOKENS
         return profile
 
     def localize(self, payload: TargetScriptProviderInput) -> TargetScriptProviderResult:
@@ -189,17 +313,10 @@ class DoubaoTargetScriptProvider:
             model=self.model_name,
             input=[{"role": "user", "content": [{"type": "input_text", "text": _prompt(payload)}]}],
             thinking={"type": "enabled"},
+            text=_structured_text_config(payload),
             max_output_tokens=P12_MAX_OUTPUT_TOKENS,
         )
-        status = str(getattr(response, "status", "") or "").lower()
-        if status == "incomplete":
-            details = getattr(response, "incomplete_details", None)
-            reason = getattr(details, "reason", None) if details is not None else None
-            raise AppError(
-                "P12_PROVIDER_RESPONSE_INCOMPLETE",
-                f"P12 Provider 输出未完成（{str(reason or 'unknown')}）",
-                status_code=502,
-            )
+        _assert_ark_response_completed(response)
         return TargetScriptProviderResult(
             semantic=_parse(_ark_response_text(response)),
             remote_job_id=str(getattr(response, "id", "") or "") or None,
@@ -227,6 +344,8 @@ class LocalQwenTargetScriptProvider:
     def profile(self) -> dict:
         profile = _profile(self.selection, self.provider_name, self.model_name, "LOCAL_VLLM_TEXT_ONLY")
         profile["base_url"] = self.base_url
+        profile["structured_output"] = "PROMPT_PLUS_SERVER_VALIDATION"
+        profile["max_output_tokens"] = P12_MAX_OUTPUT_TOKENS
         return profile
 
     def localize(self, payload: TargetScriptProviderInput) -> TargetScriptProviderResult:
