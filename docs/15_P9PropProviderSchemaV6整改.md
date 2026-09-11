@@ -130,3 +130,90 @@ SOURCE_SNAPSHOT = PLANNED
 ```
 
 P10 `SOURCE_VIDEO_SNAPSHOT` 仍禁止进入。
+
+---
+
+## 7. 2026-09-11 v9 回归整改：Prop observation 的 Source 配对改为服务端所有
+
+> 本节记录 P9 已真实验收通过以后，在一键原片解析重新执行 CURRENT P9 时暴露的 Provider wire-contract 回归。它不撤销 P9 历史 PASS，不修改已发布 `SOURCE_PROPS` Artifact schema，也不改变 P8/P9 的 Source Truth 边界。
+
+### 7.1 新的真实失败
+
+真实产品链已经从 P5/P6/P7/P8 正常推进到 P9 Prop，随后出现：
+
+```text
+P9_PROP_OBSERVATION_SET_INVALID
+Prop observations 必须与 P8 prop bindings 一一对应
+```
+
+该错误说明 Provider JSON 已通过请求级 structured-output 与 Pydantic typed parse，但 Provider 返回的 `(shot_anchor_id, source_candidate_id)` 集合并不等于 CURRENT P8 `bindings.props` 的权威集合。
+
+### 7.2 根因
+
+后续引入的 `p9-source-resolution-v8` 使用 request-scoped Source token 来缩短长 ID，并已经做到：
+
+- `shot_anchor_id` 只能来自当前合法 Shot token；
+- `source_candidate_id` 只能来自当前合法 Prop candidate token；
+- observation 数量必须等于 P8 coverage 数量；
+- Prompt 同时附带精确 coverage manifest。
+
+但 v8 的远端 JSON Schema 只约束了两个字段各自的取值集合，没有把**合法的 Shot×Prop candidate 二元关系**结构化锁死。因此模型仍可能返回：
+
+```text
+合法 Shot token + 合法 Prop token
+```
+
+但这两个 token 从未在 P8 中形成过同一条 prop binding。服务端 `_compose_props()` 正确地 fail closed，于是形成上述真实失败。
+
+P8 本身不是问题：P8 publication 在正式 composition 时已经拒绝单 Shot 内重复 candidate binding。不得通过放宽 `_compose_props()`、补造 observation 或修改 P8 历史事实来绕过该错误。
+
+### 7.3 v9 正式修复原则
+
+P9 Provider wire contract 升级为：
+
+```text
+prompt_version = p9-source-resolution-v9
+prop_observation_wire_contract = source-owned-prop-observation-keys-v1
+P9 published resolution schema = 1.0   # 不变
+source_truth_contract = full-episode-global-resolution-v1  # 不变
+```
+
+Prop observation 改成 **Source-owned coverage**：
+
+1. 服务端从 CURRENT P8 `bindings.props` 确定性生成每一条 `(Shot, Prop candidate)` pair；
+2. 每个 pair 编码成 request-scoped 固定 observation key，例如 `R0012__R0045`；
+3. 远端 strict JSON Schema 把 `observations` 定义成一个固定-key object：所有权威 key 都是 required，`additionalProperties=false`；
+4. Provider 对每个固定 key 只能填写 `group_key / resolution_status / reason`；
+5. Provider 不再回写、选择、交换、删除或新增 `shot_anchor_id / source_candidate_id`；
+6. 服务端 typed parser 根据固定 key 确定性还原 canonical `PropObservationSemantic`，随后继续执行原有 `_compose_props()` exact-set 校验；
+7. 因此 Source 引用仍然双重 fail closed：远端 wire schema 不能改变 pair，服务端 publication 也不会信任 Provider 自造 Source identity。
+
+这不是“自动修正模型错误”，而是把本来就属于 Source Truth 的键从模型输出权限中移除。Provider 仍只负责本阶段真正需要推理的内容：跨 Shot/跨 Episode 的实例 grouping、resolution status 与简洁理由。
+
+### 7.4 兼容与重跑
+
+v9 只改变 Provider wire contract，不改变：
+
+- `SOURCE_PROPS` typed Artifact schema；
+- P9 stable Prop ID 生成规则；
+- P8 `SOURCE_SHOT_FACTS`；
+- P5/P6/P7/P8/P9 已存在历史 revision；
+- Character / Speaker / Scene 的业务语义。
+
+`prompt_version` 升为 v9 后，Task fingerprint 必须变化。旧 v8 FAILED Task 只保留历史，不得作为 v9 结果复用。一键“重新解析原片”应在复用仍为 CURRENT 的上游事实后执行新的 v9 P9 Provider 工作。
+
+### 7.5 v9 自动门禁
+
+自动测试至少必须证明：
+
+- Prop dynamic schema 的 `observations` 是固定-key object，而不是由 Provider 自由填写 Source pair 的 array；
+- required key 集与 P8 prop binding pair 集一一对应；
+- `additionalProperties=false`，Provider 不能增加 observation；
+- wire value 不再包含 `shot_anchor_id / source_candidate_id`；
+- wire parse 会确定性恢复 canonical `PropObservationSemantic` pair；
+- 未知/畸形 observation key 继续 fail closed；
+- `_compose_props()` 原 exact-set guard 不删除、不放宽；
+- `P9_PROMPT_VERSION = p9-source-resolution-v9`；
+- backend compile/import/migrate/pytest 与 frontend typecheck/unit/build 全绿。
+
+P9 的已验收能力状态仍以更高编号的最终验收文档为准；本节不把后续 P11/P12 的未验收能力提前标记为 AVAILABLE。
