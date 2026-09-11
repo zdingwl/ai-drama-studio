@@ -17,6 +17,9 @@ import {
 import { getReplicaTargetBible, type ReplicaTargetBibleRead } from '@/features/projects/targetBible'
 import type { ProjectRead, TaskRead } from '@/features/projects/types'
 
+const TARGET_ASSET_TASK_NAMES = new Set(['生成目标资产候选', '重新生成目标资产候选'])
+const ACTIVE_TASK_STATUSES = new Set<TaskRead['status']>(['queued', 'running', 'interrupted'])
+
 const route = useRoute()
 const project = ref<ProjectRead | null>(null)
 const targetBible = ref<ReplicaTargetBibleRead | null>(null)
@@ -37,10 +40,16 @@ const pendingCandidate = computed(() => candidates.value.find((item) => item.rev
 const previewContent = computed<ReplicaTargetAssetsContent | null>(() => pendingCandidate.value?.content ?? result.value?.content ?? null)
 const hasFormalAssets = computed(() => Boolean(result.value?.artifact_id))
 const shouldRegenerate = computed(() => hasFormalAssets.value || result.value?.status === 'STALE' || candidates.value.length > 0)
-const active = computed(() => Boolean(activeTask.value && ['queued', 'running', 'interrupted'].includes(activeTask.value.status)))
+const active = computed(() => Boolean(activeTask.value && ACTIVE_TASK_STATUSES.has(activeTask.value.status)))
+const finalizingCandidate = computed(() => Boolean(
+  activeTask.value?.status === 'succeeded'
+  && !candidates.value.some((item) => item.generated_by_task_id === activeTask.value?.id),
+))
+const busy = computed(() => active.value || finalizingCandidate.value)
 const canReview = computed(() => Boolean(pendingCandidate.value && reviewReason.value.trim() && !reviewing.value))
 const statusText = computed(() => {
   if (active.value) return `正在生成目标资产候选 ${activeTask.value?.progress_percent ?? 0}%`
+  if (finalizingCandidate.value) return '正在整理目标资产候选…'
   if (!p11Ready.value) return '等待当前有效的目标设定'
   if (pendingCandidate.value) return '有一版目标资产候选待确认'
   if (result.value?.status === 'CURRENT') return '正式目标资产已确认'
@@ -61,6 +70,23 @@ function newKey(prefix: string): string {
     : `${prefix}-${Date.now()}`
 }
 
+function isTargetAssetsTask(task: TaskRead): boolean {
+  return TARGET_ASSET_TASK_NAMES.has(task.task_name)
+}
+
+function recoverTargetAssetsTask(tasks: TaskRead[], nextCandidates: TargetAssetsCandidateRead[]): TaskRead | null {
+  const latest = tasks.find(isTargetAssetsTask)
+  if (!latest) return null
+  if (ACTIVE_TASK_STATUSES.has(latest.status)) return latest
+  if (
+    latest.status === 'succeeded'
+    && !nextCandidates.some((item) => item.generated_by_task_id === latest.id)
+  ) {
+    return latest
+  }
+  return null
+}
+
 async function refreshAssets() {
   if (!projectId.value || !visible.value) return
   const [formal, nextCandidates] = await Promise.all([
@@ -75,13 +101,21 @@ async function pollTask() {
   if (!activeTask.value || !projectId.value) return
   const tasks = await listProjectTasks(projectId.value)
   const current = tasks.find((item) => item.id === activeTask.value?.id)
-  if (!current) return
+  if (!current) {
+    clearPoll()
+    activeTask.value = null
+    return
+  }
   activeTask.value = current
   if (current.status === 'succeeded') {
-    clearPoll()
     await refreshAssets()
+    if (candidates.value.some((item) => item.generated_by_task_id === current.id)) {
+      clearPoll()
+      activeTask.value = null
+    }
   } else if (current.status === 'failed' || current.status === 'cancelled') {
     clearPoll()
+    activeTask.value = null
     errorMessage.value = current.last_error || '目标资产候选生成失败，请重试。'
     await refreshAssets()
   }
@@ -107,14 +141,17 @@ async function load() {
   try {
     project.value = await getProject(projectId.value)
     if (project.value.project_type === 'REPLICA') {
-      const [bible, formal, nextCandidates] = await Promise.all([
+      const [bible, formal, nextCandidates, tasks] = await Promise.all([
         getReplicaTargetBible(projectId.value),
         getReplicaTargetAssets(projectId.value),
         listReplicaTargetAssetCandidates(projectId.value),
+        listProjectTasks(projectId.value),
       ])
       targetBible.value = bible
       result.value = formal
       candidates.value = nextCandidates
+      activeTask.value = recoverTargetAssetsTask(tasks, nextCandidates)
+      if (activeTask.value) beginPoll()
     }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '目标资产加载失败。'
@@ -124,7 +161,7 @@ async function load() {
 }
 
 async function generate(regenerate: boolean) {
-  if (!projectId.value || !p11Ready.value || active.value || starting.value) return
+  if (!projectId.value || !p11Ready.value || busy.value || starting.value) return
   starting.value = true
   errorMessage.value = ''
   try {
@@ -133,8 +170,14 @@ async function generate(regenerate: boolean) {
       : await startReplicaTargetAssets(projectId.value, newKey('target-assets'))
     if (activeTask.value.status === 'succeeded') {
       await refreshAssets()
+      if (!candidates.value.some((item) => item.generated_by_task_id === activeTask.value?.id)) {
+        beginPoll()
+      } else {
+        activeTask.value = null
+      }
     } else if (activeTask.value.status === 'failed') {
       errorMessage.value = activeTask.value.last_error || '目标资产候选生成失败，请重试。'
+      activeTask.value = null
     } else {
       beginPoll()
     }
@@ -189,7 +232,7 @@ onBeforeUnmount(clearPoll)
       <div class="workspace-actions">
         <span class="status-pill" :class="result?.status?.toLowerCase()">{{ statusText }}</span>
         <button
-          v-if="p11Ready && !pendingCandidate && !active"
+          v-if="p11Ready && !pendingCandidate && !busy"
           type="button"
           class="primary-action"
           :disabled="loading || starting"
@@ -213,7 +256,7 @@ onBeforeUnmount(clearPoll)
       <div class="review-actions">
         <button type="button" class="secondary-action" :disabled="!canReview" @click="review(false)">拒绝候选</button>
         <button type="button" class="primary-action" :disabled="!canReview" @click="review(true)">确认并作为正式资产</button>
-        <button type="button" class="secondary-action" :disabled="active || starting" @click="generate(true)">重新生成另一版</button>
+        <button type="button" class="secondary-action" :disabled="busy || starting" @click="generate(true)">重新生成另一版</button>
       </div>
     </section>
 
