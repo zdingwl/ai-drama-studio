@@ -20,7 +20,7 @@ from app.source_resolution.schemas import (
 )
 
 
-P9_PROMPT_VERSION = "p9-source-resolution-v6"
+P9_PROMPT_VERSION = "p9-source-resolution-v8"
 P9_SCHEMA_VERSION = "1.0"
 P9_SOURCE_TRUTH_CONTRACT = "full-episode-global-resolution-v1"
 P9_MAX_OUTPUT_TOKENS = 65536
@@ -142,7 +142,178 @@ def _clean_json_schema(value: Any) -> Any:
     return cleaned
 
 
-def _provider_json_schema(skill_id: str) -> dict[str, Any]:
+def _source_reference_sets(payload: ProjectResolutionInput) -> dict[str, set[str]]:
+    episodes = payload.source_shot_facts.get("episodes", [])
+    shots = [shot for episode in episodes for shot in episode.get("shots", [])]
+    episode_ids = {item.episode_id for item in payload.episodes}
+    shot_ids = {str(shot["shot_anchor_id"]) for shot in shots}
+    utterance_ids = {str(item["utterance_id"]) for item in payload.canonical_dialogue}
+    character_candidate_ids = {
+        str(item["id"])
+        for shot in shots
+        for item in shot.get("bindings", {}).get("characters", [])
+    }
+    scene_candidate_ids = {
+        str(item["id"])
+        for shot in shots
+        for item in shot.get("bindings", {}).get("scenes", [])
+    }
+    prop_candidate_ids = {
+        str(item["id"])
+        for shot in shots
+        for item in shot.get("bindings", {}).get("props", [])
+    }
+    visual_text_ids = {
+        str(item)
+        for shot in shots
+        for item in shot.get("visual_text_evidence_ids", [])
+    }
+    staged_character_ids = {
+        str(item["character_id"])
+        for item in (payload.source_characters or {}).get("entities", [])
+    }
+    all_ids = (
+        episode_ids
+        | shot_ids
+        | utterance_ids
+        | character_candidate_ids
+        | scene_candidate_ids
+        | prop_candidate_ids
+        | visual_text_ids
+        | staged_character_ids
+    )
+    return {
+        "all": all_ids,
+        "episodes": episode_ids,
+        "shots": shot_ids,
+        "utterances": utterance_ids,
+        "character_candidates": character_candidate_ids,
+        "scene_candidates": scene_candidate_ids,
+        "prop_candidates": prop_candidate_ids,
+        "staged_characters": staged_character_ids,
+    }
+
+
+def _reference_token_maps(payload: ProjectResolutionInput) -> tuple[dict[str, str], dict[str, str]]:
+    source_ids = sorted(_source_reference_sets(payload)["all"])
+    source_to_token = {source_id: f"R{index:04d}" for index, source_id in enumerate(source_ids, 1)}
+    return source_to_token, {token: source_id for source_id, token in source_to_token.items()}
+
+
+def _coverage_contract(skill_id: str, payload: ProjectResolutionInput) -> list[dict[str, Any]]:
+    episodes = payload.source_shot_facts.get("episodes", [])
+    shots = [shot for episode in episodes for shot in episode.get("shots", [])]
+    source_to_token, _token_to_source = _reference_token_maps(payload)
+    if skill_id == "character-resolution":
+        return [
+            {
+                "shot_anchor_id": source_to_token[str(shot["shot_anchor_id"])],
+                "source_candidate_id": source_to_token[str(candidate["id"])],
+            }
+            for shot in shots
+            for candidate in shot.get("bindings", {}).get("characters", [])
+        ]
+    if skill_id == "speaker-attribution":
+        return [
+            {"utterance_id": source_to_token[str(item["utterance_id"])]}
+            for item in payload.canonical_dialogue
+        ]
+    if skill_id == "scene-resolution":
+        return [
+            {
+                "shot_anchor_id": source_to_token[str(shot["shot_anchor_id"])],
+                "source_candidate_ids": [
+                    source_to_token[str(item["id"])]
+                    for item in shot.get("bindings", {}).get("scenes", [])
+                ],
+            }
+            for shot in shots
+        ]
+    if skill_id == "prop-resolution":
+        return [
+            {
+                "shot_anchor_id": source_to_token[str(shot["shot_anchor_id"])],
+                "source_candidate_id": source_to_token[str(candidate["id"])],
+            }
+            for shot in shots
+            for candidate in shot.get("bindings", {}).get("props", [])
+        ]
+    return []
+
+
+def _set_string_enum(schema: dict[str, Any], values: set[str]) -> None:
+    if not values:
+        return
+    allowed = sorted(values)
+    if schema.get("type") == "string":
+        schema["enum"] = allowed
+        return
+    for branch in schema.get("anyOf", []):
+        if branch.get("type") == "string":
+            branch["enum"] = allowed
+
+
+def _bind_schema_to_source_ids(
+    schema: dict[str, Any],
+    skill_id: str,
+    payload: ProjectResolutionInput,
+) -> None:
+    coverage = _coverage_contract(skill_id, payload)
+    refs = _source_reference_sets(payload)
+    source_to_token, _token_to_source = _reference_token_maps(payload)
+
+    def tokens(values: set[str]) -> set[str]:
+        return {source_to_token[value] for value in values}
+
+    definitions = schema.get("$defs", {})
+    evidence = definitions.get("EvidenceRef", {}).get("properties", {})
+    _set_string_enum(evidence.get("ref_id", {}), tokens(refs["all"]))
+    _set_string_enum(evidence.get("episode_id", {}), tokens(refs["episodes"]))
+    _set_string_enum(evidence.get("shot_anchor_id", {}), tokens(refs["shots"]))
+    _set_string_enum(evidence.get("utterance_id", {}), tokens(refs["utterances"]))
+
+    if skill_id == "character-resolution":
+        item_schema = definitions.get("CharacterObservationSemantic", {}).get("properties", {})
+        array_schema = schema.get("properties", {}).get("observations", {})
+        _set_string_enum(item_schema.get("shot_anchor_id", {}), tokens(refs["shots"]))
+        _set_string_enum(
+            item_schema.get("source_candidate_id", {}),
+            tokens(refs["character_candidates"]),
+        )
+    elif skill_id == "speaker-attribution":
+        item_schema = definitions.get("SpeakerAttributionSemantic", {}).get("properties", {})
+        array_schema = schema.get("properties", {}).get("attributions", {})
+        _set_string_enum(item_schema.get("utterance_id", {}), tokens(refs["utterances"]))
+        speaker_group = definitions.get("SpeakerGroupSemantic", {}).get("properties", {})
+        _set_string_enum(speaker_group.get("character_id", {}), tokens(refs["staged_characters"]))
+        _set_string_enum(
+            speaker_group.get("source_candidate_character_ids", {}).get("items", {}),
+            tokens(refs["character_candidates"]),
+        )
+    elif skill_id == "scene-resolution":
+        item_schema = definitions.get("SceneAssignmentSemantic", {}).get("properties", {})
+        array_schema = schema.get("properties", {}).get("assignments", {})
+        _set_string_enum(item_schema.get("shot_anchor_id", {}), tokens(refs["shots"]))
+        _set_string_enum(
+            item_schema.get("source_candidate_ids", {}).get("items", {}),
+            tokens(refs["scene_candidates"]),
+        )
+    elif skill_id == "prop-resolution":
+        item_schema = definitions.get("PropObservationSemantic", {}).get("properties", {})
+        array_schema = schema.get("properties", {}).get("observations", {})
+        _set_string_enum(item_schema.get("shot_anchor_id", {}), tokens(refs["shots"]))
+        _set_string_enum(item_schema.get("source_candidate_id", {}), tokens(refs["prop_candidates"]))
+    else:
+        return
+
+    array_schema["minItems"] = len(coverage)
+    array_schema["maxItems"] = len(coverage)
+
+
+def _provider_json_schema(
+    skill_id: str,
+    payload: ProjectResolutionInput | None = None,
+) -> dict[str, Any]:
     model = _SEMANTIC_MODELS.get(skill_id)
     if model is None:
         raise AppError("P9_SKILL_UNSUPPORTED", "未知 P9 Professional Skill", status_code=500)
@@ -162,15 +333,20 @@ def _provider_json_schema(skill_id: str) -> dict[str, Any]:
             provider_only_statuses(nested)
 
     provider_only_statuses(schema)
+    if payload is not None:
+        _bind_schema_to_source_ids(schema, skill_id, payload)
     return schema
 
 
-def _structured_text_config(skill_id: str) -> dict[str, Any]:
+def _structured_text_config(
+    skill_id: str,
+    payload: ProjectResolutionInput | None = None,
+) -> dict[str, Any]:
     return {
         "format": {
             "type": "json_schema",
             "name": f"p9_{skill_id.replace('-', '_')}",
-            "schema": _provider_json_schema(skill_id),
+            "schema": _provider_json_schema(skill_id, payload),
             "strict": True,
         }
     }
@@ -236,6 +412,108 @@ def _parse_semantic(skill_id: str, text: str) -> BaseModel:
         ) from exc
 
 
+def _restore_reference_tokens(
+    skill_id: str,
+    semantic: BaseModel,
+    payload: ProjectResolutionInput,
+) -> BaseModel:
+    _source_to_token, token_to_source = _reference_token_maps(payload)
+
+    def restore(value: str | None) -> str | None:
+        if value is None:
+            return None
+        restored = token_to_source.get(value)
+        if restored is None:
+            raise AppError(
+                _response_error_code(skill_id, "INVALID"),
+                f"{skill_id} Provider 返回未知 Source 引用令牌",
+                status_code=502,
+                details={"professional_skill_id": skill_id},
+            )
+        return restored
+
+    def restore_groups(groups: list[Any]) -> list[Any]:
+        restored_groups: list[Any] = []
+        for group in groups:
+            evidence_refs = [
+                ref.model_copy(
+                    update={
+                        "ref_id": restore(ref.ref_id),
+                        "episode_id": restore(ref.episode_id),
+                        "shot_anchor_id": restore(ref.shot_anchor_id),
+                        "utterance_id": restore(ref.utterance_id),
+                    }
+                )
+                for ref in group.evidence_refs
+            ]
+            updates: dict[str, Any] = {"evidence_refs": evidence_refs}
+            if hasattr(group, "character_id"):
+                updates["character_id"] = restore(group.character_id)
+            if hasattr(group, "source_candidate_character_ids"):
+                updates["source_candidate_character_ids"] = [
+                    restore(value) for value in group.source_candidate_character_ids
+                ]
+            restored_groups.append(group.model_copy(update=updates))
+        return restored_groups
+
+    if isinstance(semantic, CharacterResolutionSemantic):
+        return semantic.model_copy(
+            update={
+                "groups": restore_groups(semantic.groups),
+                "observations": [
+                    item.model_copy(
+                        update={
+                            "shot_anchor_id": restore(item.shot_anchor_id),
+                            "source_candidate_id": restore(item.source_candidate_id),
+                        }
+                    )
+                    for item in semantic.observations
+                ],
+            }
+        )
+    if isinstance(semantic, SpeakerResolutionSemantic):
+        return semantic.model_copy(
+            update={
+                "groups": restore_groups(semantic.groups),
+                "attributions": [
+                    item.model_copy(update={"utterance_id": restore(item.utterance_id)})
+                    for item in semantic.attributions
+                ],
+            }
+        )
+    if isinstance(semantic, SceneResolutionSemantic):
+        return semantic.model_copy(
+            update={
+                "groups": restore_groups(semantic.groups),
+                "assignments": [
+                    item.model_copy(
+                        update={
+                            "shot_anchor_id": restore(item.shot_anchor_id),
+                            "source_candidate_ids": [restore(value) for value in item.source_candidate_ids],
+                        }
+                    )
+                    for item in semantic.assignments
+                ],
+            }
+        )
+    if isinstance(semantic, PropResolutionSemantic):
+        return semantic.model_copy(
+            update={
+                "groups": restore_groups(semantic.groups),
+                "observations": [
+                    item.model_copy(
+                        update={
+                            "shot_anchor_id": restore(item.shot_anchor_id),
+                            "source_candidate_id": restore(item.source_candidate_id),
+                        }
+                    )
+                    for item in semantic.observations
+                ],
+            }
+        )
+    raise AppError("P9_SKILL_UNSUPPORTED", "未知 P9 Professional Skill", status_code=500)
+
+
 def _empty_response_error(skill_id: str) -> AppError:
     return AppError(
         _response_error_code(skill_id, "EMPTY"),
@@ -258,7 +536,13 @@ def _prompt(skill_id: str, payload: ProjectResolutionInput) -> str:
         }
         for item in payload.episodes
     ]
-    provider_schema = _provider_json_schema(skill_id)
+    provider_schema = _provider_json_schema(skill_id, payload)
+    coverage_contract = _coverage_contract(skill_id, payload)
+    source_to_token, _token_to_source = _reference_token_maps(payload)
+    reference_legend = {
+        token: source_id
+        for source_id, token in sorted(source_to_token.items(), key=lambda item: item[1])
+    }
     return f"""你正在执行 AI Drama Studio P9 Professional Skill：{skill.name}（{skill.id}@{skill.version}）。
 这是 Speaker / Character / Scene / Prop 最终归一阶段，不是 P8 逐镜拉片，也不是 P10 SourceVideoSnapshot。
 
@@ -269,10 +553,11 @@ def _prompt(skill_id: str, payload: ProjectResolutionInput) -> str:
 4. P6 canonical dialogue/OCR 只读；不得重新听写、改写、重编号或覆盖。
 5. UNKNOWN / UNRESOLVED 是正式允许结果；证据不足时不得为了填满字段强制 merge 或 attribution。
 6. 同名不等于同一实体，相似外观也不等于同一实体。
-7. evidence_refs[].ref_id 只允许逐字复制输入 JSON 中真实存在的 episode_id、shot_anchor_id、utterance_id、OCR evidence id、candidate id 或 P9 character_id；不得创造 evidence id。全集级外观连续性请把对应 episode_id 同时填入 ref_id 与 episode_id，不得用自造的 appearance_consistency 标签充当 ref_id。
+7. 输出中的 Source 引用字段只能填写“Source 引用令牌表”里的短令牌，不得直接抄写长 Source ID，不得创造令牌；服务端会确定性还原为真实 ID。全集级外观连续性请把对应 Episode 的同一令牌同时填入 ref_id 与 episode_id，不得用自造的 appearance_consistency 标签充当 ref_id。
 8. 不输出 Target 内容，不创建 Snapshot。
 9. Provider 只能输出 RESOLVED、UNKNOWN 或 UNRESOLVED；MANUAL_CONFIRMED 仅由用户显式人工裁决产生，禁止输出。
 10. 所有字符串长度必须遵守下方请求级 JSON Schema；尤其 reason / evidence note 不得超过 schema 的 maxLength。不要输出超长解释，把必要依据压缩到允许长度内。
+11. 输出主数组必须与“强制覆盖清单”逐项一一对应；数量必须相同，所有引用令牌必须逐字复制，不得截断、改写、补造或遗漏。可以改变 group_key / resolution_status / reason，但不得改变清单中的 Source 引用字段。
 
 Professional Skill rules:
 {rules}
@@ -291,6 +576,12 @@ CURRENT canonical dialogue（P6 权威，只读）:
 
 CURRENT SOURCE_CHARACTERS（仅 speaker-attribution 使用；其他 skill 可为空）:
 {json.dumps(payload.source_characters, ensure_ascii=False, separators=(",", ":")) if payload.source_characters is not None else "null"}
+
+Source 引用令牌表（仅输出左侧短令牌，右侧真实 ID 只用于查找）:
+{json.dumps(reference_legend, ensure_ascii=False, separators=(",", ":"))}
+
+强制覆盖清单（输出主数组必须完整覆盖，引用令牌逐字复制）:
+{json.dumps(coverage_contract, ensure_ascii=False, separators=(",", ":"))}
 
 只输出一个符合下列 JSON Schema 的 object，不输出 Markdown、解释或思考过程：
 {json.dumps(provider_schema, ensure_ascii=False, separators=(",", ":"))}
@@ -364,6 +655,7 @@ class DoubaoSeedSourceResolutionProvider:
             "video_input": "ARK_FILES_API_ALL_FULL_EPISODES",
             "video_fps": self.video_fps,
             "structured_output": "STRICT_JSON_SCHEMA_PROMPT_PLUS_SERVER_VALIDATION",
+            "reference_encoding": "REQUEST_SCOPED_SOURCE_TOKENS_V1",
             "max_output_tokens": P9_MAX_OUTPUT_TOKENS,
             "prompt_version": P9_PROMPT_VERSION,
             "professional_skill_id": skill.id,
@@ -397,7 +689,7 @@ class DoubaoSeedSourceResolutionProvider:
                 model=self.model_name,
                 input=[{"role": "user", "content": content}],
                 thinking={"type": "enabled"},
-                text=_structured_text_config(professional_skill_id),
+                text=_structured_text_config(professional_skill_id, payload),
                 max_output_tokens=P9_MAX_OUTPUT_TOKENS,
             )
             _assert_ark_response_completed(professional_skill_id, response)
@@ -405,7 +697,11 @@ class DoubaoSeedSourceResolutionProvider:
                 response_text = _ark_response_text(response)
             except ValueError as exc:
                 raise _empty_response_error(professional_skill_id) from exc
-            semantic = _parse_semantic(professional_skill_id, response_text)
+            semantic = _restore_reference_tokens(
+                professional_skill_id,
+                _parse_semantic(professional_skill_id, response_text),
+                payload,
+            )
             response_id = str(getattr(response, "id", "") or "") or None
             return ResolutionProviderResult(semantic=semantic, remote_job_id=response_id)
         finally:
@@ -444,6 +740,7 @@ class LocalQwenSourceResolutionProvider:
             "base_url": self.base_url,
             "video_input": "VLLM_FILE_URL_ALL_FULL_EPISODES",
             "structured_output": "STRICT_JSON_SCHEMA_PROMPT_PLUS_SERVER_VALIDATION",
+            "reference_encoding": "REQUEST_SCOPED_SOURCE_TOKENS_V1",
             "prompt_version": P9_PROMPT_VERSION,
             "professional_skill_id": skill.id,
             "professional_skill_version": skill.version,
@@ -481,7 +778,11 @@ class LocalQwenSourceResolutionProvider:
         if not isinstance(text, str) or not text.strip():
             raise _empty_response_error(professional_skill_id)
         return ResolutionProviderResult(
-            semantic=_parse_semantic(professional_skill_id, text),
+            semantic=_restore_reference_tokens(
+                professional_skill_id,
+                _parse_semantic(professional_skill_id, text),
+                payload,
+            ),
             remote_job_id=str(body.get("id") or "") or None,
         )
 

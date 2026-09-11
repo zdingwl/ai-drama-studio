@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -8,10 +9,16 @@ from app.source_resolution import service_v2
 from app.source_resolution.providers import (
     P9_MAX_OUTPUT_TOKENS,
     P9_PROMPT_VERSION,
+    ProjectResolutionInput,
+    ResolutionEpisodeVideo,
     _parse_semantic,
+    _prompt,
     _provider_json_schema,
+    _reference_token_maps,
+    _restore_reference_tokens,
     _structured_text_config,
 )
+from app.source_resolution.schemas import CharacterResolutionSemantic
 from app.workflow import provider_service
 from app.workflow.models import ProviderJobStatus
 from app.workflow.worker import _app_error_task_message
@@ -97,7 +104,135 @@ def test_p9_ark_requests_strict_json_schema_output() -> None:
     status_enum = config["format"]["schema"]["$defs"]["ResolutionStatus"]["enum"]
     assert status_enum == ["RESOLVED", "UNKNOWN", "UNRESOLVED"]
     assert P9_MAX_OUTPUT_TOKENS == 65536
-    assert P9_PROMPT_VERSION == "p9-source-resolution-v6"
+    assert P9_PROMPT_VERSION == "p9-source-resolution-v8"
+
+
+def _multi_episode_payload() -> ProjectResolutionInput:
+    shot_id = "1328bbf0-9ccb-4501-8af8-5a0a44e9fa8f"
+    return ProjectResolutionInput(
+        episodes=(
+            ResolutionEpisodeVideo(
+                source_path=Path("episode-1.mp4"),
+                source_filename="episode-1.mp4",
+                mime_type="video/mp4",
+                episode_id="episode-1",
+                episode_order=1,
+                duration_us=1_000_000,
+                source_asset_sha256="a" * 64,
+            ),
+            ResolutionEpisodeVideo(
+                source_path=Path("episode-2.mp4"),
+                source_filename="episode-2.mp4",
+                mime_type="video/mp4",
+                episode_id="episode-2",
+                episode_order=2,
+                duration_us=1_000_000,
+                source_asset_sha256="b" * 64,
+            ),
+        ),
+        source_language="zh",
+        source_bible={"episodes": []},
+        source_shot_facts={
+            "episodes": [
+                {
+                    "episode_id": "episode-1",
+                    "shots": [
+                        {
+                            "shot_anchor_id": shot_id,
+                            "bindings": {
+                                "characters": [{"id": "C001", "label": "人物"}],
+                                "scenes": [{"id": "S001", "label": "场景"}],
+                                "props": [{"id": "P001", "label": "道具"}],
+                            },
+                            "visual_text_evidence_ids": ["ocr-1"],
+                        }
+                    ],
+                },
+                {
+                    "episode_id": "episode-2",
+                    "shots": [
+                        {
+                            "shot_anchor_id": "shot-episode-2",
+                            "bindings": {"characters": [], "scenes": [], "props": []},
+                            "visual_text_evidence_ids": [],
+                        }
+                    ],
+                },
+            ]
+        },
+        canonical_dialogue=[{"episode_id": "episode-1", "utterance_id": "utt-1"}],
+    )
+
+
+def test_p9_dynamic_schema_binds_character_observations_to_exact_source_ids() -> None:
+    payload = _multi_episode_payload()
+    source_to_token, _token_to_source = _reference_token_maps(payload)
+    schema = _provider_json_schema("character-resolution", payload)
+    observation = schema["$defs"]["CharacterObservationSemantic"]["properties"]
+    observations = schema["properties"]["observations"]
+
+    assert observation["shot_anchor_id"]["enum"] == [
+        source_to_token["1328bbf0-9ccb-4501-8af8-5a0a44e9fa8f"],
+        source_to_token["shot-episode-2"],
+    ]
+    assert "1328bbf0-9ccb-4501-8af8-5a0a44e9fa8" not in observation["shot_anchor_id"]["enum"]
+    assert "1328bbf0-9ccb-4501-8af8-5a0a44e9fa8f" not in observation["shot_anchor_id"]["enum"]
+    assert observation["source_candidate_id"]["enum"] == [source_to_token["C001"]]
+    assert observations["minItems"] == 1
+    assert observations["maxItems"] == 1
+
+
+def test_p9_prompt_carries_exact_coverage_manifest() -> None:
+    payload = _multi_episode_payload()
+    source_to_token, _token_to_source = _reference_token_maps(payload)
+    prompt = _prompt("character-resolution", payload)
+
+    assert "强制覆盖清单" in prompt
+    assert "Source 引用令牌表" in prompt
+    assert f'"{source_to_token["1328bbf0-9ccb-4501-8af8-5a0a44e9fa8f"]}":"1328bbf0-9ccb-4501-8af8-5a0a44e9fa8f"' in prompt
+    assert f'"source_candidate_id":"{source_to_token["C001"]}"' in prompt
+
+
+def test_p9_reference_tokens_restore_to_authoritative_source_ids() -> None:
+    payload = _multi_episode_payload()
+    source_to_token, _token_to_source = _reference_token_maps(payload)
+    shot_id = "1328bbf0-9ccb-4501-8af8-5a0a44e9fa8f"
+    semantic = CharacterResolutionSemantic.model_validate(
+        {
+            "groups": [
+                {
+                    "group_key": "person",
+                    "display_name": "人物",
+                    "confidence": 0.9,
+                    "resolution_status": "RESOLVED",
+                    "evidence_refs": [
+                        {
+                            "ref_type": "SHOT",
+                            "ref_id": source_to_token[shot_id],
+                            "episode_id": source_to_token["episode-1"],
+                            "shot_anchor_id": source_to_token[shot_id],
+                        }
+                    ],
+                }
+            ],
+            "observations": [
+                {
+                    "shot_anchor_id": source_to_token[shot_id],
+                    "source_candidate_id": source_to_token["C001"],
+                    "group_key": "person",
+                    "resolution_status": "RESOLVED",
+                }
+            ],
+        }
+    )
+
+    restored = _restore_reference_tokens("character-resolution", semantic, payload)
+
+    assert isinstance(restored, CharacterResolutionSemantic)
+    assert restored.observations[0].shot_anchor_id == shot_id
+    assert restored.observations[0].source_candidate_id == "C001"
+    assert restored.groups[0].evidence_refs[0].ref_id == shot_id
+    assert restored.groups[0].evidence_refs[0].episode_id == "episode-1"
 
 
 def test_p9_prop_request_schema_matches_pydantic_string_guards() -> None:

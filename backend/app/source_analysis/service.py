@@ -253,9 +253,14 @@ def _claim_pipeline_task(db: Session, task_id: str, *, worker_id: str) -> Task |
     return claimed
 
 
-def _child_idempotency_key(parent_task_id: str, stage: str, episode_id: str | None = None) -> str:
+def _child_idempotency_key(
+    parent_task_id: str,
+    parent_attempt: int,
+    stage: str,
+    episode_id: str | None = None,
+) -> str:
     suffix = f"-{episode_id}" if episode_id else ""
-    return f"source-analysis-{parent_task_id}-{stage}{suffix}"[:128]
+    return f"source-analysis-{parent_task_id}-a{parent_attempt}-{stage}{suffix}"[:128]
 
 
 def _ensure_child_succeeded(
@@ -323,7 +328,7 @@ def _execute_pipeline(context: TaskExecutionContext, task: TaskWorkerRead) -> No
                     db,
                     project_id=task.project_id,
                     episode_id=episode_id,
-                    idempotency_key=_child_idempotency_key(task.id, "p5", episode_id),
+                    idempotency_key=_child_idempotency_key(task.id, task.attempt, "p5", episode_id),
                 )
             else:
                 child = None
@@ -342,7 +347,7 @@ def _execute_pipeline(context: TaskExecutionContext, task: TaskWorkerRead) -> No
                     db,
                     project_id=task.project_id,
                     episode_id=episode_id,
-                    idempotency_key=_child_idempotency_key(task.id, "p6", episode_id),
+                    idempotency_key=_child_idempotency_key(task.id, task.attempt, "p6", episode_id),
                 )
             else:
                 child = None
@@ -359,7 +364,7 @@ def _execute_pipeline(context: TaskExecutionContext, task: TaskWorkerRead) -> No
             child = create_source_bible_task(
                 db,
                 project_id=task.project_id,
-                idempotency_key=_child_idempotency_key(task.id, "p7"),
+                idempotency_key=_child_idempotency_key(task.id, task.attempt, "p7"),
             )
         else:
             child = None
@@ -376,7 +381,7 @@ def _execute_pipeline(context: TaskExecutionContext, task: TaskWorkerRead) -> No
             child = create_shot_breakdown_task(
                 db,
                 project_id=task.project_id,
-                idempotency_key=_child_idempotency_key(task.id, "p8"),
+                idempotency_key=_child_idempotency_key(task.id, task.attempt, "p8"),
             )
         else:
             child = None
@@ -402,7 +407,7 @@ def _execute_pipeline(context: TaskExecutionContext, task: TaskWorkerRead) -> No
             child = create_source_resolution_task(
                 db,
                 project_id=task.project_id,
-                idempotency_key=_child_idempotency_key(task.id, "p9"),
+                idempotency_key=_child_idempotency_key(task.id, task.attempt, "p9"),
             )
         else:
             child = None

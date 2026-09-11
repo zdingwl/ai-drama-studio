@@ -148,6 +148,15 @@ def test_source_analysis_get_is_read_only_and_one_command_creates_one_master_tas
         assert db.scalar(select(func.count(Task.id))) == 1
 
 
+def test_source_analysis_child_idempotency_key_is_scoped_to_parent_attempt() -> None:
+    first = source_analysis_service._child_idempotency_key("parent-task", 1, "p9")
+    retry = source_analysis_service._child_idempotency_key("parent-task", 2, "p9")
+
+    assert first == "source-analysis-parent-task-a1-p9"
+    assert retry == "source-analysis-parent-task-a2-p9"
+    assert first != retry
+
+
 def test_source_script_and_storyboard_draft_gets_are_read_only(
     client: TestClient,
     session_factory: sessionmaker[Session],
