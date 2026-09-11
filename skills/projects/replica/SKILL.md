@@ -13,6 +13,9 @@
 - P12 的 Source Dialogue 只能来自 Snapshot 冻结的 P6 canonical dialogue；不得重新 ASR/OCR/猜词或静默修正 Source 台词。
 - P13 正式硬输入只有 CURRENT `TARGET_BIBLE`；不得因为 Source Snapshot、Adaptation Plan 或 Target Script “可能有帮助”就把它们静默升级成硬输入。
 - P13 `Target Bible = semantic truth`，`Target Assets = visual realization`；Provider 只能具体化已有 Target Character / Scene / Prop 的视觉表现，不能改变人物故事身份、场景功能、关键道具功能或 Target entity identity。
+- P13 asset continuity 必须是 asset-local visual continuity；Target Bible 的 Story Beat / shot order / dialogue / rhythm / cliffhanger 等全局 preservation locks 不复制进每个 Target Asset packet。
+- P13 Character wardrobe 只定义 baseline；除非 Target Bible 已明确确认 variation，否则不得自行建立逐 Scene / Shot 换装计划。
+- P13 Scene time-of-day 只定义视觉基线；Target Bible 未明确时不得根据 Scene 顺序、闪回或情绪推断剧情时间跳变。
 - P13 Provider 结果必须先进入 `NEEDS_REVIEW` candidate；只有用户显式确认后才能发布 CURRENT `TARGET_ASSETS`。
 - Target 人物 / 场景 / 道具必须保留 Source lineage，但 Target identity 与 Source identity 严格分离。
 - 对白链固定为 `Source Dialogue → Translation → Localization → Final Target Dialogue → Target Speaker/Voice → TTS → Actual Speech Duration → Timing Plan`；P12 只到 Final Target Dialogue。
@@ -52,7 +55,17 @@ P12 同时读取 CURRENT Snapshot、Adaptation Plan、Target Bible，从 Snapsho
 P12 最终验收记录见 `docs/27_P12最终验收与后续阶段准入评估.md`。
 
 ## P13 目标资产
-P13 正式契约见 `docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`。P13 只读取 CURRENT `TARGET_BIBLE`，把已有 Target Character / Scene / Prop 转成可被后续分镜和视频生成稳定引用的 typed visual identity packet。
+P13 基础合同见 `docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`，审核语言见 `docs/29_P13中文审核语言与生成执行语言分层.md`，真实项目验收后的当前整改基线见 `docs/30_P13真实项目验收_资产作用域与时序约束整改.md`。
+
+当前 Professional Skill / runtime contract：
+
+```text
+replica-target-assets@1.1.0
+p13-replica-target-assets-v3
+replica-target-visual-identity-v2
+```
+
+P13 只读取 CURRENT `TARGET_BIBLE`，把已有 Target Character / Scene / Prop 转成可被后续分镜和视频生成稳定引用的 typed visual identity packet。
 
 资产设计要求：
 
@@ -60,19 +73,21 @@ P13 正式契约见 `docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`
 Character
 = identity / demographic / face / hair / body / wardrobe baseline
 + signature visual features
-+ continuity / generation guidance / negative constraints
++ asset-local visual continuity / generation guidance / negative constraints
 
 Scene
 = spatial identity / layout / architecture / material palette / fixed landmarks
-+ lighting / time-of-day baseline
-+ continuity / generation guidance / negative constraints
++ lighting / time-of-day visual baseline
++ asset-local visual continuity / generation guidance / negative constraints
 
 Prop
 = functional identity / form / material / color / scale / signature features
-+ continuity / generation guidance / negative constraints
++ asset-local visual continuity / generation guidance / negative constraints
 ```
 
-稳定 `target_asset_id`、Target Bible entity binding、单资产 fingerprint/revision、Artifact Graph 和 stale propagation 都由服务端确定性控制。当前仓库没有已接入并验收的图片生成 Provider，因此 P13 v1 不伪造图片 URI / hash / 尺寸；正式资产先以 typed visual identity packet 成立，并为未来真实 reference media 保留受控槽位。
+稳定 `target_asset_id`、Target Bible entity binding、单资产 fingerprint/revision、Artifact Graph 和 stale propagation 都由服务端确定性控制。Target Bible 的全局故事 / 镜头 preservation locks 继续通过 lineage 保持权威，但不机械复制进每个 asset packet。
+
+当前仓库没有已接入并验收的图片生成 Provider，因此 P13 不伪造图片 URI / hash / 尺寸；正式资产先以 typed visual identity packet 成立，并为未来真实 reference media 保留受控槽位。
 
 Provider 成功不等于正式资产可用：
 
@@ -83,7 +98,9 @@ Provider succeeded
 → ACCEPT 才发布 CURRENT TARGET_ASSETS
 ```
 
-P13 真实人工验收并由用户明确回复 `P13 PASS` 前：
+真实项目已经证明上述 Provider / review / formal publication 路径可运行，但旧 `replica-target-visual-identity-v1` 内容质量验收未通过。当前必须用 v3 / visual-identity-v2 显式重新生成、审核；旧正式资产只保留历史，不得据此宣布阶段 PASS。
+
+P13 真实人工复验并由用户明确回复 `P13 PASS` 前：
 
 ```text
 TARGET_ASSETS = PLANNED
@@ -95,4 +112,4 @@ P13 不准进入 Target Voice / TTS / Timing / Target Storyboard / Generation / 
 只有在故事或节奏必须偏离原片、文化替换会改变核心人物关系，或存在多个会显著改变目标世界的合理方向且系统不能安全自动选择时才询问用户。P13 的视觉身份候选属于正式人工确认边界，必须由用户显式接受或拒绝。
 
 ## 完成标准
-原片分析定稿可追溯；Target Bible 与 Source Snapshot lineage 明确；Target Script 保留 canonical Source Dialogue 与三层目标对白的可审计 lineage；目标人物 / 场景 / 道具属于同一目标世界且使用独立 Target identity；P13 资产必须保持 Target Bible semantic truth、稳定 Target Asset ID 与 per-asset revision，并经过显式人工确认；后续目标语音与时间计划成立；复刻分镜保持原故事和节奏；最终成片来自正式 GenerationSelection。
+原片分析定稿可追溯；Target Bible 与 Source Snapshot lineage 明确；Target Script 保留 canonical Source Dialogue 与三层目标对白的可审计 lineage；目标人物 / 场景 / 道具属于同一目标世界且使用独立 Target identity；P13 资产必须保持 Target Bible semantic truth、稳定 Target Asset ID 与 per-asset revision，保持 asset-local visual scope，并经过显式人工确认；后续目标语音与时间计划成立；复刻分镜保持原故事和节奏；最终成片来自正式 GenerationSelection。

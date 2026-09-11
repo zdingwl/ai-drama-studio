@@ -241,7 +241,7 @@ def _seed_candidate(db: Session, project_id: str, bible: ArtifactNode) -> Replic
         target_region="US",
         generation_sequence=1,
         generation_base_fingerprint=_SHA_A,
-        professional_skill_version="1.0.0",
+        professional_skill_version="1.1.0",
         provider="test-provider",
         model="test-model",
         provider_job=provider_job,
@@ -267,7 +267,7 @@ def _seed_candidate(db: Session, project_id: str, bible: ArtifactNode) -> Replic
 
 def test_p13_professional_skill_and_root_contract_keep_target_bible_as_only_hard_input() -> None:
     skill = get_professional_skill("replica-target-assets")
-    assert skill.version == "1.0.0"
+    assert skill.version == "1.1.0"
     assert skill.required_inputs == (ArtifactType.TARGET_BIBLE,)
     assert skill.readable_artifacts == (ArtifactType.TARGET_BIBLE,)
     assert skill.required_capabilities == (Capability.TARGET_ASSETS,)
@@ -361,7 +361,7 @@ def test_p13_exact_entity_coverage_is_fail_closed() -> None:
     assert captured.value.code == "P13_SCENE_COVERAGE_INVALID"
 
 
-def test_p13_compose_uses_stable_ids_bible_truth_and_per_asset_revisions() -> None:
+def test_p13_compose_keeps_continuity_asset_local_with_stable_ids_and_revisions() -> None:
     first = service._compose(_compose_inputs(), _semantic())
     character = first.characters[0]
     scene = first.scenes[0]
@@ -371,8 +371,19 @@ def test_p13_compose_uses_stable_ids_bible_truth_and_per_asset_revisions() -> No
     assert scene.spatial_identity == "Middle-class US apartment corridor"
     assert prop.functional_identity == "A wrapped blue rose bouquet with the same story function"
     assert character.display_name == "Alice"
-    assert "Keep all principal visual identities stable across shots" in character.continuity_constraints
-    assert "Keep the same face identity" in character.continuity_constraints
+
+    # Target Bible remains the semantic truth/lineage, but its global/entity rules are not
+    # copied into P13 review-facing asset continuity after the real-project acceptance finding.
+    assert character.continuity_constraints == ["Do not change facial proportions between shots"]
+    assert scene.continuity_constraints == ["Keep elevator, doors and fire alarm in fixed relative positions"]
+    assert prop.continuity_constraints == [
+        "Keep flower count impression, wrap geometry and ribbon identity stable"
+    ]
+    assert "Keep all principal visual identities stable across shots" not in character.continuity_constraints
+    assert "Keep the same face identity" not in character.continuity_constraints
+    assert "Door placement and corridor width remain fixed" not in scene.continuity_constraints
+    assert "Keep bouquet size and wrapping identity stable" not in prop.continuity_constraints
+
     assert character.reference_media == []
     assert scene.reference_media == []
     assert prop.reference_media == []
@@ -484,7 +495,7 @@ def test_p13_target_bible_revision_stales_assets_but_target_script_revision_does
             label="Assets",
             input_fingerprint=_SHA_B,
             skill_id="replica-target-assets",
-            skill_version="1.0.0",
+            skill_version="1.1.0",
         )
         create_artifact_relation(
             db,

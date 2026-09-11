@@ -1,7 +1,7 @@
 # AI Drama Studio V3 — 开发规则
 
 > 当前状态日期：2026-09-11。  
-> 当前最高优先级：`docs/29_P13中文审核语言与生成执行语言分层.md`。  
+> 当前最高优先级：`docs/30_P13真实项目验收_资产作用域与时序约束整改.md`。  
 > 原则：仓库当前 `main` + 编号更高、日期更新的状态/验收文档是唯一事实源；历史文档只能解释演进，不能覆盖最新口径。
 
 ## 1. 开发前读取顺序
@@ -39,7 +39,8 @@
 29. `docs/27_P12最终验收与后续阶段准入评估.md`
 30. `docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`
 31. `docs/29_P13中文审核语言与生成执行语言分层.md`
-32. 当前相关代码与测试
+32. `docs/30_P13真实项目验收_资产作用域与时序约束整改.md`
+33. 当前相关代码与测试
 
 冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。**
 
@@ -55,7 +56,8 @@
 - `docs/26`：用户已明确 `P11 PASS`，`LOCALIZATION / TARGET_BIBLE = AVAILABLE`，P12 正式准入；
 - `docs/27`：用户已明确 `P12 PASS`，`TARGET_SCRIPT = AVAILABLE`；后续能力仍需独立合同与真实验收；
 - `docs/28`：P13 Target Assets 正式合同已经建立；P13 可以实现、测试和进入真实验收，但用户明确 `P13 PASS` 前 `TARGET_ASSETS = PLANNED`，且不得进入 P14+；
-- `docs/29`：P13 用户审核语言固定中文优先；目标受众成品语言与未来模型执行 prompt 语言分层，P13 v2 Prompt 不得因 `target_language=en-US` 输出英文审核墙。
+- `docs/29`：P13 用户审核语言固定中文优先；目标受众成品语言与未来模型执行 prompt 语言分层；
+- `docs/30`：P13 已真实执行 Provider → candidate → explicit ACCEPT → CURRENT TARGET_ASSETS 路径，但真实内容质量验收发现旧 visual-identity-v1 把 Target Bible 全局英文叙事规则注入每个 asset、出现逐场景 wardrobe 与未经上游确认的剧情时段推断，因此该轮**不 PASS**；当前必须按 `p13-replica-target-assets-v3 / replica-target-visual-identity-v2` 显式 regenerate 并重新人工验收。
 
 历史分支只能参考，不能覆盖当前 V3 规划。
 
@@ -101,16 +103,19 @@ TARGET_BIBLE
 TARGET_SCRIPT
 ```
 
-当前下一工程切片：
+当前下一工程 / 验收切片：
 
 ```text
 P13 Target Assets / 目标资产
 ```
 
-P13 已有正式数据契约 / Professional Skill / 验收边界，可以进行工程实现与自动测试，但尚未完成真实 Provider / 真实项目 / 用户人工验收。因此：
+P13 已有正式数据契约 / Professional Skill / 工程实现；真实 Provider 与真实项目 formal publication 路径也已经执行成功。但本轮真实内容质量验收发现旧合同存在资产作用域、审核语言注入、wardrobe 与时序越权问题，已进入 v3 / visual-identity-v2 整改后复验。因此：
 
 ```text
+P13 real Provider path = EXECUTED
+P13 real project review = BLOCKED / RERUN REQUIRED
 TARGET_ASSETS = PLANNED
+P13 PASS = NO
 ```
 
 以下后续能力同样继续 `PLANNED`：
@@ -124,7 +129,7 @@ Post / Final Output
 以及尚未完成的其他项目类型完整业务链
 ```
 
-Root Replica Skill 中 `target_script` 后的当前内部步骤是 `target_assets`。P13 工程成功、Task succeeded 或候选可预览都不等于阶段 PASS；只有用户明确 `P13 PASS` 后才允许另行评估 `TARGET_ASSETS` 是否升级为 `AVAILABLE`。
+Root Replica Skill 中 `target_script` 后的当前内部步骤是 `target_assets`。P13 工程成功、真实 ProviderJob succeeded、候选可预览、甚至旧合同候选被人工 ACCEPT 并发布正式 Artifact，都不等于阶段 PASS；只有 v3 真实复验通过且用户明确 `P13 PASS` 后才允许另行评估 `TARGET_ASSETS` 是否升级为 `AVAILABLE`。
 
 ---
 
@@ -159,7 +164,7 @@ REPLICA Target Bible
 REPLICA Target Script / Localization
 ```
 
-P13 v1 只允许 `REPLICA`。不得借 P13 工程实现顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Target Assets，也不得实现 `Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Selection / Lip Sync / Post`。
+P13 当前合同只允许 `REPLICA`。不得借 P13 工程实现顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Target Assets，也不得实现 `Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Selection / Lip Sync / Post`。
 
 ---
 
@@ -279,19 +284,24 @@ Source Dialogue → Translation → Localization → Final Target Dialogue → T
 
 P12 只到 `Final Target Dialogue`。P12 已真实人工验收 PASS，`TARGET_SCRIPT = AVAILABLE`。
 
-P13：
+P13 当前整改基线：
 
 ```text
-replica-target-assets@1.0.0
-p13-replica-target-assets-v2
+replica-target-assets@1.1.0
+p13-replica-target-assets-v3
 TARGET_ASSETS schema 1.0
-replica-target-visual-identity-v1
+replica-target-visual-identity-v2
 target-bible-entity-binding-v1
 human-target-asset-approval-v1
 review_language = zh-CN
+review_language_contract = zh-cn-human-review-asset-local-visual-v2
 ```
 
-P13 正式硬输入只有 CURRENT `TARGET_BIBLE`。当前仓库没有已接入并真实验收的图片生成 Provider，因此 P13 v1 正式资产首先是 typed visual identity packet；不得伪造 reference media。Provider 结果只形成 `NEEDS_REVIEW` candidate，用户显式确认后才允许发布正式 CURRENT `TARGET_ASSETS`。P13 review-facing 视觉实现文本必须中文主导，目标地区人物名、地名、品牌、型号、货币可保留原文；未来真正给图像/视频模型的 execution prompt 由后续 Generation Adapter 再按模型需要生成，不得反过来把 P13 审核页做成英文墙。在 P13 真实人工验收前 capability 继续 `PLANNED`。
+P13 正式硬输入只有 CURRENT `TARGET_BIBLE`。当前仓库没有已接入并真实验收的图片生成 Provider，因此 P13 正式资产首先是 typed visual identity packet；不得伪造 reference media。Provider 结果只形成 `NEEDS_REVIEW` candidate，用户显式确认后才允许发布正式 CURRENT `TARGET_ASSETS`。P13 review-facing 视觉实现文本必须中文主导，目标地区人物名、地名、品牌、型号、货币可保留原文；未来真正给图像/视频模型的 execution prompt 由后续 Generation Adapter 再按模型需要生成，不得反过来把 P13 审核页做成英文墙。
+
+v2 visual identity contract 额外要求：asset `continuity_constraints / generation_guidance / negative_constraints` 只描述当前人物/场景/道具的视觉稳定性，不复制 Target Bible 的 Story Beat / shot order / dialogue / rhythm / cliffhanger 等全局叙事 preservation locks；Character wardrobe 只做 baseline，不擅自建立逐 Scene/Shot 换装计划；Scene time-of-day 只做视觉基线，不凭 Scene 顺序或闪回推断剧情时间跳变。
+
+在 v3 真实人工复验通过前 capability 继续 `PLANNED`。
 
 ---
 
@@ -552,13 +562,13 @@ Source Dialogue 规则：
 
 ## 11. P13 Target Assets 硬边界
 
-P13 正式契约见 `docs/28`，中文审核语言补充合同见 `docs/29`。唯一硬输入：
+P13 正式契约见 `docs/28`，中文审核语言补充合同见 `docs/29`，真实项目验收后的资产作用域与时序整改见 `docs/30`。唯一硬输入：
 
 ```text
 CURRENT TARGET_BIBLE
 ```
 
-P13 v1 不直接读取 `SOURCE_VIDEO_SNAPSHOT / ADAPTATION_PLAN / TARGET_SCRIPT` 作为硬输入。若未来真实生产证明需要新增依赖，必须通过新 schema/contract 显式升级，不得静默扩大输入。
+P13 当前合同不直接读取 `SOURCE_VIDEO_SNAPSHOT / ADAPTATION_PLAN / TARGET_SCRIPT` 作为硬输入。若未来真实生产证明需要新增依赖，必须通过新 schema/contract 显式升级，不得静默扩大输入。
 
 核心语义：
 
@@ -577,26 +587,30 @@ Target Prop      → Target Prop Asset
 
 硬规则：
 
-- P13 v1 只允许 REPLICA；
+- P13 当前合同只允许 REPLICA；
 - Provider 不得改变 P11 Target identity、人物故事功能、场景功能或关键道具功能；
 - P13 Provider 的 review-facing 视觉实现内容必须以简体中文为主；目标地区人物名、地名、品牌、型号、金额与专有实体允许保留原文；
 - `target_language` 是目标受众成品语言，不等于 P13 用户审核语言；不得因为 `target_language=en-US` 把审核正文整体输出成英文；
-- 当前 `generation_guidance` 是中文可审核设计指导，不等于最终 image/video execution prompt；未来执行 prompt 由后续 Generation Adapter 按模型需要生成；
 - `target_asset_id` 由服务端根据 project / asset type / target entity / binding contract 确定性生成，Provider 无权生成；
 - 同一 Target entity 重新生成视觉实现时 stable asset id 不变，视觉 packet fingerprint 改变才递增该 asset revision；
 - Character 资产必须稳定 face / hair / body / wardrobe baseline / signature features；
+- Character `wardrobe_baseline` 只做基础视觉身份；除非 CURRENT TARGET_BIBLE 已明确给出已确认 variation，否则不得自行列逐 Scene / Shot 换装；
 - Scene 资产必须稳定 spatial layout / architecture / materials / fixed landmarks / lighting baseline；
+- Scene `time_of_day_baseline` 只做视觉基线；Target Bible 未明确故事时段时不得根据 Scene 顺序、闪回或情绪推断“深夜 / 次日上午”等剧情时间变化；
 - Prop 资产必须稳定 form / material / color / scale / functional identity；
-- Target Bible continuity rules 必须由服务端保留，Provider 无权删除；
+- Target Bible global/entity continuity 与 preservation locks 继续作为上游 semantic truth；**服务端不得把这些 Story Beat / shot order / dialogue / rhythm / cliffhanger 等全局叙事规则机械复制进每个 Target Asset 的 review-facing continuity 字段**；
+- `Target*Asset.continuity_constraints / generation_guidance / negative_constraints` 必须严格保持 asset-local visual scope；
 - 当前 text-only Provider 不生成真实图片，不得伪造 reference media；
 - Provider 成功只产生 `NEEDS_REVIEW` candidate，不产生 CURRENT `TARGET_ASSETS`；
 - 用户显式 ACCEPT 后才允许原子发布正式 Target Artifact、typed revision、provenance 和 Artifact Graph；
 - REJECT / Provider failure / partial failure 不覆盖旧 CURRENT；
 - `TARGET_BIBLE --DERIVED_FROM--> TARGET_ASSETS`，Target Bible 新 revision 必须使旧 Assets 递归 STALE；
-- P13 v1 没有 `TARGET_SCRIPT → TARGET_ASSETS` 依赖，因此对白新 revision 不应无依据地 stale 视觉资产；
+- P13 没有 `TARGET_SCRIPT → TARGET_ASSETS` 依赖，因此对白新 revision 不应无依据地 stale 视觉资产；
 - GET 全部只读，生成 / 重生成 / accept / reject 都是显式 Command；
 - 外部 Provider 请求前先持久化 ProviderJob 并绑定 CURRENT TARGET_BIBLE；
 - P13 不创建 Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Selection / Lip Sync / Post Artifact。
+
+旧 `replica-target-visual-identity-v1` 已 ACCEPT 正式资产保留历史，不由 migration 自动改写；但本轮真实验收已证明它不满足最终 P13 质量合同，因此必须由用户显式 regenerate → review → ACCEPT 生成 v2 新 revision，才能继续 P13 最终验收。
 
 用户明确 `P13 PASS` 前：
 
@@ -604,7 +618,7 @@ Target Prop      → Target Prop Asset
 TARGET_ASSETS = PLANNED
 ```
 
-工程 CI、真实 ProviderJob succeeded、候选可预览或人工 accept 单次操作均不能替代阶段最终真实验收。
+工程 CI、真实 ProviderJob succeeded、候选可预览或旧合同人工 accept 均不能替代阶段最终真实验收。
 
 ---
 
@@ -642,7 +656,7 @@ TARGET_ASSETS = PLANNED
 
 不能用其中一层替代另一层。
 
-P11 与 P12 都已经由用户明确真实人工 PASS，因此 `LOCALIZATION / TARGET_BIBLE / TARGET_SCRIPT = AVAILABLE`。P13 仍处于工程实现 / 验收阶段。后续任何能力仍必须单独完成正式契约、工程门禁、真实 Provider / Runtime、真实项目端到端与用户人工验收后，才能从 `PLANNED` 升为 `AVAILABLE`；不能把 P12 PASS 或 P13 工程测试当作后续阶段的替代验收。
+P11 与 P12 都已经由用户明确真实人工 PASS，因此 `LOCALIZATION / TARGET_BIBLE / TARGET_SCRIPT = AVAILABLE`。P13 已真实执行 Provider 与 formal publication 路径，但本轮真实内容质量验收未通过，当前是 v3 / visual-identity-v2 整改复验阶段。后续任何能力仍必须单独完成正式契约、工程门禁、真实 Provider / Runtime、真实项目端到端与用户人工验收后，才能从 `PLANNED` 升为 `AVAILABLE`；不能把 P12 PASS、P13 工程测试、旧合同 ACCEPT 或真实 Provider 路径跑通当作后续阶段的替代验收。
 
 ---
 

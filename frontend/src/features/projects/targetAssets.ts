@@ -6,6 +6,13 @@ export type TargetAssetsResultStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
 export type CandidateReviewStatus = 'NEEDS_REVIEW' | 'ACCEPTED' | 'REJECTED' | 'SUPERSEDED'
 export type TargetAssetType = 'CHARACTER' | 'SCENE' | 'PROP'
 
+export interface TargetAssetsProvenanceSummary {
+  professional_skill_version?: string
+  prompt_version?: string
+  target_asset_contract?: string
+  review_contract?: string
+}
+
 export interface TargetCharacterAsset {
   target_asset_id: string
   target_asset_revision: number
@@ -88,7 +95,7 @@ export interface ReplicaTargetAssetsRead {
   revision: number | null
   input_fingerprint: string | null
   content: ReplicaTargetAssetsContent | null
-  provenance?: unknown
+  provenance?: TargetAssetsProvenanceSummary | null
 }
 
 export interface TargetAssetsCandidateRead {
@@ -105,7 +112,7 @@ export interface TargetAssetsCandidateRead {
   reviewed_at: string | null
   created_at: string
   content: ReplicaTargetAssetsContent
-  provenance?: unknown
+  provenance?: TargetAssetsProvenanceSummary | null
 }
 
 export interface TargetAssetsReviewCommand {
