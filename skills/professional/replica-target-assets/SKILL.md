@@ -210,4 +210,10 @@ P13 工程完成至少要求：
 - 用户验收入口；
 - 没有创建 P14+ Artifact。
 
-真实人工验收并由用户明确 `P13 PASS` 前，`TARGET_ASSETS` 必须保持 `PLANNED`。
+P13 v3 / visual-identity-v2 已完成真实 Provider、真实项目端到端与用户人工质量复验；用户已于 2026-09-11 明确确认 `P13 PASS`。正式能力状态：
+
+```text
+TARGET_ASSETS = AVAILABLE
+```
+
+该 PASS 不改变本 Skill 的输入、输出或质量合同，也不自动准入 TTS / Timing / Storyboard / Generation / QC / Lip Sync / Post；后续能力继续 `PLANNED`，须由独立正式合同与真实验收准入。最终验收记录见 `docs/31_P13最终验收与P14准入评估.md`。
