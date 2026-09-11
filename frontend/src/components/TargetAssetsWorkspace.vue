@@ -36,6 +36,7 @@ const p11Ready = computed(() => targetBible.value?.status === 'CURRENT' && Boole
 const pendingCandidate = computed(() => candidates.value.find((item) => item.review_status === 'NEEDS_REVIEW') ?? null)
 const previewContent = computed<ReplicaTargetAssetsContent | null>(() => pendingCandidate.value?.content ?? result.value?.content ?? null)
 const hasFormalAssets = computed(() => Boolean(result.value?.artifact_id))
+const shouldRegenerate = computed(() => hasFormalAssets.value || result.value?.status === 'STALE' || candidates.value.length > 0)
 const active = computed(() => Boolean(activeTask.value && ['queued', 'running', 'interrupted'].includes(activeTask.value.status)))
 const canReview = computed(() => Boolean(pendingCandidate.value && reviewReason.value.trim() && !reviewing.value))
 const statusText = computed(() => {
@@ -192,9 +193,9 @@ onBeforeUnmount(clearPoll)
           type="button"
           class="primary-action"
           :disabled="loading || starting"
-          @click="generate(hasFormalAssets || result?.status === 'STALE')"
+          @click="generate(shouldRegenerate)"
         >
-          {{ starting ? '正在启动…' : (hasFormalAssets || result?.status === 'STALE' ? '重新生成候选' : '生成目标资产') }}
+          {{ starting ? '正在启动…' : (shouldRegenerate ? '重新生成候选' : '生成目标资产') }}
         </button>
       </div>
     </div>
