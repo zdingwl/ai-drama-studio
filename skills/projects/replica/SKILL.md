@@ -34,13 +34,19 @@ TARGET_BIBLE = AVAILABLE
 ```
 
 ## P12 目标剧本 / 本土化
-P12 已在 P11 PASS 后正式准入真实 Provider 与项目验收。`TARGET_SCRIPT` 在 P12 自身真实人工验收 PASS 前仍保持 `PLANNED`，不能把“可执行验收”冒充成“能力已验收可用”。
+P12 已完成真实 Provider、真实项目端到端与用户人工质量验收，用户已明确 `P12 PASS`：
+
+```text
+TARGET_SCRIPT = AVAILABLE
+```
 
 P12 同时读取 CURRENT Snapshot、Adaptation Plan、Target Bible，从 Snapshot 中确定性提取 canonical dialogue manifest。Provider 只能针对已有 `utterance_id` 输出 `translation_text / localization_text / final_target_dialogue`，不得改变 Source text、时间或 utterance 集合。
 
 若 Source Speaker → Source Character → Target Character lineage 可证明，服务端可绑定 `target_character_id`；否则保持未绑定，不能让模型猜。Target Voice / TTS / Duration / Timing 属于后续阶段。
 
 普通产品页面加载只读；只有 P11 Target Bible 当前有效且用户显式点击“生成目标剧本 / 重新生成目标剧本”时才启动 P12。
+
+P12 最终验收记录见 `docs/27_P12最终验收与后续阶段准入评估.md`。P12 PASS 不自动准入或实现 `TARGET_ASSETS / TTS / TIMING / STORYBOARD / VIDEO_GENERATION / QC_SELECTION / LIP_SYNC / POST_PRODUCTION`；下一工程阶段必须先有正式契约。
 
 ## 需要用户决策
 只有在故事或节奏必须偏离原片、文化替换会改变核心人物关系，或存在多个会显著改变目标世界的合理方向且系统不能安全自动选择时才询问用户。

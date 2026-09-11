@@ -4,7 +4,7 @@
 
 把已经通过 P11 约束的目标世界落实为正式目标剧本对白，同时完整保留每一句 P6 canonical Source Dialogue 的可追溯来源。
 
-P11 已完成真实人工验收，P12 当前**正式准入真实 Provider 与项目验收**。这不代表 P12 已 PASS；`TARGET_SCRIPT` 在 P12 自身真实人工验收前仍保持 `PLANNED`。
+P12 已完成真实 Provider、真实项目端到端与用户人工质量验收，用户已明确 `P12 PASS`；`TARGET_SCRIPT = AVAILABLE`。
 
 ## 硬输入
 
@@ -68,14 +68,16 @@ P11 已完成真实人工验收，P12 当前**正式准入真实 Provider 与项
 
 新 revision supersede 旧 revision；任一硬输入更新都通过 Artifact Graph 递归使旧 Target Script STALE。
 
-## 当前 admission 状态
+## 当前验收状态
 
-用户已经明确 `P11 PASS`，因此：
+用户已经明确：
 
-- `LOCALIZATION = AVAILABLE`
-- `TARGET_BIBLE = AVAILABLE`
-- P12 独立 admission switch 已正式打开；
-- P12 可以创建真实 Provider 任务进行本阶段验收；
-- `TARGET_SCRIPT` 仍为 `PLANNED`，直到用户后续明确 `P12 PASS`。
+- `P11 PASS`；
+- `P12 PASS`；
+- `LOCALIZATION = AVAILABLE`；
+- `TARGET_BIBLE = AVAILABLE`；
+- `TARGET_SCRIPT = AVAILABLE`。
 
-任何请求参数或 UI 都不能绕过三个 CURRENT 硬输入、lineage 与 capability 复核。
+P12 真实验收基线记录在 `docs/27_P12最终验收与后续阶段准入评估.md`。任何后续阶段仍不能绕过三个 CURRENT 硬输入、lineage 与 Source Dialogue 不可改写规则。
+
+`TARGET_ASSETS / TTS / TIMING / STORYBOARD / VIDEO_GENERATION / QC_SELECTION / LIP_SYNC / POST_PRODUCTION` 继续保持 `PLANNED`，直到各自正式契约与真实人工验收完成。

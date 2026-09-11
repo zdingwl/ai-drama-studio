@@ -18,7 +18,7 @@ CAPABILITIES: tuple[CapabilityDefinition, ...] = (
     CapabilityDefinition(id=Capability.NOVEL_ADAPTATION, title="小说短剧化", description="把小说结构改造成短剧化的集、场和冲突结构。", category="text"),
     CapabilityDefinition(id=Capability.LOCALIZATION, title="本土化替换", description="按目标地区替换文化、身份、场景、道具和表达。", category="target", availability=CapabilityAvailability.AVAILABLE),
     CapabilityDefinition(id=Capability.TARGET_BIBLE, title="目标世界", description="形成统一的目标人物、场景、道具和世界设定。", category="target", availability=CapabilityAvailability.AVAILABLE),
-    CapabilityDefinition(id=Capability.TARGET_SCRIPT, title="目标剧本", description="形成目标语言和目标地区成立的正式剧本。", category="target"),
+    CapabilityDefinition(id=Capability.TARGET_SCRIPT, title="目标剧本", description="形成目标语言和目标地区成立的正式剧本。", category="target", availability=CapabilityAvailability.AVAILABLE),
     CapabilityDefinition(id=Capability.TARGET_ASSETS, title="目标资产", description="生成并管理目标人物、场景和关键道具资产。", category="target"),
     CapabilityDefinition(id=Capability.TTS, title="目标配音", description="生成正式目标对白音频并获得真实语音时长。", category="production"),
     CapabilityDefinition(id=Capability.TIMING, title="时间适配", description="根据真实目标语音时长规划镜头时间，不硬塞对白。", category="production"),

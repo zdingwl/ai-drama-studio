@@ -117,7 +117,7 @@ def test_p12_professional_skill_root_contract_and_p11_acceptance_admit_execution
     service._assert_p12_admitted()
     assert CAPABILITY_BY_ID[Capability.LOCALIZATION].availability == CapabilityAvailability.AVAILABLE
     assert CAPABILITY_BY_ID[Capability.TARGET_BIBLE].availability == CapabilityAvailability.AVAILABLE
-    assert CAPABILITY_BY_ID[Capability.TARGET_SCRIPT].availability == CapabilityAvailability.PLANNED
+    assert CAPABILITY_BY_ID[Capability.TARGET_SCRIPT].availability == CapabilityAvailability.AVAILABLE
     assert expected_namespace(ArtifactType.TARGET_SCRIPT) == ArtifactNamespace.TARGET
 
 

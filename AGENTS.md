@@ -1,7 +1,7 @@
 # AI Drama Studio V3 — 开发规则
 
 > 当前状态日期：2026-09-11。  
-> 当前最高优先级：`docs/26_P11最终验收与P12准入.md`。  
+> 当前最高优先级：`docs/27_P12最终验收与后续阶段准入评估.md`。  
 > 原则：仓库当前 `main` + 编号更高、日期更新的状态/验收文档是唯一事实源；历史文档只能解释演进，不能覆盖最新口径。
 
 ## 1. 开发前读取顺序
@@ -36,7 +36,8 @@
 26. `docs/24_P11ReplicaTargetBibleProfessionalSkill与数据契约.md`
 27. `docs/25_P12TargetScriptLocalizationProfessionalSkill与数据契约.md`
 28. `docs/26_P11最终验收与P12准入.md`
-29. 当前相关代码与测试
+29. `docs/27_P12最终验收与后续阶段准入评估.md`
+30. 当前相关代码与测试
 
 冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。**
 
@@ -49,7 +50,8 @@
 - `docs/23`：用户已明确 `P10 PASS`，`SOURCE_SNAPSHOT = AVAILABLE`，P11 Replica Target Bible 正式准入；
 - `docs/24`：P11 正式 Professional Skill、typed Target Artifact、revision/fingerprint/provenance、原子发布、Artifact Graph、Provider 与 UI/验收契约；
 - `docs/25`：P12 Target Script / Localization 正式数据与 Professional Skill 合同；
-- `docs/26`：用户已明确 `P11 PASS`，`LOCALIZATION / TARGET_BIBLE = AVAILABLE`，P12 正式准入；`TARGET_SCRIPT` 在 P12 自身真实验收前仍为 `PLANNED`。
+- `docs/26`：用户已明确 `P11 PASS`，`LOCALIZATION / TARGET_BIBLE = AVAILABLE`，P12 正式准入；
+- `docs/27`：用户已明确 `P12 PASS`，`TARGET_SCRIPT = AVAILABLE`；后续 `TARGET_ASSETS / TTS / TIMING / STORYBOARD / Generation / Post` 仍为 `PLANNED`，下一工程阶段必须先立正式契约。
 
 历史分支只能参考，不能覆盖当前 V3 规划。
 
@@ -72,6 +74,7 @@ P8 逐镜精细拉片
 P9 Character / Speaker / Scene / Prop 最终归一
 P10 SourceVideoSnapshot / 一键原片解析产品链
 P11 Replica Target Bible
+P12 Target Script / Localization
 ```
 
 当前 `AVAILABLE` 至少包括：
@@ -91,18 +94,18 @@ PROP_RESOLUTION
 SOURCE_SNAPSHOT
 LOCALIZATION
 TARGET_BIBLE
-```
-
-当前正式工程切片：
-
-```text
-P12 Target Script / Localization
-```
-
-P11 已完成真实人工验收，`LOCALIZATION / TARGET_BIBLE = AVAILABLE`。P12 已正式准入并允许进入真实 Provider / 项目验收，但尚未完成 P12 自身真实人工验收。以下仍为 `PLANNED`：
-
-```text
 TARGET_SCRIPT
+```
+
+当前下一工程切片：
+
+```text
+尚未正式立契约
+```
+
+P12 已完成真实 Provider、真实项目端到端与用户人工质量验收，用户已明确 `P12 PASS`，因此 `TARGET_SCRIPT = AVAILABLE`。以下仍为 `PLANNED`：
+
+```text
 TARGET_ASSETS
 TARGET_STORYBOARD
 TTS / Timing
@@ -111,7 +114,7 @@ Post / Final Output
 以及尚未完成的其他项目类型完整业务链
 ```
 
-P12 只负责 Target Script / Localization，不得进入 Target Storyboard、Target Voice/TTS、Actual Speech Duration、Timing Plan、Generation、QC、Selection 或 Post。
+Root Replica Skill 中 `target_script` 后的下一个内部步骤是 `target_assets`，但内部步骤顺序不等于新的工程阶段已经正式准入。下一阶段必须先写正式数据契约 / Professional Skill / 验收边界，再进入实现。
 
 ---
 
@@ -139,13 +142,13 @@ REDRAW
 
 `TRANSLATION` 在明确接入对应契约前不得复用该工作区假装能力可用；route 和 service 都必须 fail closed。
 
-P12 当前只开发：
+P12 已完成：
 
 ```text
 REPLICA Target Script / Localization
 ```
 
-不得借 P12 顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Target 链，也不得提前进入 Target Storyboard / Voice / TTS / Timing / Generation。
+在下一份正式阶段契约提交前，不得借 P12 PASS 顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Target 链，也不得直接实现 `TARGET_ASSETS / Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Selection / Post`。
 
 ---
 
@@ -263,7 +266,7 @@ P12 正式硬输入固定为 CURRENT `SOURCE_VIDEO_SNAPSHOT + ADAPTATION_PLAN + 
 Source Dialogue → Translation → Localization → Final Target Dialogue → Target Speaker/Voice → TTS → Actual Speech Duration → Timing Plan
 ```
 
-P12 只到 `Final Target Dialogue`。
+P12 只到 `Final Target Dialogue`。P12 已真实人工验收 PASS，`TARGET_SCRIPT = AVAILABLE`。
 
 ---
 
@@ -494,7 +497,7 @@ Artifact Graph edges
 
 ## 10. P12 Target Script / Localization 硬边界
 
-P12 已在 `docs/26` 正式准入，但 `TARGET_SCRIPT` 在 P12 自身真实人工验收 PASS 前仍保持 `PLANNED`。
+P12 已在 `docs/27` 完成真实人工验收 PASS，`TARGET_SCRIPT = AVAILABLE`。以下合同继续保持不变。
 
 正式硬输入必须同时是：
 
@@ -557,7 +560,7 @@ Source Dialogue 规则：
 
 不能用其中一层替代另一层。
 
-P11 已由用户明确真实人工 PASS，因此 `LOCALIZATION / TARGET_BIBLE = AVAILABLE`，P12 正式准入。P12 只有在工程门禁、真实 Provider、真实项目页面和用户人工验收全部通过后，才能把 `TARGET_SCRIPT` 从 `PLANNED` 升为 `AVAILABLE`。自动测试、技术 Task succeeded 或内部 TARGET_SCRIPT CURRENT 都不能替代 P12 真实人工 PASS。
+P11 与 P12 都已经由用户明确真实人工 PASS，因此 `LOCALIZATION / TARGET_BIBLE / TARGET_SCRIPT = AVAILABLE`。后续任何能力仍必须单独完成正式契约、工程门禁、真实 Provider / Runtime、真实项目端到端与用户人工验收后，才能从 `PLANNED` 升为 `AVAILABLE`；不能把 P12 PASS 当作后续阶段的替代验收。
 
 ---
 
