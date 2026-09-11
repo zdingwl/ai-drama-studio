@@ -168,6 +168,23 @@ const pending: TargetAssetsCandidateRead = {
   content,
 }
 
+const succeededTask: TaskRead = {
+  id: 'task-2',
+  project_id: 'project-1',
+  task_name: '重新生成目标资产候选',
+  progress_percent: 100,
+  status: 'succeeded',
+  last_error: null,
+  attempt: 1,
+  max_attempts: 3,
+  can_retry: false,
+  can_cancel: false,
+  can_resume: false,
+  created_at: '2026-09-11T00:00:00Z',
+  started_at: '2026-09-11T00:00:00Z',
+  finished_at: '2026-09-11T00:00:01Z',
+}
+
 async function mountWorkspace(
   bible: ReplicaTargetBibleRead = currentBible,
   assets: ReplicaTargetAssetsRead = notBuilt,
@@ -244,6 +261,26 @@ describe('TargetAssetsWorkspace', () => {
       reason: 'Looks consistent across character, scene and prop identity',
     })
     expect(wrapper.text()).toContain('正式目标资产已确认')
+    wrapper.unmount()
+  })
+
+  it('uses explicit regeneration after a rejected first candidate instead of replaying the idempotent generate command', async () => {
+    const rejected: TargetAssetsCandidateRead = {
+      ...pending,
+      review_status: 'REJECTED',
+      review_reason: 'Need another direction',
+      reviewed_at: '2026-09-11T00:02:00Z',
+    }
+    vi.mocked(targetAssetsApi.regenerateReplicaTargetAssets).mockResolvedValue(succeededTask)
+    const wrapper = await mountWorkspace(currentBible, notBuilt, [rejected])
+
+    const button = wrapper.findAll('button').find((item) => item.text() === '重新生成候选')
+    expect(button).toBeTruthy()
+    await button!.trigger('click')
+    await flushPromises()
+
+    expect(targetAssetsApi.regenerateReplicaTargetAssets).toHaveBeenCalledTimes(1)
+    expect(targetAssetsApi.startReplicaTargetAssets).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
