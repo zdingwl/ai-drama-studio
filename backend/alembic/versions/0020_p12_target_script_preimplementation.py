@@ -67,9 +67,9 @@ def upgrade() -> None:
     op.create_index("ix_replica_target_script_revisions_target_bible_artifact_id", "replica_target_script_revisions", ["target_bible_artifact_id"], unique=False)
     op.create_index("ix_replica_target_script_revisions_generated_by_task_id", "replica_target_script_revisions", ["generated_by_task_id"], unique=False)
 
-    # P12 is only preimplemented here. The Root Skill contract is versioned because
-    # target_script now has the exact future hard inputs, while TARGET_SCRIPT remains
-    # PLANNED and the service admission gate still blocks execution until P11 PASS.
+    # P11 has passed real acceptance and P12 is now formally admitted for validation.
+    # Root Skill 1.2.0 records the exact three P12 hard inputs. TARGET_SCRIPT itself
+    # remains PLANNED until P12 completes its own real manual acceptance.
     _invalidate_replica_plans()
     op.execute(
         sa.text(

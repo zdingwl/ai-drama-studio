@@ -64,8 +64,9 @@ from app.workflow.worker import TaskExecutionContext
 
 
 P12_TASK_TYPE = "P12_TARGET_SCRIPT_LOCALIZATION"
-# Engineering exists before formal admission. Flip only in the post-P11-PASS admission change.
-P12_FORMALLY_ADMITTED = False
+# P11 has passed real manual acceptance; P12 is formally admitted for real validation.
+# TARGET_SCRIPT itself remains PLANNED until P12 receives its own real manual PASS.
+P12_FORMALLY_ADMITTED = True
 
 
 @dataclass(frozen=True)
@@ -110,18 +111,17 @@ def _assert_storage_ready(db: Session) -> None:
 
 
 def _assert_p12_admitted() -> None:
-    """Fail closed until a post-P11-PASS change explicitly admits P12.
+    """Require explicit P12 admission plus the independently accepted P11 capabilities.
 
     TARGET_SCRIPT intentionally remains PLANNED while P12 itself is being accepted,
-    so its capability availability cannot be the P12 execution switch. A separate
-    admission constant makes the preimplementation state explicit and non-bypassable
-    from API/UI inputs. P11 capabilities are rechecked as a second independent gate.
+    so its capability availability is not the P12 execution switch. The dedicated
+    admission switch records that P11 has passed and P12 may now run real validation.
     """
 
     if not P12_FORMALLY_ADMITTED:
         raise AppError(
             "P12_NOT_ADMITTED",
-            "P12 仅完成工程预实现；需在 P11 真实人工 PASS 后另行正式准入",
+            "P12 尚未正式准入",
             status_code=409,
             details={"formal_admission": False},
         )
@@ -134,7 +134,7 @@ def _assert_p12_admitted() -> None:
     if blockers:
         raise AppError(
             "P12_NOT_ADMITTED",
-            "P11 尚未真实人工验收通过，当前不能执行目标剧本生成",
+            "P11 验收能力状态不完整，当前不能执行目标剧本生成",
             status_code=409,
             details={"required_p11_capabilities": blockers},
         )
@@ -700,7 +700,7 @@ def _claim(db: Session, task_id: str, worker_id: str) -> Task | None:
             Task.id == task_id,
             Task.task_type == P12_TASK_TYPE,
             Task.status == TaskStatus.QUEUED,
-            Task.attempt < Task.max_attempts,
+            Task.attempt < task.max_attempts,
         )
         .values(
             status=TaskStatus.RUNNING,

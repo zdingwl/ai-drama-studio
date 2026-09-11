@@ -4,7 +4,7 @@
 
 把已经通过 P11 约束的目标世界落实为正式目标剧本对白，同时完整保留每一句 P6 canonical Source Dialogue 的可追溯来源。
 
-当前版本是 **P12 工程预实现**。P11 尚未真实人工 PASS 时，服务端 admission gate 必须拒绝执行；本 Skill 的存在不代表 P12 已正式准入或 `TARGET_SCRIPT` 已 AVAILABLE。
+P11 已完成真实人工验收，P12 当前**正式准入真实 Provider 与项目验收**。这不代表 P12 已 PASS；`TARGET_SCRIPT` 在 P12 自身真实人工验收前仍保持 `PLANNED`。
 
 ## 硬输入
 
@@ -68,8 +68,14 @@
 
 新 revision supersede 旧 revision；任一硬输入更新都通过 Artifact Graph 递归使旧 Target Script STALE。
 
-## 当前 admission gate
+## 当前 admission 状态
 
-P12 只有在 P11 用户真实人工 PASS 后才允许进入正式 Provider 验收。当前实现首先固定 `P12_FORMALLY_ADMITTED = False`，并同时复核 P11 的 `LOCALIZATION` 与 `TARGET_BIBLE` capability。只有 P11 用户真实 PASS 后的下一次正式准入改动显式打开该 switch，且两项 P11 capability 都已由正式验收流程升级为 `AVAILABLE`，服务端才允许创建 P12 真实任务；任何请求参数或 UI 都不能绕过。
+用户已经明确 `P11 PASS`，因此：
 
-`TARGET_SCRIPT` 本身在 P12 真实人工 PASS 前仍保持 `PLANNED`。
+- `LOCALIZATION = AVAILABLE`
+- `TARGET_BIBLE = AVAILABLE`
+- P12 独立 admission switch 已正式打开；
+- P12 可以创建真实 Provider 任务进行本阶段验收；
+- `TARGET_SCRIPT` 仍为 `PLANNED`，直到用户后续明确 `P12 PASS`。
+
+任何请求参数或 UI 都不能绕过三个 CURRENT 硬输入、lineage 与 capability 复核。

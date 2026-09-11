@@ -91,7 +91,7 @@ def _semantic(utterance_id: str = "utt-1") -> TargetScriptSemantic:
     )
 
 
-def test_p12_professional_skill_root_contract_and_capability_remain_pre_admission() -> None:
+def test_p12_professional_skill_root_contract_and_p11_acceptance_admit_execution() -> None:
     skill = get_professional_skill("target-script-localization")
     assert skill.version == "1.0.0"
     assert skill.required_inputs == (
@@ -113,13 +113,15 @@ def test_p12_professional_skill_root_contract_and_capability_remain_pre_admissio
     assert target_script.produces == (ArtifactType.TARGET_SCRIPT,)
     assert target_script.capabilities == (Capability.TARGET_SCRIPT,)
 
-    assert CAPABILITY_BY_ID[Capability.LOCALIZATION].availability == CapabilityAvailability.PLANNED
-    assert CAPABILITY_BY_ID[Capability.TARGET_BIBLE].availability == CapabilityAvailability.PLANNED
+    assert service.P12_FORMALLY_ADMITTED is True
+    service._assert_p12_admitted()
+    assert CAPABILITY_BY_ID[Capability.LOCALIZATION].availability == CapabilityAvailability.AVAILABLE
+    assert CAPABILITY_BY_ID[Capability.TARGET_BIBLE].availability == CapabilityAvailability.AVAILABLE
     assert CAPABILITY_BY_ID[Capability.TARGET_SCRIPT].availability == CapabilityAvailability.PLANNED
     assert expected_namespace(ArtifactType.TARGET_SCRIPT) == ArtifactNamespace.TARGET
 
 
-def test_p12_get_is_read_only_and_post_is_blocked_before_p11_pass(
+def test_p12_get_is_read_only_and_post_requires_current_hard_inputs_after_p11_pass(
     client: TestClient,
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -144,10 +146,10 @@ def test_p12_get_is_read_only_and_post_is_blocked_before_p11_pass(
 
     start = client.post(
         f"/api/v3/projects/{project['id']}/commands/target-script",
-        headers={"Idempotency-Key": "p12-before-p11-pass"},
+        headers={"Idempotency-Key": "p12-missing-hard-inputs"},
     )
     assert start.status_code == 409, start.text
-    assert start.json()["error"]["code"] == "P12_NOT_ADMITTED"
+    assert start.json()["error"]["code"] == "P12_SOURCE_SNAPSHOT_REQUIRED"
     assert counts() == before
 
 

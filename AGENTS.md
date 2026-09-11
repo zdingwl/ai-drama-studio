@@ -1,7 +1,7 @@
 # AI Drama Studio V3 — 开发规则
 
 > 当前状态日期：2026-09-11。  
-> 当前最高优先级：`docs/24_P11ReplicaTargetBibleProfessionalSkill与数据契约.md`。  
+> 当前最高优先级：`docs/26_P11最终验收与P12准入.md`。  
 > 原则：仓库当前 `main` + 编号更高、日期更新的状态/验收文档是唯一事实源；历史文档只能解释演进，不能覆盖最新口径。
 
 ## 1. 开发前读取顺序
@@ -34,7 +34,9 @@
 24. `docs/22_P10一键原片解析最终产品验收.md`
 25. `docs/23_P10最终验收与P11准入.md`
 26. `docs/24_P11ReplicaTargetBibleProfessionalSkill与数据契约.md`
-27. 当前相关代码与测试
+27. `docs/25_P12TargetScriptLocalizationProfessionalSkill与数据契约.md`
+28. `docs/26_P11最终验收与P12准入.md`
+29. 当前相关代码与测试
 
 冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。**
 
@@ -45,7 +47,9 @@
 - `docs/21`：REPLICA / REDRAW 的 P5~P10 收口为一次“解析原片”；
 - `docs/22`：P10 一键产品最终验收清单；
 - `docs/23`：用户已明确 `P10 PASS`，`SOURCE_SNAPSHOT = AVAILABLE`，P11 Replica Target Bible 正式准入；
-- `docs/24`：P11 正式 Professional Skill、typed Target Artifact、revision/fingerprint/provenance、原子发布、Artifact Graph、Provider 与 UI/验收契约；当前工程实现按此执行，真实人工验收尚未 PASS。
+- `docs/24`：P11 正式 Professional Skill、typed Target Artifact、revision/fingerprint/provenance、原子发布、Artifact Graph、Provider 与 UI/验收契约；
+- `docs/25`：P12 Target Script / Localization 正式数据与 Professional Skill 合同；
+- `docs/26`：用户已明确 `P11 PASS`，`LOCALIZATION / TARGET_BIBLE = AVAILABLE`，P12 正式准入；`TARGET_SCRIPT` 在 P12 自身真实验收前仍为 `PLANNED`。
 
 历史分支只能参考，不能覆盖当前 V3 规划。
 
@@ -67,6 +71,7 @@ P7 整集多模态原片理解
 P8 逐镜精细拉片
 P9 Character / Speaker / Scene / Prop 最终归一
 P10 SourceVideoSnapshot / 一键原片解析产品链
+P11 Replica Target Bible
 ```
 
 当前 `AVAILABLE` 至少包括：
@@ -84,19 +89,19 @@ IDENTITY_RESOLUTION
 SCENE_RESOLUTION
 PROP_RESOLUTION
 SOURCE_SNAPSHOT
+LOCALIZATION
+TARGET_BIBLE
 ```
 
 当前正式工程切片：
 
 ```text
-P11 Replica Target Bible
+P12 Target Script / Localization
 ```
 
-P11 已有正式契约并正在工程实现，但尚未完成真实人工验收。以下仍为 `PLANNED`：
+P11 已完成真实人工验收，`LOCALIZATION / TARGET_BIBLE = AVAILABLE`。P12 已正式准入并允许进入真实 Provider / 项目验收，但尚未完成 P12 自身真实人工验收。以下仍为 `PLANNED`：
 
 ```text
-LOCALIZATION
-TARGET_BIBLE
 TARGET_SCRIPT
 TARGET_ASSETS
 TARGET_STORYBOARD
@@ -106,7 +111,7 @@ Post / Final Output
 以及尚未完成的其他项目类型完整业务链
 ```
 
-禁止跳过 P11 直接进入后续阶段。
+P12 只负责 Target Script / Localization，不得进入 Target Storyboard、Target Voice/TTS、Actual Speech Duration、Timing Plan、Generation、QC、Selection 或 Post。
 
 ---
 
@@ -134,13 +139,13 @@ REDRAW
 
 `TRANSLATION` 在明确接入对应契约前不得复用该工作区假装能力可用；route 和 service 都必须 fail closed。
 
-P11 当前只开发：
+P12 当前只开发：
 
 ```text
-REPLICA Target Bible
+REPLICA Target Script / Localization
 ```
 
-不得借 P11 顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Target 链。
+不得借 P12 顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Target 链，也不得提前进入 Target Storyboard / Voice / TTS / Timing / Generation。
 
 ---
 
@@ -241,6 +246,24 @@ TARGET_BIBLE
 ```
 
 不得在 P11 提前产出正式 `TARGET_SCRIPT`。
+
+P12：
+
+```text
+target-script-localization@1.0.0
+p12-target-script-localization-v1
+TARGET_SCRIPT schema 1.0
+replica-target-script-localization-v1
+p6-canonical-dialogue-frozen-in-p10-v1
+```
+
+P12 正式硬输入固定为 CURRENT `SOURCE_VIDEO_SNAPSHOT + ADAPTATION_PLAN + TARGET_BIBLE`；Source Dialogue 只能来自 Snapshot 冻结的 P6 canonical dialogue。正式对白链固定为：
+
+```text
+Source Dialogue → Translation → Localization → Final Target Dialogue → Target Speaker/Voice → TTS → Actual Speech Duration → Timing Plan
+```
+
+P12 只到 `Final Target Dialogue`。
 
 ---
 
@@ -417,7 +440,6 @@ Replica 默认目标：
 > 故事不乱改，节奏不重做，文化和表达才本土化。
 
 P11 preservation locks 必须由服务端从 Snapshot 确定性生成，Provider 只能读取，不能重写。默认锁定：
-
 ```text
 故事主线
 Hook
@@ -467,9 +489,41 @@ Artifact Graph edges
 
 普通产品界面只显示“目标设定”，不暴露 P11 / Artifact id / fingerprint / provenance / ProviderJob / schema 等工程术语；页面加载只 GET，只有用户显式点击“生成目标设定 / 重新生成目标设定”才 POST。
 
+
 ---
 
-## 10. Workflow / Provider / 安全硬规则
+## 10. P12 Target Script / Localization 硬边界
+
+P12 已在 `docs/26` 正式准入，但 `TARGET_SCRIPT` 在 P12 自身真实人工验收 PASS 前仍保持 `PLANNED`。
+
+正式硬输入必须同时是：
+
+```text
+CURRENT SOURCE_VIDEO_SNAPSHOT
+CURRENT ADAPTATION_PLAN
+CURRENT TARGET_BIBLE
+```
+
+三者必须属于同一条 P11 / Source Snapshot lineage。P12 不允许只拿 Target Bible，也不允许退回散落的 P5~P9 Artifact 自行拼当前 Source 世界。
+
+Source Dialogue 规则：
+
+- 原始正文只读取 `SOURCE_VIDEO_SNAPSHOT.episodes[*].canonical_dialogue[*]`；
+- `utterance_id / utterance_number / start_us / end_us / text / language` 由服务端确定性复制；
+- Provider 不得重新 ASR / OCR / 听写 / 看口型猜词 / 按剧情补词 / 静默修正 Source 台词；
+- Provider 必须按 canonical utterance 集合一一完整覆盖、顺序一致，不得遗漏、重复、创造、合并或拆分；
+- 每条目标对白必须分层保留 `translation_text / localization_text / final_target_dialogue`；
+- Source Speaker → Source Character → Target Character lineage 可唯一证明时，服务端可以确定性绑定 `target_character_id`；否则保持空，不得让 Provider 猜人；
+- 页面 GET 只读，只有用户显式“生成目标剧本 / 重新生成目标剧本”才允许 POST；
+- ProviderJob 必须在远端请求前持久化；
+- publication 必须原子写入 TARGET_SCRIPT typed revision、provenance、三输入 Artifact Graph 与 SUPERSEDES；
+- 任一硬输入 STALE 必须递归使 TARGET_SCRIPT STALE；
+- P12 不生成 Target Voice / TTS / Actual Speech Duration / Timing Plan / Target Storyboard / Generation / QC / Selection / Post Artifact。
+
+
+---
+
+## 11. Workflow / Provider / 安全硬规则
 
 - 页面 GET 必须只读，不能写 DB、建 Task、运行 Agent、启动模型或自动重算；
 - 重任务必须由明确 POST / Command 启动；
@@ -487,7 +541,7 @@ Artifact Graph edges
 
 ---
 
-## 11. 完成定义
+## 12. 完成定义
 
 任何能力都必须分别说明并验证：
 
@@ -503,11 +557,11 @@ Artifact Graph edges
 
 不能用其中一层替代另一层。
 
-P11 只有在工程门禁、真实 Provider、真实项目页面和用户人工验收全部通过后，才能把 `LOCALIZATION / TARGET_BIBLE` 从 `PLANNED` 升为 `AVAILABLE`，并准入 P12。自动测试或内部 Target Artifact CURRENT 不能替代真实人工 PASS。
+P11 已由用户明确真实人工 PASS，因此 `LOCALIZATION / TARGET_BIBLE = AVAILABLE`，P12 正式准入。P12 只有在工程门禁、真实 Provider、真实项目页面和用户人工验收全部通过后，才能把 `TARGET_SCRIPT` 从 `PLANNED` 升为 `AVAILABLE`。自动测试、技术 Task succeeded 或内部 TARGET_SCRIPT CURRENT 都不能替代 P12 真实人工 PASS。
 
 ---
 
-## 12. Git 规则
+## 13. Git 规则
 
 ```text
 main = V3 当前稳定开发基线

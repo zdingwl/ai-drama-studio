@@ -3,9 +3,9 @@
   "name": "目标剧本与对白本土化",
   "version": "1.0.0",
   "category": "target-script",
-  "description": "读取 CURRENT SOURCE_VIDEO_SNAPSHOT + ADAPTATION_PLAN + TARGET_BIBLE，以冻结的 P6 canonical Source Dialogue 为唯一原始对白事实，形成 Translation → Localization → Final Target Dialogue 并发布 TARGET_SCRIPT。当前仅工程预实现，P11 未 PASS 前不得正式执行。",
-  "when_to_use": ["REPLICA 项目未来已通过 P11 人工验收，且三个 P12 硬输入均为 CURRENT 时"],
-  "when_not_to_use": ["P11 尚未人工 PASS", "任一硬输入缺失或 STALE", "项目不是 REPLICA", "需要重新识别 Source 台词", "需要 Target Storyboard / Voice / TTS / Timing / Generation"],
+  "description": "读取 CURRENT SOURCE_VIDEO_SNAPSHOT + ADAPTATION_PLAN + TARGET_BIBLE，以冻结的 P6 canonical Source Dialogue 为唯一原始对白事实，形成 Translation → Localization → Final Target Dialogue 并发布 TARGET_SCRIPT。P11 已真实人工 PASS，P12 当前已正式准入真实 Provider 与项目验收。",
+  "when_to_use": ["REPLICA 项目已通过 P11 人工验收，且三个 P12 硬输入均为 CURRENT 时"],
+  "when_not_to_use": ["任一硬输入缺失或 STALE", "项目不是 REPLICA", "需要重新识别 Source 台词", "需要 Target Storyboard / Voice / TTS / Timing / Generation"],
   "required_inputs": ["SOURCE_VIDEO_SNAPSHOT", "ADAPTATION_PLAN", "TARGET_BIBLE"],
   "optional_inputs": [],
   "readable_artifacts": ["SOURCE_VIDEO_SNAPSHOT", "ADAPTATION_PLAN", "TARGET_BIBLE"],
@@ -30,9 +30,9 @@
     "禁止生成 Target Voice、TTS、Actual Speech Duration、Timing Plan、Target Storyboard、Generation、QC、Selection 或 Post 内容。",
     "GET 永远只读；外部 Provider 请求前必须先持久化 ProviderJob，并绑定三个 CURRENT 输入。",
     "任一硬输入 STALE 或 lineage 不一致时 fail closed；Target 不得反向写 Source。",
-    "P11 未真实人工 PASS 时，P12 admission gate 必须在 Task/ProviderJob/Artifact 创建之前拒绝执行。"
+    "P11 已真实人工 PASS，P12 当前允许进入真实 Provider 验收；TARGET_SCRIPT 只有在 P12 自身真实人工 PASS 后才能标记 AVAILABLE。"
   ],
   "output_contracts": ["TARGET_SCRIPT"],
   "completion_criteria": ["canonical Source Dialogue 一一完整覆盖且 source text/timing 未被改写", "Translation → Localization → Final Target Dialogue 三层可审计", "三硬输入 revision/fingerprint/provenance/Graph 完整", "角色绑定只来自确定性 lineage", "没有生成后续 Voice/TTS/Timing/Storyboard/Generation Artifact"],
-  "failure_policy": ["P11 未 PASS 时阻断且零写副作用", "任一硬输入缺失/STALE/lineage 不一致时阻断", "Provider dialogue coverage 非精确一一对应时阻断", "publication 失败整体 rollback 并保留旧 CURRENT TARGET_SCRIPT", "P12 真实人工验收通过前 TARGET_SCRIPT capability 保持 PLANNED"]
+  "failure_policy": ["任一 P11 已验收 capability 状态异常时阻断", "任一硬输入缺失/STALE/lineage 不一致时阻断", "Provider dialogue coverage 非精确一一对应时阻断", "publication 失败整体 rollback 并保留旧 CURRENT TARGET_SCRIPT", "P12 真实人工验收通过前 TARGET_SCRIPT capability 保持 PLANNED"]
 }

@@ -20,7 +20,7 @@
     {"id":"source_breakdown","phase":"理解","title":"逐镜拉片与最终归一","description":"在源作概览分析与逐镜精细拉片已经建立后，基于完整 Episode、跨 Shot/跨 Episode Evidence 对 Character、Speaker、Scene 和 Prop 做最终稳定归一；Speaker 与 Character 分层，不强制一一对应。","capabilities":["SHOT_BREAKDOWN","IDENTITY_RESOLUTION","SCENE_RESOLUTION","PROP_RESOLUTION"],"requires":["SOURCE_BIBLE","SHOT_ANCHORS"],"produces":["SOURCE_SHOT_FACTS","SOURCE_CHARACTERS","SOURCE_SPEAKERS","SOURCE_SCENES","SOURCE_PROPS"]},
     {"id":"source_finalize","phase":"理解","title":"原片分析定稿","description":"不重新调用模型，把 P5~P9 已验收 CURRENT Source Facts 确定性冻结为下游正式来源。","capabilities":["SOURCE_SNAPSHOT"],"requires":["SOURCE_VIDEO","SHOT_ANCHORS","SOURCE_DIALOGUE","SOURCE_BIBLE","STORY_SKELETON","RHYTHM_SKELETON","SOURCE_SHOT_FACTS","SOURCE_CHARACTERS","SOURCE_SPEAKERS","SOURCE_SCENES","SOURCE_PROPS"],"produces":["SOURCE_VIDEO_SNAPSHOT"]},
     {"id":"target_bible","phase":"目标版本","title":"目标设定","description":"以 CURRENT SourceVideoSnapshot 为唯一 Source 世界版本锚点，锁定故事与节奏，建立目标地区人物、场景、道具、文化、视觉与连续性设定；本阶段不生成正式 Target Script。","capabilities":["LOCALIZATION","TARGET_BIBLE"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":["ADAPTATION_PLAN","TARGET_BIBLE"]},
-    {"id":"target_script","phase":"目标版本","title":"目标剧本与对白","description":"仅在 P11 已真实验收后，同时读取 CURRENT SOURCE_VIDEO_SNAPSHOT、ADAPTATION_PLAN、TARGET_BIBLE；以 Snapshot 冻结的 P6 canonical Source Dialogue 为原始事实，形成 Translation → Localization → Final Target Dialogue。","capabilities":["TARGET_SCRIPT"],"requires":["SOURCE_VIDEO_SNAPSHOT","ADAPTATION_PLAN","TARGET_BIBLE"],"produces":["TARGET_SCRIPT"]},
+    {"id":"target_script","phase":"目标版本","title":"目标剧本与对白","description":"P11 已真实验收；同时读取 CURRENT SOURCE_VIDEO_SNAPSHOT、ADAPTATION_PLAN、TARGET_BIBLE，以 Snapshot 冻结的 P6 canonical Source Dialogue 为原始事实，形成 Translation → Localization → Final Target Dialogue。","capabilities":["TARGET_SCRIPT"],"requires":["SOURCE_VIDEO_SNAPSHOT","ADAPTATION_PLAN","TARGET_BIBLE"],"produces":["TARGET_SCRIPT"]},
     {"id":"target_assets","phase":"目标版本","title":"目标资产","description":"形成可复用的人物、场景和关键道具资产。","capabilities":["TARGET_ASSETS"],"requires":["TARGET_BIBLE"],"produces":["TARGET_ASSETS"]},
     {"id":"voice_timing","phase":"分镜","title":"目标对白与时长","description":"先生成目标配音，再根据真实语音时长做最小必要的节奏适配。","capabilities":["TTS","TIMING"],"requires":["TARGET_SCRIPT"],"produces":["TARGET_AUDIO","TIMING_PLAN"]},
     {"id":"replica_storyboard","phase":"分镜","title":"复刻分镜","description":"把原镜头关系与目标资产组合成可编辑复刻分镜。","capabilities":["STORYBOARD"],"requires":["SOURCE_VIDEO_SNAPSHOT","TARGET_ASSETS","TIMING_PLAN"],"produces":["TARGET_STORYBOARD","GENERATION_SEGMENTS"]},
@@ -28,9 +28,9 @@
     {"id":"post","phase":"成片","title":"口型与后期","description":"完成音频、字幕、剪辑和成片输出。","capabilities":["LIP_SYNC","POST_PRODUCTION"],"requires":["GENERATION_SELECTION","TARGET_AUDIO"],"produces":["FINAL_OUTPUT"]}
   ],
   "user_decision_policy": ["故事或节奏需要偏离原片时必须显式确认", "目标文化存在多个合理方向且会改变人物关系时询问用户", "用户修改或合规微调 SOURCE_BIBLE 时保留为新 revision，并使依赖旧版本的逐镜拉片和后续结果 STALE"],
-  "auto_decision_policy": ["默认锁定故事骨架和节奏骨架", "普通文化替换和对白压缩自动完成", "理解模型不得用摘要或合规改写静默覆盖 canonical Source Evidence"],
+  "auto_decision_policy": ["默认锁定故事骨架和节奏骨架", "普通文化替换与自然表达本土化自动完成；P12 不为预计时长静默压缩对白", "理解模型不得用摘要或合规改写静默覆盖 canonical Source Evidence"],
   "output_contracts": ["SOURCE_VIDEO_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON", "ADAPTATION_PLAN", "TARGET_BIBLE", "TARGET_SCRIPT", "TARGET_STORYBOARD", "FINAL_OUTPUT"],
   "completion_criteria": ["源作概览分析 SOURCE_BIBLE 可读、可追溯且版本明确", "原片分析定稿可追溯", "故事和节奏约束已应用", "Target Bible 与 Source Snapshot lineage 明确", "Target Script 保留 canonical Source Dialogue lineage 与 Translation/Localization/Final Target Dialogue 分层", "目标分镜与目标资产一致", "正式生成选择已完成", "最终成片可导出"],
-  "failure_policy": ["缺原片事实则阻断目标生成", "Source Snapshot STALE 时阻断 Target Bible/Script 下游消费", "P11 未真实人工 PASS 时阻断 P12 Target Script 执行", "生成失败有限重试后阻断，不伪造成功"],
+  "failure_policy": ["缺原片事实则阻断目标生成", "Source Snapshot STALE 时阻断 Target Bible/Script 下游消费", "P11 capability 状态异常或 P12 三个硬输入不满足 CURRENT/lineage 契约时阻断 Target Script", "生成失败有限重试后阻断，不伪造成功"],
   "next_recommended_skills": []
 }

@@ -10,6 +10,7 @@ import P9SourceResolutionPanel from '@/components/P9SourceResolutionPanel.vue'
 import SourceResultApprovalBar from '@/components/SourceResultApprovalBar.vue'
 import SourceScriptStoryboardWorkspace from '@/components/SourceScriptStoryboardWorkspace.vue'
 import TargetBibleWorkspace from '@/components/TargetBibleWorkspace.vue'
+import TargetScriptWorkspace from '@/components/TargetScriptWorkspace.vue'
 
 const route = useRoute()
 const isProjectWorkspace = computed(() => route.name === 'project-workspace')
@@ -22,6 +23,7 @@ const debugMode = computed(() => route.query.debug === '1')
       <RouterView />
       <SourceScriptStoryboardWorkspace v-if="isProjectWorkspace" />
       <TargetBibleWorkspace v-if="isProjectWorkspace" />
+      <TargetScriptWorkspace v-if="isProjectWorkspace" />
 
       <template v-if="isProjectWorkspace && debugMode">
         <P6AcceptancePanel />
@@ -37,7 +39,7 @@ const debugMode = computed(() => route.query.debug === '1')
 <style>
 /*
  * Product mode exposes one source-analysis action and the resulting script / storyboard,
- * followed by the business-facing Target Bible workspace for Replica projects.
+ * followed by business-facing Target Bible and Target Script workspaces for Replica projects.
  * The existing P5-P10 engineering surfaces stay available at ?debug=1 for acceptance
  * and diagnostics without making ordinary users operate the internal pipeline.
  */

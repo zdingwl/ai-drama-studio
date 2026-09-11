@@ -1,5 +1,7 @@
 import { apiRequest } from '@/lib/api'
 
+import type { TaskRead } from './types'
+
 export type TargetScriptResultStatus = 'NOT_BUILT' | 'CURRENT' | 'STALE'
 
 export interface TargetScriptDialogueLine {
@@ -45,4 +47,11 @@ export interface ReplicaTargetScriptRead {
 
 export function getReplicaTargetScript(projectId: string): Promise<ReplicaTargetScriptRead> {
   return apiRequest<ReplicaTargetScriptRead>(`/projects/${projectId}/target-script`, { cache: 'no-store' })
+}
+
+export function startReplicaTargetScript(projectId: string, idempotencyKey: string): Promise<TaskRead> {
+  return apiRequest<TaskRead>(`/projects/${projectId}/commands/target-script`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
 }

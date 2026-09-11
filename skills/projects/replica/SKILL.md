@@ -9,7 +9,7 @@
 - P10 `SOURCE_VIDEO_SNAPSHOT` 是 Target 阶段唯一当前 Source 世界版本锚点；Target 不得绕过 Snapshot 自行拼装当前 Source Facts。
 - 故事骨架（Story Skeleton）与节奏骨架（Rhythm Skeleton）通过 Snapshot 冻结后，作为目标版本的权威 preservation locks。
 - P11 只建立 `ADAPTATION_PLAN + TARGET_BIBLE`；不得提前生成正式 `TARGET_SCRIPT`、Target Storyboard、TTS、Timing 或视频生成参数。
-- P12 正式硬输入必须同时是 CURRENT `SOURCE_VIDEO_SNAPSHOT + ADAPTATION_PLAN + TARGET_BIBLE`；P11 未真实人工 PASS 时 P12 不得执行。
+- P12 正式硬输入必须同时是 CURRENT `SOURCE_VIDEO_SNAPSHOT + ADAPTATION_PLAN + TARGET_BIBLE`；P11 已真实人工 PASS 后 P12 才允许执行。
 - P12 的 Source Dialogue 只能来自 Snapshot 冻结的 P6 canonical dialogue；不得重新 ASR/OCR/猜词或静默修正 Source 台词。
 - Target 人物 / 场景 / 道具必须保留 Source lineage，但 Target identity 与 Source identity 严格分离。
 - 对白链固定为 `Source Dialogue → Translation → Localization → Final Target Dialogue → Target Speaker/Voice → TTS → Actual Speech Duration → Timing Plan`；P12 只到 Final Target Dialogue。
@@ -26,12 +26,21 @@ P11 读取且只锚定 CURRENT `SOURCE_VIDEO_SNAPSHOT`，确定性锁定：故�
 
 外部 Provider 只返回 Target 设计语义；Target ID、preservation locks、Artifact revision / fingerprint / provenance 与 Graph 由服务端控制。
 
+P11 已完成真实人工验收：
+
+```text
+LOCALIZATION = AVAILABLE
+TARGET_BIBLE = AVAILABLE
+```
+
 ## P12 目标剧本 / 本土化
-P12 当前只做工程预实现，不代表正式准入。P11 用户真实人工 PASS、`LOCALIZATION / TARGET_BIBLE` 按正式验收流程 AVAILABLE 只是必要条件；还必须通过后续正式准入改动显式打开独立 P12 admission switch，服务端才允许创建真实任务。
+P12 已在 P11 PASS 后正式准入真实 Provider 与项目验收。`TARGET_SCRIPT` 在 P12 自身真实人工验收 PASS 前仍保持 `PLANNED`，不能把“可执行验收”冒充成“能力已验收可用”。
 
 P12 同时读取 CURRENT Snapshot、Adaptation Plan、Target Bible，从 Snapshot 中确定性提取 canonical dialogue manifest。Provider 只能针对已有 `utterance_id` 输出 `translation_text / localization_text / final_target_dialogue`，不得改变 Source text、时间或 utterance 集合。
 
 若 Source Speaker → Source Character → Target Character lineage 可证明，服务端可绑定 `target_character_id`；否则保持未绑定，不能让模型猜。Target Voice / TTS / Duration / Timing 属于后续阶段。
+
+普通产品页面加载只读；只有 P11 Target Bible 当前有效且用户显式点击“生成目标剧本 / 重新生成目标剧本”时才启动 P12。
 
 ## 需要用户决策
 只有在故事或节奏必须偏离原片、文化替换会改变核心人物关系，或存在多个会显著改变目标世界的合理方向且系统不能安全自动选择时才询问用户。
