@@ -19,6 +19,7 @@ import type { ProjectRead, TaskRead } from '@/features/projects/types'
 
 const TARGET_ASSET_TASK_NAMES = new Set(['生成目标资产候选', '重新生成目标资产候选'])
 const ACTIVE_TASK_STATUSES = new Set<TaskRead['status']>(['queued', 'running', 'interrupted'])
+const CURRENT_TARGET_ASSET_CONTRACT = 'replica-target-visual-identity-v2'
 
 const route = useRoute()
 const project = ref<ProjectRead | null>(null)
@@ -39,6 +40,12 @@ const p11Ready = computed(() => targetBible.value?.status === 'CURRENT' && Boole
 const pendingCandidate = computed(() => candidates.value.find((item) => item.review_status === 'NEEDS_REVIEW') ?? null)
 const previewContent = computed<ReplicaTargetAssetsContent | null>(() => pendingCandidate.value?.content ?? result.value?.content ?? null)
 const hasFormalAssets = computed(() => Boolean(result.value?.artifact_id))
+const formalAssetContract = computed(() => result.value?.provenance?.target_asset_contract ?? null)
+const needsContractRefresh = computed(() => Boolean(
+  hasFormalAssets.value
+  && formalAssetContract.value
+  && formalAssetContract.value !== CURRENT_TARGET_ASSET_CONTRACT,
+))
 const shouldRegenerate = computed(() => hasFormalAssets.value || result.value?.status === 'STALE' || candidates.value.length > 0)
 const active = computed(() => Boolean(activeTask.value && ACTIVE_TASK_STATUSES.has(activeTask.value.status)))
 const finalizingCandidate = computed(() => Boolean(
@@ -52,6 +59,7 @@ const statusText = computed(() => {
   if (finalizingCandidate.value) return '正在整理目标资产候选…'
   if (!p11Ready.value) return '等待当前有效的目标设定'
   if (pendingCandidate.value) return '有一版目标资产候选待确认'
+  if (needsContractRefresh.value) return '正式资产来自旧审核合同，需要重新生成'
   if (result.value?.status === 'CURRENT') return '正式目标资产已确认'
   if (result.value?.status === 'STALE') return '目标设定已有更新，需要重新生成并确认资产'
   return '可以生成目标资产候选'
@@ -244,6 +252,7 @@ onBeforeUnmount(clearPoll)
     </div>
 
     <p class="provider-note">资产说明与审核内容默认使用中文；人物名、地名、品牌、型号和金额保留目标地区真实写法。真正进入图片或视频生成时，系统会再按生成模型需要整理执行提示。当前尚未接入已验收的参考图生成，因此不会显示或伪造参考图。</p>
+    <p v-if="needsContractRefresh" class="acceptance-warning">当前正式目标资产来自旧版视觉身份合同。本轮真实验收发现旧版会混入全局故事规则，并可能越过资产阶段推断逐场景服装或剧情时段。请点击“重新生成候选”，按当前合同重新审核并确认；旧正式资产会保留历史，不会被页面自动改写。</p>
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="loading" class="empty-state">正在读取目标资产…</p>
 
@@ -352,6 +361,7 @@ h2, h3, p { margin-top: 0; }
 .secondary-action { border: 1px solid #d1d5db; background: #fff; color: #111827; }
 button:disabled { cursor: default; opacity: .5; }
 .provider-note { margin: 16px 0 0; padding: 10px 12px; border-radius: 10px; background: #f8fafc; font-size: 13px; opacity: .75; }
+.acceptance-warning { margin: 12px 0 0; padding: 12px 14px; border: 1px solid #f59e0b55; border-radius: 10px; background: #fffbeb; line-height: 1.55; }
 .error-message { margin-top: 16px; padding: 10px 12px; border-radius: 10px; background: #fef2f2; }
 .empty-state { margin: 18px 0 0; padding: 22px; border-radius: 12px; background: #f9fafb; opacity: .72; }
 .review-panel { margin-top: 18px; padding: 16px; border: 1px solid #f59e0b55; border-radius: 12px; background: #fffbeb; }
