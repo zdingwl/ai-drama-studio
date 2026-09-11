@@ -29,6 +29,7 @@ async function mountApp(path: string) {
       stubs: {
         AppShell: { template: '<div><slot /></div>' },
         SourceScriptStoryboardWorkspace: { template: '<section data-testid="source-workspace" />' },
+        TargetBibleWorkspace: { template: '<section data-testid="target-bible-workspace" />' },
         P6AcceptancePanel: { template: '<section data-testid="p6-panel" />' },
         P7SourceUnderstandingWorkspace: { template: '<section data-testid="p7-panel" />' },
         P8ShotBreakdownPanel: { template: '<section data-testid="p8-panel" />' },
@@ -42,10 +43,11 @@ async function mountApp(path: string) {
 }
 
 describe('App source workspace product mode', () => {
-  it('shows only the product workspace on an ordinary project page', async () => {
+  it('shows the product workspaces without engineering panels on an ordinary project page', async () => {
     const wrapper = await mountApp('/projects/project-1')
 
     expect(wrapper.get('[data-testid="source-workspace"]')).toBeTruthy()
+    expect(wrapper.get('[data-testid="target-bible-workspace"]')).toBeTruthy()
     expect(wrapper.find('.product-mode').exists()).toBe(true)
     for (const panel of technicalPanels) {
       expect(wrapper.find(`[data-testid="${panel}"]`).exists()).toBe(false)
@@ -57,6 +59,7 @@ describe('App source workspace product mode', () => {
     const wrapper = await mountApp('/projects/project-1?debug=1')
 
     expect(wrapper.get('[data-testid="source-workspace"]')).toBeTruthy()
+    expect(wrapper.get('[data-testid="target-bible-workspace"]')).toBeTruthy()
     expect(wrapper.find('.product-mode').exists()).toBe(false)
     for (const panel of technicalPanels) {
       expect(wrapper.get(`[data-testid="${panel}"]`)).toBeTruthy()
