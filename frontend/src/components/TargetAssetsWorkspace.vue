@@ -243,14 +243,14 @@ onBeforeUnmount(clearPoll)
       </div>
     </div>
 
-    <p class="provider-note">当前版本先形成可审核的视觉身份约束，尚未接入已验收的参考图生成，因此不会显示或伪造参考图。</p>
+    <p class="provider-note">资产说明与审核内容默认使用中文；人物名、地名、品牌、型号和金额保留目标地区真实写法。真正进入图片或视频生成时，系统会再按生成模型需要整理执行提示。当前尚未接入已验收的参考图生成，因此不会显示或伪造参考图。</p>
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="loading" class="empty-state">正在读取目标资产…</p>
 
     <section v-if="pendingCandidate" class="review-panel">
       <div>
         <strong>候选版本 {{ pendingCandidate.generation_sequence }} · 待人工确认</strong>
-        <p>自动生成完成不会直接成为正式资产。请核对人物身份、场景布局、道具形态和连续性约束后再确认。</p>
+        <p>自动生成完成不会直接成为正式资产。请核对人物外形、场景布局、道具形态和连续性约束后再确认。</p>
       </div>
       <textarea v-model="reviewReason" rows="2" placeholder="填写本次确认或拒绝原因（必填）" />
       <div class="review-actions">
@@ -265,7 +265,6 @@ onBeforeUnmount(clearPoll)
         <h3>人物资产</h3>
         <article v-for="asset in previewContent.characters" :key="asset.target_asset_id" class="asset-card">
           <div class="asset-heading"><strong>{{ asset.display_name }}</strong><span>rev {{ asset.target_asset_revision }}</span></div>
-          <p><b>身份方向</b> {{ asset.identity_direction }}</p>
           <p><b>面部</b> {{ asset.face_direction }}</p>
           <p><b>发型 / 体态</b> {{ asset.hair_direction }} · {{ asset.body_direction }}</p>
           <p><b>服装基线</b> {{ asset.wardrobe_baseline }}</p>
@@ -278,7 +277,6 @@ onBeforeUnmount(clearPoll)
         <h3>场景资产</h3>
         <article v-for="asset in previewContent.scenes" :key="asset.target_asset_id" class="asset-card">
           <div class="asset-heading"><strong>{{ asset.display_name }}</strong><span>rev {{ asset.target_asset_revision }}</span></div>
-          <p><b>空间身份</b> {{ asset.spatial_identity }}</p>
           <p><b>布局</b> {{ asset.layout }}</p>
           <p><b>建筑 / 空间风格</b> {{ asset.architecture_style }} · {{ asset.interior_exterior_style }}</p>
           <p><b>光照基线</b> {{ asset.lighting_baseline }} · {{ asset.time_of_day_baseline }}</p>
@@ -291,7 +289,6 @@ onBeforeUnmount(clearPoll)
         <h3>道具资产</h3>
         <article v-for="asset in previewContent.props" :key="asset.target_asset_id" class="asset-card">
           <div class="asset-heading"><strong>{{ asset.display_name }}</strong><span>rev {{ asset.target_asset_revision }}</span></div>
-          <p><b>功能身份</b> {{ asset.functional_identity }}</p>
           <p><b>视觉形态</b> {{ asset.visual_form }}</p>
           <p><b>尺度</b> {{ asset.scale_reference }}</p>
           <div class="chips"><span v-for="item in [...asset.materials, ...asset.color_palette]" :key="item">{{ item }}</span></div>
