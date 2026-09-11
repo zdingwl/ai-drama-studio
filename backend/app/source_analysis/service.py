@@ -15,10 +15,12 @@ from app.evidence.service_v4 import create_source_evidence_task, run_p6_source_e
 from app.preprocessing.service import create_shot_boundary_task, get_episode_shot_boundary, run_p5_shot_boundary_task
 from app.projects.enums import SOURCE_BIBLE_PROJECT_TYPES
 from app.projects.service import get_project
-from app.shot_breakdown.service_v2 import create_shot_breakdown_task, get_shot_breakdown, run_p8_shot_breakdown_task
+from app.shot_breakdown.service import create_shot_breakdown_task
+from app.shot_breakdown.service_v2 import get_shot_breakdown, run_p8_shot_breakdown_task
 from app.skills.models import ArtifactType
 from app.source_analysis.schemas import SourceAnalysisState, SourceAnalysisStatusRead, SourceScriptRead
-from app.source_resolution.service_v2 import create_source_resolution_task, get_source_resolution, run_p9_source_resolution_task
+from app.source_resolution.service import create_source_resolution_task
+from app.source_resolution.service_v2 import get_source_resolution, run_p9_source_resolution_task
 from app.source_snapshot.service import finalize_source_video_snapshot, get_source_video_snapshot
 from app.sources.models import Episode
 from app.understanding.evidence_reference_runtime import run_p7_source_bible_task
@@ -267,6 +269,116 @@ def _child_idempotency_key(
     return f"source-analysis-{parent_task_id}-a{parent_attempt}-{stage}{suffix}"[:128]
 
 
+def _same_child_business_input(left: Task, right: Task) -> bool:
+    return (
+        left.project_id == right.project_id
+        and left.task_type == right.task_type
+        and left.input_fingerprint == right.input_fingerprint
+        and sorted(left.input_artifact_ids_json or []) == sorted(right.input_artifact_ids_json or [])
+        and left.plan_id == right.plan_id
+        and left.plan_step_key == right.plan_step_key
+        and left.episode_id == right.episode_id
+    )
+
+
+def _latest_equivalent_child(db: Session, seed: Task) -> Task:
+    candidates = list(
+        db.scalars(
+            select(Task)
+            .where(
+                Task.project_id == seed.project_id,
+                Task.task_type == seed.task_type,
+                Task.input_fingerprint == seed.input_fingerprint,
+            )
+            .order_by(Task.created_at.desc(), Task.id.desc())
+        ).all()
+    )
+    return next((candidate for candidate in candidates if _same_child_business_input(candidate, seed)), seed)
+
+
+def _restart_terminal_child(
+    db: Session,
+    *,
+    seed: Task,
+    parent_task_id: str,
+) -> Task:
+    current = _latest_equivalent_child(db, seed)
+    if current.status == TaskStatus.FAILED and current.attempt < current.max_attempts:
+        return retry_task(db, current.project_id, current.id)
+    if current.status == TaskStatus.INTERRUPTED and current.attempt < current.max_attempts:
+        return resume_task(db, current.project_id, current.id)
+    if current.status in {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.SUCCEEDED}:
+        return current
+
+    restartable = current.status == TaskStatus.CANCELLED or (
+        current.status in {TaskStatus.FAILED, TaskStatus.INTERRUPTED}
+        and current.attempt >= current.max_attempts
+    )
+    if not restartable:
+        return current
+
+    # Generic Task business-key dedupe is intentionally strict. For an explicit
+    # top-level "重新解析原片" command, however, a terminal child from an older
+    # execution must not brick the project forever. Preserve the old Task row and
+    # formal input_fingerprint, but start a new execution generation with a new
+    # internal business_key tied to the terminal predecessor.
+    idempotency_key = f"source-analysis-recover-{parent_task_id}-{current.id}"[:128]
+    existing = db.scalar(
+        select(Task).where(
+            Task.project_id == current.project_id,
+            Task.idempotency_key == idempotency_key,
+        )
+    )
+    if existing is not None:
+        if not _same_child_business_input(existing, current):
+            raise AppError(
+                "SOURCE_ANALYSIS_CHILD_RECOVERY_COLLISION",
+                "原片解析恢复任务的幂等键与其他业务输入冲突",
+                status_code=409,
+            )
+        return existing
+
+    business_key = _sha(
+        {
+            "source_analysis_restart_after": current.id,
+            "previous_business_key": current.business_key,
+            "task_type": current.task_type,
+            "input_fingerprint": current.input_fingerprint,
+        }
+    )
+    existing_business = db.scalar(
+        select(Task).where(
+            Task.project_id == current.project_id,
+            Task.business_key == business_key,
+        )
+    )
+    if existing_business is not None:
+        return existing_business
+
+    fresh = Task(
+        project_id=current.project_id,
+        task_type=current.task_type,
+        task_name=current.task_name,
+        idempotency_key=idempotency_key,
+        business_key=business_key,
+        input_fingerprint=current.input_fingerprint,
+        input_artifact_ids_json=list(current.input_artifact_ids_json or []),
+        plan_id=current.plan_id,
+        plan_step_key=current.plan_step_key,
+        episode_id=current.episode_id,
+        status=TaskStatus.QUEUED,
+        progress_percent=0,
+        attempt=0,
+        max_attempts=current.max_attempts,
+        checkpoint_json={},
+        cancel_requested=False,
+    )
+    db.add(fresh)
+    db.commit()
+    db.refresh(fresh)
+    return fresh
+
+
 def _ensure_child_succeeded(
     context: TaskExecutionContext,
     *,
@@ -274,28 +386,31 @@ def _ensure_child_succeeded(
     runner: Callable[[sessionmaker[Session], str], None],
 ) -> None:
     with context.session_factory() as db:
-        current = db.get(Task, child.id)
-        if current is None:
+        seed = db.get(Task, child.id)
+        if seed is None:
             raise AppError("SOURCE_ANALYSIS_CHILD_MISSING", "原片解析子任务不存在", status_code=500)
-        if current.status == TaskStatus.FAILED and current.attempt < current.max_attempts:
-            current = retry_task(db, current.project_id, current.id)
-        elif current.status == TaskStatus.INTERRUPTED and current.attempt < current.max_attempts:
-            current = resume_task(db, current.project_id, current.id)
+        current = _restart_terminal_child(
+            db,
+            seed=seed,
+            parent_task_id=context.task_id,
+        )
         if current.status == TaskStatus.SUCCEEDED:
             return
-        if current.status in {TaskStatus.CANCELLED, TaskStatus.FAILED}:
+        if current.status in {TaskStatus.CANCELLED, TaskStatus.FAILED, TaskStatus.INTERRUPTED}:
             raise AppError(
                 "SOURCE_ANALYSIS_CHILD_FAILED",
                 current.last_error or f"{current.task_name}失败",
                 status_code=409,
             )
-    runner(context.session_factory, child.id)
+        child_id = current.id
+        child_name = current.task_name
+    runner(context.session_factory, child_id)
     with context.session_factory() as db:
-        finished = db.get(Task, child.id)
+        finished = db.get(Task, child_id)
         if finished is None or finished.status != TaskStatus.SUCCEEDED:
             raise AppError(
                 "SOURCE_ANALYSIS_CHILD_FAILED",
-                finished.last_error if finished is not None and finished.last_error else f"{child.task_name}失败",
+                finished.last_error if finished is not None and finished.last_error else f"{child_name}失败",
                 status_code=409,
             )
 
