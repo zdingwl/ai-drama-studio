@@ -1,7 +1,7 @@
 # AI Drama Studio V3 — 开发规则
 
 > 当前状态日期：2026-09-11。  
-> 当前最高优先级：`docs/23_P10最终验收与P11准入.md`。  
+> 当前最高优先级：`docs/24_P11ReplicaTargetBibleProfessionalSkill与数据契约.md`。  
 > 原则：仓库当前 `main` + 编号更高、日期更新的状态/验收文档是唯一事实源；历史文档只能解释演进，不能覆盖最新口径。
 
 ## 1. 开发前读取顺序
@@ -33,7 +33,8 @@
 23. `docs/21_原片解析一键编排与剧本分镜工作区.md`
 24. `docs/22_P10一键原片解析最终产品验收.md`
 25. `docs/23_P10最终验收与P11准入.md`
-26. 当前相关代码与测试
+26. `docs/24_P11ReplicaTargetBibleProfessionalSkill与数据契约.md`
+27. 当前相关代码与测试
 
 冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。**
 
@@ -43,7 +44,8 @@
 - `docs/20`：取消 P10 作为普通用户独立大面板；
 - `docs/21`：REPLICA / REDRAW 的 P5~P10 收口为一次“解析原片”；
 - `docs/22`：P10 一键产品最终验收清单；
-- `docs/23`：用户已明确 `P10 PASS`，`SOURCE_SNAPSHOT = AVAILABLE`，P11 Replica Target Bible 正式准入。
+- `docs/23`：用户已明确 `P10 PASS`，`SOURCE_SNAPSHOT = AVAILABLE`，P11 Replica Target Bible 正式准入；
+- `docs/24`：P11 正式 Professional Skill、typed Target Artifact、revision/fingerprint/provenance、原子发布、Artifact Graph、Provider 与 UI/验收契约；当前工程实现按此执行，真实人工验收尚未 PASS。
 
 历史分支只能参考，不能覆盖当前 V3 规划。
 
@@ -84,17 +86,19 @@ PROP_RESOLUTION
 SOURCE_SNAPSHOT
 ```
 
-当前正式下一工程切片：
+当前正式工程切片：
 
 ```text
 P11 Replica Target Bible
 ```
 
-P11 只“准入”，并未完成。以下仍为 `PLANNED`：
+P11 已有正式契约并正在工程实现，但尚未完成真实人工验收。以下仍为 `PLANNED`：
 
 ```text
-Target Bible capability
-Target Script
+LOCALIZATION
+TARGET_BIBLE
+TARGET_SCRIPT
+TARGET_ASSETS
 TARGET_STORYBOARD
 TTS / Timing
 Generation / QC / Selection
@@ -219,7 +223,24 @@ frozen-accepted-source-facts-v1
 DETERMINISTIC_FREEZE
 ```
 
-P11 尚未有正式运行契约。**必须先设计并落文档，再实现。**
+P11：
+
+```text
+replica-target-bible@1.0.0
+p11-replica-target-bible-v1
+P11 Target schema 1.0
+replica-target-bible-v1
+replica-story-rhythm-locks-v1
+```
+
+P11 正式输出只允许：
+
+```text
+ADAPTATION_PLAN
+TARGET_BIBLE
+```
+
+不得在 P11 提前产出正式 `TARGET_SCRIPT`。
 
 ---
 
@@ -374,21 +395,19 @@ CURRENT SOURCE_VIDEO_SNAPSHOT
 
 作为 Source 世界版本边界，而不是从散落的 P5~P9 Artifact 自行拼装“当前事实”。
 
-需要细节时可以沿 Snapshot lineage 读取被冻结 Source Artifact，但必须保持 Snapshot revision 是唯一当前 Source 版本锚点。
+需要细节时可以读取 Snapshot 已冻结的 typed content / lineage，但 Snapshot revision 必须始终是唯一当前 Source 版本锚点。
 
-P11 必须先设计：
+P11 当前正式契约见 `docs/24`，实现必须包含：
 
 ```text
-Professional Skill
-manifest / SKILL.md
-typed schema
-Target Artifact
-revision / fingerprint / provenance
+Professional Skill: replica-target-bible@1.0.0
+typed ADAPTATION_PLAN + TARGET_BIBLE
+Target revision / fingerprint / provenance
 CURRENT / STALE
 Artifact Graph relations
 GET / POST / Command
-ProviderJob 策略
-用户编辑 / 决策规则
+ProviderJob-before-remote
+原子 publication set
 自动测试
 真实人工验收
 ```
@@ -397,30 +416,56 @@ Replica 默认目标：
 
 > 故事不乱改，节奏不重做，文化和表达才本土化。
 
-P11 默认锁定：
+P11 preservation locks 必须由服务端从 Snapshot 确定性生成，Provider 只能读取，不能重写。默认锁定：
 
 ```text
+故事主线
 Hook
-冲突
-反转
+冲突与顺序
+反转与顺序
 信息揭示顺序
 情绪峰值
 Payoff
 Cliffhanger
 Story Beat timing
 Shot rhythm baseline
+Scene order baseline
+Shot logic baseline
+Action rhythm baseline
 ```
 
-允许在 Target namespace 进行：人物身份 / 外形、场景、道具、文化信息、目标语言对白等本土化设计。
+P11 允许在 Target namespace 进行：人物身份 / 姓名 / 外形方向、场景文化环境、道具文化替换、世界语境、称谓/表达策略、visual style 与 continuity rules。
+
+Target Character / Scene / Prop 必须：
+
+- 使用独立 Target identity；
+- 保留 source_*_id lineage；
+- P11 v1 对 Snapshot 中 Source Character / Scene / Prop 一对一完整覆盖；
+- Provider 不得生成正式 Artifact / DB id；Target id 由服务端确定性生成。
+
+P11 原子 publication set：
+
+```text
+ADAPTATION_PLAN
+TARGET_BIBLE
+typed revision rows
+Artifact Graph edges
+```
+
+必须同一事务发布，任一步失败整体 rollback，不能留下半套 CURRENT Target 世界。
 
 硬规则：
 
 - Source Facts 绝不被 Target 创作反写；
-- Target identity 不得冒充 Source identity；
-- Source Snapshot STALE 时，基于旧 Snapshot 的 Target Bible 必须 STALE / BLOCKED；
+- Source Snapshot STALE 时，基于旧 Snapshot 的 ADAPTATION_PLAN / TARGET_BIBLE 必须递归 STALE；
+- target_language / target_region / scene_strategy / visual_style 改变后旧 Target Bible 必须 STALE；
+- P11 不得生成正式 `TARGET_SCRIPT` 或逐句 Final Target Dialogue；只能给出后续对白风格 / 本土化策略；
 - P11 不得提前实现正式 Target Storyboard；
 - P11 不得提前实现 TTS / Timing；
-- P11 不得提前实现 Generation / QC / Selection / Post。
+- P11 不得提前实现 Generation / QC / Selection / Post；
+- P11 v1 只允许 REPLICA，其他 ProjectType service-level fail closed。
+
+普通产品界面只显示“目标设定”，不暴露 P11 / Artifact id / fingerprint / provenance / ProviderJob / schema 等工程术语；页面加载只 GET，只有用户显式点击“生成目标设定 / 重新生成目标设定”才 POST。
 
 ---
 
@@ -458,7 +503,7 @@ Shot rhythm baseline
 
 不能用其中一层替代另一层。
 
-P11 只有在上述门禁和真实人工验收全部通过后，才能把对应 Target Bible capability 从 `PLANNED` 升为 `AVAILABLE`，并准入下一工程阶段。
+P11 只有在工程门禁、真实 Provider、真实项目页面和用户人工验收全部通过后，才能把 `LOCALIZATION / TARGET_BIBLE` 从 `PLANNED` 升为 `AVAILABLE`，并准入 P12。自动测试或内部 Target Artifact CURRENT 不能替代真实人工 PASS。
 
 ---
 
