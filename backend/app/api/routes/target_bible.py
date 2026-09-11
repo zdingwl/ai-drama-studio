@@ -11,6 +11,7 @@ from app.target_bible.service import (
     list_replica_target_bible_revisions,
     run_replica_target_bible_task,
 )
+from app.workflow.models import TaskStatus
 from app.workflow.schemas import TaskRead
 from app.workflow.task_service import task_to_read
 
@@ -38,7 +39,7 @@ def start_target_bible_route(
         project_id=project_id,
         idempotency_key=idempotency_key,
     )
-    if task.status.value == "QUEUED":
+    if task.status == TaskStatus.QUEUED:
         background_tasks.add_task(
             run_replica_target_bible_task,
             _request_session_factory(db),
