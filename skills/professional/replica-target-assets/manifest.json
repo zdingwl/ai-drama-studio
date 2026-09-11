@@ -1,0 +1,35 @@
+{
+  "id": "replica-target-assets",
+  "name": "复刻目标资产",
+  "version": "1.0.0",
+  "category": "target-assets",
+  "description": "把 CURRENT TARGET_BIBLE 中已确定的人物、场景和关键道具语义身份实现为可跨镜稳定引用、版本化、追溯和人工确认的正式视觉资产。",
+  "when_to_use": ["REPLICA 项目已存在 CURRENT TARGET_BIBLE，且 P12 已 PASS，需要为后续 Target Storyboard / Generation 建立正式视觉资产时"],
+  "when_not_to_use": ["TARGET_BIBLE 缺失或 STALE", "项目不是 REPLICA", "需要修改 Target Bible 语义身份", "需要生成 Target Storyboard / TTS / Timing / Video Generation"],
+  "required_inputs": ["TARGET_BIBLE"],
+  "optional_inputs": [],
+  "readable_artifacts": ["TARGET_BIBLE"],
+  "required_capabilities": ["TARGET_BIBLE", "TARGET_SCRIPT"],
+  "manual_path": "replica-target-assets/SKILL.md",
+  "steps": [
+    {"id":"load_target_bible","phase":"目标资产","title":"读取正式目标设定","description":"只读取 CURRENT TARGET_BIBLE typed content；Target Bible 是人物、场景和道具的语义真值。","capabilities":["TARGET_BIBLE"],"requires":["TARGET_BIBLE"],"produces":[]},
+    {"id":"design_visual_specs","phase":"目标资产","title":"具体化视觉资产规格","description":"Provider 在既有 target entity identity 内具体化人物、场景、道具视觉规格；服务端锁定 Target Bible 字段并严格校验 entity coverage。","capabilities":["TARGET_ASSETS"],"requires":["TARGET_BIBLE"],"produces":[]},
+    {"id":"generate_reference_media","phase":"目标资产","title":"生成参考资产","description":"对每个正式 Target Asset 生成 reference sheet，并由服务端解码、hash、尺寸校验和不可变持久化；失败时不得伪造成功。","capabilities":["TARGET_ASSETS"],"requires":["TARGET_BIBLE"],"produces":[]},
+    {"id":"review_candidate","phase":"目标资产","title":"形成人工审核候选","description":"完整通过 strict schema、identity、media 校验后只生成 READY_FOR_REVIEW candidate；candidate 不是正式 Artifact。","capabilities":["TARGET_ASSETS"],"requires":["TARGET_BIBLE"],"produces":[]},
+    {"id":"publish_target_assets","phase":"目标资产","title":"批准并发布正式目标资产","description":"用户显式批准后，服务端再次校验上游与媒体，在一个事务中发布 TARGET_ASSETS typed revision、Graph lineage、SUPERSEDES 与 CURRENT/STALE。","capabilities":["TARGET_ASSETS"],"requires":["TARGET_BIBLE"],"produces":["TARGET_ASSETS"]}
+  ],
+  "fact_levels": ["TARGET_BIBLE_SEMANTIC_TRUTH", "TARGET_VISUAL_REALIZATION", "HUMAN_APPROVED_REFERENCE_ASSET"],
+  "provider_rules": [
+    "CURRENT TARGET_BIBLE 是 P13 唯一硬输入；不得静默读取 SOURCE_VIDEO_SNAPSHOT、TARGET_SCRIPT 或散落 Source Artifact 来重解释 Target identity。",
+    "Provider 必须逐字返回被要求覆盖的 target_character_id / target_scene_id / target_prop_id；不得生成或修改这些正式身份。",
+    "Target Bible = semantic truth；Target Assets = visual realization。视觉具体化不得改变人物功能、场景功能、关键道具功能或目标世界身份。",
+    "每个正式 asset 必须拥有至少一个真实、可解码、已持久化且带 sha256/尺寸的 REFERENCE_SHEET；不得以 placeholder 或 Provider 临时 URL 冒充正式媒体。",
+    "Provider 输出只能形成待审核 candidate；未经用户显式 APPROVE 不得发布 CURRENT TARGET_ASSETS。",
+    "服务端独占 target_asset_id、asset_revision、reference_asset_id、Artifact revision、fingerprint、CURRENT/STALE、Graph 和 provenance。",
+    "GET 永远只读；外部 Provider 请求前必须先持久化 ProviderJob，并绑定 CURRENT TARGET_BIBLE。",
+    "P13 不输出 Voice、TTS、Actual Speech Duration、Timing、Target Storyboard、Generation Segment、Video Generation、QC、Lip Sync 或 Post Production。"
+  ],
+  "output_contracts": ["TARGET_ASSETS"],
+  "completion_criteria": ["Character/Scene/Prop 对 CURRENT TARGET_BIBLE entity 一一完整覆盖", "target_asset_id 在同一 Target entity 上跨重新生成保持稳定", "每个 asset 至少一个通过媒体校验的 REFERENCE_SHEET", "candidate 经用户显式批准后才原子发布 CURRENT TARGET_ASSETS", "revision/fingerprint/provenance/Artifact Graph 完整", "GET 无写副作用", "没有提前实现 P14+"],
+  "failure_policy": ["TARGET_BIBLE 缺失或 STALE 时阻断", "Visual Spec Provider entity coverage 不完整或篡改 identity 时阻断", "Image Provider 未配置或任一 reference media 失败时整次生成失败且不产生 candidate", "批准时上游或媒体校验变化则阻断并保留旧 CURRENT", "真实人工验收且用户明确回复 P13 PASS 前 TARGET_ASSETS capability 保持 PLANNED"]
+}
