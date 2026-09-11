@@ -86,10 +86,14 @@ def test_professional_skill_api_exposes_episode_understanding_p11_p12_and_p13_ma
     p13 = client.get("/api/v3/skills/professional/replica-target-assets")
     assert p13.status_code == 200
     p13_detail = p13.json()
-    assert p13_detail["version"] == "1.0.0"
+    assert p13_detail["version"] == "1.1.0"
     assert p13_detail["required_inputs"] == ["TARGET_BIBLE"]
     assert p13_detail["readable_artifacts"] == ["TARGET_BIBLE"]
     assert p13_detail["output_contracts"] == ["TARGET_ASSETS"]
+    p13_rules = "\n".join(p13_detail["provider_rules"])
+    assert "逐 Scene/逐 Shot 换装表" in p13_rules
+    assert "Story Beat" in p13_rules
+    assert "剧情时间轴" in p13_rules
 
 
 def test_missing_professional_skill_returns_404(client: TestClient) -> None:
