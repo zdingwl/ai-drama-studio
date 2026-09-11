@@ -472,7 +472,6 @@ def _revision_for(previous: dict[str, Any], asset_id: str, fingerprint: str) -> 
 def _compose(inputs: P13Inputs, semantic: TargetAssetsSemantic) -> ReplicaTargetAssetsContent:
     _validate_semantic(inputs, semantic)
     previous = _previous_asset_map(inputs.base_target_assets)
-    global_rules = list(inputs.target_bible.continuity_rules)
 
     characters: list[TargetCharacterAsset] = []
     for bible, generated in zip(inputs.target_bible.characters, semantic.characters, strict=True):
@@ -489,7 +488,7 @@ def _compose(inputs: P13Inputs, semantic: TargetAssetsSemantic) -> ReplicaTarget
             "body_direction": generated.body_direction,
             "wardrobe_baseline": generated.wardrobe_baseline,
             "signature_visual_features": generated.signature_visual_features,
-            "continuity_constraints": _merge_rules(global_rules, bible.continuity_rules, generated.continuity_constraints),
+            "continuity_constraints": _merge_rules(generated.continuity_constraints),
             "generation_guidance": generated.generation_guidance,
             "negative_constraints": generated.negative_constraints,
             "reference_media": [],
@@ -520,7 +519,7 @@ def _compose(inputs: P13Inputs, semantic: TargetAssetsSemantic) -> ReplicaTarget
             "fixed_landmarks": generated.fixed_landmarks,
             "lighting_baseline": generated.lighting_baseline,
             "time_of_day_baseline": generated.time_of_day_baseline,
-            "continuity_constraints": _merge_rules(global_rules, bible.continuity_rules, generated.continuity_constraints),
+            "continuity_constraints": _merge_rules(generated.continuity_constraints),
             "generation_guidance": generated.generation_guidance,
             "negative_constraints": generated.negative_constraints,
             "reference_media": [],
@@ -549,7 +548,7 @@ def _compose(inputs: P13Inputs, semantic: TargetAssetsSemantic) -> ReplicaTarget
             "color_palette": generated.color_palette,
             "scale_reference": generated.scale_reference,
             "signature_visual_features": generated.signature_visual_features,
-            "continuity_constraints": _merge_rules(global_rules, bible.continuity_rules, generated.continuity_constraints),
+            "continuity_constraints": _merge_rules(generated.continuity_constraints),
             "generation_guidance": generated.generation_guidance,
             "negative_constraints": generated.negative_constraints,
             "reference_media": [],
