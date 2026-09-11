@@ -47,6 +47,7 @@ class TaskWorkerRead(BaseModel):
     project_id: str
     task_type: str
     task_name: str
+    idempotency_key: str
     input_fingerprint: str
     input_artifact_ids_json: list[str]
     plan_id: str | None
