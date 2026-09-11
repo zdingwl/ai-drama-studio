@@ -1,7 +1,7 @@
 # AI Drama Studio V3 — 开发规则
 
 > 当前状态日期：2026-09-11。  
-> 当前最高优先级：`docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`。  
+> 当前最高优先级：`docs/29_P13中文审核语言与生成执行语言分层.md`。  
 > 原则：仓库当前 `main` + 编号更高、日期更新的状态/验收文档是唯一事实源；历史文档只能解释演进，不能覆盖最新口径。
 
 ## 1. 开发前读取顺序
@@ -38,7 +38,8 @@
 28. `docs/26_P11最终验收与P12准入.md`
 29. `docs/27_P12最终验收与后续阶段准入评估.md`
 30. `docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`
-31. 当前相关代码与测试
+31. `docs/29_P13中文审核语言与生成执行语言分层.md`
+32. 当前相关代码与测试
 
 冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。**
 
@@ -53,7 +54,8 @@
 - `docs/25`：P12 Target Script / Localization 正式数据与 Professional Skill 合同；
 - `docs/26`：用户已明确 `P11 PASS`，`LOCALIZATION / TARGET_BIBLE = AVAILABLE`，P12 正式准入；
 - `docs/27`：用户已明确 `P12 PASS`，`TARGET_SCRIPT = AVAILABLE`；后续能力仍需独立合同与真实验收；
-- `docs/28`：P13 Target Assets 正式合同已经建立；P13 可以实现、测试和进入真实验收，但用户明确 `P13 PASS` 前 `TARGET_ASSETS = PLANNED`，且不得进入 P14+。
+- `docs/28`：P13 Target Assets 正式合同已经建立；P13 可以实现、测试和进入真实验收，但用户明确 `P13 PASS` 前 `TARGET_ASSETS = PLANNED`，且不得进入 P14+；
+- `docs/29`：P13 用户审核语言固定中文优先；目标受众成品语言与未来模型执行 prompt 语言分层，P13 v2 Prompt 不得因 `target_language=en-US` 输出英文审核墙。
 
 历史分支只能参考，不能覆盖当前 V3 规划。
 
@@ -281,14 +283,15 @@ P13：
 
 ```text
 replica-target-assets@1.0.0
-p13-replica-target-assets-v1
+p13-replica-target-assets-v2
 TARGET_ASSETS schema 1.0
 replica-target-visual-identity-v1
 target-bible-entity-binding-v1
 human-target-asset-approval-v1
+review_language = zh-CN
 ```
 
-P13 正式硬输入只有 CURRENT `TARGET_BIBLE`。当前仓库没有已接入并真实验收的图片生成 Provider，因此 P13 v1 正式资产首先是 typed visual identity packet；不得伪造 reference media。Provider 结果只形成 `NEEDS_REVIEW` candidate，用户显式确认后才允许发布正式 CURRENT `TARGET_ASSETS`。在 P13 真实人工验收前 capability 继续 `PLANNED`。
+P13 正式硬输入只有 CURRENT `TARGET_BIBLE`。当前仓库没有已接入并真实验收的图片生成 Provider，因此 P13 v1 正式资产首先是 typed visual identity packet；不得伪造 reference media。Provider 结果只形成 `NEEDS_REVIEW` candidate，用户显式确认后才允许发布正式 CURRENT `TARGET_ASSETS`。P13 review-facing 视觉实现文本必须中文主导，目标地区人物名、地名、品牌、型号、货币可保留原文；未来真正给图像/视频模型的 execution prompt 由后续 Generation Adapter 再按模型需要生成，不得反过来把 P13 审核页做成英文墙。在 P13 真实人工验收前 capability 继续 `PLANNED`。
 
 ---
 
@@ -549,7 +552,7 @@ Source Dialogue 规则：
 
 ## 11. P13 Target Assets 硬边界
 
-P13 正式契约见 `docs/28`。唯一硬输入：
+P13 正式契约见 `docs/28`，中文审核语言补充合同见 `docs/29`。唯一硬输入：
 
 ```text
 CURRENT TARGET_BIBLE
@@ -576,6 +579,9 @@ Target Prop      → Target Prop Asset
 
 - P13 v1 只允许 REPLICA；
 - Provider 不得改变 P11 Target identity、人物故事功能、场景功能或关键道具功能；
+- P13 Provider 的 review-facing 视觉实现内容必须以简体中文为主；目标地区人物名、地名、品牌、型号、金额与专有实体允许保留原文；
+- `target_language` 是目标受众成品语言，不等于 P13 用户审核语言；不得因为 `target_language=en-US` 把审核正文整体输出成英文；
+- 当前 `generation_guidance` 是中文可审核设计指导，不等于最终 image/video execution prompt；未来执行 prompt 由后续 Generation Adapter 按模型需要生成；
 - `target_asset_id` 由服务端根据 project / asset type / target entity / binding contract 确定性生成，Provider 无权生成；
 - 同一 Target entity 重新生成视觉实现时 stable asset id 不变，视觉 packet fingerprint 改变才递增该 asset revision；
 - Character 资产必须稳定 face / hair / body / wardrobe baseline / signature features；
