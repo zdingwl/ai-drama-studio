@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 P13_SCHEMA_VERSION = "1.0"
@@ -275,6 +275,14 @@ class TargetAssetsReviewCommand(BaseModel):
     expected_target_bible_artifact_id: str = Field(min_length=1, max_length=160)
     expected_generation_sequence: int = Field(ge=1)
     reason: str = Field(min_length=1, max_length=800)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("review reason must not be blank")
+        return normalized
 
 
 class TargetAssetRef(BaseModel):
