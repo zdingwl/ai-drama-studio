@@ -138,11 +138,16 @@ def test_p11_professional_skill_root_step_and_capability_gate() -> None:
     assert Capability.TARGET_SCRIPT not in target_bible.capabilities
     assert ArtifactType.TARGET_SCRIPT not in target_bible.produces
     target_script = next(step for step in root.steps if step.id == "target_script")
-    assert target_script.requires == (ArtifactType.TARGET_BIBLE, ArtifactType.SOURCE_VIDEO_SNAPSHOT)
+    assert target_script.requires == (
+        ArtifactType.SOURCE_VIDEO_SNAPSHOT,
+        ArtifactType.ADAPTATION_PLAN,
+        ArtifactType.TARGET_BIBLE,
+    )
 
     assert CAPABILITY_BY_ID[Capability.SOURCE_SNAPSHOT].availability == CapabilityAvailability.AVAILABLE
     assert CAPABILITY_BY_ID[Capability.LOCALIZATION].availability == CapabilityAvailability.PLANNED
     assert CAPABILITY_BY_ID[Capability.TARGET_BIBLE].availability == CapabilityAvailability.PLANNED
+    assert CAPABILITY_BY_ID[Capability.TARGET_SCRIPT].availability == CapabilityAvailability.PLANNED
     assert expected_namespace(ArtifactType.ADAPTATION_PLAN) == ArtifactNamespace.TARGET
     assert expected_namespace(ArtifactType.TARGET_BIBLE) == ArtifactNamespace.TARGET
 

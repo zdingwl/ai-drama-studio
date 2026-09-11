@@ -1,0 +1,38 @@
+{
+  "id": "target-script-localization",
+  "name": "目标剧本与对白本土化",
+  "version": "1.0.0",
+  "category": "target-script",
+  "description": "读取 CURRENT SOURCE_VIDEO_SNAPSHOT + ADAPTATION_PLAN + TARGET_BIBLE，以冻结的 P6 canonical Source Dialogue 为唯一原始对白事实，形成 Translation → Localization → Final Target Dialogue 并发布 TARGET_SCRIPT。当前仅工程预实现，P11 未 PASS 前不得正式执行。",
+  "when_to_use": ["REPLICA 项目未来已通过 P11 人工验收，且三个 P12 硬输入均为 CURRENT 时"],
+  "when_not_to_use": ["P11 尚未人工 PASS", "任一硬输入缺失或 STALE", "项目不是 REPLICA", "需要重新识别 Source 台词", "需要 Target Storyboard / Voice / TTS / Timing / Generation"],
+  "required_inputs": ["SOURCE_VIDEO_SNAPSHOT", "ADAPTATION_PLAN", "TARGET_BIBLE"],
+  "optional_inputs": [],
+  "readable_artifacts": ["SOURCE_VIDEO_SNAPSHOT", "ADAPTATION_PLAN", "TARGET_BIBLE"],
+  "required_capabilities": ["TARGET_SCRIPT"],
+  "manual_path": "target-script-localization/SKILL.md",
+  "steps": [
+    {"id":"load_current_target_inputs","phase":"目标版本","title":"读取正式 Target 输入","description":"同时读取 CURRENT SOURCE_VIDEO_SNAPSHOT、ADAPTATION_PLAN 和 TARGET_BIBLE，并验证三者 lineage 与目标配置一致。","capabilities":["TARGET_SCRIPT"],"requires":["SOURCE_VIDEO_SNAPSHOT","ADAPTATION_PLAN","TARGET_BIBLE"],"produces":[]},
+    {"id":"freeze_canonical_dialogue_manifest","phase":"目标版本","title":"冻结原对白清单","description":"只从 Source Snapshot 冻结的 P6 canonical_dialogue 构造只读 manifest；source text、时间和 utterance id 不得由 Provider 改写。","capabilities":["TARGET_SCRIPT"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":[]},
+    {"id":"translate_dialogue","phase":"目标版本","title":"逐句翻译","description":"对每条 canonical Source Dialogue 形成独立 translation_text，保持原始语义可审计。","capabilities":["TARGET_SCRIPT"],"requires":["SOURCE_VIDEO_SNAPSHOT","TARGET_BIBLE"],"produces":[]},
+    {"id":"localize_dialogue","phase":"目标版本","title":"逐句本土化","description":"结合 P11 Target Bible 与 Adaptation Plan，把翻译转换为目标地区自然表达并形成 final_target_dialogue。","capabilities":["TARGET_SCRIPT"],"requires":["ADAPTATION_PLAN","TARGET_BIBLE"],"produces":[]},
+    {"id":"validate_dialogue_lineage","phase":"目标版本","title":"校验对白 lineage","description":"服务端校验 canonical utterance 一一完整覆盖、顺序不变、Source 正文与时间原样保留，角色只能按已证明 lineage 确定性绑定。","capabilities":["TARGET_SCRIPT"],"requires":["SOURCE_VIDEO_SNAPSHOT","TARGET_BIBLE"],"produces":[]},
+    {"id":"publish_target_script","phase":"目标版本","title":"发布目标剧本","description":"发布 TARGET_SCRIPT typed revision、provenance 与三输入 Artifact Graph；不生成 Voice/TTS/Timing/Storyboard。","capabilities":["TARGET_SCRIPT"],"requires":["SOURCE_VIDEO_SNAPSHOT","ADAPTATION_PLAN","TARGET_BIBLE"],"produces":["TARGET_SCRIPT"]}
+  ],
+  "fact_levels": ["FROZEN_CANONICAL_SOURCE_DIALOGUE", "P11_TARGET_CONSTRAINT", "TARGET_DIALOGUE_DECISION"],
+  "provider_rules": [
+    "Source Dialogue 原始正文只允许来自 CURRENT SOURCE_VIDEO_SNAPSHOT 中冻结的 P6 canonical_dialogue；禁止重新 ASR、OCR、听写、口型猜词或按剧情补台词。",
+    "Provider 必须按 utterance_id 与 canonical manifest 一一完整覆盖，顺序一致；不得遗漏、重复、创造、合并或拆分 utterance。",
+    "translation_text、localization_text、final_target_dialogue 必须分层输出，不能把三个阶段折叠成不可审计的一段文本。",
+    "Translation 优先保持 Source 原意；Localization 应遵守 CURRENT ADAPTATION_PLAN 与 TARGET_BIBLE 的文化、称谓、人物和表达约束。",
+    "P12 不为了预计时长硬塞对白；真实语音时长只由后续 TTS 获得，Timing 调整属于后续阶段。",
+    "Target character 只能由服务端依据 Source Speaker/Character → P11 Target Character lineage 确定；Provider 不得猜 target_character_id 或 voice。",
+    "禁止生成 Target Voice、TTS、Actual Speech Duration、Timing Plan、Target Storyboard、Generation、QC、Selection 或 Post 内容。",
+    "GET 永远只读；外部 Provider 请求前必须先持久化 ProviderJob，并绑定三个 CURRENT 输入。",
+    "任一硬输入 STALE 或 lineage 不一致时 fail closed；Target 不得反向写 Source。",
+    "P11 未真实人工 PASS 时，P12 admission gate 必须在 Task/ProviderJob/Artifact 创建之前拒绝执行。"
+  ],
+  "output_contracts": ["TARGET_SCRIPT"],
+  "completion_criteria": ["canonical Source Dialogue 一一完整覆盖且 source text/timing 未被改写", "Translation → Localization → Final Target Dialogue 三层可审计", "三硬输入 revision/fingerprint/provenance/Graph 完整", "角色绑定只来自确定性 lineage", "没有生成后续 Voice/TTS/Timing/Storyboard/Generation Artifact"],
+  "failure_policy": ["P11 未 PASS 时阻断且零写副作用", "任一硬输入缺失/STALE/lineage 不一致时阻断", "Provider dialogue coverage 非精确一一对应时阻断", "publication 失败整体 rollback 并保留旧 CURRENT TARGET_SCRIPT", "P12 真实人工验收通过前 TARGET_SCRIPT capability 保持 PLANNED"]
+}

@@ -9,13 +9,15 @@
 - P10 `SOURCE_VIDEO_SNAPSHOT` 是 Target 阶段唯一当前 Source 世界版本锚点；Target 不得绕过 Snapshot 自行拼装当前 Source Facts。
 - 故事骨架（Story Skeleton）与节奏骨架（Rhythm Skeleton）通过 Snapshot 冻结后，作为目标版本的权威 preservation locks。
 - P11 只建立 `ADAPTATION_PLAN + TARGET_BIBLE`；不得提前生成正式 `TARGET_SCRIPT`、Target Storyboard、TTS、Timing 或视频生成参数。
+- P12 正式硬输入必须同时是 CURRENT `SOURCE_VIDEO_SNAPSHOT + ADAPTATION_PLAN + TARGET_BIBLE`；P11 未真实人工 PASS 时 P12 不得执行。
+- P12 的 Source Dialogue 只能来自 Snapshot 冻结的 P6 canonical dialogue；不得重新 ASR/OCR/猜词或静默修正 Source 台词。
 - Target 人物 / 场景 / 道具必须保留 Source lineage，但 Target identity 与 Source identity 严格分离。
-- 目标对白先保证意图、情绪和自然表达，再在后续阶段根据真实 TTS 时长做 Timing；P11 不直接生成正式逐句目标对白。
+- 对白链固定为 `Source Dialogue → Translation → Localization → Final Target Dialogue → Target Speaker/Voice → TTS → Actual Speech Duration → Timing Plan`；P12 只到 Final Target Dialogue。
 - 原片事实、目标世界、生产计划严格分层。
 - 未经过生成质检与正式选择的尝试不能进入后期。
 
 ## 正式顺序
-原片 → 证据 → 整集理解 → 故事骨架 / 节奏骨架 → 逐镜拉片与角色 / 场景 / 道具归一 → 原片分析定稿 → **目标设定（ADAPTATION_PLAN + TARGET_BIBLE）** → 目标剧本 / 对白 → 目标资产 → 真实语音时长 → 复刻分镜 → 视频生成与选择 → 口型 / 字幕 / 剪辑 → 成片。
+原片 → 证据 → 整集理解 → 故事骨架 / 节奏骨架 → 逐镜拉片与角色 / 场景 / 道具归一 → 原片分析定稿 → **目标设定（ADAPTATION_PLAN + TARGET_BIBLE）** → **目标剧本 / 对白（Translation → Localization → Final Target Dialogue）** → 目标资产 → Target Speaker/Voice → TTS / 真实语音时长 → Timing → 复刻分镜 → 视频生成与选择 → 口型 / 字幕 / 剪辑 → 成片。
 
 ## P11 目标设定
 P11 读取且只锚定 CURRENT `SOURCE_VIDEO_SNAPSHOT`，确定性锁定：故事主线、Hook、冲突、反转、信息揭示顺序、情绪峰值、Payoff、Cliffhanger、Story Beat timing、Shot rhythm / Scene order / Shot logic / Action rhythm baseline。
@@ -24,8 +26,15 @@ P11 读取且只锚定 CURRENT `SOURCE_VIDEO_SNAPSHOT`，确定性锁定：故�
 
 外部 Provider 只返回 Target 设计语义；Target ID、preservation locks、Artifact revision / fingerprint / provenance 与 Graph 由服务端控制。
 
+## P12 目标剧本 / 本土化
+P12 当前只做工程预实现，不代表正式准入。P11 用户真实人工 PASS、`LOCALIZATION / TARGET_BIBLE` 按正式验收流程 AVAILABLE 只是必要条件；还必须通过后续正式准入改动显式打开独立 P12 admission switch，服务端才允许创建真实任务。
+
+P12 同时读取 CURRENT Snapshot、Adaptation Plan、Target Bible，从 Snapshot 中确定性提取 canonical dialogue manifest。Provider 只能针对已有 `utterance_id` 输出 `translation_text / localization_text / final_target_dialogue`，不得改变 Source text、时间或 utterance 集合。
+
+若 Source Speaker → Source Character → Target Character lineage 可证明，服务端可绑定 `target_character_id`；否则保持未绑定，不能让模型猜。Target Voice / TTS / Duration / Timing 属于后续阶段。
+
 ## 需要用户决策
 只有在故事或节奏必须偏离原片、文化替换会改变核心人物关系，或存在多个会显著改变目标世界的合理方向且系统不能安全自动选择时才询问用户。
 
 ## 完成标准
-原片分析定稿可追溯；Target Bible 与 Source Snapshot lineage 明确；目标人物 / 场景 / 道具属于同一目标世界且使用独立 Target identity；后续目标对白与时间计划成立；复刻分镜保持原故事和节奏；最终成片来自正式 GenerationSelection。
+原片分析定稿可追溯；Target Bible 与 Source Snapshot lineage 明确；Target Script 保留 canonical Source Dialogue 与三层目标对白的可审计 lineage；目标人物 / 场景 / 道具属于同一目标世界且使用独立 Target identity；后续目标语音与时间计划成立；复刻分镜保持原故事和节奏；最终成片来自正式 GenerationSelection。

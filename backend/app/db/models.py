@@ -18,6 +18,7 @@ from app.source_resolution.models import SourceResolutionRevision
 from app.source_snapshot.models import SourceVideoSnapshotRevision
 from app.sources.models import Episode, SourceAsset, SourceDocument
 from app.target_bible.models import ReplicaTargetRevision
+from app.target_script.models import ReplicaTargetScriptRevision
 from app.understanding.models import SourceBibleRevision
 from app.workflow.models import ProviderJob, Task
 
@@ -32,6 +33,7 @@ __all__ = [
     "ProjectExecutionPlanStepRecord",
     "ProviderJob",
     "ReplicaTargetRevision",
+    "ReplicaTargetScriptRevision",
     "ShotAnchor",
     "ShotBoundarySet",
     "ShotDialogueProjection",
