@@ -9,6 +9,7 @@ from app.target_assets.providers import (
     _assert_review_language,
     _profile,
     _prompt,
+    _target_bible_visual_view,
 )
 from app.target_assets.schemas import (
     P13_PROMPT_VERSION,
@@ -107,6 +108,58 @@ def test_p13_v3_prompt_separates_chinese_review_language_and_enforces_asset_loca
     assert "time_of_day_baseline 是场景视觉基线，不是剧情时间轴" in prompt
     assert "不得根据 Scene 顺序、闪回或情绪自行推断" in prompt
     assert "P13 不负责复述 preservation locks" in prompt
+
+
+def test_p13_visual_projection_omits_global_story_and_dialogue_text_from_provider_prompt() -> None:
+    target_bible = {
+        "schema_version": "1.0",
+        "target_language": "en-US",
+        "target_region": "US",
+        "target_world": {"setting_summary": "Austin apartment community"},
+        "visual_style": "grounded US vertical drama",
+        "continuity_rules": ["GLOBAL_STORY_LOCK_SENTINEL"],
+        "dialogue_style_rules": ["GLOBAL_DIALOGUE_LOCK_SENTINEL"],
+        "adaptation_summary": "GLOBAL_ADAPTATION_SUMMARY_SENTINEL",
+        "characters": [
+            {
+                "target_character_id": "tchr_lila",
+                "source_character_id": "src_lila",
+                "display_name": "Lila Xu",
+                "localized_identity": "Austin marketing professional",
+                "appearance_direction": "Grounded contemporary urban styling",
+                "personality_constraints": ["PERSONALITY_SENTINEL"],
+                "continuity_rules": ["ENTITY_VISUAL_GUARDRAIL_SENTINEL"],
+            }
+        ],
+        "scenes": [],
+        "props": [],
+    }
+
+    visual_view = _target_bible_visual_view(target_bible)
+    assert "continuity_rules" not in visual_view
+    assert "dialogue_style_rules" not in visual_view
+    assert "adaptation_summary" not in visual_view
+    assert "source_character_id" not in visual_view["characters"][0]
+    assert "personality_constraints" not in visual_view["characters"][0]
+    assert visual_view["characters"][0]["continuity_rules"] == ["ENTITY_VISUAL_GUARDRAIL_SENTINEL"]
+
+    prompt = _prompt(
+        TargetAssetsProviderInput(
+            target_language="en-US",
+            target_region="US",
+            target_bible=target_bible,
+            entity_manifest={
+                "characters": [{"target_character_id": "tchr_lila", "display_name": "Lila Xu"}],
+                "scenes": [],
+                "props": [],
+            },
+        )
+    )
+    assert "GLOBAL_STORY_LOCK_SENTINEL" not in prompt
+    assert "GLOBAL_DIALOGUE_LOCK_SENTINEL" not in prompt
+    assert "GLOBAL_ADAPTATION_SUMMARY_SENTINEL" not in prompt
+    assert "PERSONALITY_SENTINEL" not in prompt
+    assert "ENTITY_VISUAL_GUARDRAIL_SENTINEL" in prompt
 
 
 def test_p13_review_language_accepts_chinese_explanations_with_target_region_proper_nouns() -> None:
