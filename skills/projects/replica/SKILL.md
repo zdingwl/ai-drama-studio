@@ -55,7 +55,7 @@ P12 同时读取 CURRENT Snapshot、Adaptation Plan、Target Bible，从 Snapsho
 P12 最终验收记录见 `docs/27_P12最终验收与后续阶段准入评估.md`。
 
 ## P13 目标资产
-P13 基础合同见 `docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`，审核语言见 `docs/29_P13中文审核语言与生成执行语言分层.md`，真实项目验收后的当前整改基线见 `docs/30_P13真实项目验收_资产作用域与时序约束整改.md`。
+P13 基础合同见 `docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`，审核语言见 `docs/29_P13中文审核语言与生成执行语言分层.md`，真实项目整改基线见 `docs/30_P13真实项目验收_资产作用域与时序约束整改.md`，最终验收状态见 `docs/31_P13最终验收与P14准入评估.md`。
 
 当前 Professional Skill / runtime contract：
 
@@ -98,15 +98,18 @@ Provider succeeded
 → ACCEPT 才发布 CURRENT TARGET_ASSETS
 ```
 
-真实项目已经证明上述 Provider / review / formal publication 路径可运行，但旧 `replica-target-visual-identity-v1` 内容质量验收未通过。当前必须用 v3 / visual-identity-v2 显式重新生成、审核；旧正式资产只保留历史，不得据此宣布阶段 PASS。
-
-P13 真实人工复验并由用户明确回复 `P13 PASS` 前：
+v3 / visual-identity-v2 已完成真实 Provider、真实项目重跑与用户人工质量复验，用户已明确 `P13 PASS`。正式能力状态为：
 
 ```text
-TARGET_ASSETS = PLANNED
+TARGET_ASSETS = AVAILABLE
 ```
 
-P13 不准进入 Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Post。
+旧 `replica-target-visual-identity-v1` 正式 revision 继续只作为历史保留；当前可用基线以 v3 / visual-identity-v2 为准。
+
+P13 自身不创建 Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Lip Sync / Post Artifact。P13 PASS 也不自动准入这些后续能力；它们继续 `PLANNED`，必须先建立下一阶段正式合同，再分别完成工程与真实人工验收。
+
+## 下一阶段边界
+Root Skill 的长期顺序在 `target_assets` 后是 `voice_timing`，但当前只表示依赖顺序，不等于 P14 已实现或已准入。P14 正式合同尚未建立；在新的编号合同明确 Target Voice / TTS / Timing 的硬输入、typed output、Provider、时长权威来源、Artifact Graph 与验收规则前，不进入 P14 实现。
 
 ## 需要用户决策
 只有在故事或节奏必须偏离原片、文化替换会改变核心人物关系，或存在多个会显著改变目标世界的合理方向且系统不能安全自动选择时才询问用户。P13 的视觉身份候选属于正式人工确认边界，必须由用户显式接受或拒绝。

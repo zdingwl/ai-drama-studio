@@ -102,7 +102,7 @@ def test_missing_professional_skill_returns_404(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "PROFESSIONAL_SKILL_NOT_FOUND"
 
 
-def test_capability_registry_reflects_p12_acceptance_and_keeps_p13_planned(client: TestClient) -> None:
+def test_capability_registry_reflects_p13_acceptance_and_keeps_p14_plus_planned(client: TestClient) -> None:
     response = client.get("/api/v3/skills/capabilities")
     assert response.status_code == 200
     capabilities = {item["id"]: item for item in response.json()}
@@ -123,7 +123,9 @@ def test_capability_registry_reflects_p12_acceptance_and_keeps_p13_planned(clien
     assert capabilities["LOCALIZATION"]["availability"] == "AVAILABLE"
     assert capabilities["TARGET_BIBLE"]["availability"] == "AVAILABLE"
     assert capabilities["TARGET_SCRIPT"]["availability"] == "AVAILABLE"
-    assert capabilities["TARGET_ASSETS"]["availability"] == "PLANNED"
+    assert capabilities["TARGET_ASSETS"]["availability"] == "AVAILABLE"
+    assert capabilities["TTS"]["availability"] == "PLANNED"
+    assert capabilities["TIMING"]["availability"] == "PLANNED"
     assert capabilities["VIDEO_GENERATION"]["availability"] == "PLANNED"
 
 

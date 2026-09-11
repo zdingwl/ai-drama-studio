@@ -281,7 +281,7 @@ def test_p13_professional_skill_and_root_contract_keep_target_bible_as_only_hard
     assert step.capabilities == (Capability.TARGET_ASSETS,)
     assert "replica-target-assets" in root.subskills
 
-    assert CAPABILITY_BY_ID[Capability.TARGET_ASSETS].availability == CapabilityAvailability.PLANNED
+    assert CAPABILITY_BY_ID[Capability.TARGET_ASSETS].availability == CapabilityAvailability.AVAILABLE
     assert expected_namespace(ArtifactType.TARGET_ASSETS) == ArtifactNamespace.TARGET
 
 
