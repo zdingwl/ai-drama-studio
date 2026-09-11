@@ -212,6 +212,7 @@ class TargetAssetsCandidateProvenance(BaseModel):
     target_language: str
     target_region: str
     generation_sequence: int = Field(ge=1)
+    generation_base_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     professional_skill_id: str = P13_SKILL_ID
     professional_skill_version: str
     provider: str
