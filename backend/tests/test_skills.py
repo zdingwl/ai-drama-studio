@@ -20,7 +20,7 @@ def test_skill_registry_exposes_six_versioned_root_skills(client: TestClient) ->
         "SCRIPT_TO_DRAMA",
         "SCRIPT_LOCALIZATION",
     }
-    assert by_type["REPLICA"]["version"] == "1.2.0"
+    assert by_type["REPLICA"]["version"] == "1.3.0"
     assert {skill["version"] for project_type, skill in by_type.items() if project_type != "REPLICA"} == {"1.0.0"}
     assert all(skill["required_capabilities"] for skill in skills)
     assert all(skill["completion_criteria"] for skill in skills)
@@ -34,7 +34,7 @@ def test_skill_detail_contains_real_manual_and_replica_constraints(client: TestC
     assert "故事骨架" in detail["manual"]
     assert "节奏骨架" in detail["manual"]
     assert detail["manual_path"] == "replica/SKILL.md"
-    assert detail["version"] == "1.2.0"
+    assert detail["version"] == "1.3.0"
     steps = {step["id"]: step for step in detail["steps"]}
     assert steps["target_bible"]["requires"] == ["SOURCE_VIDEO_SNAPSHOT"]
     assert steps["target_bible"]["produces"] == ["ADAPTATION_PLAN", "TARGET_BIBLE"]
@@ -43,15 +43,18 @@ def test_skill_detail_contains_real_manual_and_replica_constraints(client: TestC
         "ADAPTATION_PLAN",
         "TARGET_BIBLE",
     ]
+    assert steps["target_assets"]["requires"] == ["TARGET_BIBLE"]
+    assert steps["target_assets"]["produces"] == ["TARGET_ASSETS"]
 
 
-def test_professional_skill_api_exposes_episode_understanding_p11_and_p12_manuals(client: TestClient) -> None:
+def test_professional_skill_api_exposes_episode_understanding_p11_p12_and_p13_manuals(client: TestClient) -> None:
     listed = client.get("/api/v3/skills/professional")
     assert listed.status_code == 200
     ids = {item["id"] for item in listed.json()}
     assert "source-video-understanding" in ids
     assert "replica-target-bible" in ids
     assert "target-script-localization" in ids
+    assert "replica-target-assets" in ids
 
     response = client.get("/api/v3/skills/professional/source-video-understanding")
     assert response.status_code == 200
@@ -80,6 +83,14 @@ def test_professional_skill_api_exposes_episode_understanding_p11_and_p12_manual
     assert p12_detail["required_inputs"] == ["SOURCE_VIDEO_SNAPSHOT", "ADAPTATION_PLAN", "TARGET_BIBLE"]
     assert p12_detail["output_contracts"] == ["TARGET_SCRIPT"]
 
+    p13 = client.get("/api/v3/skills/professional/replica-target-assets")
+    assert p13.status_code == 200
+    p13_detail = p13.json()
+    assert p13_detail["version"] == "1.0.0"
+    assert p13_detail["required_inputs"] == ["TARGET_BIBLE"]
+    assert p13_detail["readable_artifacts"] == ["TARGET_BIBLE"]
+    assert p13_detail["output_contracts"] == ["TARGET_ASSETS"]
+
 
 def test_missing_professional_skill_returns_404(client: TestClient) -> None:
     response = client.get("/api/v3/skills/professional/not-found")
@@ -87,7 +98,7 @@ def test_missing_professional_skill_returns_404(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "PROFESSIONAL_SKILL_NOT_FOUND"
 
 
-def test_capability_registry_reflects_p12_acceptance(client: TestClient) -> None:
+def test_capability_registry_reflects_p12_acceptance_and_keeps_p13_planned(client: TestClient) -> None:
     response = client.get("/api/v3/skills/capabilities")
     assert response.status_code == 200
     capabilities = {item["id"]: item for item in response.json()}
@@ -98,6 +109,7 @@ def test_capability_registry_reflects_p12_acceptance(client: TestClient) -> None
     assert "LOCALIZATION" in capabilities
     assert "TARGET_BIBLE" in capabilities
     assert "TARGET_SCRIPT" in capabilities
+    assert "TARGET_ASSETS" in capabilities
     assert "VIDEO_GENERATION" in capabilities
     assert capabilities["EPISODE_UNDERSTANDING"]["availability"] == "AVAILABLE"
     assert capabilities["STORY_RHYTHM"]["availability"] == "AVAILABLE"
@@ -107,6 +119,7 @@ def test_capability_registry_reflects_p12_acceptance(client: TestClient) -> None
     assert capabilities["LOCALIZATION"]["availability"] == "AVAILABLE"
     assert capabilities["TARGET_BIBLE"]["availability"] == "AVAILABLE"
     assert capabilities["TARGET_SCRIPT"]["availability"] == "AVAILABLE"
+    assert capabilities["TARGET_ASSETS"]["availability"] == "PLANNED"
     assert capabilities["VIDEO_GENERATION"]["availability"] == "PLANNED"
 
 
