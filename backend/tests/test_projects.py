@@ -24,7 +24,7 @@ EXPECTED_SKILLS = {
     "SCRIPT_LOCALIZATION": "project.script_localization",
 }
 EXPECTED_SKILL_VERSIONS = {
-    "REPLICA": "1.2.0",
+    "REPLICA": "1.3.0",
     "REDRAW": "1.0.0",
     "TRANSLATION": "1.0.0",
     "NOVEL_TO_DRAMA": "1.0.0",
@@ -98,7 +98,7 @@ def test_plan_must_be_explicitly_compiled_then_get_is_read_only(client: TestClie
 
     plan = _compile(client, project["id"])
     assert plan["skill_id"] == "project.replica"
-    assert plan["skill_version"] == "1.2.0"
+    assert plan["skill_version"] == "1.3.0"
     assert plan["revision"] == 1
     assert len(plan["input_fingerprint"]) == 64
     assert plan["steps"][0]["id"] == "source_input"

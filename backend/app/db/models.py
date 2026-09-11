@@ -17,6 +17,7 @@ from app.source_analysis.models import SourceStoryboardDraftRevision
 from app.source_resolution.models import SourceResolutionRevision
 from app.source_snapshot.models import SourceVideoSnapshotRevision
 from app.sources.models import Episode, SourceAsset, SourceDocument
+from app.target_assets.models import ReplicaTargetAssetsCandidate, ReplicaTargetAssetsRevision
 from app.target_bible.models import ReplicaTargetRevision
 from app.target_script.models import ReplicaTargetScriptRevision
 from app.understanding.models import SourceBibleRevision
@@ -32,6 +33,8 @@ __all__ = [
     "ProjectExecutionPlanRecord",
     "ProjectExecutionPlanStepRecord",
     "ProviderJob",
+    "ReplicaTargetAssetsCandidate",
+    "ReplicaTargetAssetsRevision",
     "ReplicaTargetRevision",
     "ReplicaTargetScriptRevision",
     "ShotAnchor",
