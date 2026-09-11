@@ -67,7 +67,9 @@ class ReplicaTargetCharacterAsset(StrictModel):
     continuity_constraints: list[str] = Field(min_length=1)
     generation_guidance: list[str] = Field(min_length=1)
     negative_constraints: list[str] = Field(min_length=1)
-    reference_assets: list[TargetAssetReference] = Field(min_length=1)
+    # Empty is allowed only as an internal pre-media intermediate. The complete
+    # ReplicaTargetAssetsContent validator below requires at least one real reference.
+    reference_assets: list[TargetAssetReference] = Field(default_factory=list)
 
 
 class ReplicaTargetSceneAsset(StrictModel):
@@ -88,7 +90,7 @@ class ReplicaTargetSceneAsset(StrictModel):
     continuity_constraints: list[str] = Field(min_length=1)
     generation_guidance: list[str] = Field(min_length=1)
     negative_constraints: list[str] = Field(min_length=1)
-    reference_assets: list[TargetAssetReference] = Field(min_length=1)
+    reference_assets: list[TargetAssetReference] = Field(default_factory=list)
 
 
 class ReplicaTargetPropAsset(StrictModel):
@@ -107,7 +109,7 @@ class ReplicaTargetPropAsset(StrictModel):
     continuity_constraints: list[str] = Field(min_length=1)
     generation_guidance: list[str] = Field(min_length=1)
     negative_constraints: list[str] = Field(min_length=1)
-    reference_assets: list[TargetAssetReference] = Field(min_length=1)
+    reference_assets: list[TargetAssetReference] = Field(default_factory=list)
 
 
 class ReplicaTargetAssetsContent(StrictModel):
@@ -124,17 +126,18 @@ class ReplicaTargetAssetsContent(StrictModel):
     prop_assets: list[ReplicaTargetPropAsset]
 
     @model_validator(mode="after")
-    def unique_asset_ids(self) -> "ReplicaTargetAssetsContent":
-        all_ids = [
-            *(item.target_asset_id for item in self.character_assets),
-            *(item.target_asset_id for item in self.scene_assets),
-            *(item.target_asset_id for item in self.prop_assets),
-        ]
+    def validate_formal_asset_set(self) -> "ReplicaTargetAssetsContent":
+        collections = (self.character_assets, self.scene_assets, self.prop_assets)
+        all_ids = [item.target_asset_id for collection in collections for item in collection]
         if len(all_ids) != len(set(all_ids)):
             raise ValueError("target_asset_id must be globally unique")
+        for collection in collections:
+            for item in collection:
+                if not item.reference_assets:
+                    raise ValueError("every formal target asset requires at least one reference asset")
         ref_ids = [
             ref.reference_asset_id
-            for collection in (self.character_assets, self.scene_assets, self.prop_assets)
+            for collection in collections
             for item in collection
             for ref in item.reference_assets
         ]
