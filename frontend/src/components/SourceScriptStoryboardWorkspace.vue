@@ -12,6 +12,7 @@ import {
   type SourceAnalysisStatusRead,
   type SourceAssetShotRef,
   type SourceScriptRead,
+  type SourceScriptScene,
   type SourceScriptShot,
   type StoryboardDraftRead,
   type StoryboardShotOverride,
@@ -32,6 +33,7 @@ const savingShot = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
 const activeTab = ref<WorkspaceTab>('script')
+const activeEpisodeId = ref('all')
 const editingShot = ref<StoryboardShotOverride | null>(null)
 const previewShot = ref<SourceScriptShot | null>(null)
 let pollTimer: number | null = null
@@ -45,6 +47,28 @@ const draftByShot = computed(() => new Map(
 ))
 const sceneCount = computed(() => script.value?.scenes.length ?? 0)
 const shotCount = computed(() => script.value?.scenes.reduce((sum, scene) => sum + scene.shots.length, 0) ?? 0)
+const episodeOptions = computed(() => {
+  const scenes = script.value?.scenes ?? []
+  const episodeIds: string[] = []
+  for (const scene of scenes) {
+    if (!episodeIds.includes(scene.episode_id)) episodeIds.push(scene.episode_id)
+  }
+  return episodeIds.map((id, index) => {
+    const episodeScenes = scenes.filter((scene) => scene.episode_id === id)
+    return {
+      id,
+      label: `第 ${index + 1} 集`,
+      sceneCount: episodeScenes.length,
+      shotCount: episodeScenes.reduce((sum, scene) => sum + scene.shots.length, 0),
+    }
+  })
+})
+const filteredScenes = computed(() => {
+  const scenes = script.value?.scenes ?? []
+  if (activeEpisodeId.value === 'all') return scenes
+  return scenes.filter((scene) => scene.episode_id === activeEpisodeId.value)
+})
+const episodeLabelById = computed(() => new Map(episodeOptions.value.map((item) => [item.id, item.label])))
 
 function commandKey(): string {
   const suffix = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -64,6 +88,11 @@ function formatDuration(us: number): string {
   return `${(Math.max(0, us) / 1_000_000).toFixed(2)} 秒`
 }
 
+function episodeSceneLabel(scene: SourceScriptScene): string {
+  const episode = episodeLabelById.value.get(scene.episode_id)
+  return episodeOptions.value.length > 1 && episode ? `${episode} · 场 ${scene.scene_number}` : `场 ${scene.scene_number}`
+}
+
 function stopPolling(): void {
   if (pollTimer !== null) window.clearInterval(pollTimer)
   pollTimer = null
@@ -76,6 +105,9 @@ async function loadResults(): Promise<void> {
   ])
   script.value = sourceScript
   draft.value = storyboardDraft
+  if (activeEpisodeId.value !== 'all' && !sourceScript.scenes.some((scene) => scene.episode_id === activeEpisodeId.value)) {
+    activeEpisodeId.value = 'all'
+  }
 }
 
 async function refreshStatus(): Promise<void> {
@@ -101,6 +133,7 @@ function startPolling(): void {
 async function load(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
+  activeEpisodeId.value = 'all'
   try {
     project.value = await getProject(projectId.value)
     if (!visible.value) return
@@ -199,6 +232,7 @@ async function resetShot(shot: SourceScriptShot): Promise<void> {
 
 async function focusShot(shot: SourceAssetShotRef): Promise<void> {
   activeTab.value = 'storyboard'
+  activeEpisodeId.value = shot.episode_id
   await nextTick()
   const target = document.getElementById(`source-shot-${shot.shot_anchor_id}`)
   target?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
@@ -263,10 +297,23 @@ onBeforeUnmount(stopPolling)
         <button :class="{ active: activeTab === 'assets' }" type="button" @click="activeTab = 'assets'">人物 / 场景 / 道具</button>
       </nav>
 
+      <nav v-if="activeTab !== 'assets' && episodeOptions.length > 1" class="episode-tabs" data-testid="source-episode-tabs" aria-label="原片剧集">
+        <button type="button" :class="{ active: activeEpisodeId === 'all' }" @click="activeEpisodeId = 'all'">全部 <span>{{ shotCount }} 镜</span></button>
+        <button
+          v-for="episode in episodeOptions"
+          :key="episode.id"
+          type="button"
+          :class="{ active: activeEpisodeId === episode.id }"
+          @click="activeEpisodeId = episode.id"
+        >
+          {{ episode.label }} <span>{{ episode.shotCount }} 镜</span>
+        </button>
+      </nav>
+
       <div v-if="activeTab === 'script'" class="result-body" data-testid="source-script-view">
-        <article v-for="scene in script.scenes" :key="`${scene.scene_number}-${scene.start_us}`" class="scene">
+        <article v-for="scene in filteredScenes" :key="`${scene.episode_id}-${scene.scene_number}-${scene.start_us}`" class="scene">
           <header>
-            <div><small>场 {{ scene.scene_number }}</small><h3>{{ scene.scene_name }}</h3></div>
+            <div><small>{{ episodeSceneLabel(scene) }}</small><h3>{{ scene.scene_name }}</h3></div>
             <div class="scene-meta">
               <span>{{ formatTime(scene.start_us) }} – {{ formatTime(scene.end_us) }}</span>
               <span v-if="scene.character_names.length">{{ scene.character_names.join(' · ') }}</span>
@@ -288,8 +335,8 @@ onBeforeUnmount(stopPolling)
           <strong>{{ draft?.status === 'STALE' ? '旧分镜草稿已归档' : draft?.overrides.length ? `分镜编辑草稿 r${draft.revision}` : '原片分镜' }}</strong>
           <span>{{ draft?.status === 'STALE' ? '原片结果已更新，旧草稿不会自动套用；新的修改会从当前原片分镜开始。' : '直接修改保存为工作草稿，不覆盖原片事实。' }}</span>
         </div>
-        <section v-for="scene in script.scenes" :key="`board-${scene.scene_number}-${scene.start_us}`" class="board-scene">
-          <header><strong>场 {{ scene.scene_number }} · {{ scene.scene_name }}</strong><span>{{ scene.shots.length }} 镜</span></header>
+        <section v-for="scene in filteredScenes" :key="`board-${scene.episode_id}-${scene.scene_number}-${scene.start_us}`" class="board-scene">
+          <header><strong>{{ episodeSceneLabel(scene) }} · {{ scene.scene_name }}</strong><span>{{ scene.shots.length }} 镜</span></header>
           <article v-for="shot in scene.shots" :id="`source-shot-${shot.shot_anchor_id}`" :key="shot.shot_anchor_id" class="shot-card">
             <button class="shot-media" type="button" :aria-label="`播放镜头 ${shot.shot_number} 原片段`" @click="previewShot = shot">
               <img :src="shot.thumbnail_url" :alt="`镜头 ${shot.shot_number} 缩略图`" loading="lazy" />
@@ -403,6 +450,7 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 .progress-copy { display:flex; justify-content:space-between; color:#273244; }.progress-track{height:8px;margin:14px 0 10px;border-radius:999px;background:#edf0f4;overflow:hidden}.progress-track i{display:block;height:100%;background:#273244}
 .summary { display:grid; grid-template-columns:repeat(4,1fr); border:1px solid #e1e6ed; border-top:0; background:#fff; }.summary span{padding:16px 24px;border-right:1px solid #edf0f4;color:#7b8492;font-size:12px}.summary span:last-child{border-right:0}.summary b{color:#172033;font-size:22px}
 .tabs { display:flex; gap:6px; padding:14px 18px; border:1px solid #e1e6ed; border-top:0; background:#fafbfc; }.tabs button{border:0;border-radius:8px;padding:9px 14px;background:transparent;color:#667085;font-weight:800;cursor:pointer}.tabs button.active{background:#172033;color:#fff}
+.episode-tabs{display:flex;gap:7px;padding:10px 18px;border:1px solid #e1e6ed;border-top:0;background:#fff;overflow-x:auto}.episode-tabs button{flex:0 0 auto;border:1px solid #dfe4eb;border-radius:999px;padding:7px 11px;background:#fff;color:#5f6979;font-size:11px;font-weight:800;cursor:pointer}.episode-tabs button span{margin-left:4px;color:#8a94a3;font-weight:600}.episode-tabs button.active{border-color:#172033;background:#172033;color:#fff}.episode-tabs button.active span{color:#d6dbe3}
 .result-body,.assets { border:1px solid #e1e6ed; border-top:0; border-radius:0 0 18px 18px; background:#fff; }
 .scene { padding:28px 34px; border-bottom:1px solid #edf0f4; }.scene:last-child{border-bottom:0}.scene>header,.board-scene>header{display:flex;justify-content:space-between;gap:20px}.scene h3{margin:3px 0 0}.scene small,.scene-meta{color:#7b8492;font-size:11px}.scene-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.script-copy{max-width:820px;margin:18px auto 0}.action{color:#4e5969;line-height:1.8}.dialogue{max-width:560px;margin:18px auto}.dialogue strong{font-size:12px}.dialogue p{margin:6px 0 0;line-height:1.75}
 .draft-note { display:flex;justify-content:space-between;gap:16px;padding:14px 22px;background:#f7f8fa;color:#6a7484;font-size:12px }.draft-note strong{color:#273244}
