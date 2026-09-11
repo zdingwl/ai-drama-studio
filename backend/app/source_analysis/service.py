@@ -84,8 +84,10 @@ def _pipeline_input_fingerprint(db: Session, project_id: str, source: ArtifactNo
     restart_after_terminal = None
     if latest is not None and (
         latest.status in {TaskStatus.SUCCEEDED, TaskStatus.CANCELLED}
-        or latest.status in {TaskStatus.FAILED, TaskStatus.INTERRUPTED}
-        and latest.attempt >= latest.max_attempts
+        or (
+            latest.status in {TaskStatus.FAILED, TaskStatus.INTERRUPTED}
+            and latest.attempt >= latest.max_attempts
+        )
     ):
         restart_after_terminal = latest.id
     return _sha(
@@ -464,7 +466,7 @@ def run_source_analysis_task(session_factory: sessionmaker[Session], task_id: st
                     safe_error=f"原片解析失败（{type(exc).__name__}）",
                 )
         return
-    with context.session_factory() as db:
+    with session_factory() as db:
         current = db.get(Task, task_snapshot.id)
         if current is not None and current.status == TaskStatus.RUNNING and current.worker_id == worker_id:
             mark_task_succeeded(db, task_snapshot.id, worker_id=worker_id)
