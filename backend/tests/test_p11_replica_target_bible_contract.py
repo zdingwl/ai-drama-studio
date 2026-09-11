@@ -147,7 +147,7 @@ def test_p11_professional_skill_root_step_and_capability_gate() -> None:
     assert CAPABILITY_BY_ID[Capability.SOURCE_SNAPSHOT].availability == CapabilityAvailability.AVAILABLE
     assert CAPABILITY_BY_ID[Capability.LOCALIZATION].availability == CapabilityAvailability.AVAILABLE
     assert CAPABILITY_BY_ID[Capability.TARGET_BIBLE].availability == CapabilityAvailability.AVAILABLE
-    assert CAPABILITY_BY_ID[Capability.TARGET_SCRIPT].availability == CapabilityAvailability.PLANNED
+    assert CAPABILITY_BY_ID[Capability.TARGET_SCRIPT].availability == CapabilityAvailability.AVAILABLE
     assert expected_namespace(ArtifactType.ADAPTATION_PLAN) == ArtifactNamespace.TARGET
     assert expected_namespace(ArtifactType.TARGET_BIBLE) == ArtifactNamespace.TARGET
 
