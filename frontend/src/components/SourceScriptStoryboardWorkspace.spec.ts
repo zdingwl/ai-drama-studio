@@ -112,13 +112,16 @@ const emptyDraft: StoryboardDraftRead = {
   overrides: [],
 }
 
-async function mountWorkspace(storyboardDraft: StoryboardDraftRead = emptyDraft) {
+async function mountWorkspace(
+  storyboardDraft: StoryboardDraftRead = emptyDraft,
+  sourceScript: SourceScriptRead = script,
+) {
   vi.mocked(projectApi.getProject).mockResolvedValue({
     id: 'project-1',
     project_type: 'REPLICA',
   } as Awaited<ReturnType<typeof projectApi.getProject>>)
   vi.mocked(sourceAnalysisApi.getSourceAnalysisStatus).mockResolvedValue(readyStatus)
-  vi.mocked(sourceAnalysisApi.getSourceScript).mockResolvedValue(script)
+  vi.mocked(sourceAnalysisApi.getSourceScript).mockResolvedValue(sourceScript)
   vi.mocked(sourceAnalysisApi.getStoryboardDraft).mockResolvedValue(storyboardDraft)
 
   const router = createRouter({
@@ -147,6 +150,57 @@ describe('SourceScriptStoryboardWorkspace', () => {
     expect(wrapper.text()).not.toContain('SourceVideoSnapshot')
     expect(wrapper.text()).not.toContain('ProviderJob')
     expect(sourceAnalysisApi.startSourceAnalysis).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('separates multi-episode script and storyboard results with episode switches', async () => {
+    const secondShot = {
+      ...script.scenes[0].shots[0],
+      episode_id: 'episode-2',
+      shot_anchor_id: 'shot-2',
+      shot_number: 1,
+      visual_description: '第二集开场，周母正在超市打电话。',
+      action_summary: '周母正在超市打电话。',
+      dialogues: [],
+      thumbnail_url: '/thumb-2.jpg',
+      reference_clip_url: '/clip-2.mp4',
+    }
+    const multiEpisode: SourceScriptRead = {
+      ...script,
+      scenes: [
+        ...script.scenes,
+        {
+          scene_number: 2,
+          episode_id: 'episode-2',
+          scene_id: 'scene-2',
+          scene_name: '超市生鲜区',
+          start_us: 0,
+          end_us: 2_000_000,
+          character_names: ['周母'],
+          shots: [secondShot],
+        },
+      ],
+    }
+    const wrapper = await mountWorkspace(emptyDraft, multiEpisode)
+
+    const episodeTabs = wrapper.get('[data-testid="source-episode-tabs"]')
+    expect(episodeTabs.text()).toContain('全部 2 镜')
+    expect(episodeTabs.text()).toContain('第 1 集 1 镜')
+    expect(episodeTabs.text()).toContain('第 2 集 1 镜')
+    expect(wrapper.get('[data-testid="source-script-view"]').text()).toContain('徐然家客厅')
+    expect(wrapper.get('[data-testid="source-script-view"]').text()).toContain('超市生鲜区')
+
+    await episodeTabs.findAll('button').find((button) => button.text().includes('第 1 集'))!.trigger('click')
+    expect(wrapper.get('[data-testid="source-script-view"]').text()).toContain('徐然家客厅')
+    expect(wrapper.get('[data-testid="source-script-view"]').text()).not.toContain('超市生鲜区')
+
+    await episodeTabs.findAll('button').find((button) => button.text().includes('第 2 集'))!.trigger('click')
+    expect(wrapper.get('[data-testid="source-script-view"]').text()).toContain('超市生鲜区')
+    expect(wrapper.get('[data-testid="source-script-view"]').text()).not.toContain('徐然家客厅')
+
+    await wrapper.findAll('button').find((button) => button.text() === '分镜')!.trigger('click')
+    expect(wrapper.get('[data-testid="source-storyboard-view"]').text()).toContain('第二集开场')
+    expect(wrapper.get('[data-testid="source-storyboard-view"]').text()).not.toContain('徐然站在客厅里看向门口。')
     wrapper.unmount()
   })
 
