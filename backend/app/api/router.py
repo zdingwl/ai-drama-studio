@@ -10,6 +10,7 @@ from app.api.routes.source_analysis import router as source_analysis_router
 from app.api.routes.source_resolution import router as source_resolution_router
 from app.api.routes.source_snapshot import router as source_snapshot_router
 from app.api.routes.sources import router as sources_router
+from app.api.routes.target_assets import router as target_assets_router
 from app.api.routes.target_bible import router as target_bible_router
 from app.api.routes.target_script import router as target_script_router
 from app.api.routes.tasks import router as tasks_router
@@ -29,4 +30,5 @@ api_router.include_router(source_snapshot_router)
 api_router.include_router(source_analysis_router)
 api_router.include_router(target_bible_router)
 api_router.include_router(target_script_router)
+api_router.include_router(target_assets_router)
 api_router.include_router(tasks_router)
