@@ -1,7 +1,7 @@
 # AI Drama Studio V3 — 开发规则
 
 > 当前状态日期：2026-09-11。  
-> 当前最高优先级：`docs/27_P12最终验收与后续阶段准入评估.md`。  
+> 当前最高优先级：`docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`。  
 > 原则：仓库当前 `main` + 编号更高、日期更新的状态/验收文档是唯一事实源；历史文档只能解释演进，不能覆盖最新口径。
 
 ## 1. 开发前读取顺序
@@ -37,7 +37,8 @@
 27. `docs/25_P12TargetScriptLocalizationProfessionalSkill与数据契约.md`
 28. `docs/26_P11最终验收与P12准入.md`
 29. `docs/27_P12最终验收与后续阶段准入评估.md`
-30. 当前相关代码与测试
+30. `docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`
+31. 当前相关代码与测试
 
 冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。**
 
@@ -51,7 +52,8 @@
 - `docs/24`：P11 正式 Professional Skill、typed Target Artifact、revision/fingerprint/provenance、原子发布、Artifact Graph、Provider 与 UI/验收契约；
 - `docs/25`：P12 Target Script / Localization 正式数据与 Professional Skill 合同；
 - `docs/26`：用户已明确 `P11 PASS`，`LOCALIZATION / TARGET_BIBLE = AVAILABLE`，P12 正式准入；
-- `docs/27`：用户已明确 `P12 PASS`，`TARGET_SCRIPT = AVAILABLE`；后续 `TARGET_ASSETS / TTS / TIMING / STORYBOARD / Generation / Post` 仍为 `PLANNED`，下一工程阶段必须先立正式契约。
+- `docs/27`：用户已明确 `P12 PASS`，`TARGET_SCRIPT = AVAILABLE`；后续能力仍需独立合同与真实验收；
+- `docs/28`：P13 Target Assets 正式合同已经建立；P13 可以实现、测试和进入真实验收，但用户明确 `P13 PASS` 前 `TARGET_ASSETS = PLANNED`，且不得进入 P14+。
 
 历史分支只能参考，不能覆盖当前 V3 规划。
 
@@ -100,21 +102,27 @@ TARGET_SCRIPT
 当前下一工程切片：
 
 ```text
-尚未正式立契约
+P13 Target Assets / 目标资产
 ```
 
-P12 已完成真实 Provider、真实项目端到端与用户人工质量验收，用户已明确 `P12 PASS`，因此 `TARGET_SCRIPT = AVAILABLE`。以下仍为 `PLANNED`：
+P13 已有正式数据契约 / Professional Skill / 验收边界，可以进行工程实现与自动测试，但尚未完成真实 Provider / 真实项目 / 用户人工验收。因此：
 
 ```text
-TARGET_ASSETS
+TARGET_ASSETS = PLANNED
+```
+
+以下后续能力同样继续 `PLANNED`：
+
+```text
 TARGET_STORYBOARD
 TTS / Timing
 Generation / QC / Selection
+Lip Sync
 Post / Final Output
 以及尚未完成的其他项目类型完整业务链
 ```
 
-Root Replica Skill 中 `target_script` 后的下一个内部步骤是 `target_assets`，但内部步骤顺序不等于新的工程阶段已经正式准入。下一阶段必须先写正式数据契约 / Professional Skill / 验收边界，再进入实现。
+Root Replica Skill 中 `target_script` 后的当前内部步骤是 `target_assets`。P13 工程成功、Task succeeded 或候选可预览都不等于阶段 PASS；只有用户明确 `P13 PASS` 后才允许另行评估 `TARGET_ASSETS` 是否升级为 `AVAILABLE`。
 
 ---
 
@@ -142,13 +150,14 @@ REDRAW
 
 `TRANSLATION` 在明确接入对应契约前不得复用该工作区假装能力可用；route 和 service 都必须 fail closed。
 
-P12 已完成：
+当前 Target 链正式已验收：
 
 ```text
+REPLICA Target Bible
 REPLICA Target Script / Localization
 ```
 
-在下一份正式阶段契约提交前，不得借 P12 PASS 顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Target 链，也不得直接实现 `TARGET_ASSETS / Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Selection / Post`。
+P13 v1 只允许 `REPLICA`。不得借 P13 工程实现顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Target Assets，也不得实现 `Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Selection / Lip Sync / Post`。
 
 ---
 
@@ -267,6 +276,19 @@ Source Dialogue → Translation → Localization → Final Target Dialogue → T
 ```
 
 P12 只到 `Final Target Dialogue`。P12 已真实人工验收 PASS，`TARGET_SCRIPT = AVAILABLE`。
+
+P13：
+
+```text
+replica-target-assets@1.0.0
+p13-replica-target-assets-v1
+TARGET_ASSETS schema 1.0
+replica-target-visual-identity-v1
+target-bible-entity-binding-v1
+human-target-asset-approval-v1
+```
+
+P13 正式硬输入只有 CURRENT `TARGET_BIBLE`。当前仓库没有已接入并真实验收的图片生成 Provider，因此 P13 v1 正式资产首先是 typed visual identity packet；不得伪造 reference media。Provider 结果只形成 `NEEDS_REVIEW` candidate，用户显式确认后才允许发布正式 CURRENT `TARGET_ASSETS`。在 P13 真实人工验收前 capability 继续 `PLANNED`。
 
 ---
 
@@ -443,6 +465,7 @@ Replica 默认目标：
 > 故事不乱改，节奏不重做，文化和表达才本土化。
 
 P11 preservation locks 必须由服务端从 Snapshot 确定性生成，Provider 只能读取，不能重写。默认锁定：
+
 ```text
 故事主线
 Hook
@@ -492,7 +515,6 @@ Artifact Graph edges
 
 普通产品界面只显示“目标设定”，不暴露 P11 / Artifact id / fingerprint / provenance / ProviderJob / schema 等工程术语；页面加载只 GET，只有用户显式点击“生成目标设定 / 重新生成目标设定”才 POST。
 
-
 ---
 
 ## 10. P12 Target Script / Localization 硬边界
@@ -523,10 +545,64 @@ Source Dialogue 规则：
 - 任一硬输入 STALE 必须递归使 TARGET_SCRIPT STALE；
 - P12 不生成 Target Voice / TTS / Actual Speech Duration / Timing Plan / Target Storyboard / Generation / QC / Selection / Post Artifact。
 
+---
+
+## 11. P13 Target Assets 硬边界
+
+P13 正式契约见 `docs/28`。唯一硬输入：
+
+```text
+CURRENT TARGET_BIBLE
+```
+
+P13 v1 不直接读取 `SOURCE_VIDEO_SNAPSHOT / ADAPTATION_PLAN / TARGET_SCRIPT` 作为硬输入。若未来真实生产证明需要新增依赖，必须通过新 schema/contract 显式升级，不得静默扩大输入。
+
+核心语义：
+
+```text
+Target Bible  = semantic truth
+Target Assets = visual realization
+```
+
+正式 Target Asset 必须稳定绑定 P11 已有 Target entity：
+
+```text
+Target Character → Target Character Asset
+Target Scene     → Target Scene Asset
+Target Prop      → Target Prop Asset
+```
+
+硬规则：
+
+- P13 v1 只允许 REPLICA；
+- Provider 不得改变 P11 Target identity、人物故事功能、场景功能或关键道具功能；
+- `target_asset_id` 由服务端根据 project / asset type / target entity / binding contract 确定性生成，Provider 无权生成；
+- 同一 Target entity 重新生成视觉实现时 stable asset id 不变，视觉 packet fingerprint 改变才递增该 asset revision；
+- Character 资产必须稳定 face / hair / body / wardrobe baseline / signature features；
+- Scene 资产必须稳定 spatial layout / architecture / materials / fixed landmarks / lighting baseline；
+- Prop 资产必须稳定 form / material / color / scale / functional identity；
+- Target Bible continuity rules 必须由服务端保留，Provider 无权删除；
+- 当前 text-only Provider 不生成真实图片，不得伪造 reference media；
+- Provider 成功只产生 `NEEDS_REVIEW` candidate，不产生 CURRENT `TARGET_ASSETS`；
+- 用户显式 ACCEPT 后才允许原子发布正式 Target Artifact、typed revision、provenance 和 Artifact Graph；
+- REJECT / Provider failure / partial failure 不覆盖旧 CURRENT；
+- `TARGET_BIBLE --DERIVED_FROM--> TARGET_ASSETS`，Target Bible 新 revision 必须使旧 Assets 递归 STALE；
+- P13 v1 没有 `TARGET_SCRIPT → TARGET_ASSETS` 依赖，因此对白新 revision 不应无依据地 stale 视觉资产；
+- GET 全部只读，生成 / 重生成 / accept / reject 都是显式 Command；
+- 外部 Provider 请求前先持久化 ProviderJob 并绑定 CURRENT TARGET_BIBLE；
+- P13 不创建 Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Selection / Lip Sync / Post Artifact。
+
+用户明确 `P13 PASS` 前：
+
+```text
+TARGET_ASSETS = PLANNED
+```
+
+工程 CI、真实 ProviderJob succeeded、候选可预览或人工 accept 单次操作均不能替代阶段最终真实验收。
 
 ---
 
-## 11. Workflow / Provider / 安全硬规则
+## 12. Workflow / Provider / 安全硬规则
 
 - 页面 GET 必须只读，不能写 DB、建 Task、运行 Agent、启动模型或自动重算；
 - 重任务必须由明确 POST / Command 启动；
@@ -544,7 +620,7 @@ Source Dialogue 规则：
 
 ---
 
-## 12. 完成定义
+## 13. 完成定义
 
 任何能力都必须分别说明并验证：
 
@@ -560,11 +636,11 @@ Source Dialogue 规则：
 
 不能用其中一层替代另一层。
 
-P11 与 P12 都已经由用户明确真实人工 PASS，因此 `LOCALIZATION / TARGET_BIBLE / TARGET_SCRIPT = AVAILABLE`。后续任何能力仍必须单独完成正式契约、工程门禁、真实 Provider / Runtime、真实项目端到端与用户人工验收后，才能从 `PLANNED` 升为 `AVAILABLE`；不能把 P12 PASS 当作后续阶段的替代验收。
+P11 与 P12 都已经由用户明确真实人工 PASS，因此 `LOCALIZATION / TARGET_BIBLE / TARGET_SCRIPT = AVAILABLE`。P13 仍处于工程实现 / 验收阶段。后续任何能力仍必须单独完成正式契约、工程门禁、真实 Provider / Runtime、真实项目端到端与用户人工验收后，才能从 `PLANNED` 升为 `AVAILABLE`；不能把 P12 PASS 或 P13 工程测试当作后续阶段的替代验收。
 
 ---
 
-## 13. Git 规则
+## 14. Git 规则
 
 ```text
 main = V3 当前稳定开发基线
