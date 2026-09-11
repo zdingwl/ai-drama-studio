@@ -198,7 +198,7 @@ describe('TargetAssetsWorkspace', () => {
     expect(targetAssetsApi.regenerateReplicaTargetAssets).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('可以生成目标资产候选')
     expect(wrapper.findAll('button').some((item) => item.text() === '生成目标资产')).toBe(true)
-    expect(wrapper.text()).toContain('页面刷新不会自动调用')
+    expect(wrapper.text()).toContain('页面刷新不会自动启动生成')
     wrapper.unmount()
   })
 
