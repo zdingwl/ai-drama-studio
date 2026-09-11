@@ -104,7 +104,7 @@ def test_p9_ark_requests_strict_json_schema_output() -> None:
     status_enum = config["format"]["schema"]["$defs"]["ResolutionStatus"]["enum"]
     assert status_enum == ["RESOLVED", "UNKNOWN", "UNRESOLVED"]
     assert P9_MAX_OUTPUT_TOKENS == 65536
-    assert P9_PROMPT_VERSION == "p9-source-resolution-v8"
+    assert P9_PROMPT_VERSION == "p9-source-resolution-v9"
 
 
 def _multi_episode_payload() -> ProjectResolutionInput:
@@ -256,11 +256,10 @@ def test_p9_prop_request_schema_matches_pydantic_string_guards() -> None:
 def test_prop_provider_validation_hint_exposes_constraint_not_raw_text() -> None:
     oversized_reason = "x" * 501
     raw = (
-        '{"groups":[],"observations":['
-        '{"shot_anchor_id":"shot-1","source_candidate_id":"prop-1",'
-        '"group_key":null,"resolution_status":"UNRESOLVED","reason":"'
+        '{"groups":[],"observations":{"R0001__R0002":'
+        '{"group_key":null,"resolution_status":"UNRESOLVED","reason":"'
         + oversized_reason
-        + '"}]}'
+        + '"}}}'
     )
 
     with pytest.raises(AppError) as captured:
