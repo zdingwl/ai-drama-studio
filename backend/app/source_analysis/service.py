@@ -84,7 +84,10 @@ def _pipeline_input_fingerprint(db: Session, project_id: str, source: ArtifactNo
     restart_after_terminal = None
     if latest is not None and (
         latest.status in {TaskStatus.SUCCEEDED, TaskStatus.CANCELLED}
-        or latest.status == TaskStatus.FAILED and latest.attempt >= latest.max_attempts
+        or (
+            latest.status in {TaskStatus.FAILED, TaskStatus.INTERRUPTED}
+            and latest.attempt >= latest.max_attempts
+        )
     ):
         restart_after_terminal = latest.id
     return _sha(
@@ -95,9 +98,9 @@ def _pipeline_input_fingerprint(db: Session, project_id: str, source: ArtifactNo
             "source_language": project.source_language,
             "source_understanding_provider": project.source_understanding_provider.value,
             # A non-CURRENT snapshot after a terminal pipeline means an upstream
-            # Source revision changed or the previous publication was invalidated.
+            # Source revision changed or the previous publication/recovery was exhausted.
             # Including that terminal task prevents the generic business-key
-            # dedupe from replaying an old SUCCEEDED task instead of scheduling
+            # dedupe from replaying an old terminal task instead of scheduling
             # the missing/STALE recovery chain.
             "restart_after_terminal": restart_after_terminal,
         }
