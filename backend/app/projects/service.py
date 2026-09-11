@@ -21,6 +21,13 @@ _DEFAULT_AUDIO_POLICY = {
     ProjectType.REDRAW: AudioPolicy.KEEP_SOURCE_AUDIO,
 }
 
+_TARGET_BIBLE_CONFIG_FIELDS = {
+    "target_language",
+    "target_region",
+    "scene_strategy",
+    "visual_style",
+}
+
 
 def create_project(db: Session, payload: ProjectCreate) -> Project:
     root_skill = get_root_skill(payload.project_type)
@@ -68,6 +75,7 @@ def update_project(db: Session, project_id: str, payload: ProjectUpdate) -> Proj
         return project
 
     provider_changed = "source_understanding_provider" in actual_changes
+    target_bible_config_changed = bool(_TARGET_BIBLE_CONFIG_FIELDS & set(actual_changes))
     for field, value in actual_changes.items():
         setattr(project, field, value)
 
@@ -93,6 +101,26 @@ def update_project(db: Session, project_id: str, payload: ProjectUpdate) -> Proj
             db,
             project_id=project_id,
             artifact_type=ArtifactType.SOURCE_BIBLE,
+        )
+        db.refresh(project)
+
+    if target_bible_config_changed:
+        # P11 fingerprints target language/region/scene strategy/visual style. A change to any of
+        # these settings invalidates the old Target world but must never mutate the Source chain.
+        # Invalidate both roots defensively: ADAPTATION_PLAN normally propagates to TARGET_BIBLE
+        # through Artifact Graph, while the second call also covers legacy/incomplete graph data.
+        from app.artifacts.service import invalidate_current_artifact_type
+        from app.skills.models import ArtifactType
+
+        invalidate_current_artifact_type(
+            db,
+            project_id=project_id,
+            artifact_type=ArtifactType.ADAPTATION_PLAN,
+        )
+        invalidate_current_artifact_type(
+            db,
+            project_id=project_id,
+            artifact_type=ArtifactType.TARGET_BIBLE,
         )
         db.refresh(project)
     return project

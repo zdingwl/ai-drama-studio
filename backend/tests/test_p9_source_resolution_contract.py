@@ -84,7 +84,9 @@ def test_p9_artifacts_are_source_namespace_and_accepted_capabilities_are_availab
     assert CAPABILITY_BY_ID[Capability.IDENTITY_RESOLUTION].availability == CapabilityAvailability.AVAILABLE
     assert CAPABILITY_BY_ID[Capability.SCENE_RESOLUTION].availability == CapabilityAvailability.AVAILABLE
     assert CAPABILITY_BY_ID[Capability.PROP_RESOLUTION].availability == CapabilityAvailability.AVAILABLE
-    assert CAPABILITY_BY_ID[Capability.SOURCE_SNAPSHOT].availability == CapabilityAvailability.PLANNED
+    # P10 has passed real product acceptance; P9's historical regression must follow the
+    # current accepted capability baseline rather than freezing the old pre-P10 state.
+    assert CAPABILITY_BY_ID[Capability.SOURCE_SNAPSHOT].availability == CapabilityAvailability.AVAILABLE
 
 
 def test_p9_provider_schema_rejects_manual_truth_and_extra_fields() -> None:

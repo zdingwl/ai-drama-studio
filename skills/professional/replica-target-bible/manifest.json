@@ -1,0 +1,36 @@
+{
+  "id": "replica-target-bible",
+  "name": "复刻目标设定",
+  "version": "1.0.0",
+  "category": "target-design",
+  "description": "以 CURRENT SOURCE_VIDEO_SNAPSHOT 为唯一 Source 世界版本锚点，在锁定故事与节奏的前提下设计目标地区人物、场景、道具、文化、视觉与连续性规则，并发布 ADAPTATION_PLAN + TARGET_BIBLE。",
+  "when_to_use": ["REPLICA 项目已存在 CURRENT SOURCE_VIDEO_SNAPSHOT，需要建立后续 Target Script / Storyboard 共用的目标世界时"],
+  "when_not_to_use": ["Source Snapshot 缺失或 STALE", "项目不是 REPLICA", "只需要翻译原画面", "需要直接生成 Target Script / Storyboard / TTS / Video Generation"],
+  "required_inputs": ["SOURCE_VIDEO_SNAPSHOT"],
+  "optional_inputs": [],
+  "readable_artifacts": ["SOURCE_VIDEO_SNAPSHOT"],
+  "required_capabilities": ["LOCALIZATION", "TARGET_BIBLE"],
+  "manual_path": "replica-target-bible/SKILL.md",
+  "steps": [
+    {"id":"load_source_snapshot","phase":"目标版本","title":"读取正式 Source 世界","description":"只读取 CURRENT SOURCE_VIDEO_SNAPSHOT 及其冻结 typed content，Snapshot revision 是唯一 Source 世界版本锚点。","capabilities":["LOCALIZATION","TARGET_BIBLE"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":[]},
+    {"id":"build_preservation_locks","phase":"目标版本","title":"建立复刻锁定项","description":"确定性提取故事主线、Hook、冲突、反转、信息揭示、情绪峰值、Payoff、Cliffhanger、Story Beat timing 与 Shot rhythm baseline；Provider 无权修改。","capabilities":["TARGET_BIBLE"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":[]},
+    {"id":"design_localization","phase":"目标版本","title":"设计目标地区本土化","description":"在不改故事和节奏的前提下设计人物身份/姓名/外形方向、场景文化环境、关键道具、世界语境、称谓与表达策略。","capabilities":["LOCALIZATION","TARGET_BIBLE"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":[]},
+    {"id":"validate_target_lineage","phase":"目标版本","title":"校验 Target lineage","description":"服务端严格校验 Source Character/Scene/Prop 一对一覆盖、Target identity 独立、无 Source id 伪造或遗漏。","capabilities":["TARGET_BIBLE"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":[]},
+    {"id":"publish_target_bible","phase":"目标版本","title":"发布目标设定","description":"在一个数据库事务内原子发布 ADAPTATION_PLAN + TARGET_BIBLE typed revisions、provenance 和 Artifact Graph。","capabilities":["LOCALIZATION","TARGET_BIBLE"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":["ADAPTATION_PLAN","TARGET_BIBLE"]}
+  ],
+  "fact_levels": ["FROZEN_SOURCE_SNAPSHOT", "REPLICA_PRESERVATION_LOCK", "TARGET_DESIGN_DECISION"],
+  "provider_rules": [
+    "CURRENT SOURCE_VIDEO_SNAPSHOT 是唯一 Source 世界版本锚点；不得重新解释散落 P5~P9 Artifact 来覆盖 Snapshot。",
+    "故事主线、Hook、冲突与顺序、反转与顺序、信息揭示顺序、情绪峰值、Payoff、Cliffhanger、Story Beat timing、Shot rhythm baseline 属于硬锁，Provider 无权删除、合并或重排。",
+    "Source Facts 只读；不得修改 P5 Shot 时间、P6 canonical dialogue/OCR、P7/P8/P9 typed Source 内容。",
+    "Target Character / Scene / Prop 必须保留 source_*_id lineage，但 Target identity 必须独立，Provider 不生成数据库或 Artifact id。",
+    "第一版必须一对一完整覆盖 Snapshot 中所有 Source Character / Scene / Prop；不得遗漏或创造无 lineage 的主要实体。",
+    "允许设计人物本土身份/姓名/外形、场景文化环境、道具文化替代、世界语境、称谓/表达策略、visual style 和 continuity rules。",
+    "P11 不输出正式 Target Script、逐句 Target Dialogue、Target Storyboard、Target Voice、TTS、Timing 或 Generation 参数。",
+    "GET 永远只读；外部 Provider 请求前必须先持久化 ProviderJob，并绑定 CURRENT Source Snapshot Artifact。",
+    "Source Snapshot STALE 时 P11 必须 fail closed；Target 不得反向写 Source。"
+  ],
+  "output_contracts": ["ADAPTATION_PLAN", "TARGET_BIBLE"],
+  "completion_criteria": ["preservation locks 由服务端确定性生成且覆盖 Replica Story/Rhythm 锁", "Source Character/Scene/Prop 一对一完整映射到独立 Target identity", "ADAPTATION_PLAN 与 TARGET_BIBLE 在同一事务发布", "revision/fingerprint/provenance/Artifact Graph 完整", "GET 无写副作用", "没有提前生成 TARGET_SCRIPT / TARGET_STORYBOARD / TTS / Generation"],
+  "failure_policy": ["Source Snapshot 缺失或 STALE 时阻断", "Provider 返回遗漏/伪造 Source identity 时阻断", "任何 publication set 部分失败时整体 rollback 并保留旧 CURRENT Target set", "真实人工验收通过前 LOCALIZATION / TARGET_BIBLE capability 保持 PLANNED"]
+}

@@ -23,6 +23,14 @@ EXPECTED_SKILLS = {
     "SCRIPT_TO_DRAMA": "project.script_to_drama",
     "SCRIPT_LOCALIZATION": "project.script_localization",
 }
+EXPECTED_SKILL_VERSIONS = {
+    "REPLICA": "1.1.0",
+    "REDRAW": "1.0.0",
+    "TRANSLATION": "1.0.0",
+    "NOVEL_TO_DRAMA": "1.0.0",
+    "SCRIPT_TO_DRAMA": "1.0.0",
+    "SCRIPT_LOCALIZATION": "1.0.0",
+}
 
 
 def _payload(project_type: str, name: str | None = None) -> dict:
@@ -51,7 +59,7 @@ def test_all_six_project_types_are_persisted_and_bound_to_root_skills(client: Te
         body = response.json()
         assert body["project_type"] == project_type
         assert body["root_skill_id"] == EXPECTED_SKILLS[project_type]
-        assert body["root_skill_version"] == "1.0.0"
+        assert body["root_skill_version"] == EXPECTED_SKILL_VERSIONS[project_type]
         assert body["current_plan_id"] is None
 
     response = client.get("/api/v3/projects")
@@ -90,7 +98,7 @@ def test_plan_must_be_explicitly_compiled_then_get_is_read_only(client: TestClie
 
     plan = _compile(client, project["id"])
     assert plan["skill_id"] == "project.replica"
-    assert plan["skill_version"] == "1.0.0"
+    assert plan["skill_version"] == "1.1.0"
     assert plan["revision"] == 1
     assert len(plan["input_fingerprint"]) == 64
     assert plan["steps"][0]["id"] == "source_input"

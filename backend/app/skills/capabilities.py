@@ -13,7 +13,7 @@ CAPABILITIES: tuple[CapabilityDefinition, ...] = (
     CapabilityDefinition(id=Capability.IDENTITY_RESOLUTION, title="人物归一", description="使用多证据把不同镜头中的人物归一为稳定角色。", category="source", availability=CapabilityAvailability.AVAILABLE),
     CapabilityDefinition(id=Capability.SCENE_RESOLUTION, title="场景归一", description="建立稳定场景资产并绑定镜头。", category="source", availability=CapabilityAvailability.AVAILABLE),
     CapabilityDefinition(id=Capability.PROP_RESOLUTION, title="道具归一", description="识别并归一剧情关键道具。", category="source", availability=CapabilityAvailability.AVAILABLE),
-    CapabilityDefinition(id=Capability.SOURCE_SNAPSHOT, title="原片分析定稿", description="冻结可供下游使用的正式原片事实。", category="source"),
+    CapabilityDefinition(id=Capability.SOURCE_SNAPSHOT, title="原片分析定稿", description="冻结可供下游使用的正式原片事实。", category="source", availability=CapabilityAvailability.AVAILABLE),
     CapabilityDefinition(id=Capability.SCRIPT_ANALYSIS, title="剧本理解", description="解析剧本结构、角色、场景、对白和事件。", category="text"),
     CapabilityDefinition(id=Capability.NOVEL_ADAPTATION, title="小说短剧化", description="把小说结构改造成短剧化的集、场和冲突结构。", category="text"),
     CapabilityDefinition(id=Capability.LOCALIZATION, title="本土化替换", description="按目标地区替换文化、身份、场景、道具和表达。", category="target"),
