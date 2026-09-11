@@ -13,19 +13,11 @@ from app.core.time import utc_now
 from app.evidence.manual_adjudication import get_episode_source_evidence
 from app.evidence.service_v4 import create_source_evidence_task, run_p6_source_evidence_task
 from app.preprocessing.service import create_shot_boundary_task, get_episode_shot_boundary, run_p5_shot_boundary_task
-from app.projects.enums import VIDEO_PROJECT_TYPES
+from app.projects.enums import SOURCE_BIBLE_PROJECT_TYPES
 from app.projects.service import get_project
 from app.shot_breakdown.service_v2 import create_shot_breakdown_task, get_shot_breakdown, run_p8_shot_breakdown_task
 from app.skills.models import ArtifactType
-from app.source_analysis.schemas import (
-    SourceAnalysisState,
-    SourceAnalysisStatusRead,
-    SourceScriptDialogue,
-    SourceScriptEntity,
-    SourceScriptRead,
-    SourceScriptScene,
-    SourceScriptShot,
-)
+from app.source_analysis.schemas import SourceAnalysisState, SourceAnalysisStatusRead, SourceScriptRead
 from app.source_resolution.service_v2 import create_source_resolution_task, get_source_resolution, run_p9_source_resolution_task
 from app.source_snapshot.service import finalize_source_video_snapshot, get_source_video_snapshot
 from app.sources.models import Episode
@@ -54,6 +46,16 @@ def _sha(payload: object) -> str:
 
 def _status_value(value: object) -> str:
     return str(getattr(value, "value", value))
+
+
+def _assert_source_analysis_project(db: Session, project_id: str) -> None:
+    project = get_project(db, project_id)
+    if project.project_type not in SOURCE_BIBLE_PROJECT_TYPES:
+        raise AppError(
+            "SOURCE_ANALYSIS_NOT_ALLOWED",
+            "当前一键原片解析仅用于复刻短剧和重绘短剧",
+            status_code=422,
+        )
 
 
 def _current_artifact(db: Session, project_id: str, artifact_type: ArtifactType) -> ArtifactNode | None:
@@ -111,17 +113,17 @@ def _pipeline_message(task: Task | None, state: SourceAnalysisState) -> str:
     if state == SourceAnalysisState.NEEDS_REFRESH:
         return "原片分析结果已有更新，需要重新解析后再继续。"
     if state == SourceAnalysisState.FAILED:
+        if task is not None and task.status == TaskStatus.INTERRUPTED:
+            return task.last_error or "原片解析已中断，请重新解析继续。"
         return task.last_error or "原片解析失败，请重试。" if task else "原片解析失败，请重试。"
     return "上传原片后即可开始解析。"
 
 
 def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisStatusRead:
-    project = get_project(db, project_id)
-    if project.project_type not in VIDEO_PROJECT_TYPES:
-        raise AppError("SOURCE_ANALYSIS_NOT_ALLOWED", "当前项目类型不执行原片解析", status_code=422)
+    _assert_source_analysis_project(db, project_id)
 
     latest = _latest_pipeline_task(db, project_id)
-    if latest is not None and latest.status in {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.INTERRUPTED}:
+    if latest is not None and latest.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
         state = SourceAnalysisState.RUNNING
         stage = str((latest.checkpoint_json or {}).get("stage_label") or "正在解析原片")
         return SourceAnalysisStatusRead(
@@ -145,12 +147,13 @@ def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisSt
             can_retry=False,
             message=_pipeline_message(latest, SourceAnalysisState.READY),
         )
-    if latest is not None and latest.status == TaskStatus.FAILED:
+    if latest is not None and latest.status in {TaskStatus.FAILED, TaskStatus.INTERRUPTED}:
+        fallback_stage = "解析已中断" if latest.status == TaskStatus.INTERRUPTED else "解析失败"
         return SourceAnalysisStatusRead(
             project_id=project_id,
             state=SourceAnalysisState.FAILED,
             progress_percent=latest.progress_percent,
-            current_stage=str((latest.checkpoint_json or {}).get("stage_label") or "解析失败"),
+            current_stage=str((latest.checkpoint_json or {}).get("stage_label") or fallback_stage),
             task_id=latest.id,
             can_retry=latest.attempt < latest.max_attempts,
             message=_pipeline_message(latest, SourceAnalysisState.FAILED),
@@ -177,9 +180,7 @@ def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisSt
 
 
 def create_source_analysis_task(db: Session, *, project_id: str, idempotency_key: str) -> Task | None:
-    project = get_project(db, project_id)
-    if project.project_type not in VIDEO_PROJECT_TYPES:
-        raise AppError("SOURCE_ANALYSIS_NOT_ALLOWED", "当前项目类型不执行原片解析", status_code=422)
+    _assert_source_analysis_project(db, project_id)
     source = _current_artifact(db, project_id, ArtifactType.SOURCE_VIDEO)
     if source is None:
         raise AppError("SOURCE_VIDEO_REQUIRED", "请先上传原片视频", status_code=409)
@@ -468,154 +469,9 @@ def run_source_analysis_task(session_factory: sessionmaker[Session], task_id: st
             mark_task_succeeded(db, task_snapshot.id, worker_id=worker_id)
 
 
-def _scene_name(scene_id: str | None, scene_names: dict[str, str]) -> str:
-    if scene_id is None:
-        return "未识别场景"
-    return scene_names.get(scene_id, "未命名场景")
-
-
-def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
-    from app.source_analysis.script_service import _action_summary
-
-    status = get_source_analysis_status(db, project_id)
-    if status.state != SourceAnalysisState.READY:
-        return SourceScriptRead(project_id=project_id, state=status.state, title="原片剧本")
-
-    breakdown = get_shot_breakdown(db, project_id)
-    resolution = get_source_resolution(db, project_id)
-    if (
-        _status_value(breakdown.status) != "CURRENT"
-        or breakdown.content is None
-        or resolution.characters.content is None
-        or resolution.speakers.content is None
-        or resolution.scenes.content is None
-        or resolution.props.content is None
-    ):
-        return SourceScriptRead(project_id=project_id, state=SourceAnalysisState.NEEDS_REFRESH, title="原片剧本")
-
-    scene_names = {item.scene_id: item.display_name for item in resolution.scenes.content.entities}
-    assignment_by_shot = {
-        item.shot_anchor_id: item
-        for item in resolution.scenes.content.assignments
-    }
-    character_names = {item.character_id: item.display_name for item in resolution.characters.content.entities}
-    speaker_names = {item.speaker_id: item.display_name for item in resolution.speakers.content.entities}
-    speaker_character_names = {
-        item.speaker_id: character_names.get(item.character_id or "") or item.display_name
-        for item in resolution.speakers.content.entities
-    }
-    attribution_by_utterance = {
-        item.utterance_id: item
-        for item in resolution.speakers.content.attributions
-    }
-    characters_by_shot: dict[str, set[str]] = {}
-    for character in resolution.characters.content.entities:
-        for shot_id in character.shot_anchor_ids:
-            characters_by_shot.setdefault(shot_id, set()).add(character.display_name)
-
-    scenes: list[SourceScriptScene] = []
-    seen_utterances: set[str] = set()
-    scene_number = 0
-    for episode in breakdown.content.episodes:
-        for fact in episode.shots:
-            assignment = assignment_by_shot.get(fact.shot_anchor_id)
-            scene_id = assignment.scene_id if assignment is not None else None
-            if not scenes or scenes[-1].scene_id != scene_id:
-                scene_number += 1
-                scenes.append(
-                    SourceScriptScene(
-                        scene_number=scene_number,
-                        episode_id=episode.episode_id,
-                        scene_id=scene_id,
-                        scene_name=_scene_name(scene_id, scene_names),
-                        start_us=fact.start_us,
-                        end_us=fact.end_us,
-                        character_names=[],
-                        shots=[],
-                    )
-                )
-            current_scene = scenes[-1]
-            visible_names = characters_by_shot.get(fact.shot_anchor_id, set())
-            shot_dialogues: list[SourceScriptDialogue] = []
-            for dialogue in fact.dialogue:
-                if dialogue.utterance_id in seen_utterances:
-                    continue
-                seen_utterances.add(dialogue.utterance_id)
-                attribution = attribution_by_utterance.get(dialogue.utterance_id)
-                speaker_id = attribution.speaker_id if attribution is not None else None
-                speaker_name = speaker_character_names.get(speaker_id or "") or speaker_names.get(speaker_id or "") or "未知说话人"
-                shot_dialogues.append(
-                    SourceScriptDialogue(
-                        utterance_id=dialogue.utterance_id,
-                        utterance_number=dialogue.utterance_number,
-                        start_us=dialogue.utterance_start_us,
-                        end_us=dialogue.utterance_end_us,
-                        speaker_id=speaker_id,
-                        speaker_name=speaker_name,
-                        text=dialogue.text,
-                        delivery=_status_value(dialogue.delivery),
-                    )
-                )
-            current_scene.shots.append(
-                SourceScriptShot(
-                    episode_id=episode.episode_id,
-                    shot_anchor_id=fact.shot_anchor_id,
-                    shot_number=fact.shot_number,
-                    start_us=fact.start_us,
-                    end_us=fact.end_us,
-                    duration_us=fact.duration_us,
-                    action_summary=_action_summary(
-                        fact.visual_description,
-                        visible_character_names=visible_names,
-                        camera_values=(
-                            fact.camera_language.shot_size,
-                            fact.camera_language.composition,
-                            fact.camera_language.angle_or_type,
-                            fact.camera_language.movement,
-                            fact.camera_language.focal_length_dof,
-                        ),
-                    ),
-                    visual_description=fact.visual_description,
-                    shot_size=fact.camera_language.shot_size,
-                    composition=fact.camera_language.composition,
-                    angle_or_type=fact.camera_language.angle_or_type,
-                    movement=fact.camera_language.movement,
-                    focal_length_dof=fact.camera_language.focal_length_dof,
-                    thumbnail_url=(
-                        f"/api/v3/projects/{project_id}/episodes/{episode.episode_id}/shot-boundary/"
-                        f"shots/{fact.shot_anchor_id}/thumbnail"
-                    ),
-                    reference_clip_url=(
-                        f"/api/v3/projects/{project_id}/episodes/{episode.episode_id}/shot-boundary/"
-                        f"shots/{fact.shot_anchor_id}/reference-clip"
-                    ),
-                    dialogues=shot_dialogues,
-                )
-            )
-            current_scene.end_us = fact.end_us
-            names = set(current_scene.character_names)
-            names.update(visible_names)
-            current_scene.character_names = sorted(names)
-
-    return SourceScriptRead(
-        project_id=project_id,
-        state=SourceAnalysisState.READY,
-        title=breakdown.content.title or "原片剧本",
-        scenes=scenes,
-        characters=[
-            SourceScriptEntity(id=item.character_id, name=item.display_name)
-            for item in resolution.characters.content.entities
-        ],
-        props=[
-            SourceScriptEntity(id=item.prop_id, name=item.display_name)
-            for item in resolution.props.content.entities
-        ],
-    )
-
-
-# Compatibility import for callers that historically imported the composer from
-# this orchestration module. The canonical implementation lives in
-# source_analysis.script_service so product presentation has one source of truth.
+# Compatibility shim for callers that historically imported the deterministic
+# Source Script composer from this orchestration module. The canonical composer
+# lives in script_service; keeping this lazy import avoids a circular import.
 def compose_source_script(db: Session, project_id: str) -> SourceScriptRead:
     from app.source_analysis.script_service import get_source_script as compose
 
