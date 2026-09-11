@@ -24,7 +24,7 @@ from app.target_assets.schemas import (
 
 P13_MAX_OUTPUT_TOKENS = 65536
 P13_REVIEW_LANGUAGE = "zh-CN"
-P13_REVIEW_LANGUAGE_CONTRACT = "zh-cn-human-review-model-execution-separated-v1"
+P13_REVIEW_LANGUAGE_CONTRACT = "zh-cn-human-review-asset-local-visual-v2"
 
 _JSON_SCHEMA_KEYS = {
     "$defs",
@@ -301,6 +301,12 @@ def _prompt(payload: TargetAssetsProviderInput) -> str:
 - Lila Xu、Jake Miller、Austin、HEB、iPhone、$19.99 等目标地区人物名、地名、品牌、型号、货币和专有名词可以保留原文；解释这些实体的句子仍使用中文。
 - generation_guidance 在 P13 是给用户审核的视觉设计指导，不是最终 image/video execution prompt。未来真正生成时由 Generation Adapter 再按模型需要整理英文或其他模型优化 prompt；本阶段不得提前进入 P14。
 - 不得因为 target_language=en-US 就把本次审核正文整体输出为英文。
+
+视觉资产作用域硬规则：
+- continuity_constraints / generation_guidance / negative_constraints 只能描述当前人物、场景或道具的视觉身份稳定性；不得复制或改写 Target Bible 中的故事主线、Story Beat、镜头顺序、对白、节奏、Cliffhanger、人物关系等全局叙事锁。
+- wardrobe_baseline 是人物基础视觉身份，不是逐 Scene / 逐 Shot 换装计划。除非 CURRENT TARGET_BIBLE 明确给出已确认的服装 variation，否则不得自行列出“场景 1/2/3 穿什么”或按剧情段落发明换装。
+- time_of_day_baseline 是场景视觉基线，不是剧情时间轴。不得根据 Scene 顺序、闪回或情绪自行推断“深夜、次日上午、若干小时后”等故事时间变化；若 Target Bible 没有明确时段，只描述不依赖虚构剧情时间的稳定光照/环境基线，并说明具体时段由后续 Storyboard/Shot context 决定。
+- P13 不负责复述 preservation locks。上游故事/镜头保留规则继续属于 Target Bible 与后续 production planning，不应重复塞进每个 Target Asset packet。
 
 最高规则：
 1. 只能读取 CURRENT TARGET_BIBLE；不得要求或推断 SOURCE_VIDEO_SNAPSHOT、ADAPTATION_PLAN、TARGET_SCRIPT 中的新事实。
