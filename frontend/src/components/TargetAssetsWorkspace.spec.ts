@@ -185,13 +185,36 @@ const succeededTask: TaskRead = {
   finished_at: '2026-09-11T00:00:01Z',
 }
 
+const runningTask: TaskRead = {
+  ...succeededTask,
+  id: 'task-running',
+  task_name: '生成目标资产候选',
+  progress_percent: 25,
+  status: 'running',
+  can_cancel: true,
+  created_at: '2026-09-11T00:03:00Z',
+  started_at: '2026-09-11T00:03:00Z',
+  finished_at: null,
+}
+
+const finalizingTask: TaskRead = {
+  ...succeededTask,
+  id: 'task-finalizing',
+  task_name: '生成目标资产候选',
+  created_at: '2026-09-11T00:04:00Z',
+  started_at: '2026-09-11T00:04:00Z',
+  finished_at: '2026-09-11T00:04:10Z',
+}
+
 async function mountWorkspace(
   bible: ReplicaTargetBibleRead = currentBible,
   assets: ReplicaTargetAssetsRead = notBuilt,
   candidates: TargetAssetsCandidateRead[] = [],
   selectedProject: ProjectRead = project,
+  tasks: TaskRead[] = [],
 ) {
   vi.mocked(projectApi.getProject).mockResolvedValue(selectedProject)
+  vi.mocked(projectApi.listProjectTasks).mockResolvedValue(tasks)
   vi.mocked(targetBibleApi.getReplicaTargetBible).mockResolvedValue(bible)
   vi.mocked(targetAssetsApi.getReplicaTargetAssets).mockResolvedValue(assets)
   vi.mocked(targetAssetsApi.listReplicaTargetAssetCandidates).mockResolvedValue(candidates)
@@ -211,11 +234,45 @@ afterEach(() => vi.clearAllMocks())
 describe('TargetAssetsWorkspace', () => {
   it('loads via GET only and exposes an explicit generate action only after Target Bible is current', async () => {
     const wrapper = await mountWorkspace()
+    expect(projectApi.listProjectTasks).toHaveBeenCalledWith('project-1')
     expect(targetAssetsApi.startReplicaTargetAssets).not.toHaveBeenCalled()
     expect(targetAssetsApi.regenerateReplicaTargetAssets).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('可以生成目标资产候选')
     expect(wrapper.findAll('button').some((item) => item.text() === '生成目标资产')).toBe(true)
     expect(wrapper.text()).toContain('页面刷新不会自动启动生成')
+    wrapper.unmount()
+  })
+
+  it('restores a running target-assets task after page reload without starting another generation', async () => {
+    const wrapper = await mountWorkspace(currentBible, notBuilt, [], project, [runningTask])
+
+    expect(projectApi.listProjectTasks).toHaveBeenCalledWith('project-1')
+    expect(wrapper.text()).toContain('正在生成目标资产候选 25%')
+    expect(wrapper.findAll('button').some((item) => item.text() === '生成目标资产')).toBe(false)
+    expect(targetAssetsApi.startReplicaTargetAssets).not.toHaveBeenCalled()
+    expect(targetAssetsApi.regenerateReplicaTargetAssets).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps a just-succeeded task busy until its candidate becomes readable', async () => {
+    const wrapper = await mountWorkspace(currentBible, notBuilt, [], project, [finalizingTask])
+
+    expect(wrapper.text()).toContain('正在整理目标资产候选…')
+    expect(wrapper.findAll('button').some((item) => item.text() === '生成目标资产')).toBe(false)
+    expect(targetAssetsApi.startReplicaTargetAssets).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('does not mistake an unrelated running project task for target-assets generation', async () => {
+    const unrelatedTask: TaskRead = {
+      ...runningTask,
+      id: 'source-analysis-task',
+      task_name: '解析原片',
+    }
+    const wrapper = await mountWorkspace(currentBible, notBuilt, [], project, [unrelatedTask])
+
+    expect(wrapper.text()).toContain('可以生成目标资产候选')
+    expect(wrapper.findAll('button').some((item) => item.text() === '生成目标资产')).toBe(true)
     wrapper.unmount()
   })
 
@@ -298,6 +355,7 @@ describe('TargetAssetsWorkspace', () => {
     expect(wrapper.html()).toBe('<!--v-if-->')
     expect(targetBibleApi.getReplicaTargetBible).not.toHaveBeenCalled()
     expect(targetAssetsApi.getReplicaTargetAssets).not.toHaveBeenCalled()
+    expect(projectApi.listProjectTasks).not.toHaveBeenCalled()
     expect(targetAssetsApi.startReplicaTargetAssets).not.toHaveBeenCalled()
     wrapper.unmount()
   })
