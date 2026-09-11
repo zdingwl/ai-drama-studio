@@ -133,9 +133,9 @@ def test_p10_professional_skill_and_root_contract_require_independent_speakers()
     assert ArtifactType.SOURCE_PROPS in source_breakdown.produces
 
 
-def test_p10_snapshot_stays_source_and_capability_stays_planned_until_real_acceptance() -> None:
+def test_p10_snapshot_stays_source_and_capability_is_available_after_real_acceptance() -> None:
     assert expected_namespace(ArtifactType.SOURCE_VIDEO_SNAPSHOT) == ArtifactNamespace.SOURCE
-    assert CAPABILITY_BY_ID[Capability.SOURCE_SNAPSHOT].availability == CapabilityAvailability.PLANNED
+    assert CAPABILITY_BY_ID[Capability.SOURCE_SNAPSHOT].availability == CapabilityAvailability.AVAILABLE
 
 
 def test_p10_provenance_rejects_provider_jobs_and_missing_speaker_input() -> None:
