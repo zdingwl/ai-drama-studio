@@ -368,6 +368,24 @@ def _task_generation(task: TaskWorkerRead | Task) -> tuple[int, str]:
     return sequence, base_fingerprint
 
 
+def _checkpoint(
+    context: TaskExecutionContext,
+    *,
+    stage: str,
+    progress_percent: int,
+    generation_sequence: int,
+    generation_base_fingerprint: str,
+) -> None:
+    context.checkpoint(
+        {
+            "stage": stage,
+            "generation_sequence": generation_sequence,
+            "generation_base_fingerprint": generation_base_fingerprint,
+        },
+        progress_percent=progress_percent,
+    )
+
+
 def _assert_task_inputs(
     task: TaskWorkerRead | Task,
     inputs: P13Inputs,
@@ -581,9 +599,21 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P13Executio
         profile = provider.profile()
         base_artifact_id = inputs.base_target_assets_artifact.id if inputs.base_target_assets_artifact else None
 
-    context.checkpoint({"stage": "target_asset_identity_manifest"}, progress_percent=15)
+    _checkpoint(
+        context,
+        stage="target_asset_identity_manifest",
+        progress_percent=15,
+        generation_sequence=generation_sequence,
+        generation_base_fingerprint=base_fingerprint,
+    )
     payload = _provider_input(inputs)
-    context.checkpoint({"stage": "design_visual_identity_packets"}, progress_percent=25)
+    _checkpoint(
+        context,
+        stage="design_visual_identity_packets",
+        progress_percent=25,
+        generation_sequence=generation_sequence,
+        generation_base_fingerprint=base_fingerprint,
+    )
     job_payload = {
         "profile": P13_PROMPT_VERSION,
         "schema_version": P13_SCHEMA_VERSION,
@@ -609,11 +639,23 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P13Executio
             artifact_id=inputs.target_bible_artifact.id,
             remote_call=lambda _job: _dispatch(provider, payload),
         )
-    context.checkpoint({"stage": "validate_target_asset_lineage"}, progress_percent=82)
+    _checkpoint(
+        context,
+        stage="validate_target_asset_lineage",
+        progress_percent=82,
+        generation_sequence=generation_sequence,
+        generation_base_fingerprint=base_fingerprint,
+    )
     raw = dispatched.value
     semantic = raw if isinstance(raw, TargetAssetsSemantic) else TargetAssetsSemantic.model_validate(raw)
     content = _compose(inputs, semantic)
-    context.checkpoint({"stage": "stage_for_human_review"}, progress_percent=94)
+    _checkpoint(
+        context,
+        stage="stage_for_human_review",
+        progress_percent=94,
+        generation_sequence=generation_sequence,
+        generation_base_fingerprint=base_fingerprint,
+    )
     provider_job = TargetAssetsProviderJobProvenance(
         provider_job_id=job.id,
         provider=job.provider,
