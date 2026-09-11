@@ -1,6 +1,6 @@
 """Supersede pending P13 candidates before asset-local visual identity v2.
 
-Revision ID: 0023_p13_visual_identity_scope_v2
+Revision ID: 0023_p13_visual_scope_v2
 Revises: 0022_p13_chinese_review_language
 Create Date: 2026-09-11
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0023_p13_visual_identity_scope_v2"
+revision = "0023_p13_visual_scope_v2"
 down_revision = "0022_p13_chinese_review_language"
 branch_labels = None
 depends_on = None
