@@ -103,7 +103,7 @@ def test_p12_professional_skill_root_contract_and_p11_acceptance_admit_execution
     assert skill.output_contracts == (ArtifactType.TARGET_SCRIPT,)
 
     root = get_root_skill(ProjectType.REPLICA)
-    assert root.version == "1.2.0"
+    assert root.version == "1.3.0"
     target_script = next(step for step in root.steps if step.id == "target_script")
     assert target_script.requires == (
         ArtifactType.SOURCE_VIDEO_SNAPSHOT,
