@@ -1,7 +1,7 @@
 # AI Drama Studio V3 — 开发规则
 
 > 当前状态日期：2026-09-11。  
-> 当前最高优先级：`docs/22_P10一键原片解析最终产品验收.md`。  
+> 当前最高优先级：`docs/23_P10最终验收与P11准入.md`。  
 > 原则：仓库当前 `main` + 编号更高、日期更新的状态/验收文档是唯一事实源；历史文档只能解释演进，不能覆盖最新口径。
 
 ## 1. 开发前读取顺序
@@ -32,16 +32,20 @@
 22. `docs/20_P10产品呈现整改_取消独立阶段.md`
 23. `docs/21_原片解析一键编排与剧本分镜工作区.md`
 24. `docs/22_P10一键原片解析最终产品验收.md`
-25. 当前相关代码与测试
+25. `docs/23_P10最终验收与P11准入.md`
+26. 当前相关代码与测试
 
-冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。** 特别是：
+冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。**
 
-- `docs/17` 已记录 P9 最终真实人工 PASS；任何“P9 尚未实现 / P9 PLANNED”的旧描述失效；
-- `docs/20` 取消 P10 作为普通用户独立大面板；
-- `docs/21` 将 REPLICA / REDRAW 的 P5~P10 收口为一次“解析原片”；
-- `docs/22` 是当前 P10 最终产品级真实人工验收的唯一准入清单。
+关键当前事实：
 
-历史分支不能覆盖当前 V3 规划。
+- `docs/17`：P9 最终真实人工 PASS；
+- `docs/20`：取消 P10 作为普通用户独立大面板；
+- `docs/21`：REPLICA / REDRAW 的 P5~P10 收口为一次“解析原片”；
+- `docs/22`：P10 一键产品最终验收清单；
+- `docs/23`：用户已明确 `P10 PASS`，`SOURCE_SNAPSHOT = AVAILABLE`，P11 Replica Target Bible 正式准入。
+
+历史分支只能参考，不能覆盖当前 V3 规划。
 
 ---
 
@@ -60,21 +64,8 @@ P6 Source Evidence
 P7 整集多模态原片理解
 P8 逐镜精细拉片
 P9 Character / Speaker / Scene / Prop 最终归一
+P10 SourceVideoSnapshot / 一键原片解析产品链
 ```
-
-P10 当前状态：
-
-```text
-工程实现       = 完成
-自动门禁 / CI  = 完成
-内部 Snapshot  = 已有真实 publication 证据
-新一键产品呈现 = 已实现
-最终真实人工验收 = 待用户明确 PASS
-
-SOURCE_SNAPSHOT = PLANNED
-```
-
-P10 未最终 PASS 前，**禁止进入 P11 Replica Target Bible 正式实现**。
 
 当前 `AVAILABLE` 至少包括：
 
@@ -90,16 +81,28 @@ SHOT_BREAKDOWN
 IDENTITY_RESOLUTION
 SCENE_RESOLUTION
 PROP_RESOLUTION
+SOURCE_SNAPSHOT
 ```
 
-当前仍为 `PLANNED`：
+当前正式下一工程切片：
 
 ```text
-SOURCE_SNAPSHOT
-Target Bible / Target Script / TARGET_STORYBOARD
-TTS / Timing / Generation / QC / Selection / Post / Final Output
+P11 Replica Target Bible
+```
+
+P11 只“准入”，并未完成。以下仍为 `PLANNED`：
+
+```text
+Target Bible capability
+Target Script
+TARGET_STORYBOARD
+TTS / Timing
+Generation / QC / Selection
+Post / Final Output
 以及尚未完成的其他项目类型完整业务链
 ```
+
+禁止跳过 P11 直接进入后续阶段。
 
 ---
 
@@ -125,7 +128,15 @@ REPLICA
 REDRAW
 ```
 
-`TRANSLATION` 在明确接入对应契约前不得复用该工作区假装能力可用；route 和 service 都应 fail closed。
+`TRANSLATION` 在明确接入对应契约前不得复用该工作区假装能力可用；route 和 service 都必须 fail closed。
+
+P11 当前只开发：
+
+```text
+REPLICA Target Bible
+```
+
+不得借 P11 顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Target 链。
 
 ---
 
@@ -154,7 +165,7 @@ Tool        = 用什么执行
 Guardrail   = 绝对不能违反什么
 ```
 
-同时严格区分：
+必须严格区分：
 
 ```text
 Product Stage
@@ -162,7 +173,7 @@ Internal PlanStep / Capability
 P0/P1/P2/... Engineering Phase
 ```
 
-Skill 不是 Prompt；至少必须定义适用条件、输入、可读 Artifact、required capabilities、步骤、判断规则、用户决策策略、输出契约、校验、完成标准和失败处理。
+Skill 不是 Prompt。正式 Skill 至少要定义适用条件、输入、可读 Artifact、required capabilities、步骤、判断规则、用户决策策略、输出契约、校验、完成标准和失败处理。
 
 ---
 
@@ -203,10 +214,12 @@ P10：
 ```text
 source-video-snapshot@1.0.0
 p10-source-video-snapshot-v1
-P10 snapshot schema 1.0
+SOURCE_VIDEO_SNAPSHOT schema 1.0
 frozen-accepted-source-facts-v1
 DETERMINISTIC_FREEZE
 ```
+
+P11 尚未有正式运行契约。**必须先设计并落文档，再实现。**
 
 ---
 
@@ -246,14 +259,14 @@ P10 deterministic Source Snapshot
 - P7/P8/P9/P10 无权静默覆盖 P6 canonical dialogue / OCR；
 - P7 必须读取完整 Episode，先整集理解再逐镜；
 - P8 Shot 时间只认 P5，对白正文只认 P6；
-- P8 speaker candidate / character / scene / prop 只是 provisional binding，不能冒充 P9 最终 identity；
+- P8 speaker / character / scene / prop 只是 provisional binding，不能冒充 P9 最终 identity；
 - P9 Provider 以完整 Episode / 全集上下文做全局归一；
 - Speaker 与 Character 分层，Speaker→Character 可以为空；
 - UNKNOWN / UNRESOLVED 是正式状态，禁止最高相似度兜底；
 - P9 不得反写 P5/P6/P7/P8 历史 revision；
 - P10 只冻结 CURRENT Source Facts，不重新理解 Episode，不调用模型，不创建 ProviderJob；
 - P10 必须保持 P5 Shot 时间、P6 canonical dialogue/OCR 原值；
-- P10 的 `SOURCE_SPEAKERS` 是独立冻结输入与独立 section；
+- `SOURCE_SPEAKERS` 是独立冻结输入与独立 section；
 - 任一上游新 revision 必须使依赖旧链的 Snapshot / draft 正确 STALE；
 - Target / Production 不得反向写入 Source。
 
@@ -264,7 +277,7 @@ Source Evidence      = 原片实际说了什么 / 写了什么
 Source Understanding = 这些事实在故事、人物、关系、场景、事件、节奏上意味着什么
 ```
 
-Grounding 继续使用：
+Grounding：
 
 ```text
 FACT
@@ -276,9 +289,9 @@ UNKNOWN
 
 ---
 
-## 7. 当前普通用户产品流程
+## 7. 当前普通用户原片流程
 
-REPLICA / REDRAW 普通模式只允许：
+REPLICA / REDRAW 普通模式：
 
 ```text
 上传完整原片
@@ -292,7 +305,7 @@ REPLICA / REDRAW 普通模式只允许：
 
 P5/P6/P7/P8/P9/P10 是内部工程切片，不得堆成普通用户独立操作卡。
 
-普通模式禁止展示或要求用户理解：
+普通模式禁止要求用户理解：
 
 ```text
 Artifact / ProviderJob
@@ -300,13 +313,11 @@ Fingerprint / Provenance
 Frozen Inputs / SourceVideoSnapshot
 ```
 
-开发 / 诊断模式通过：
+开发 / 诊断入口继续通过：
 
 ```text
 ?debug=1
 ```
-
-保留工程证据入口。
 
 一键解析必须：
 
@@ -353,12 +364,73 @@ P9 Scene Assignment
 
 ---
 
-## 9. Workflow / Provider / 安全硬规则
+## 9. P11 Replica Target Bible 硬边界
+
+P11 正式输入必须以：
+
+```text
+CURRENT SOURCE_VIDEO_SNAPSHOT
+```
+
+作为 Source 世界版本边界，而不是从散落的 P5~P9 Artifact 自行拼装“当前事实”。
+
+需要细节时可以沿 Snapshot lineage 读取被冻结 Source Artifact，但必须保持 Snapshot revision 是唯一当前 Source 版本锚点。
+
+P11 必须先设计：
+
+```text
+Professional Skill
+manifest / SKILL.md
+typed schema
+Target Artifact
+revision / fingerprint / provenance
+CURRENT / STALE
+Artifact Graph relations
+GET / POST / Command
+ProviderJob 策略
+用户编辑 / 决策规则
+自动测试
+真实人工验收
+```
+
+Replica 默认目标：
+
+> 故事不乱改，节奏不重做，文化和表达才本土化。
+
+P11 默认锁定：
+
+```text
+Hook
+冲突
+反转
+信息揭示顺序
+情绪峰值
+Payoff
+Cliffhanger
+Story Beat timing
+Shot rhythm baseline
+```
+
+允许在 Target namespace 进行：人物身份 / 外形、场景、道具、文化信息、目标语言对白等本土化设计。
+
+硬规则：
+
+- Source Facts 绝不被 Target 创作反写；
+- Target identity 不得冒充 Source identity；
+- Source Snapshot STALE 时，基于旧 Snapshot 的 Target Bible 必须 STALE / BLOCKED；
+- P11 不得提前实现正式 Target Storyboard；
+- P11 不得提前实现 TTS / Timing；
+- P11 不得提前实现 Generation / QC / Selection / Post。
+
+---
+
+## 10. Workflow / Provider / 安全硬规则
 
 - 页面 GET 必须只读，不能写 DB、建 Task、运行 Agent、启动模型或自动重算；
 - 重任务必须由明确 POST / Command 启动；
 - 外部计费 Provider 请求前必须先持久化 `ProviderJob`；
 - API Key 禁止写入 DB、日志、Artifact、ProviderJob、provenance 或 Git；
+- API Key UI 默认遮罩，用户显式选择显示后才可回显；本机配置只能进入被 Git 忽略的本地环境文件；
 - Task 必须支持有限 retry / cancel / resume，不允许无限重试；
 - Task 技术 succeeded 不等于业务 Artifact READY；
 - 失败不得覆盖旧 CURRENT Artifact；
@@ -367,22 +439,6 @@ P9 Scene Assignment
 - Source Shot / TargetStoryboardShot / GenerationSegment 严格分离；
 - GenerationAttempt 不是正式结果，只有 GenerationSelection 可进入后期；
 - 多 Episode 重模型默认串行；同 Episode 内独立轻量能力可由 orchestration 按资源条件并行。
-
----
-
-## 10. Replica 后续硬约束
-
-Replica 默认目标：
-
-> 故事不乱改，节奏不重做，文化和表达才本土化。
-
-后续 P11+ 必须默认锁定 Hook、冲突、反转、信息揭示顺序、情绪峰值、Payoff、Cliffhanger、Story Beat timing 与 Shot rhythm baseline。
-
-允许本土化人物身份 / 外形、场景、道具、文化信息与目标语言对白。
-
-目标对白必须先得到真实 TTS 时长，再做 Timing。
-
-但这些 P11+ 能力**当前不得提前实现**；只有 `docs/22` 最终真实人工验收由用户明确 PASS 后才准入。
 
 ---
 
@@ -402,4 +458,19 @@ Replica 默认目标：
 
 不能用其中一层替代另一层。
 
-当前 P10 的缺口正是第 5~7 层在**新的“一键解析原片”普通产品呈现**上的最终确认，因此任何自动测试或内部 Snapshot CURRENT 都不能自行宣布 `SOURCE_SNAPSHOT = AVAILABLE`。
+P11 只有在上述门禁和真实人工验收全部通过后，才能把对应 Target Bible capability 从 `PLANNED` 升为 `AVAILABLE`，并准入下一工程阶段。
+
+---
+
+## 12. Git 规则
+
+```text
+main = V3 当前稳定开发基线
+backup/* = 历史回滚 / 参考
+```
+
+- 禁止 force push；
+- 重大结构变化必须先更新规划 / 契约，再编码；
+- 默认通过 branch → PR → CI → merge → main CI 验证；
+- 合并前必须人工复核 diff，避免整文件替换引入无关改动；
+- 文档状态变更不能替代代码测试；代码测试也不能替代真实人工验收。
