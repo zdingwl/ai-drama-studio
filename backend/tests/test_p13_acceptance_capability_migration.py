@@ -5,6 +5,7 @@ from types import ModuleType
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from sqlalchemy.engine import Connection
 
 
 def _load_migration() -> ModuleType:
@@ -16,7 +17,7 @@ def _load_migration() -> ModuleType:
     return module
 
 
-def _state(connection: sa.Connection) -> tuple[dict[str, str | None], dict[str, int]]:
+def _state(connection: Connection) -> tuple[dict[str, str | None], dict[str, int]]:
     projects = {
         row.id: row.current_plan_id
         for row in connection.execute(
