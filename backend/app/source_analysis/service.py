@@ -84,7 +84,8 @@ def _pipeline_input_fingerprint(db: Session, project_id: str, source: ArtifactNo
     restart_after_terminal = None
     if latest is not None and (
         latest.status in {TaskStatus.SUCCEEDED, TaskStatus.CANCELLED}
-        or latest.status == TaskStatus.FAILED and latest.attempt >= latest.max_attempts
+        or latest.status in {TaskStatus.FAILED, TaskStatus.INTERRUPTED}
+        and latest.attempt >= latest.max_attempts
     ):
         restart_after_terminal = latest.id
     return _sha(
@@ -95,9 +96,9 @@ def _pipeline_input_fingerprint(db: Session, project_id: str, source: ArtifactNo
             "source_language": project.source_language,
             "source_understanding_provider": project.source_understanding_provider.value,
             # A non-CURRENT snapshot after a terminal pipeline means an upstream
-            # Source revision changed or the previous publication was invalidated.
+            # Source revision changed or the previous publication/recovery was exhausted.
             # Including that terminal task prevents the generic business-key
-            # dedupe from replaying an old SUCCEEDED task instead of scheduling
+            # dedupe from replaying an old terminal task instead of scheduling
             # the missing/STALE recovery chain.
             "restart_after_terminal": restart_after_terminal,
         }
@@ -463,7 +464,7 @@ def run_source_analysis_task(session_factory: sessionmaker[Session], task_id: st
                     safe_error=f"原片解析失败（{type(exc).__name__}）",
                 )
         return
-    with session_factory() as db:
+    with context.session_factory() as db:
         current = db.get(Task, task_snapshot.id)
         if current is not None and current.status == TaskStatus.RUNNING and current.worker_id == worker_id:
             mark_task_succeeded(db, task_snapshot.id, worker_id=worker_id)
