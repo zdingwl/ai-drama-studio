@@ -65,6 +65,18 @@ class Settings(BaseSettings):
     p7_qwen3_vl_8b_local_model: str = "Qwen/Qwen3-VL-8B-Thinking"
     p7_qwen_local_request_timeout_seconds: float = 3600.0
 
+    # P13 visual reference provider. It is deliberately separate from the reasoning provider:
+    # text/model output alone is never treated as a formal visual asset.
+    p13_image_base_url: str = ""
+    p13_image_api_key: SecretStr | None = None
+    p13_image_model: str = ""
+    p13_image_provider: str = "openai-compatible-image"
+    p13_image_size: str = "1024x1024"
+    p13_image_request_timeout_seconds: float = 300.0
+    p13_image_max_bytes: int = 20 * 1024 * 1024
+    p13_image_min_width: int = 512
+    p13_image_min_height: int = 512
+
     @model_validator(mode="after")
     def anchor_runtime_paths(self) -> "Settings":
         sqlite_prefix = "sqlite:///"
@@ -99,6 +111,14 @@ class Settings(BaseSettings):
             raise ValueError("p7_qwen38_local_model must not be empty")
         if not self.p7_qwen3_vl_8b_local_model.strip():
             raise ValueError("p7_qwen3_vl_8b_local_model must not be empty")
+        if self.p13_image_base_url and not self.p13_image_base_url.startswith(("http://", "https://")):
+            raise ValueError("p13_image_base_url must be http(s) when configured")
+        if self.p13_image_request_timeout_seconds <= 0:
+            raise ValueError("p13_image_request_timeout_seconds must be positive")
+        if self.p13_image_max_bytes <= 0:
+            raise ValueError("p13_image_max_bytes must be positive")
+        if self.p13_image_min_width <= 0 or self.p13_image_min_height <= 0:
+            raise ValueError("p13 image minimum dimensions must be positive")
         return self
 
     def ensure_runtime_directories(self) -> None:
