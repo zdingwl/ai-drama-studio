@@ -250,7 +250,7 @@ onBeforeUnmount(clearPoll)
     <section v-if="pendingCandidate" class="review-panel">
       <div>
         <strong>候选版本 {{ pendingCandidate.generation_sequence }} · 待人工确认</strong>
-        <p>自动生成完成不会直接成为正式资产。请核对人物外形、场景布局、道具形态和连续性约束后再确认。</p>
+        <p>自动生成完成不会直接成为正式资产。请核对人物外形、场景布局、道具形态、生成指导和连续性约束后再确认。</p>
       </div>
       <textarea v-model="reviewReason" rows="2" placeholder="填写本次确认或拒绝原因（必填）" />
       <div class="review-actions">
@@ -265,11 +265,20 @@ onBeforeUnmount(clearPoll)
         <h3>人物资产</h3>
         <article v-for="asset in previewContent.characters" :key="asset.target_asset_id" class="asset-card">
           <div class="asset-heading"><strong>{{ asset.display_name }}</strong><span>rev {{ asset.target_asset_revision }}</span></div>
+          <p><b>人物视觉方向</b> {{ asset.demographic_direction }}</p>
           <p><b>面部</b> {{ asset.face_direction }}</p>
           <p><b>发型 / 体态</b> {{ asset.hair_direction }} · {{ asset.body_direction }}</p>
           <p><b>服装基线</b> {{ asset.wardrobe_baseline }}</p>
-          <div class="chips"><span v-for="item in asset.signature_visual_features" :key="item">{{ item }}</span></div>
-          <details><summary>连续性与生成约束</summary><ul><li v-for="item in asset.continuity_constraints" :key="item">{{ item }}</li></ul><ul><li v-for="item in asset.negative_constraints" :key="item">避免：{{ item }}</li></ul></details>
+          <div class="field-block">
+            <b>识别特征</b>
+            <div class="chips"><span v-for="item in asset.signature_visual_features" :key="item">{{ item }}</span></div>
+          </div>
+          <details>
+            <summary>连续性与生成约束</summary>
+            <div class="constraint-group"><strong>生成指导</strong><ul><li v-for="item in asset.generation_guidance" :key="item">{{ item }}</li></ul></div>
+            <div class="constraint-group"><strong>连续性要求</strong><ul><li v-for="item in asset.continuity_constraints" :key="item">{{ item }}</li></ul></div>
+            <div class="constraint-group"><strong>避免项</strong><ul><li v-for="item in asset.negative_constraints" :key="item">{{ item }}</li></ul></div>
+          </details>
         </article>
       </div>
 
@@ -280,8 +289,20 @@ onBeforeUnmount(clearPoll)
           <p><b>布局</b> {{ asset.layout }}</p>
           <p><b>建筑 / 空间风格</b> {{ asset.architecture_style }} · {{ asset.interior_exterior_style }}</p>
           <p><b>光照基线</b> {{ asset.lighting_baseline }} · {{ asset.time_of_day_baseline }}</p>
-          <div class="chips"><span v-for="item in asset.fixed_landmarks" :key="item">{{ item }}</span></div>
-          <details><summary>连续性与生成约束</summary><ul><li v-for="item in asset.continuity_constraints" :key="item">{{ item }}</li></ul><ul><li v-for="item in asset.negative_constraints" :key="item">避免：{{ item }}</li></ul></details>
+          <div class="field-block">
+            <b>材质基线</b>
+            <div class="chips"><span v-for="item in asset.materials_palette" :key="item">{{ item }}</span></div>
+          </div>
+          <div class="field-block">
+            <b>固定地标</b>
+            <div class="chips"><span v-for="item in asset.fixed_landmarks" :key="item">{{ item }}</span></div>
+          </div>
+          <details>
+            <summary>连续性与生成约束</summary>
+            <div class="constraint-group"><strong>生成指导</strong><ul><li v-for="item in asset.generation_guidance" :key="item">{{ item }}</li></ul></div>
+            <div class="constraint-group"><strong>连续性要求</strong><ul><li v-for="item in asset.continuity_constraints" :key="item">{{ item }}</li></ul></div>
+            <div class="constraint-group"><strong>避免项</strong><ul><li v-for="item in asset.negative_constraints" :key="item">{{ item }}</li></ul></div>
+          </details>
         </article>
       </div>
 
@@ -291,8 +312,20 @@ onBeforeUnmount(clearPoll)
           <div class="asset-heading"><strong>{{ asset.display_name }}</strong><span>rev {{ asset.target_asset_revision }}</span></div>
           <p><b>视觉形态</b> {{ asset.visual_form }}</p>
           <p><b>尺度</b> {{ asset.scale_reference }}</p>
-          <div class="chips"><span v-for="item in [...asset.materials, ...asset.color_palette]" :key="item">{{ item }}</span></div>
-          <details><summary>连续性与生成约束</summary><ul><li v-for="item in asset.continuity_constraints" :key="item">{{ item }}</li></ul><ul><li v-for="item in asset.negative_constraints" :key="item">避免：{{ item }}</li></ul></details>
+          <div class="field-block">
+            <b>材质 / 色彩</b>
+            <div class="chips"><span v-for="item in [...asset.materials, ...asset.color_palette]" :key="item">{{ item }}</span></div>
+          </div>
+          <div class="field-block">
+            <b>识别特征</b>
+            <div class="chips"><span v-for="item in asset.signature_visual_features" :key="item">{{ item }}</span></div>
+          </div>
+          <details>
+            <summary>连续性与生成约束</summary>
+            <div class="constraint-group"><strong>生成指导</strong><ul><li v-for="item in asset.generation_guidance" :key="item">{{ item }}</li></ul></div>
+            <div class="constraint-group"><strong>连续性要求</strong><ul><li v-for="item in asset.continuity_constraints" :key="item">{{ item }}</li></ul></div>
+            <div class="constraint-group"><strong>避免项</strong><ul><li v-for="item in asset.negative_constraints" :key="item">{{ item }}</li></ul></div>
+          </details>
         </article>
       </div>
     </template>
@@ -330,10 +363,14 @@ button:disabled { cursor: default; opacity: .5; }
 .asset-heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .asset-heading span { opacity: .55; font-size: 13px; }
 .asset-card p { margin-bottom: 8px; line-height: 1.55; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.field-block { margin-top: 10px; }
+.field-block > b { display: block; margin-bottom: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
 .chips span { padding: 4px 8px; border-radius: 999px; background: #fff; font-size: 12px; }
-details { margin-top: 10px; }
-details ul { margin: 8px 0; padding-left: 22px; }
+details { margin-top: 12px; }
+.constraint-group { margin-top: 10px; }
+.constraint-group strong { font-size: 13px; }
+.constraint-group ul { margin: 6px 0 0; padding-left: 22px; }
 @media (max-width: 720px) {
   .target-assets-workspace { padding: 18px; }
   .workspace-header { flex-direction: column; }
