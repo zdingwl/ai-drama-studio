@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 P13_SCHEMA_VERSION = "1.0"
-P13_PROMPT_VERSION = "p13-replica-target-assets-v1"
+P13_PROMPT_VERSION = "p13-replica-target-assets-v2"
 P13_TARGET_ASSET_CONTRACT = "replica-target-visual-identity-v1"
 P13_ENTITY_BINDING_CONTRACT = "target-bible-entity-binding-v1"
 P13_REVIEW_CONTRACT = "human-target-asset-approval-v1"

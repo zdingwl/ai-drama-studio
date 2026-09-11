@@ -23,6 +23,8 @@ from app.target_assets.schemas import (
 
 
 P13_MAX_OUTPUT_TOKENS = 65536
+P13_REVIEW_LANGUAGE = "zh-CN"
+P13_REVIEW_LANGUAGE_CONTRACT = "zh-cn-human-review-model-execution-separated-v1"
 
 _JSON_SCHEMA_KEYS = {
     "$defs",
@@ -158,9 +160,117 @@ def _validation_hint(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def _flatten_review_text(value: Any) -> list[str]:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return [normalized] if normalized else []
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            result.extend(_flatten_review_text(item))
+        return result
+    return []
+
+
+def _review_text_groups(semantic: TargetAssetsSemantic) -> list[tuple[str, str, list[str]]]:
+    groups: list[tuple[str, str, list[str]]] = []
+    for item in semantic.characters:
+        groups.append(
+            (
+                "CHARACTER",
+                item.target_character_id,
+                _flatten_review_text(
+                    [
+                        item.demographic_direction,
+                        item.face_direction,
+                        item.hair_direction,
+                        item.body_direction,
+                        item.wardrobe_baseline,
+                        item.signature_visual_features,
+                        item.continuity_constraints,
+                        item.generation_guidance,
+                        item.negative_constraints,
+                    ]
+                ),
+            )
+        )
+    for item in semantic.scenes:
+        groups.append(
+            (
+                "SCENE",
+                item.target_scene_id,
+                _flatten_review_text(
+                    [
+                        item.layout,
+                        item.architecture_style,
+                        item.interior_exterior_style,
+                        item.materials_palette,
+                        item.fixed_landmarks,
+                        item.lighting_baseline,
+                        item.time_of_day_baseline,
+                        item.continuity_constraints,
+                        item.generation_guidance,
+                        item.negative_constraints,
+                    ]
+                ),
+            )
+        )
+    for item in semantic.props:
+        groups.append(
+            (
+                "PROP",
+                item.target_prop_id,
+                _flatten_review_text(
+                    [
+                        item.visual_form,
+                        item.materials,
+                        item.color_palette,
+                        item.scale_reference,
+                        item.signature_visual_features,
+                        item.continuity_constraints,
+                        item.generation_guidance,
+                        item.negative_constraints,
+                    ]
+                ),
+            )
+        )
+    return groups
+
+
+def _assert_review_language(semantic: TargetAssetsSemantic) -> None:
+    invalid: list[dict[str, Any]] = []
+    for asset_type, target_entity_id, values in _review_text_groups(semantic):
+        joined = "\n".join(values)
+        cjk_count = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", joined))
+        latin_count = len(re.findall(r"[A-Za-z]", joined))
+        # Chinese review prose is intentionally allowed to contain target-region proper nouns,
+        # brands, model names and currency. Reject only English-dominant review packets.
+        if cjk_count < 8 or (latin_count > 80 and cjk_count * 3 < latin_count):
+            invalid.append(
+                {
+                    "asset_type": asset_type,
+                    "target_entity_id": target_entity_id,
+                    "cjk_count": cjk_count,
+                    "latin_count": latin_count,
+                }
+            )
+    if invalid:
+        raise AppError(
+            "P13_PROVIDER_REVIEW_LANGUAGE_INVALID",
+            "目标资产审核说明必须以简体中文为主；人物名、地名、品牌、型号和金额可保留目标地区写法",
+            status_code=502,
+            details={
+                "review_language": P13_REVIEW_LANGUAGE,
+                "invalid_entities": invalid[:20],
+            },
+        )
+
+
 def _parse(text: str) -> TargetAssetsSemantic:
     try:
-        return TargetAssetsSemantic.model_validate_json(_json_text(text))
+        semantic = TargetAssetsSemantic.model_validate_json(_json_text(text))
+        _assert_review_language(semantic)
+        return semantic
     except AppError:
         raise
     except Exception as exc:
@@ -183,6 +293,14 @@ def _prompt(payload: TargetAssetsProviderInput) -> str:
 目标：
 - target_language: {payload.target_language}
 - target_region: {payload.target_region}
+- review_language: {P13_REVIEW_LANGUAGE}
+
+语言硬规则：
+- target_language 是未来目标受众成品语言，不是本次审核说明语言。
+- 所有供中国用户审核的视觉设计正文必须以简体中文表达，包括人物外形/服装/特征/连续性/生成指导/避免项，场景布局/风格/材质/地标/光照/时间基线/连续性，及道具形态/材质/颜色/尺度/特征/连续性。
+- Lila Xu、Jake Miller、Austin、HEB、iPhone、$19.99 等目标地区人物名、地名、品牌、型号、货币和专有名词可以保留原文；解释这些实体的句子仍使用中文。
+- generation_guidance 在 P13 是给用户审核的视觉设计指导，不是最终 image/video execution prompt。未来真正生成时由 Generation Adapter 再按模型需要整理英文或其他模型优化 prompt；本阶段不得提前进入 P14。
+- 不得因为 target_language=en-US 就把本次审核正文整体输出为英文。
 
 最高规则：
 1. 只能读取 CURRENT TARGET_BIBLE；不得要求或推断 SOURCE_VIDEO_SNAPSHOT、ADAPTATION_PLAN、TARGET_SCRIPT 中的新事实。
@@ -258,6 +376,8 @@ def _profile(selection: SourceUnderstandingProvider, provider: str, model: str, 
         "target_asset_contract": P13_TARGET_ASSET_CONTRACT,
         "entity_binding_contract": P13_ENTITY_BINDING_CONTRACT,
         "review_contract": P13_REVIEW_CONTRACT,
+        "review_language": P13_REVIEW_LANGUAGE,
+        "review_language_contract": P13_REVIEW_LANGUAGE_CONTRACT,
         "professional_skill_id": skill.id,
         "professional_skill_version": skill.version,
         "reference_media_generation": "NOT_CONFIGURED",

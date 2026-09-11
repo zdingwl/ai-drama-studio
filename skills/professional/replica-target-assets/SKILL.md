@@ -21,6 +21,33 @@ CURRENT TARGET_BIBLE
 
 P13 v1 不把 `SOURCE_VIDEO_SNAPSHOT`、`ADAPTATION_PLAN`、`TARGET_SCRIPT` 静默加入硬输入。Target Script 的局部对白变化不应无意义地使人物脸型、场景布局或道具视觉身份全部失效。
 
+## 用户审核语言
+
+P13 的视觉实现文本首先是给中国用户理解和审核的，不是最终目标受众文案，也不是已经发给图像/视频模型的执行 prompt。
+
+当前运行合同固定：
+
+```text
+review_language = zh-CN
+prompt_version  = p13-replica-target-assets-v2
+```
+
+因此 Provider 新生成的 review-facing 内容必须以简体中文为主：人物外形/服装/特征/连续性/生成指导/避免项，场景布局/风格/材质/地标/光照/时间基线/连续性，以及道具形态/材质/颜色/尺度/特征/连续性。
+
+允许保留目标地区的专有实体原文，例如：
+
+```text
+Lila Xu
+Austin
+HEB
+iPhone
+$19.99
+```
+
+规则是“解释用中文，实体名按目标地区真实写法保留”。不得因为 `target_language = en-US` 就把整份审核正文写成英文。
+
+当前 `generation_guidance` 仍是**中文可审计的视觉设计指导**，不是最终 image/video prompt。未来真正进入生成阶段时，由独立 Generation Adapter 根据具体模型能力整理成英文或其他模型优化执行 prompt；P13 不提前实现该阶段。
+
 ## Character
 
 必须围绕同一 `target_character_id` 稳定表达：
@@ -103,6 +130,8 @@ Video Generation / QC / Post
 8. 用户显式确认后发布正式 `TARGET_ASSETS`；
 9. 建立 Artifact Graph、provenance、SUPERSEDES 和 STALE 传播。
 
+Provider 响应在进入 composition 前还必须通过中文审核语言门禁；明显以英文为主的候选应 fail closed，不得进入人工审核区。
+
 ## 人工确认
 
 Provider Task succeeded 不等于正式资产 READY。
@@ -124,6 +153,7 @@ P13 工程完成至少要求：
 - Character / Scene / Prop typed packet；
 - exact Target Bible binding；
 - per-asset revision / fingerprint；
+- 中文审核语言与目标受众/模型执行语言分层；
 - candidate review gate；
 - ProviderJob-before-remote；
 - GET read-only；
