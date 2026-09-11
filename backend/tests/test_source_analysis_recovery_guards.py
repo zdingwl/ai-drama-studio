@@ -101,3 +101,38 @@ def test_interrupted_pipeline_at_attempt_limit_is_not_retryable(monkeypatch) -> 
     assert result.can_retry is False
     assert result.current_stage == "解析已中断"
     assert result.message == "worker heartbeat expired"
+
+
+def test_terminal_interruption_rotates_pipeline_business_fingerprint(monkeypatch) -> None:
+    project = SimpleNamespace(
+        project_type=ProjectType.REPLICA,
+        source_language="zh-CN",
+        source_understanding_provider=SimpleNamespace(value="DOUBAO_SEED_2_1_PRO_API"),
+    )
+    source = SimpleNamespace(id="source-video-1", input_fingerprint="a" * 64)
+    latest = {"task": None}
+    monkeypatch.setattr(source_analysis_service, "get_project", lambda db, project_id: project)
+    monkeypatch.setattr(
+        source_analysis_service,
+        "_latest_pipeline_task",
+        lambda db, project_id: latest["task"],
+    )
+
+    initial = source_analysis_service._pipeline_input_fingerprint(SimpleNamespace(), "project-1", source)
+    latest["task"] = SimpleNamespace(
+        id="pipeline-interrupted",
+        status=TaskStatus.INTERRUPTED,
+        attempt=1,
+        max_attempts=3,
+    )
+    resumable = source_analysis_service._pipeline_input_fingerprint(SimpleNamespace(), "project-1", source)
+    latest["task"] = SimpleNamespace(
+        id="pipeline-interrupted",
+        status=TaskStatus.INTERRUPTED,
+        attempt=3,
+        max_attempts=3,
+    )
+    terminal = source_analysis_service._pipeline_input_fingerprint(SimpleNamespace(), "project-1", source)
+
+    assert resumable == initial
+    assert terminal != initial
