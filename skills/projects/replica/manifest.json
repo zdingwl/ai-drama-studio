@@ -1,7 +1,7 @@
 {
   "id": "project.replica",
   "name": "复刻短剧",
-  "version": "1.1.0",
+  "version": "1.0.0",
   "category": "project",
   "description": "保留原剧故事与节奏，把人物、场景、文化和对白替换成目标地区版本并重新生成。",
   "project_type": "REPLICA",
