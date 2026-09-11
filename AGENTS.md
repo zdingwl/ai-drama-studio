@@ -1,8 +1,12 @@
 # AI Drama Studio V3 — 开发规则
 
+> 当前状态日期：2026-09-11。  
+> 当前最高优先级：`docs/22_P10一键原片解析最终产品验收.md`。  
+> 原则：仓库当前 `main` + 编号更高、日期更新的状态/验收文档是唯一事实源；历史文档只能解释演进，不能覆盖最新口径。
+
 ## 1. 开发前读取顺序
 
-任何代码修改前必须按顺序读取：
+任何代码修改前必须按以下顺序读取，并在最后读取当前相关代码与测试：
 
 1. `docs/00_V3产品与系统详细规划.md`
 2. `docs/03_Seko3.0_Skill架构逆向分析.md`
@@ -15,35 +19,117 @@
 9. `docs/08_P8逐镜精细拉片ProfessionalSkill与数据契约.md`
 10. `docs/09_P6CanonicalEvidenceV2与P8最终验收整改.md`
 11. `docs/10_P8SpeakerCandidate与P6微段幻觉整改.md`
-12. `docs/11_P6字幕证据裁决与P8台词一致性整改.md`
-13. `docs/12_P6人工对白裁决与Canonical可编辑.md`
-14. `docs/13_P8最终验收与P9准入.md`
-15. 当前相关代码与测试
+12. `docs/10_P8说话人候选绑定与分镜表可读性修正.md`
+13. `docs/11_P6字幕证据裁决与P8台词一致性整改.md`
+14. `docs/12_P6人工对白裁决与Canonical可编辑.md`
+15. `docs/13_P8最终验收与P9准入.md`
+16. `docs/14_P9最终归一ProfessionalSkill与数据契约.md`
+17. `docs/15_P9PropProviderSchemaV6整改.md`
+18. `docs/16_P9SpeakerStagedCharacterEvidenceRef整改.md`
+19. `docs/17_P9最终验收与P10准入.md`
+20. `docs/18_P10SourceVideoSnapshotProfessionalSkill与数据契约.md`
+21. `docs/19_P10工程验收与真实人工验收清单.md`
+22. `docs/20_P10产品呈现整改_取消独立阶段.md`
+23. `docs/21_原片解析一键编排与剧本分镜工作区.md`
+24. `docs/22_P10一键原片解析最终产品验收.md`
+25. 当前相关代码与测试
 
-**阶段状态以编号更高、日期更新的状态文档为准。** `docs/07` 记录 P7 最终验收，`docs/08` 记录 P8 初始正式契约，`docs/09` 记录 P6 canonical Evidence v2 整改及真实 P6 v2 → P7 → P8 恢复验收，`docs/10` 记录 P8 speaker candidate v2 与 P6 canonical micro-duplicate v3 整改，`docs/11` 记录 P6 v4 字幕证据显式裁决与 P8 台词一致性整改，`docs/12` 记录 P6 canonical dialogue 的显式人工选择 / 修改与版本化规则，`docs/13` 记录 P8 最终人工 PASS、`SHOT_BREAKDOWN = AVAILABLE` 与 P9 正式准入。旧文档中“P8 尚未开始 / P8 待验收 / SHOT_BREAKDOWN = PLANNED / 禁止进入 P9 / P7 待验收 / P6-P7 未开发 / P8 schema 1.0 / P6 v2 或 v3 是当前最终 canonical policy / P6 canonical 只能自动生成不可人工确认”等历史描述不得覆盖当前 `main` 事实。
+冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。** 特别是：
 
-历史分支只能做参考，不能覆盖 V3 当前规划。
+- `docs/17` 已记录 P9 最终真实人工 PASS；任何“P9 尚未实现 / P9 PLANNED”的旧描述失效；
+- `docs/20` 取消 P10 作为普通用户独立大面板；
+- `docs/21` 将 REPLICA / REDRAW 的 P5~P10 收口为一次“解析原片”；
+- `docs/22` 是当前 P10 最终产品级真实人工验收的唯一准入清单。
+
+历史分支不能覆盖当前 V3 规划。
 
 ---
 
-## 2. 产品边界
+## 2. 当前阶段事实
 
-V3 只围绕六类项目建设：
+当前已完成并通过对应真实人工验收：
 
 ```text
-REPLICA              复刻
-REDRAW               重绘
-TRANSLATION          翻译
-NOVEL_TO_DRAMA       小说生成短剧
-SCRIPT_TO_DRAMA      剧本生成短剧
-SCRIPT_LOCALIZATION  剧本本土化
+P0 仓库重建
+P1 新工程骨架
+P2 Project + Skill Kernel
+P3 SourceAsset + 输入系统
+P4 Task / ProviderJob
+P5 Shot Anchors
+P6 Source Evidence
+P7 整集多模态原片理解
+P8 逐镜精细拉片
+P9 Character / Speaker / Scene / Prop 最终归一
 ```
 
-`project_type` 是真实数据库字段；每种 `project_type` 必须绑定自己的 Root Project Skill。
+P10 当前状态：
+
+```text
+工程实现       = 完成
+自动门禁 / CI  = 完成
+内部 Snapshot  = 已有真实 publication 证据
+新一键产品呈现 = 已实现
+最终真实人工验收 = 待用户明确 PASS
+
+SOURCE_SNAPSHOT = PLANNED
+```
+
+P10 未最终 PASS 前，**禁止进入 P11 Replica Target Bible 正式实现**。
+
+当前 `AVAILABLE` 至少包括：
+
+```text
+SOURCE_VIDEO_INGEST
+SOURCE_TEXT_INGEST
+MEDIA_PREFLIGHT
+SHOT_BOUNDARY
+SOURCE_DIALOGUE_EVIDENCE
+EPISODE_UNDERSTANDING
+STORY_RHYTHM
+SHOT_BREAKDOWN
+IDENTITY_RESOLUTION
+SCENE_RESOLUTION
+PROP_RESOLUTION
+```
+
+当前仍为 `PLANNED`：
+
+```text
+SOURCE_SNAPSHOT
+Target Bible / Target Script / TARGET_STORYBOARD
+TTS / Timing / Generation / QC / Selection / Post / Final Output
+以及尚未完成的其他项目类型完整业务链
+```
 
 ---
 
-## 3. V3 核心架构
+## 3. 产品边界
+
+V3 六类正式 `ProjectType`：
+
+```text
+REPLICA
+REDRAW
+TRANSLATION
+NOVEL_TO_DRAMA
+SCRIPT_TO_DRAMA
+SCRIPT_LOCALIZATION
+```
+
+每种项目类型必须绑定自己的 Root Project Skill。
+
+当前完整 Source Bible / P8 / P9 / P10 一键工作区只正式适用于：
+
+```text
+REPLICA
+REDRAW
+```
+
+`TRANSLATION` 在明确接入对应契约前不得复用该工作区假装能力可用；route 和 service 都应 fail closed。
+
+---
+
+## 4. 核心架构
 
 正式架构：
 
@@ -58,7 +144,7 @@ Project Type
 → Artifact Graph
 ```
 
-职责必须分开：
+职责分离：
 
 ```text
 Skill       = 怎么做对
@@ -68,294 +154,21 @@ Tool        = 用什么执行
 Guardrail   = 绝对不能违反什么
 ```
 
-同时强制区分：
+同时严格区分：
 
 ```text
 Product Stage
-= 用户关心的业务阶段
-
 Internal PlanStep / Capability
-= 为得到该业务结果而执行的内部步骤
-
 P0/P1/P2/... Engineering Phase
-= 开发和验收代码的切片
 ```
 
-三者不能混为一谈。
-
-### Skill 不是 Prompt
-
-Skill 至少要有使用条件、输入、可读取 Artifact、required capabilities、步骤、判断规则、用户询问规则、输出契约、校验、完成标准与失败处理。
-
-P7 的正式 Professional Skill：
-
-```text
-skills/professional/episode-understanding/SKILL.md
-skills/professional/episode-understanding/manifest.json
-source-video-understanding@1.1.0
-```
-
-P8 的正式 Professional Skill：
-
-```text
-skills/professional/shot-breakdown/SKILL.md
-skills/professional/shot-breakdown/manifest.json
-shot-breakdown@1.1.0
-```
-
-P8 当前运行契约：
-
-```text
-p8-shot-breakdown-v2
-SOURCE_SHOT_FACTS schema 1.1
-source-bible-shot-facts-v2
-```
-
-P9 尚未实现新的 Professional Skill。P9 必须先设计 character-resolution / speaker-attribution / scene-resolution / prop-resolution 的职责边界、typed schema、Artifact、revision、fingerprint、provenance 与人工验收，再实现 Provider 和 UI。
-
-Provider Prompt 必须执行 Professional Skill 规则，但 Professional Skill 本身不等于 Prompt。
+Skill 不是 Prompt；至少必须定义适用条件、输入、可读 Artifact、required capabilities、步骤、判断规则、用户决策策略、输出契约、校验、完成标准和失败处理。
 
 ---
 
-## 4. Artifact Graph
+## 5. 当前 Professional Skill 基线
 
-V3 后端项目上下文必须由正式 Artifact 构成。
-
-```text
-Artifact Graph = 正式业务关系
-Canvas View    = Artifact Graph 的可视化
-```
-
-人物、场景、关键道具、剧本、分镜、音频和生成版本必须成为可引用正式 Artifact 或正式领域对象。
-
-禁止靠每次 Prompt 重复描述人物来维持一致性。
-
----
-
-## 5. 统一硬规则
-
-- 默认自动完成；只有真正需要创作选择或结构无法安全决定时询问用户。
-- 普通用户按业务结果工作，不要求理解 P5/P6/P7/P8 技术切片。
-- 页面 GET 必须只读。
-- 重任务必须由明确 POST / Command 启动。
-- Skill 无权绕过 GET read-only。
-- 外部计费 Provider 请求前必须先持久化 ProviderJob。
-- API key 禁止写入 DB、日志、Artifact、ProviderJob、provenance 或 Git。
-- API Key UI 当前默认密码遮罩，用户显式点击“显示”后才回显明文；本机值仅写入被 `.gitignore` 排除的 `backend/.env`。
-- Source 与 Target 严格分离。
-- Source Shot、Target Storyboard Shot、GenerationSegment 严格分离。
-- GenerationAttempt 不是正式可用结果；只有 GenerationSelection 可以进入后期。
-- 批量 Episode 默认顺序串行。
-- 上游 revision / fingerprint 改变后，下游必须 STALE。
-- 某个内部 Task succeeded 不等于整个 Product Stage 完成。
-
----
-
-## 6. 视频类项目：原片理解编排
-
-完整 Episode 永远是 Source Truth：
-
-```text
-SOURCE_VIDEO / 完整 Episode
-= 权威原片输入
-```
-
-thumbnail / Reference Clip 是派生技术资产，只用于人工核对、局部精看或索引，不得替代完整 Episode。
-
-内部执行关系：
-
-```text
-完整 Episode
-        │
-        ↓
-Media Preflight
-        │
-        ├────────────────┬────────────────┐
-        ↓                ↓                ↓
-Shot Anchors         ASR Evidence      OCR Evidence
-        │                │                │
-        └────────────┬───┴────────────────┘
-                     ↓
-              Source Evidence
-                     +
-               完整 Episode
-                     ↓
-          整集多模态原片理解
-                     ↓
-      SOURCE_BIBLE / Story / Rhythm
-                     ↓
-        带全局知识做逐镜精细拉片
-                     ↓
-人物 / 场景 / 道具 / Speaker 归一
-                     ↓
-             SourceVideoSnapshot
-```
-
-硬规则：
-
-- Shot Boundary 与连续 ASR 都直接读取 `SOURCE_VIDEO`，可并行；
-- `SOURCE_DIALOGUE_EVIDENCE` 不得依赖 `SHOT_ANCHORS` 才能开始；
-- ASR 不得按每个 Reference Clip 分开识别后拼句子；
-- OCR 可以读取 Shot Anchors 作为抽帧提示，但完整 Episode 时间轴仍是 Source Truth；
-- P6 canonical dialogue 必须保守分段；没有明确连续证据时不得仅因相邻 segment 时间接近就跨段合并；
-- P6 raw ASR Evidence 必须完整保留；canonical admission 可以拒绝通用规则判定为不可信的 ASR micro duplicate，但不得删除 raw provenance；
-- OCR 只有在 P6 Source Evidence 内部、经过版本化的严格时间重叠 / 高置信 / 字幕区域 / 近似文本裁决规则时，才允许成为 canonical dialogue 的正文依据；必须同时记录 ASR 原文、OCR 依据、policy 与 reason。任何 OCR/VLM/P7/P8 对 canonical dialogue 的静默覆盖均禁止；
-- 用户可以在 P6 Source Evidence 层对单条 canonical dialogue 显式选择 ASR、时间重叠的 CURRENT OCR span 或输入自定义文本；保存必须走显式 POST Command、生成新的 SourceEvidenceSet / SOURCE_DIALOGUE revision、保留 raw ASR/OCR，并让依赖旧 canonical revision 的 P7/P8 下游 STALE。GET / 页面刷新不得自动保存；
-- 同文案不等于同一 utterance，更不等于同一 speaker；禁止按字符串相同传播 P8 speaker candidate；
-- P7 整集理解必须读取完整 Episode；
-- 先整集理解，再逐 Shot 精细拉片；
-- 禁止先逐 Shot 猜完整剧情，再拼整集理解；
-- P9 最终归一必须读取 CURRENT P7/P8 与必要 P5/P6 证据，不能把 P8 provisional candidate 直接冒充最终 identity；
-- P9 不得反向改写 P5/P6/P7/P8 历史 revision。
-
-### Source Evidence 与 Source Understanding 分离
-
-```text
-Source Evidence
-= 原片实际说了什么 / 写了什么
-= canonical + provenance
-
-Source Understanding
-= 这些事实在剧情、人物、关系、场景、事件和节奏上意味着什么
-```
-
-P6 可以在 Source Evidence 层对 ASR 与 OCR 做可追溯的自动证据裁决，也可以接受用户显式的版本化人工裁决；raw Evidence 始终不被人工正文覆盖。VLM / Agent / P7 / P8 / 安全过滤后的文本仍无权静默覆盖 canonical Evidence。
-
-P7 Grounding：
-
-```text
-FACT
-= 原片直接可见或 CURRENT Source Evidence 明确陈述
-
-INFERENCE
-= 合理推导，但原片未直接确认
-
-UNKNOWN
-= 无法可靠判断
-```
-
-原则：**宁可 UNKNOWN，也不要合理补全。**
-
-`UNKNOWN` 不是确定性正文的逃逸通道；`world_rules` 只允许本作品内部已确认 FACT，禁止社会泛化、法律结论、道德训诫或片外常识扩写。
-
----
-
-## 7. Replica 硬规则
-
-Replica 默认目标：
-
-> 故事不乱改，节奏不重做，文化和表达才本土化。
-
-必须保留 / 锁定：Hook、冲突、反转、信息揭示顺序、情绪峰值、Payoff、Cliffhanger、Story Beat timing、Shot rhythm baseline。
-
-允许本土化：人物身份 / 外形、场景、道具、文化信息、目标语言对白。
-
-目标对白必须先获得真实 TTS 时长，再做 Timing。
-
----
-
-## 8. Provider / Capability 原则
-
-业务 Skill 只依赖 capability，不依赖具体模型名。
-
-当前已完成真实验收并维持 `AVAILABLE` 的能力：
-
-```text
-SOURCE_DIALOGUE_EVIDENCE
-EPISODE_UNDERSTANDING
-STORY_RHYTHM
-SHOT_BREAKDOWN
-```
-
-P6 当前工程 canonical 自动基线：
-
-```text
-p6-source-evidence-v4
-segment-preserving-dialogue-v4
-adjacent-duplicate-microsegment-v1
-ocr-subtitle-near-match-v1
-```
-
-P6 当前显式人工增量契约：
-
-```text
-human-dialogue-adjudication-v1
-```
-
-v4 保留 v3 的完整 Episode 连续 ASR、保守分段、raw Evidence 保留与 micro-duplicate guard；新增严格、可审计的 OCR 字幕 near-match evidence adjudication。人工增量契约只允许用户显式确认/选择/修改 canonical text，不能改写 raw Evidence；每次保存产生新 revision。P6 canonical revision 改变会使依赖旧 canonical set 的 P7/P8 Artifact STALE，必须按 P6 → P7 → P8 显式恢复；CURRENT P8 只有在恢复完成后才能作为 P9 输入。
-
-仍为 `PLANNED`：
-
-```text
-IDENTITY_RESOLUTION
-SCENE_RESOLUTION
-PROP_RESOLUTION
-SOURCE_SNAPSHOT
-以及后续目标创作 / 生成能力
-```
-
-### Provider readiness 与 Capability availability 分离
-
-```text
-Capability AVAILABLE
-!=
-所有 Provider 都已在当前环境实测
-```
-
-P7 当前三个用户可选 Provider：
-
-- Doubao Seed 2.1 Pro / Volcengine Ark：真实短剧 + Grounding v2 已通过，当前已验证生产 Provider；
-- Qwen3.8-27B / local vLLM：工程接入和自动测试完成，真实本机 GPU / vLLM 质量验收待补；
-- Qwen3-VL-8B-Thinking / local vLLM：工程接入和自动测试完成，低显存真实本机验收待补。
-
-新增 / 可选 Provider 的 readiness 不应阻塞一个已经由真实生产 Provider 验收通过的业务 Capability。
-
----
-
-## 9. 状态与任务
-
-正式 Artifact / 重阶段继续采用：
-
-```text
-Validity:
-NOT_BUILT | CURRENT | STALE
-
-Readiness:
-READY | BLOCKED_DEPENDENCY | WAITING_RUNTIME | BLOCKED_TECHNICAL | NEEDS_USER_DECISION
-
-Execution:
-IDLE | QUEUED | PROCESSING | SUCCEEDED | FAILED | INTERRUPTED
-```
-
-只有：
-
-```text
-CURRENT + READY
-```
-
-才能下游消费。
-
-Task 必须逐步支持 input fingerprint、Idempotency-Key、checkpoint、heartbeat、finite retry、cancel / resume。
-
----
-
-## 10. 当前开发顺序
-
-```text
-P0 仓库重建                ✅
-P1 新工程骨架              ✅
-P2 Project + Skill Kernel  ✅
-P3 SourceAsset + 输入系统  ✅
-P4 Task / ProviderJob      ✅
-P5 镜头技术锚点            ✅（真实 Episode 人工验收通过）
-P6 Source Evidence         ✅（能力 AVAILABLE；v4 + 人工对白裁决已进入当前基线）
-P7 整集多模态原片理解      ✅（能力 AVAILABLE）
-P8 逐镜精细拉片            ✅（最终 28 Shot 人工验收通过；SHOT_BREAKDOWN = AVAILABLE）
-P9 身份/场景/道具/Speaker归一  ▶ 下一工程切片
-P10 SourceVideoSnapshot    ⛔ P9 完成前禁止进入
-```
-
-P7 最终验收基线：
+P7：
 
 ```text
 source-video-understanding@1.1.0
@@ -364,54 +177,229 @@ SOURCE_BIBLE schema 1.1
 grounded-source-truth-v2
 ```
 
-P8 最终验收基线：
+P8：
 
 ```text
 shot-breakdown@1.1.0
 p8-shot-breakdown-v2
 SOURCE_SHOT_FACTS schema 1.1
 source-bible-shot-facts-v2
-SHOT_BREAKDOWN = AVAILABLE
 ```
 
-P8 最终真实样例基线见 `docs/13_P8最终验收与P9准入.md`。当前关键 revision 为 P5 SHOT_ANCHORS rev1、P6 SOURCE_DIALOGUE rev9、P7 SOURCE_BIBLE rev8、P8 SOURCE_SHOT_FACTS rev6；Shot #001 的最终 Scene binding 已人工确认并修正为“王桂香家客厅”。
-
-P6 当前工程基线：
+P9：
 
 ```text
-p6-source-evidence-v4
-segment-preserving-dialogue-v4
-adjacent-duplicate-microsegment-v1
-ocr-subtitle-near-match-v1
-human-dialogue-adjudication-v1
-migration head = 0015_p6_ocr_subtitle_v4
+character-resolution@1.0.0
+speaker-attribution@1.0.0
+scene-resolution@1.0.0
+prop-resolution@1.0.0
+p9-source-resolution-v8
+P9 resolution schema 1.0
+full-episode-global-resolution-v1
 ```
 
-P9 开发硬输入：
+P10：
 
 ```text
-CURRENT SOURCE_VIDEO / 完整 Episode
-+
-CURRENT SOURCE_BIBLE
-+
-CURRENT SOURCE_SHOT_FACTS
-+
-CURRENT SHOT_ANCHORS
-+
-需要核对时读取 CURRENT canonical Source Evidence
+source-video-snapshot@1.0.0
+p10-source-video-snapshot-v1
+P10 snapshot schema 1.0
+frozen-accepted-source-facts-v1
+DETERMINISTIC_FREEZE
 ```
-
-P9 必须先设计 Professional Skill、typed schema、Artifact / revision / fingerprint / provenance / CURRENT-STALE、Artifact Graph、GET/POST/ProviderJob 与人工验收规则，再实现 Provider 和 UI。P9 只能完成 Speaker / Character / Scene / Prop 最终归一；不得提前实现 P10 `SOURCE_SNAPSHOT`。
 
 ---
 
-## 11. Git 规则
+## 6. Source Truth 与原片理解硬规则
+
+完整 Episode 永远是视频 Source Truth：
 
 ```text
-main = V3 当前开发
-backup/* = 历史回滚 / 参考
+SOURCE_VIDEO / 完整 Episode = 权威原片输入
 ```
 
-禁止 force push。
+thumbnail / Reference Clip 只是派生技术资产，不能替代完整 Episode。
 
-重大结构变化必须先更新规划，再编码。
+内部关系：
+
+```text
+完整 Episode
+├─ P5 Shot Anchors
+└─ P6 ASR / OCR / canonical Evidence
+        ↓
+P7 Whole-Episode Understanding + Story / Rhythm
+        ↓
+P8 Shot Breakdown
+        ↓
+P9 Character / Speaker / Scene / Prop Resolution
+        ↓
+P10 deterministic Source Snapshot
+```
+
+必须遵守：
+
+- P5 Shot Boundary 读取完整 `SOURCE_VIDEO`；
+- P6 ASR 读取完整连续音轨，不得按 Shot / Reference Clip 分开识别再拼句；
+- P6 OCR 读取完整视频时间轴，Shot Anchors 只能辅助抽帧 / 去重；
+- raw ASR / OCR 永久保留；
+- canonical dialogue 的自动/人工裁决必须版本化、可追溯；
+- P7/P8/P9/P10 无权静默覆盖 P6 canonical dialogue / OCR；
+- P7 必须读取完整 Episode，先整集理解再逐镜；
+- P8 Shot 时间只认 P5，对白正文只认 P6；
+- P8 speaker candidate / character / scene / prop 只是 provisional binding，不能冒充 P9 最终 identity；
+- P9 Provider 以完整 Episode / 全集上下文做全局归一；
+- Speaker 与 Character 分层，Speaker→Character 可以为空；
+- UNKNOWN / UNRESOLVED 是正式状态，禁止最高相似度兜底；
+- P9 不得反写 P5/P6/P7/P8 历史 revision；
+- P10 只冻结 CURRENT Source Facts，不重新理解 Episode，不调用模型，不创建 ProviderJob；
+- P10 必须保持 P5 Shot 时间、P6 canonical dialogue/OCR 原值；
+- P10 的 `SOURCE_SPEAKERS` 是独立冻结输入与独立 section；
+- 任一上游新 revision 必须使依赖旧链的 Snapshot / draft 正确 STALE；
+- Target / Production 不得反向写入 Source。
+
+Source Evidence 与 Source Understanding 严格分离：
+
+```text
+Source Evidence      = 原片实际说了什么 / 写了什么
+Source Understanding = 这些事实在故事、人物、关系、场景、事件、节奏上意味着什么
+```
+
+Grounding 继续使用：
+
+```text
+FACT
+INFERENCE
+UNKNOWN
+```
+
+原则：**宁可 UNKNOWN，也不要合理补全。**
+
+---
+
+## 7. 当前普通用户产品流程
+
+REPLICA / REDRAW 普通模式只允许：
+
+```text
+上传完整原片
+↓
+解析原片（一次显式操作）
+↓
+原片剧本 + 分镜 + 人物 / 场景 / 道具
+↓
+分镜编辑草稿
+```
+
+P5/P6/P7/P8/P9/P10 是内部工程切片，不得堆成普通用户独立操作卡。
+
+普通模式禁止展示或要求用户理解：
+
+```text
+Artifact / ProviderJob
+Fingerprint / Provenance
+Frozen Inputs / SourceVideoSnapshot
+```
+
+开发 / 诊断模式通过：
+
+```text
+?debug=1
+```
+
+保留工程证据入口。
+
+一键解析必须：
+
+- 只由显式 `POST /commands/source-analysis` 启动；
+- 页面加载只 GET；
+- 只执行缺失 / STALE 子步骤；
+- 已 CURRENT 子结果幂等复用；
+- P5/P6 按 Episode；
+- P7 → P8 → P9 严格满足依赖；
+- 最后确定性发布 P10；
+- 子任务失败时顶层 fail closed；
+- 可恢复中断走 resume；
+- 已耗尽重试次数的终态中断允许新的显式解析创建新流水线。
+
+---
+
+## 8. Source Script 与 working draft
+
+“原片剧本”是正式 Source Facts 的确定性可读视图，不是新一轮生成：
+
+```text
+P9 Scene Assignment
++ P9 Speaker / Character
++ P8 visual_description / camera language
++ P6 canonical dialogue
+```
+
+规则：
+
+- Scene Assignment 变化开始新场次；
+- 同 Scene 后续再次出现也形成新的连续场次；
+- Episode 边界强制开始新场次；
+- 跨 Shot 同一 canonical utterance 在剧本中只出现一次；
+- 原片剧本必须保持 Source Truth，不得读取 working draft 覆盖正文。
+
+“分镜编辑草稿”不是正式 `TARGET_STORYBOARD`：
+
+- 每次显式保存生成 draft revision；
+- 记录 base Source Snapshot；
+- Source 更新后旧 draft STALE / 归档；
+- 旧 draft 不自动套用到新 Source；
+- 新 Source 首次编辑从当前原片分镜开始；
+- 用户可显式“恢复原片”删除单 Shot override。
+
+---
+
+## 9. Workflow / Provider / 安全硬规则
+
+- 页面 GET 必须只读，不能写 DB、建 Task、运行 Agent、启动模型或自动重算；
+- 重任务必须由明确 POST / Command 启动；
+- 外部计费 Provider 请求前必须先持久化 `ProviderJob`；
+- API Key 禁止写入 DB、日志、Artifact、ProviderJob、provenance 或 Git；
+- Task 必须支持有限 retry / cancel / resume，不允许无限重试；
+- Task 技术 succeeded 不等于业务 Artifact READY；
+- 失败不得覆盖旧 CURRENT Artifact；
+- 上游 revision / fingerprint 改变，下游必须 STALE；
+- Source / Target / Production 严格分离；
+- Source Shot / TargetStoryboardShot / GenerationSegment 严格分离；
+- GenerationAttempt 不是正式结果，只有 GenerationSelection 可进入后期；
+- 多 Episode 重模型默认串行；同 Episode 内独立轻量能力可由 orchestration 按资源条件并行。
+
+---
+
+## 10. Replica 后续硬约束
+
+Replica 默认目标：
+
+> 故事不乱改，节奏不重做，文化和表达才本土化。
+
+后续 P11+ 必须默认锁定 Hook、冲突、反转、信息揭示顺序、情绪峰值、Payoff、Cliffhanger、Story Beat timing 与 Shot rhythm baseline。
+
+允许本土化人物身份 / 外形、场景、道具、文化信息与目标语言对白。
+
+目标对白必须先得到真实 TTS 时长，再做 Timing。
+
+但这些 P11+ 能力**当前不得提前实现**；只有 `docs/22` 最终真实人工验收由用户明确 PASS 后才准入。
+
+---
+
+## 11. 完成定义
+
+任何能力都必须分别说明并验证：
+
+```text
+1. 架构 / 数据模型
+2. 自动测试
+3. CI
+4. Provider / 本地 Runtime 真实运行
+5. 真实素材端到端
+6. 输出结构正确性
+7. 用户看 / 听质量
+```
+
+不能用其中一层替代另一层。
+
+当前 P10 的缺口正是第 5~7 层在**新的“一键解析原片”普通产品呈现**上的最终确认，因此任何自动测试或内部 Snapshot CURRENT 都不能自行宣布 `SOURCE_SNAPSHOT = AVAILABLE`。
