@@ -81,6 +81,65 @@ class TargetAssetsProvider(Protocol):
     def design(self, payload: TargetAssetsProviderInput) -> TargetAssetsProviderResult: ...
 
 
+def _project_records(value: Any, keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    projected: list[dict[str, Any]] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        projected.append({key: raw[key] for key in keys if key in raw})
+    return projected
+
+
+def _target_bible_visual_view(target_bible: dict[str, Any]) -> dict[str, Any]:
+    """Expose only Target Bible fields needed for P13 visual realization.
+
+    The complete TARGET_BIBLE Artifact remains the sole hard input, lineage anchor and
+    generation fingerprint. This projection deliberately omits global story/dialogue
+    text that the real-project review showed could leak into every review-facing asset
+    packet. Entity-level visual continuity is retained as an upstream guardrail, not as
+    text to copy verbatim.
+    """
+
+    return {
+        "schema_version": target_bible.get("schema_version"),
+        "target_language": target_bible.get("target_language"),
+        "target_region": target_bible.get("target_region"),
+        "target_world": target_bible.get("target_world"),
+        "visual_style": target_bible.get("visual_style"),
+        "characters": _project_records(
+            target_bible.get("characters"),
+            (
+                "target_character_id",
+                "display_name",
+                "localized_identity",
+                "appearance_direction",
+                "continuity_rules",
+            ),
+        ),
+        "scenes": _project_records(
+            target_bible.get("scenes"),
+            (
+                "target_scene_id",
+                "display_name",
+                "localized_setting",
+                "visual_direction",
+                "continuity_rules",
+            ),
+        ),
+        "props": _project_records(
+            target_bible.get("props"),
+            (
+                "target_prop_id",
+                "display_name",
+                "localized_form",
+                "continuity_rules",
+            ),
+        ),
+    }
+
+
 def _clean_json_schema(value: Any) -> Any:
     if isinstance(value, list):
         return [_clean_json_schema(item) for item in value]
@@ -286,6 +345,7 @@ def _prompt(payload: TargetAssetsProviderInput) -> str:
     skill = get_professional_skill(P13_SKILL_ID)
     rules = "\n".join(f"{index}. {rule}" for index, rule in enumerate(skill.provider_rules, 1))
     schema = _provider_json_schema(payload)
+    visual_bible = _target_bible_visual_view(payload.target_bible)
     return f"""你正在执行 AI Drama Studio P13 Professional Skill：{skill.name}（{skill.id}@{skill.version}）。
 
 这是 Target Assets / 目标资产阶段。Target Bible 是不可改写的 semantic truth；你只负责把已有 Target Character / Scene / Prop 具体化为跨镜稳定的视觉身份约束。
@@ -311,7 +371,7 @@ def _prompt(payload: TargetAssetsProviderInput) -> str:
 最高规则：
 1. 只能读取 CURRENT TARGET_BIBLE；不得要求或推断 SOURCE_VIDEO_SNAPSHOT、ADAPTATION_PLAN、TARGET_SCRIPT 中的新事实。
 2. characters / scenes / props 必须按 entity_manifest 的顺序逐项完整覆盖；target_*_id 必须逐字复制，不能遗漏、重复、创造、合并或拆分。
-3. Target Bible 的 display_name、localized_identity / localized_setting / localized_form、appearance / visual direction、continuity rules 与 visual style 是语义边界；你可以具体化视觉表现，但不能改变人物故事身份、场景功能或关键道具功能。
+3. 下方只提供 CURRENT TARGET_BIBLE 的 P13 visual projection。完整 Target Bible Artifact 仍是唯一硬输入、lineage 与 fingerprint，但全局故事 / 对白 / preservation 文本不会重复提供给本阶段。visual projection 中的 display_name、localized_identity / localized_setting / localized_form、appearance / visual direction、entity continuity guardrail 与 visual style 是语义边界；可以具体化视觉表现，但不能改变人物故事身份、场景功能或关键道具功能，也不要逐字复制 guardrail。
 4. 重点是跨 Shot 一致性：人物脸/发型/体态/服装基线、场景 layout/landmark/材质/光照基线、道具 form/material/color/scale 必须能稳定复用。
 5. 不输出正式 target_asset_id、Artifact id、revision、fingerprint、CURRENT/STALE、图片 URI 或媒体 sha256；这些由服务端所有。
 6. 当前 Provider 是 text-only。不得声称生成了图片，不得伪造 reference media。
@@ -324,8 +384,8 @@ Professional Skill rules:
 Target entity manifest（必须按顺序完整覆盖）：
 {json.dumps(payload.entity_manifest, ensure_ascii=False, separators=(",", ":"))}
 
-CURRENT TARGET_BIBLE typed content：
-{json.dumps(payload.target_bible, ensure_ascii=False, separators=(",", ":"))}
+CURRENT TARGET_BIBLE — P13 visual projection：
+{json.dumps(visual_bible, ensure_ascii=False, separators=(",", ":"))}
 
 输出 JSON Schema：
 {json.dumps(schema, ensure_ascii=False, separators=(",", ":"))}
