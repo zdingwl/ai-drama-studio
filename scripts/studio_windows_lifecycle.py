@@ -107,8 +107,9 @@ class WindowsStudioLifetimeGuard:
             ctypes.sizeof(info),
         )
         if not ok:
+            error = ctypes.get_last_error()
             self._cleanup_handles()
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise ctypes.WinError(error)
 
         ok = self._kernel32.AssignProcessToJobObject(
             self._job,
@@ -274,6 +275,11 @@ def cleanup_repo_listener(repo_root: Path, port: int, label: str, *, timeout: fl
 def cleanup_repo_services(repo_root: Path) -> None:
     if not IS_WINDOWS:
         return
-    cleanup_repo_listener(repo_root, 5173, "frontend")
-    cleanup_repo_listener(repo_root, 8000, "backend")
-    cleanup_repo_listener(repo_root, 8092, "IndexTTS-2.5")
+    errors: list[str] = []
+    for port, label in ((5173, "frontend"), (8000, "backend"), (8092, "IndexTTS-2.5")):
+        try:
+            cleanup_repo_listener(repo_root, port, label)
+        except RuntimeError as exc:
+            errors.append(str(exc))
+    if errors:
+        raise RuntimeError("\n".join(errors))
