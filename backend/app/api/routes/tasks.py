@@ -5,6 +5,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
 from app.evidence.service_v4 import is_p6_source_evidence_task, run_p6_source_evidence_task
+from app.p14.audio_contract import P14_AUDIO_TASK_TYPE
+from app.p14.audio_runtime import run_target_audio_task
+from app.p14.timing_service import P14_TIMING_TASK_TYPE, run_timing_plan_task
 from app.preprocessing.service import is_p5_shot_boundary_task, run_p5_shot_boundary_task
 from app.shot_breakdown.service_v2 import P8_TASK_TYPE, run_p8_shot_breakdown_task
 from app.source_analysis.service import SOURCE_ANALYSIS_TASK_TYPE, run_source_analysis_task
@@ -58,6 +61,10 @@ def _schedule_task_if_needed(
         background_tasks.add_task(run_p8_shot_breakdown_task, session_factory, task.id)
     elif task.task_type == P9_TASK_TYPE:
         background_tasks.add_task(run_p9_source_resolution_task, session_factory, task.id)
+    elif task.task_type == P14_AUDIO_TASK_TYPE:
+        background_tasks.add_task(run_target_audio_task, session_factory, task.id)
+    elif task.task_type == P14_TIMING_TASK_TYPE:
+        background_tasks.add_task(run_timing_plan_task, session_factory, task.id)
     elif task.task_type == SOURCE_ANALYSIS_TASK_TYPE:
         background_tasks.add_task(run_source_analysis_task, session_factory, task.id)
 

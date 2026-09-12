@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from app.artifacts.enums import ArtifactNamespace
 from app.artifacts.service import expected_namespace
+from app.p14 import common, timing_service
 from app.p14.schemas import (
     ReplicaTargetAudioContent,
     TargetAudioClip,
@@ -115,3 +116,7 @@ def test_timing_is_deterministic_and_overflow_is_explicit() -> None:
     assert overflow.total_overflow_us == 250_000
     assert overflow.items[0].fit_status == TimingFitStatus.OVERFLOW
     assert overflow.items[0].overflow_us == 250_000
+
+
+def test_timing_worker_uses_shared_checkpoint_helper() -> None:
+    assert timing_service._checkpoint is common._checkpoint

@@ -9,7 +9,7 @@ from app.artifacts.service import _invalidate_project_plan, _mark_stale_with_dow
 from app.core.errors import AppError
 from app.core.time import utc_now
 from app.p14.audio_contract import _flatten_dialogue
-from app.p14.common import _assert_replica, _claim_specific, _current_artifact, _existing_command_task, _latest_artifact, _mark_stage_failed, _next_artifact_revision, _next_generation_sequence, _sha, _text_sha
+from app.p14.common import _assert_replica, _checkpoint, _claim_specific, _current_artifact, _existing_command_task, _latest_artifact, _mark_stage_failed, _next_artifact_revision, _next_generation_sequence, _sha, _text_sha
 from app.p14.models import ReplicaTargetAudioRevision, ReplicaTimingPlanCandidate, ReplicaTimingPlanRevision
 from app.p14.schemas import P14_TIMING_SCHEMA_VERSION, P14_TIMING_SKILL_ID, P14ResultStatus, CandidateReviewStatus, ReplicaTargetAudioContent, ReplicaTimingPlanContent, ReplicaTimingPlanRead, TimingDialogueItem, TimingFitStatus, TimingPlanCandidateProvenance, TimingPlanCandidateRead, TimingPlanProvenance, TimingPlanReviewCommand
 from app.projects.models import Project
