@@ -5,24 +5,11 @@ import { useRoute } from 'vue-router'
 import { getReplicaTargetBible } from '@/features/projects/targetBible'
 import { getReplicaTargetScript } from '@/features/projects/targetScript'
 import { getTargetAudio, getTimingPlan, listAudioCandidates, listTimingCandidates, reviewAudioCandidate, reviewTimingCandidate, startTargetAudio, startTimingPlan, type AudioCandidate, type TimingCandidate, type VoiceBinding } from '@/features/projects/p14'
+import { collectVoiceFilterOptions, filterVoices, type VoiceAgeRange, type VoiceFilterState, type VoiceFilterable, type VoiceGender } from '@/features/projects/p14VoiceFilters'
 import { apiRequest } from '@/lib/api'
 
-type VoiceGender = 'UNKNOWN' | 'FEMALE' | 'MALE' | 'NEUTRAL'
-type VoiceAgeRange = 'UNKNOWN' | 'CHILD' | 'TEEN' | 'YOUNG_ADULT' | 'ADULT' | 'MATURE' | 'SENIOR'
-
-interface VoiceOption {
-  voice_key: string
-  default_display_name: string
-  display_name: string
+interface VoiceOption extends VoiceFilterable {
   preview_url: string
-  locale: string | null
-  tags: string[]
-  gender: VoiceGender
-  age_range: VoiceAgeRange
-  style_tags: string[]
-  notes: string | null
-  metadata_source: 'CATALOG' | 'USER'
-  metadata_stale: boolean
   metadata_updated_at: string | null
 }
 
@@ -60,6 +47,14 @@ const metadataDraft = reactive({
   style_tags_text: '',
   notes: '',
 })
+const voiceFilters = reactive<VoiceFilterState>({
+  query: '',
+  gender: 'ALL',
+  age_range: 'ALL',
+  style_tag: 'ALL',
+  locale: 'ALL',
+  metadata_status: 'ALL',
+})
 const reviewReason = ref('已逐句听审目标配音与时序结果')
 let runtimePoll: number | undefined
 
@@ -86,8 +81,18 @@ const unresolvedLines = computed(() => scriptLines.value.filter((line: any) => !
 const speakingCharacterIds = computed(() => new Set(scriptLines.value.map((line: any) => line.target_character_id).filter(Boolean)))
 const speakingCharacters = computed(() => (bible.value?.content?.characters ?? []).filter((character: any) => speakingCharacterIds.value.has(character.target_character_id)))
 const availableVoices = computed(() => voiceCatalog.value?.voices ?? [])
+const filterOptions = computed(() => collectVoiceFilterOptions(availableVoices.value))
+const filteredVoices = computed(() => filterVoices(availableVoices.value, voiceFilters))
 const catalogConfigured = computed(() => Boolean(voiceCatalog.value?.configured && availableVoices.value.length))
 const runtimeReady = computed(() => Boolean(voiceCatalog.value?.runtime_ready))
+const hasActiveVoiceFilters = computed(() => Boolean(
+  voiceFilters.query.trim()
+  || voiceFilters.gender !== 'ALL'
+  || voiceFilters.age_range !== 'ALL'
+  || voiceFilters.style_tag !== 'ALL'
+  || voiceFilters.locale !== 'ALL'
+  || voiceFilters.metadata_status !== 'ALL',
+))
 
 function voiceOption(key: string): VoiceOption | undefined {
   return availableVoices.value.find((item) => item.voice_key === key)
@@ -95,10 +100,20 @@ function voiceOption(key: string): VoiceOption | undefined {
 
 function voiceMetadata(voice: VoiceOption): string {
   const details: string[] = []
+  if (voice.locale) details.push(voice.locale)
   if (voice.gender !== 'UNKNOWN') details.push(genderLabels[voice.gender])
   if (voice.age_range !== 'UNKNOWN') details.push(ageLabels[voice.age_range])
   details.push(...voice.style_tags)
   return details.length ? details.join(' · ') : '尚未人工标注性别、年龄或声音风格'
+}
+
+function clearVoiceFilters() {
+  voiceFilters.query = ''
+  voiceFilters.gender = 'ALL'
+  voiceFilters.age_range = 'ALL'
+  voiceFilters.style_tag = 'ALL'
+  voiceFilters.locale = 'ALL'
+  voiceFilters.metadata_status = 'ALL'
 }
 
 function pickerKey(scope: 'character' | 'utterance', id: string): string {
@@ -306,15 +321,32 @@ onBeforeUnmount(() => {
         <p :class="runtimeReady ? 'runtime-ok' : 'error'">本地 IndexTTS-2.5：{{ voiceCatalog?.runtime_message || '正在探测…' }}</p>
         <p v-if="!catalogConfigured" class="error">当前 IndexTTS-2.5 参考声线目录为空。请先配置有使用授权的 Reference Audio，再生成目标配音。</p>
         <template v-else>
-          <p v-if="!runtimeReady" class="error">IndexTTS-2.5 由 AI Drama Studio 统一启动器自动管理。若当前应用是手工启动的，请关闭旧进程并从仓库根目录运行 start.cmd（Windows）或 ./start.sh（Linux）。首次启动会自动准备运行时和模型；声线试听和人工标注仍可使用，但只有 READY 后才能生成正式候选。</p>
-          <p class="voice-guidance">官方示例没有可信的性别、年龄或风格名称。请试听后由你人工命名和标注；这些标签会保存到本机声线库，并在所有项目复用，不会被系统自动猜测。</p>
+          <p v-if="!runtimeReady" class="error">IndexTTS-2.5 由 AI Drama Studio 统一启动器自动管理。若当前应用是手工启动的，请关闭旧进程并从仓库根目录运行 start.cmd（Windows）或 ./start.sh（Linux）。首次启动会自动准备运行时和模型；声线试听、分类筛选和人工标注仍可使用，但只有 READY 后才能生成正式候选。</p>
+          <p class="voice-guidance">官方示例没有可信的性别、年龄或风格名称。请试听后由你人工命名和标注；分类筛选只使用人工元数据和目录已有语言信息，不会自动猜测。</p>
 
           <div class="library-head">
-            <strong>声线库</strong>
-            <button type="button" @click="voiceLibraryOpen = !voiceLibraryOpen">{{ voiceLibraryOpen ? '收起声线库' : '管理声线名称与标签' }}</button>
+            <div><strong>声线库</strong><span class="result-count">{{ filteredVoices.length }} / {{ availableVoices.length }}</span></div>
+            <button type="button" @click="voiceLibraryOpen = !voiceLibraryOpen">{{ voiceLibraryOpen ? '收起声线库' : '管理声线与分类' }}</button>
           </div>
-          <div v-if="voiceLibraryOpen" class="voice-grid voice-library">
-            <article v-for="voice in availableVoices" :key="`library-${voice.voice_key}`" class="voice-card">
+
+          <div class="voice-filter-panel">
+            <div class="filter-title-row">
+              <strong>分类筛选</strong>
+              <button v-if="hasActiveVoiceFilters" type="button" class="clear-filter" @click="clearVoiceFilters">清空筛选</button>
+            </div>
+            <div class="filter-grid">
+              <label class="filter-search"><span>搜索</span><input v-model="voiceFilters.query" placeholder="名称 / voice_key / 风格 / 备注" /></label>
+              <label><span>性别</span><select v-model="voiceFilters.gender"><option value="ALL">全部性别</option><option value="FEMALE">女声</option><option value="MALE">男声</option><option value="NEUTRAL">中性 / 不限定</option><option value="UNKNOWN">未标注</option></select></label>
+              <label><span>年龄感</span><select v-model="voiceFilters.age_range"><option value="ALL">全部年龄</option><option value="CHILD">儿童</option><option value="TEEN">青少年</option><option value="YOUNG_ADULT">青年</option><option value="ADULT">成年</option><option value="MATURE">成熟</option><option value="SENIOR">老年</option><option value="UNKNOWN">未标注</option></select></label>
+              <label><span>风格</span><select v-model="voiceFilters.style_tag"><option value="ALL">全部风格</option><option v-for="tag in filterOptions.style_tags" :key="tag" :value="tag">{{ tag }}</option></select></label>
+              <label><span>语言 / 地区</span><select v-model="voiceFilters.locale"><option value="ALL">全部语言 / 地区</option><option v-for="locale in filterOptions.locales" :key="locale" :value="locale">{{ locale }}</option></select></label>
+              <label><span>标注状态</span><select v-model="voiceFilters.metadata_status"><option value="ALL">全部状态</option><option value="USER">已人工标注</option><option value="UNLABELED">未标注</option><option value="STALE">需重新标注</option></select></label>
+            </div>
+            <p class="filter-summary">当前显示 {{ filteredVoices.length }} 条声线；同一筛选会同时用于声线库和角色选角。</p>
+          </div>
+
+          <div v-if="voiceLibraryOpen && filteredVoices.length" class="voice-grid voice-library">
+            <article v-for="voice in filteredVoices" :key="`library-${voice.voice_key}`" class="voice-card">
               <div class="voice-title"><strong>{{ voice.display_name }}</strong><span v-if="voice.metadata_source === 'USER'" class="human-badge">人工标注</span></div>
               <small class="technical-id">{{ voice.voice_key }} · 原始目录名：{{ voice.default_display_name }}</small>
               <p class="voice-meta">{{ voiceMetadata(voice) }}</p>
@@ -332,19 +364,22 @@ onBeforeUnmount(() => {
               </div>
             </article>
           </div>
+          <p v-else-if="voiceLibraryOpen" class="empty-filter-result">当前分类没有匹配声线。可以减少筛选条件，或先给未标注声线补充人工标签。</p>
 
           <section v-for="character in speakingCharacters" :key="character.target_character_id" class="voice-binding">
             <div class="binding-head"><div><strong>{{ character.display_name }}</strong><p class="muted">为这个角色固定一条参考声线</p></div><button class="picker-toggle" type="button" @click="toggleVoicePicker(pickerKey('character', character.target_character_id))">{{ selectedCharacterVoice(character.target_character_id) ? '更换声线' : '选择声线' }}</button></div>
             <div v-if="selectedCharacterVoice(character.target_character_id)" class="selected-voice"><div><strong>{{ selectedCharacterVoice(character.target_character_id)?.display_name }}</strong><p class="voice-meta">{{ voiceMetadata(selectedCharacterVoice(character.target_character_id)!) }}</p></div><audio :src="selectedCharacterVoice(character.target_character_id)?.preview_url" controls preload="none" /></div>
-            <p v-else class="muted">尚未选择。打开声线库后先试听，再决定是否分配给这个角色。</p>
-            <div v-if="activeVoicePicker === pickerKey('character', character.target_character_id)" class="voice-grid"><article v-for="voice in availableVoices" :key="voice.voice_key" class="voice-card" :class="{ selected: characterVoices[character.target_character_id] === voice.voice_key }"><div class="voice-title"><strong>{{ voice.display_name }}</strong><span v-if="voice.metadata_source === 'USER'" class="human-badge">人工标注</span></div><p class="voice-meta">{{ voiceMetadata(voice) }}</p><audio :src="voice.preview_url" controls preload="none" /><button type="button" @click="chooseCharacterVoice(character.target_character_id, voice.voice_key)">选用这个声线</button></article></div>
+            <p v-else class="muted">尚未选择。可先用上面的分类筛选缩小范围，再试听并分配给这个角色。</p>
+            <div v-if="activeVoicePicker === pickerKey('character', character.target_character_id) && filteredVoices.length" class="voice-grid"><article v-for="voice in filteredVoices" :key="voice.voice_key" class="voice-card" :class="{ selected: characterVoices[character.target_character_id] === voice.voice_key }"><div class="voice-title"><strong>{{ voice.display_name }}</strong><span v-if="voice.metadata_source === 'USER'" class="human-badge">人工标注</span></div><p class="voice-meta">{{ voiceMetadata(voice) }}</p><audio :src="voice.preview_url" controls preload="none" /><button type="button" @click="chooseCharacterVoice(character.target_character_id, voice.voice_key)">选用这个声线</button></article></div>
+            <p v-else-if="activeVoicePicker === pickerKey('character', character.target_character_id)" class="empty-filter-result">当前筛选没有可选声线，请调整分类条件。</p>
           </section>
 
           <section v-for="line in unresolvedLines" :key="line.utterance_id" class="voice-binding">
             <div class="binding-head"><div><strong>未绑定人物 · #{{ line.utterance_number }}</strong><p>{{ line.final_target_dialogue }}</p></div><button class="picker-toggle" type="button" @click="toggleVoicePicker(pickerKey('utterance', line.utterance_id))">{{ selectedUtteranceVoice(line.utterance_id) ? '更换声线' : '为该句选声线' }}</button></div>
             <div v-if="selectedUtteranceVoice(line.utterance_id)" class="selected-voice"><div><strong>{{ selectedUtteranceVoice(line.utterance_id)?.display_name }}</strong><p class="voice-meta">{{ voiceMetadata(selectedUtteranceVoice(line.utterance_id)!) }}</p></div><audio :src="selectedUtteranceVoice(line.utterance_id)?.preview_url" controls preload="none" /></div>
             <p v-else class="muted">这句没有人物绑定，必须显式试听并选择声线。</p>
-            <div v-if="activeVoicePicker === pickerKey('utterance', line.utterance_id)" class="voice-grid"><article v-for="voice in availableVoices" :key="voice.voice_key" class="voice-card" :class="{ selected: utteranceVoices[line.utterance_id] === voice.voice_key }"><div class="voice-title"><strong>{{ voice.display_name }}</strong><span v-if="voice.metadata_source === 'USER'" class="human-badge">人工标注</span></div><p class="voice-meta">{{ voiceMetadata(voice) }}</p><audio :src="voice.preview_url" controls preload="none" /><button type="button" @click="chooseUtteranceVoice(line.utterance_id, voice.voice_key)">选用这个声线</button></article></div>
+            <div v-if="activeVoicePicker === pickerKey('utterance', line.utterance_id) && filteredVoices.length" class="voice-grid"><article v-for="voice in filteredVoices" :key="voice.voice_key" class="voice-card" :class="{ selected: utteranceVoices[line.utterance_id] === voice.voice_key }"><div class="voice-title"><strong>{{ voice.display_name }}</strong><span v-if="voice.metadata_source === 'USER'" class="human-badge">人工标注</span></div><p class="voice-meta">{{ voiceMetadata(voice) }}</p><audio :src="voice.preview_url" controls preload="none" /><button type="button" @click="chooseUtteranceVoice(line.utterance_id, voice.voice_key)">选用这个声线</button></article></div>
+            <p v-else-if="activeVoicePicker === pickerKey('utterance', line.utterance_id)" class="empty-filter-result">当前筛选没有可选声线，请调整分类条件。</p>
           </section>
         </template>
         <button type="button" :disabled="!allBindingsResolved" @click="generateAudio">生成 IndexTTS-2.5 配音候选</button>
@@ -359,5 +394,5 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.p14-workspace{margin:24px 0;padding:24px;border:1px solid var(--border-color,#ddd);border-radius:16px}.p14-workspace header{display:flex;justify-content:space-between;align-items:center}.eyebrow{margin:0;font-size:12px;opacity:.65}.panel{margin-top:18px;padding:18px;border-radius:12px;background:rgba(127,127,127,.06)}input,select,textarea{box-sizing:border-box;width:100%;padding:9px 11px}.clip{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid rgba(127,127,127,.2)}audio{width:100%}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}.error{color:#b42318}.runtime-ok{color:#067647}.voice-guidance{padding:10px 12px;border-left:3px solid rgba(127,127,127,.45);background:rgba(127,127,127,.05)}.library-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:16px}.voice-library{padding:12px;border:1px solid rgba(127,127,127,.18);border-radius:12px}.voice-binding{margin:14px 0;padding:14px;border:1px solid rgba(127,127,127,.22);border-radius:10px}.binding-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.binding-head p{margin:4px 0 0}.picker-toggle{white-space:nowrap}.selected-voice{display:grid;grid-template-columns:minmax(180px,1fr) minmax(260px,2fr);gap:14px;align-items:center;margin-top:12px;padding:12px;border-radius:8px;background:rgba(127,127,127,.06)}.voice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:14px}.voice-card{display:grid;gap:9px;padding:12px;border:1px solid rgba(127,127,127,.22);border-radius:10px;background:var(--surface-color,#fff)}.voice-card.selected{outline:2px solid rgba(6,118,71,.45)}.voice-title{display:flex;gap:8px;align-items:center;justify-content:space-between}.human-badge{font-size:12px;padding:2px 7px;border-radius:999px;background:rgba(6,118,71,.12);color:#067647;white-space:nowrap}.technical-id{opacity:.58}.voice-meta,.muted,.voice-notes{font-size:13px;opacity:.72;margin:3px 0}.voice-card>button{justify-self:start}.metadata-editor{display:grid;gap:8px;margin-top:4px;padding-top:10px;border-top:1px solid rgba(127,127,127,.18)}.metadata-editor label{display:grid;gap:5px;font-size:13px}.metadata-editor .actions button{width:auto}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:8px;border-bottom:1px solid rgba(127,127,127,.2);font-size:13px}@media(max-width:720px){.selected-voice{grid-template-columns:1fr}.binding-head,.library-head{flex-direction:column}.voice-grid{grid-template-columns:1fr}}
+.p14-workspace{margin:24px 0;padding:24px;border:1px solid var(--border-color,#ddd);border-radius:16px}.p14-workspace header{display:flex;justify-content:space-between;align-items:center}.eyebrow{margin:0;font-size:12px;opacity:.65}.panel{margin-top:18px;padding:18px;border-radius:12px;background:rgba(127,127,127,.06)}input,select,textarea{box-sizing:border-box;width:100%;padding:9px 11px}.clip{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid rgba(127,127,127,.2)}audio{width:100%}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}.error{color:#b42318}.runtime-ok{color:#067647}.voice-guidance{padding:10px 12px;border-left:3px solid rgba(127,127,127,.45);background:rgba(127,127,127,.05)}.library-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:16px}.library-head>div{display:flex;gap:9px;align-items:baseline}.result-count{font-size:12px;opacity:.6}.voice-filter-panel{margin-top:12px;padding:12px;border:1px solid rgba(127,127,127,.18);border-radius:12px;background:rgba(127,127,127,.035)}.filter-title-row{display:flex;justify-content:space-between;gap:10px;align-items:center}.clear-filter{width:auto}.filter-grid{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px;margin-top:10px}.filter-grid label{display:grid;gap:5px;font-size:12px}.filter-search{grid-column:span 2}.filter-summary{margin:9px 0 0;font-size:12px;opacity:.65}.empty-filter-result{padding:12px;border:1px dashed rgba(127,127,127,.3);border-radius:9px;font-size:13px;opacity:.72}.voice-library{padding:12px;border:1px solid rgba(127,127,127,.18);border-radius:12px}.voice-binding{margin:14px 0;padding:14px;border:1px solid rgba(127,127,127,.22);border-radius:10px}.binding-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.binding-head p{margin:4px 0 0}.picker-toggle{white-space:nowrap}.selected-voice{display:grid;grid-template-columns:minmax(180px,1fr) minmax(260px,2fr);gap:14px;align-items:center;margin-top:12px;padding:12px;border-radius:8px;background:rgba(127,127,127,.06)}.voice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:14px}.voice-card{display:grid;gap:9px;padding:12px;border:1px solid rgba(127,127,127,.22);border-radius:10px;background:var(--surface-color,#fff)}.voice-card.selected{outline:2px solid rgba(6,118,71,.45)}.voice-title{display:flex;gap:8px;align-items:center;justify-content:space-between}.human-badge{font-size:12px;padding:2px 7px;border-radius:999px;background:rgba(6,118,71,.12);color:#067647;white-space:nowrap}.technical-id{opacity:.58}.voice-meta,.muted,.voice-notes{font-size:13px;opacity:.72;margin:3px 0}.voice-card>button{justify-self:start}.metadata-editor{display:grid;gap:8px;margin-top:4px;padding-top:10px;border-top:1px solid rgba(127,127,127,.18)}.metadata-editor label{display:grid;gap:5px;font-size:13px}.metadata-editor .actions button{width:auto}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:8px;border-bottom:1px solid rgba(127,127,127,.2);font-size:13px}@media(max-width:980px){.filter-grid{grid-template-columns:repeat(2,minmax(150px,1fr))}.filter-search{grid-column:span 2}}@media(max-width:720px){.selected-voice{grid-template-columns:1fr}.binding-head,.library-head{flex-direction:column}.voice-grid,.filter-grid{grid-template-columns:1fr}.filter-search{grid-column:span 1}}
 </style>
