@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 from pathlib import Path
 
@@ -8,6 +9,30 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE_PATH = BACKEND_ROOT / "data" / "ai_drama_studio.db"
 DEFAULT_ARTIFACT_ROOT = BACKEND_ROOT / "artifacts"
+
+# OpenAI's documented built-in /v1/audio/speech voices, verified 2026-09-12.
+# The application still exposes only voice_key/display_name/locale/tags to the browser;
+# provider_voice_id remains server-side. Override the catalog for a different compatible provider.
+DEFAULT_P14_TTS_VOICE_CATALOG = (
+    {"voice_key": "alloy", "display_name": "Alloy", "provider_voice_id": "alloy", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "ash", "display_name": "Ash", "provider_voice_id": "ash", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "ballad", "display_name": "Ballad", "provider_voice_id": "ballad", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "coral", "display_name": "Coral", "provider_voice_id": "coral", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "echo", "display_name": "Echo", "provider_voice_id": "echo", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "fable", "display_name": "Fable", "provider_voice_id": "fable", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "onyx", "display_name": "Onyx", "provider_voice_id": "onyx", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "nova", "display_name": "Nova", "provider_voice_id": "nova", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "sage", "display_name": "Sage", "provider_voice_id": "sage", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "shimmer", "display_name": "Shimmer", "provider_voice_id": "shimmer", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "verse", "display_name": "Verse", "provider_voice_id": "verse", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "marin", "display_name": "Marin", "provider_voice_id": "marin", "locale": None, "tags": ["openai", "built-in"]},
+    {"voice_key": "cedar", "display_name": "Cedar", "provider_voice_id": "cedar", "locale": None, "tags": ["openai", "built-in"]},
+)
+DEFAULT_P14_TTS_VOICE_CATALOG_JSON = json.dumps(
+    DEFAULT_P14_TTS_VOICE_CATALOG,
+    ensure_ascii=False,
+    separators=(",", ":"),
+)
 
 
 def _sqlite_url(path: Path) -> str:
@@ -70,9 +95,8 @@ class Settings(BaseSettings):
     p14_tts_model: str = "tts-1"
     p14_tts_response_format: str = "wav"
     p14_tts_request_timeout_seconds: float = 300.0
-    # Server-owned voice catalog. Browser receives only voice_key/display_name/locale/tags;
-    # provider_voice_id stays server-side and is resolved immediately before /audio/speech.
-    p14_tts_voice_catalog_json: str = "[]"
+    # Defaults to the official OpenAI built-in voice names. Override for another provider.
+    p14_tts_voice_catalog_json: str = DEFAULT_P14_TTS_VOICE_CATALOG_JSON
 
     @model_validator(mode="after")
     def anchor_runtime_paths(self) -> "Settings":
