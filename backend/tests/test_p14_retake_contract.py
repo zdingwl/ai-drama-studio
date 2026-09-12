@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import Settings
+from app.core.errors import AppError
 from app.p14.delivery import synthesize_with_delivery
 from app.p14.provider import IndexTTS25Provider
 from app.p14.schemas import (
@@ -77,6 +78,21 @@ def test_retake_command_requires_at_least_one_line() -> None:
             expected_generation_sequence=1,
             retakes=[],
         )
+
+
+@pytest.mark.parametrize("duration_factor", [0.5, 0.79, 1.26, 1.5])
+def test_delivery_runtime_rejects_factors_outside_product_contract(duration_factor: float) -> None:
+    provider = IndexTTS25Provider(_settings(), target_language="en-US")
+    with pytest.raises(AppError) as exc_info:
+        synthesize_with_delivery(
+            provider,
+            text="Frozen dialogue.",
+            voice_id="voice-a",
+            acting_direction=None,
+            emo_alpha=0.6,
+            duration_factor=duration_factor,
+        )
+    assert exc_info.value.code == "P14_INDEXTTS_DURATION_FACTOR_INVALID"
 
 
 def test_indextts_delivery_keeps_dialogue_and_acting_direction_separate(monkeypatch: pytest.MonkeyPatch) -> None:

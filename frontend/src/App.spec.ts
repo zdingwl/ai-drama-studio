@@ -34,6 +34,7 @@ async function mountApp(path: string) {
         TargetAssetsWorkspace: { template: '<section data-testid="target-assets-workspace" />' },
         TargetAudioTimingWorkspace: { template: '<section data-testid="target-audio-timing-workspace" />' },
         TargetAudioRetakeWorkspace: { template: '<section data-testid="target-audio-retake-workspace" />' },
+        P14AcceptanceReadinessPanel: { template: '<section data-testid="p14-acceptance-readiness" />' },
         P6AcceptancePanel: { template: '<section data-testid="p6-panel" />' },
         P7SourceUnderstandingWorkspace: { template: '<section data-testid="p7-panel" />' },
         P8ShotBreakdownPanel: { template: '<section data-testid="p8-panel" />' },
@@ -56,6 +57,7 @@ describe('App source workspace product mode', () => {
     expect(wrapper.get('[data-testid="target-assets-workspace"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="target-audio-timing-workspace"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="target-audio-retake-workspace"]')).toBeTruthy()
+    expect(wrapper.get('[data-testid="p14-acceptance-readiness"]')).toBeTruthy()
     expect(wrapper.find('.product-mode').exists()).toBe(true)
     for (const panel of technicalPanels) {
       expect(wrapper.find(`[data-testid="${panel}"]`).exists()).toBe(false)
@@ -72,6 +74,7 @@ describe('App source workspace product mode', () => {
     expect(wrapper.get('[data-testid="target-assets-workspace"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="target-audio-timing-workspace"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="target-audio-retake-workspace"]')).toBeTruthy()
+    expect(wrapper.get('[data-testid="p14-acceptance-readiness"]')).toBeTruthy()
     expect(wrapper.find('.product-mode').exists()).toBe(false)
     for (const panel of technicalPanels) {
       expect(wrapper.get(`[data-testid="${panel}"]`)).toBeTruthy()

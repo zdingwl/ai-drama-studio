@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 import AppShell from '@/components/AppShell.vue'
+import P14AcceptanceReadinessPanel from '@/components/P14AcceptanceReadinessPanel.vue'
 import P6AcceptancePanel from '@/components/P6AcceptancePanel.vue'
 import P7SourceUnderstandingWorkspace from '@/components/P7SourceUnderstandingWorkspace.vue'
 import P8ShotBreakdownPanel from '@/components/P8ShotBreakdownPanel.vue'
@@ -30,6 +31,7 @@ const debugMode = computed(() => route.query.debug === '1')
       <TargetAssetsWorkspace v-if="isProjectWorkspace" />
       <TargetAudioTimingWorkspace v-if="isProjectWorkspace" />
       <TargetAudioRetakeWorkspace v-if="isProjectWorkspace" />
+      <P14AcceptanceReadinessPanel v-if="isProjectWorkspace" />
 
       <template v-if="isProjectWorkspace && debugMode">
         <P6AcceptancePanel />

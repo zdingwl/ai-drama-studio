@@ -5,7 +5,7 @@ from app.artifacts.models import ArtifactNode
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.p14.common import _assert_replica, _current_artifact, _existing_command_task, _next_generation_sequence, _sha
-from app.p14.models import ReplicaTargetAudioCandidate
+from app.p14.models import ReplicaTargetAudioCandidate, ReplicaTargetAudioRevision
 from app.p14.provider import IndexTTS25Provider
 from app.p14.schemas import (
     CandidateReviewStatus,
@@ -131,9 +131,26 @@ def _validate_base_candidate(db: Session, *, project_id: str, candidate_id: str,
     if candidate is None or candidate.project_id != project_id:
         raise AppError("P14_AUDIO_CANDIDATE_NOT_FOUND", "目标配音候选不存在", status_code=404)
     if candidate.review_status not in {CandidateReviewStatus.NEEDS_REVIEW.value, CandidateReviewStatus.ACCEPTED.value}:
-        raise AppError("P14_RETAKE_BASE_NOT_REVIEWABLE", "只能基于待审核或已确认的目标配音候选重录", status_code=409)
+        raise AppError("P14_RETAKE_BASE_NOT_REVIEWABLE", "只能基于待审核或当前已确认的目标配音候选重录", status_code=409)
     if candidate.target_script_artifact_id != script_artifact_id or candidate.target_bible_artifact_id != bible_artifact_id:
         raise AppError("P14_RETAKE_BASE_STALE", "重录基线不属于当前 TARGET_SCRIPT / TARGET_BIBLE", status_code=409)
+    if candidate.review_status == CandidateReviewStatus.ACCEPTED.value:
+        current_audio = _current_artifact(db, project_id, ArtifactType.TARGET_AUDIO)
+        current_revision = (
+            db.scalar(
+                select(ReplicaTargetAudioRevision).where(
+                    ReplicaTargetAudioRevision.artifact_id == current_audio.id
+                )
+            )
+            if current_audio is not None
+            else None
+        )
+        if current_revision is None or current_revision.candidate_id != candidate.id:
+            raise AppError(
+                "P14_RETAKE_BASE_NOT_CURRENT",
+                "历史已确认配音不能作为 Retake 基线；必须基于 CURRENT TARGET_AUDIO 对应的候选重录",
+                status_code=409,
+            )
     ReplicaTargetAudioContent.model_validate(candidate.content_json)
     if not candidate.generated_by_task_id:
         raise AppError("P14_RETAKE_BASE_MEDIA_MISSING", "重录基线缺少生成 Task，无法复用未重录音频", status_code=409)

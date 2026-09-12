@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.errors import AppError
 from app.db.session import get_db
+from app.p14.acceptance_readiness import P14AcceptanceReadiness, get_p14_acceptance_readiness
 from app.p14.schemas import (
     ReplicaTargetAudioRead,
     ReplicaTimingPlanRead,
@@ -42,6 +43,17 @@ router = APIRouter(tags=["p14-target-audio-timing"])
 
 def _request_session_factory(db: Session) -> sessionmaker[Session]:
     return sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False, class_=Session)
+
+
+@router.get(
+    "/projects/{project_id}/p14/acceptance-readiness",
+    response_model=P14AcceptanceReadiness,
+)
+def get_p14_acceptance_readiness_route(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> P14AcceptanceReadiness:
+    return get_p14_acceptance_readiness(db, project_id)
 
 
 def _start_audio(

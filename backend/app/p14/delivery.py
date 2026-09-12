@@ -21,8 +21,14 @@ def synthesize_with_delivery(
 
     if not 0.0 <= emo_alpha <= 1.0:
         raise AppError("P14_INDEXTTS_EMOTION_INVALID", "IndexTTS 情绪强度必须在 0.0 到 1.0 之间", status_code=422)
-    if not 0.5 <= duration_factor <= 2.0:
-        raise AppError("P14_INDEXTTS_DURATION_FACTOR_INVALID", "IndexTTS duration_factor 必须在 0.5 到 2.0 之间", status_code=422)
+    # The native/provider adapter can technically accept a broader factor, but the P14
+    # product contract deliberately limits authored retakes to 0.8..1.25.
+    if not 0.8 <= duration_factor <= 1.25:
+        raise AppError(
+            "P14_INDEXTTS_DURATION_FACTOR_INVALID",
+            "P14 duration_factor 只允许 0.8 到 1.25；禁止用极端倍速静默解决 Timing",
+            status_code=422,
+        )
 
     ref_audio, _reference_sha = provider._reference_data_url(voice_id)
     extra_params: dict[str, object] = {

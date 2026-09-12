@@ -11,13 +11,13 @@ from app.artifacts.service import _invalidate_project_plan, _mark_stale_with_dow
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.time import utc_now
+from app.p14.audio_contract import _load_target_audio_inputs
 from app.p14.common import _assert_replica, _current_artifact, _latest_artifact, _next_artifact_revision, _sha
-from app.p14.models import ReplicaTargetAudioCandidate, ReplicaTargetAudioRevision
+from app.p14.models import ReplicaTargetAudioCandidate, ReplicaTargetAudioRevision, ReplicaTimingPlanCandidate
 from app.p14.schemas import P14_AUDIO_SCHEMA_VERSION, P14_AUDIO_SKILL_ID, P14ResultStatus, CandidateReviewStatus, ReplicaTargetAudioContent, ReplicaTargetAudioRead, TargetAudioCandidateProvenance, TargetAudioCandidateRead, TargetAudioProvenance, TargetAudioReviewCommand
 from app.projects.service import get_project
 from app.skills.models import ArtifactType
 from app.skills.professional import get_professional_skill
-from app.p14.audio_contract import _load_target_audio_inputs
 
 
 def _audio_candidate_read(row: ReplicaTargetAudioCandidate) -> TargetAudioCandidateRead:
@@ -186,6 +186,21 @@ def accept_target_audio_candidate(
             other.review_reason = "A newer target-audio candidate was explicitly accepted."
             other.reviewed_at = reviewed_at
             db.add(other)
+
+        # Any still-pending timing candidate was computed from the previous CURRENT audio.
+        # Once a new TARGET_AUDIO is accepted it must never remain reviewable or surface as
+        # the apparent overflow state for the new audio revision.
+        for pending_timing in db.scalars(
+            select(ReplicaTimingPlanCandidate).where(
+                ReplicaTimingPlanCandidate.project_id == project_id,
+                ReplicaTimingPlanCandidate.review_status == CandidateReviewStatus.NEEDS_REVIEW.value,
+            )
+        ).all():
+            pending_timing.review_status = CandidateReviewStatus.SUPERSEDED.value
+            pending_timing.review_reason = "TARGET_AUDIO changed before this timing candidate was reviewed."
+            pending_timing.reviewed_at = reviewed_at
+            db.add(pending_timing)
+
         candidate.review_status = CandidateReviewStatus.ACCEPTED.value
         candidate.review_reason = command.reason.strip()
         candidate.reviewed_at = reviewed_at
