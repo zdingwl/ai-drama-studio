@@ -1,9 +1,15 @@
+import base64
+import binascii
+from urllib.parse import quote
+
 import httpx
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.errors import AppError
 from app.db.session import get_db
 from app.p14.common import _assert_replica
 from app.p14.provider import IndexTTS25Provider
@@ -13,6 +19,7 @@ from app.projects.service import get_project
 class TTSVoiceOptionRead(BaseModel):
     voice_key: str
     display_name: str
+    preview_url: str
     locale: str | None = None
     tags: list[str] = Field(default_factory=list)
 
@@ -84,6 +91,28 @@ def _runtime_readiness(provider: IndexTTS25Provider) -> tuple[bool, str]:
     return True, "IndexTTS-2.5 READY"
 
 
+def _decode_reference_audio(data_url: str) -> tuple[bytes, str]:
+    try:
+        header, encoded = data_url.split(",", 1)
+        if not header.startswith("data:audio/") or ";base64" not in header:
+            raise ValueError("not an audio base64 data URL")
+        mime = header[5:].split(";", 1)[0]
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise AppError(
+            "P14_INDEXTTS_REFERENCE_INVALID",
+            "IndexTTS 参考声线试听音频无效",
+            status_code=502,
+        ) from exc
+    if not raw:
+        raise AppError(
+            "P14_INDEXTTS_REFERENCE_INVALID",
+            "IndexTTS 参考声线试听音频无效",
+            status_code=502,
+        )
+    return raw, mime
+
+
 @router.get(
     "/projects/{project_id}/target-audio/voices",
     response_model=TTSVoiceCatalogRead,
@@ -94,8 +123,18 @@ def get_target_audio_voice_catalog_route(
 ) -> TTSVoiceCatalogRead:
     project = get_project(db, project_id)
     _assert_replica(project)
-    provider = IndexTTS25Provider(get_settings(), target_language=project.target_language)
-    voices = [TTSVoiceOptionRead.model_validate(item) for item in provider.public_voice_catalog()]
+    settings = get_settings()
+    provider = IndexTTS25Provider(settings, target_language=project.target_language)
+    voices = [
+        TTSVoiceOptionRead(
+            **item,
+            preview_url=(
+                f"{settings.api_prefix.rstrip('/')}/projects/{project_id}/target-audio/voices/"
+                f"{quote(item['voice_key'], safe='')}/preview"
+            ),
+        )
+        for item in provider.public_voice_catalog()
+    ]
     runtime_ready, runtime_message = _runtime_readiness(provider)
     return TTSVoiceCatalogRead(
         provider=provider.provider_name,
@@ -105,4 +144,29 @@ def get_target_audio_voice_catalog_route(
         runtime_ready=runtime_ready,
         runtime_message=runtime_message,
         voices=voices,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/target-audio/voices/{voice_key}/preview",
+    response_class=Response,
+)
+def get_target_audio_voice_preview_route(
+    project_id: str,
+    voice_key: str,
+    db: Session = Depends(get_db),
+) -> Response:
+    project = get_project(db, project_id)
+    _assert_replica(project)
+    provider = IndexTTS25Provider(get_settings(), target_language=project.target_language)
+    provider.resolve_voice(voice_key)
+    data_url, _reference_sha = provider._reference_data_url(voice_key)
+    raw, mime = _decode_reference_audio(data_url)
+    return Response(
+        content=raw,
+        media_type=mime,
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": "inline",
+        },
     )

@@ -10,6 +10,7 @@ import { apiRequest } from '@/lib/api'
 interface VoiceOption {
   voice_key: string
   display_name: string
+  preview_url: string
   locale: string | null
   tags: string[]
 }
@@ -37,9 +38,11 @@ const timingCandidates = ref<TimingCandidate[]>([])
 const voiceCatalog = ref<VoiceCatalogRead | null>(null)
 const characterVoices = reactive<Record<string, string>>({})
 const utteranceVoices = reactive<Record<string, string>>({})
+const activeVoicePicker = ref<string | null>(null)
 const reviewReason = ref('已逐句听审目标配音与时序结果')
 let runtimePoll: number | undefined
 
+const genericDemoTags = new Set(['IndexTTS-2.5', '官方示例', '开发验收'])
 const latestAudioCandidate = computed(() => audioCandidates.value.find((item) => item.review_status === 'NEEDS_REVIEW') ?? null)
 const latestTimingCandidate = computed(() => timingCandidates.value.find((item) => item.review_status === 'NEEDS_REVIEW') ?? null)
 const scriptLines = computed(() => (script.value?.content?.episodes ?? []).flatMap((episode: any) => episode.dialogue ?? []))
@@ -52,6 +55,41 @@ const runtimeReady = computed(() => Boolean(voiceCatalog.value?.runtime_ready))
 
 function voiceOption(key: string): VoiceOption | undefined {
   return availableVoices.value.find((item) => item.voice_key === key)
+}
+
+function voiceMetadata(voice: VoiceOption): string {
+  const details: string[] = []
+  if (voice.locale) details.push(voice.locale)
+  for (const tag of voice.tags) {
+    if (!genericDemoTags.has(tag)) details.push(tag)
+  }
+  return details.length ? details.join(' · ') : '官方未提供可信的性别、年龄或风格标签'
+}
+
+function pickerKey(scope: 'character' | 'utterance', id: string): string {
+  return `${scope}:${id}`
+}
+
+function toggleVoicePicker(key: string) {
+  activeVoicePicker.value = activeVoicePicker.value === key ? null : key
+}
+
+function chooseCharacterVoice(characterId: string, voiceKey: string) {
+  characterVoices[characterId] = voiceKey
+  activeVoicePicker.value = null
+}
+
+function chooseUtteranceVoice(utteranceId: string, voiceKey: string) {
+  utteranceVoices[utteranceId] = voiceKey
+  activeVoicePicker.value = null
+}
+
+function selectedCharacterVoice(characterId: string): VoiceOption | undefined {
+  return voiceOption(characterVoices[characterId] ?? '')
+}
+
+function selectedUtteranceVoice(utteranceId: string): VoiceOption | undefined {
+  return voiceOption(utteranceVoices[utteranceId] ?? '')
 }
 
 const allBindingsResolved = computed(() => {
@@ -152,7 +190,10 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="p14-workspace">
-    <header><div><p class="eyebrow">配音与时序</p><h2>目标对白音频与真实时长</h2></div><button type="button" @click="refresh">刷新</button></header>
+    <header>
+      <div><p class="eyebrow">配音与时序</p><h2>目标对白音频与真实时长</h2></div>
+      <button type="button" @click="refresh">刷新</button>
+    </header>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="loading">正在读取当前结果…</p>
 
@@ -162,26 +203,67 @@ onBeforeUnmount(() => {
         <p>每个声线都对应一段 Reference Audio，由本地 IndexTTS-2.5 做 zero-shot voice cloning；这里不存在需要用户填写的 Provider voice id，也不会自动从原剧演员音轨克隆。</p>
         <p :class="runtimeReady ? 'runtime-ok' : 'error'">本地 IndexTTS-2.5：{{ voiceCatalog?.runtime_message || '正在探测…' }}</p>
         <p v-if="!catalogConfigured" class="error">当前 IndexTTS-2.5 参考声线目录为空。请先配置有使用授权的 Reference Audio，再生成目标配音。</p>
-        <p v-else-if="!runtimeReady" class="error">IndexTTS-2.5 由 AI Drama Studio 统一启动器自动管理。若当前应用是手工启动的，请关闭旧进程并从仓库根目录运行 start.cmd（Windows）或 ./start.sh（Linux / WSL）。首次启动会自动准备运行时和模型，本页会自动等待 READY。</p>
+        <p v-else-if="!runtimeReady" class="error">IndexTTS-2.5 由 AI Drama Studio 统一启动器自动管理。若当前应用是手工启动的，请关闭旧进程并从仓库根目录运行 start.cmd（Windows）或 ./start.sh（Linux）。首次启动会自动准备运行时和模型，本页会自动等待 READY。</p>
         <template v-else>
-          <label v-for="character in speakingCharacters" :key="character.target_character_id">
-            <span>{{ character.display_name }}</span>
-            <select v-model="characterVoices[character.target_character_id]">
-              <option value="" disabled>选择参考声线</option>
-              <option v-for="voice in availableVoices" :key="voice.voice_key" :value="voice.voice_key">
-                {{ voice.display_name }}{{ voice.locale ? ` · ${voice.locale}` : '' }}{{ voice.tags.length ? ` · ${voice.tags.join(' / ')}` : '' }}
-              </option>
-            </select>
-          </label>
-          <label v-for="line in unresolvedLines" :key="line.utterance_id">
-            <span>未绑定人物 · #{{ line.utterance_number }} {{ line.final_target_dialogue }}</span>
-            <select v-model="utteranceVoices[line.utterance_id]">
-              <option value="" disabled>为该句选择参考声线</option>
-              <option v-for="voice in availableVoices" :key="voice.voice_key" :value="voice.voice_key">
-                {{ voice.display_name }}{{ voice.locale ? ` · ${voice.locale}` : '' }}{{ voice.tags.length ? ` · ${voice.tags.join(' / ')}` : '' }}
-              </option>
-            </select>
-          </label>
+          <p class="voice-guidance">上游官方示例只有编号与 Reference Audio，没有可信的性别、年龄或风格元数据；系统不会猜。请先试听，再把合适声线分配给角色。</p>
+
+          <section v-for="character in speakingCharacters" :key="character.target_character_id" class="voice-binding">
+            <div class="binding-head">
+              <div>
+                <strong>{{ character.display_name }}</strong>
+                <p class="muted">为这个角色固定一条参考声线</p>
+              </div>
+              <button class="picker-toggle" type="button" @click="toggleVoicePicker(pickerKey('character', character.target_character_id))">
+                {{ selectedCharacterVoice(character.target_character_id) ? '更换声线' : '选择声线' }}
+              </button>
+            </div>
+            <div v-if="selectedCharacterVoice(character.target_character_id)" class="selected-voice">
+              <div>
+                <strong>{{ selectedCharacterVoice(character.target_character_id)?.display_name }}</strong>
+                <p class="voice-meta">{{ voiceMetadata(selectedCharacterVoice(character.target_character_id)!) }}</p>
+              </div>
+              <audio :src="selectedCharacterVoice(character.target_character_id)?.preview_url" controls preload="none" />
+            </div>
+            <p v-else class="muted">尚未选择。打开声线库后先试听，再决定是否分配给这个角色。</p>
+
+            <div v-if="activeVoicePicker === pickerKey('character', character.target_character_id)" class="voice-grid">
+              <article v-for="voice in availableVoices" :key="voice.voice_key" class="voice-card" :class="{ selected: characterVoices[character.target_character_id] === voice.voice_key }">
+                <strong>{{ voice.display_name }}</strong>
+                <p class="voice-meta">{{ voiceMetadata(voice) }}</p>
+                <audio :src="voice.preview_url" controls preload="none" />
+                <button type="button" @click="chooseCharacterVoice(character.target_character_id, voice.voice_key)">选用这个声线</button>
+              </article>
+            </div>
+          </section>
+
+          <section v-for="line in unresolvedLines" :key="line.utterance_id" class="voice-binding">
+            <div class="binding-head">
+              <div>
+                <strong>未绑定人物 · #{{ line.utterance_number }}</strong>
+                <p>{{ line.final_target_dialogue }}</p>
+              </div>
+              <button class="picker-toggle" type="button" @click="toggleVoicePicker(pickerKey('utterance', line.utterance_id))">
+                {{ selectedUtteranceVoice(line.utterance_id) ? '更换声线' : '为该句选声线' }}
+              </button>
+            </div>
+            <div v-if="selectedUtteranceVoice(line.utterance_id)" class="selected-voice">
+              <div>
+                <strong>{{ selectedUtteranceVoice(line.utterance_id)?.display_name }}</strong>
+                <p class="voice-meta">{{ voiceMetadata(selectedUtteranceVoice(line.utterance_id)!) }}</p>
+              </div>
+              <audio :src="selectedUtteranceVoice(line.utterance_id)?.preview_url" controls preload="none" />
+            </div>
+            <p v-else class="muted">这句没有人物绑定，必须显式试听并选择声线。</p>
+
+            <div v-if="activeVoicePicker === pickerKey('utterance', line.utterance_id)" class="voice-grid">
+              <article v-for="voice in availableVoices" :key="voice.voice_key" class="voice-card" :class="{ selected: utteranceVoices[line.utterance_id] === voice.voice_key }">
+                <strong>{{ voice.display_name }}</strong>
+                <p class="voice-meta">{{ voiceMetadata(voice) }}</p>
+                <audio :src="voice.preview_url" controls preload="none" />
+                <button type="button" @click="chooseUtteranceVoice(line.utterance_id, voice.voice_key)">选用这个声线</button>
+              </article>
+            </div>
+          </section>
         </template>
         <button type="button" :disabled="!allBindingsResolved" @click="generateAudio">生成 IndexTTS-2.5 配音候选</button>
       </div>
@@ -213,5 +295,5 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.p14-workspace{margin:24px 0;padding:24px;border:1px solid var(--border-color,#ddd);border-radius:16px}.p14-workspace header{display:flex;justify-content:space-between;align-items:center}.eyebrow{margin:0;font-size:12px;opacity:.65}.panel{margin-top:18px;padding:18px;border-radius:12px;background:rgba(127,127,127,.06)}label{display:grid;gap:6px;margin:12px 0}input,select{padding:9px 11px}.clip{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid rgba(127,127,127,.2)}audio{width:100%}.actions{display:flex;gap:10px;margin-top:12px}.error{color:#b42318}.runtime-ok{color:#067647}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:8px;border-bottom:1px solid rgba(127,127,127,.2);font-size:13px}
+.p14-workspace{margin:24px 0;padding:24px;border:1px solid var(--border-color,#ddd);border-radius:16px}.p14-workspace header{display:flex;justify-content:space-between;align-items:center}.eyebrow{margin:0;font-size:12px;opacity:.65}.panel{margin-top:18px;padding:18px;border-radius:12px;background:rgba(127,127,127,.06)}input{padding:9px 11px}.clip{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid rgba(127,127,127,.2)}audio{width:100%}.actions{display:flex;gap:10px;margin-top:12px}.error{color:#b42318}.runtime-ok{color:#067647}.voice-guidance{padding:10px 12px;border-left:3px solid rgba(127,127,127,.45);background:rgba(127,127,127,.05)}.voice-binding{margin:14px 0;padding:14px;border:1px solid rgba(127,127,127,.22);border-radius:10px}.binding-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.binding-head p{margin:4px 0 0}.picker-toggle{white-space:nowrap}.selected-voice{display:grid;grid-template-columns:minmax(180px,1fr) minmax(260px,2fr);gap:14px;align-items:center;margin-top:12px;padding:12px;border-radius:8px;background:rgba(127,127,127,.06)}.voice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:14px}.voice-card{display:grid;gap:9px;padding:12px;border:1px solid rgba(127,127,127,.22);border-radius:10px;background:var(--surface-color,#fff)}.voice-card.selected{outline:2px solid rgba(6,118,71,.45)}.voice-meta,.muted{font-size:13px;opacity:.72;margin:3px 0}.voice-card button{justify-self:start}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:8px;border-bottom:1px solid rgba(127,127,127,.2);font-size:13px}@media(max-width:720px){.selected-voice{grid-template-columns:1fr}.binding-head{flex-direction:column}.voice-grid{grid-template-columns:1fr}}
 </style>
