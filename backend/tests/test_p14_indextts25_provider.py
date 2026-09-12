@@ -3,6 +3,7 @@ import json
 import httpx
 import pytest
 
+from app.api.routes.p14_voices import _runtime_readiness
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.p14.provider import IndexTTS25Provider
@@ -60,6 +61,33 @@ def test_indextts_provider_uses_reference_audio_native_emotion_and_language(monk
     }
     assert result.audio_bytes == b"RIFF-real-wave"
     assert result.remote_job_id == "req-1"
+
+
+def test_indextts_runtime_readiness_requires_loaded_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"data": [{"id": "IndexTeam/IndexTTS-2.5"}]}
+
+    monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: Response())
+    provider = IndexTTS25Provider(_settings(), target_language="en-US")
+    ready, message = _runtime_readiness(provider)
+
+    assert ready is True
+    assert message == "IndexTTS-2.5 READY"
+
+
+def test_indextts_runtime_readiness_fails_closed_when_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    def offline(*args, **kwargs):
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr(httpx, "get", offline)
+    provider = IndexTTS25Provider(_settings(), target_language="en-US")
+    ready, message = _runtime_readiness(provider)
+
+    assert ready is False
+    assert "未启动" in message
 
 
 def test_indextts_provider_rejects_unsupported_target_language() -> None:

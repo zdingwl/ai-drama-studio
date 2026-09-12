@@ -19,6 +19,8 @@ interface VoiceCatalogRead {
   model: string
   target_language: string
   configured: boolean
+  runtime_ready: boolean
+  runtime_message: string
   voices: VoiceOption[]
 }
 
@@ -45,13 +47,14 @@ const speakingCharacterIds = computed(() => new Set(scriptLines.value.map((line:
 const speakingCharacters = computed(() => (bible.value?.content?.characters ?? []).filter((character: any) => speakingCharacterIds.value.has(character.target_character_id)))
 const availableVoices = computed(() => voiceCatalog.value?.voices ?? [])
 const catalogConfigured = computed(() => Boolean(voiceCatalog.value?.configured && availableVoices.value.length))
+const runtimeReady = computed(() => Boolean(voiceCatalog.value?.runtime_ready))
 
 function voiceOption(key: string): VoiceOption | undefined {
   return availableVoices.value.find((item) => item.voice_key === key)
 }
 
 const allBindingsResolved = computed(() => {
-  if (!catalogConfigured.value) return false
+  if (!catalogConfigured.value || !runtimeReady.value) return false
   return speakingCharacters.value.every((character: any) => Boolean(characterVoices[character.target_character_id]))
     && unresolvedLines.value.every((line: any) => Boolean(utteranceVoices[line.utterance_id]))
 })
@@ -142,7 +145,9 @@ onMounted(refresh)
       <div class="panel">
         <h3>1. IndexTTS-2.5 参考声线绑定</h3>
         <p>每个声线都对应一段 Reference Audio，由本地 IndexTTS-2.5 做 zero-shot voice cloning；这里不存在需要用户填写的 Provider voice id，也不会自动从原剧演员音轨克隆。</p>
+        <p :class="runtimeReady ? 'runtime-ok' : 'error'">本地 IndexTTS-2.5：{{ voiceCatalog?.runtime_message || '正在探测…' }}</p>
         <p v-if="!catalogConfigured" class="error">当前 IndexTTS-2.5 参考声线目录为空。请先配置有使用授权的 Reference Audio，再生成目标配音。</p>
+        <p v-else-if="!runtimeReady" class="error">请先启动本地 IndexTTS-2.5 服务；服务 READY 后才允许生成正式候选。</p>
         <template v-else>
           <label v-for="character in speakingCharacters" :key="character.target_character_id">
             <span>{{ character.display_name }}</span>
@@ -193,5 +198,5 @@ onMounted(refresh)
 </template>
 
 <style scoped>
-.p14-workspace{margin:24px 0;padding:24px;border:1px solid var(--border-color,#ddd);border-radius:16px}.p14-workspace header{display:flex;justify-content:space-between;align-items:center}.eyebrow{margin:0;font-size:12px;opacity:.65}.panel{margin-top:18px;padding:18px;border-radius:12px;background:rgba(127,127,127,.06)}label{display:grid;gap:6px;margin:12px 0}input,select{padding:9px 11px}.clip{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid rgba(127,127,127,.2)}audio{width:100%}.actions{display:flex;gap:10px;margin-top:12px}.error{color:#b42318}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:8px;border-bottom:1px solid rgba(127,127,127,.2);font-size:13px}
+.p14-workspace{margin:24px 0;padding:24px;border:1px solid var(--border-color,#ddd);border-radius:16px}.p14-workspace header{display:flex;justify-content:space-between;align-items:center}.eyebrow{margin:0;font-size:12px;opacity:.65}.panel{margin-top:18px;padding:18px;border-radius:12px;background:rgba(127,127,127,.06)}label{display:grid;gap:6px;margin:12px 0}input,select{padding:9px 11px}.clip{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid rgba(127,127,127,.2)}audio{width:100%}.actions{display:flex;gap:10px;margin-top:12px}.error{color:#b42318}.runtime-ok{color:#067647}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:8px;border-bottom:1px solid rgba(127,127,127,.2);font-size:13px}
 </style>
