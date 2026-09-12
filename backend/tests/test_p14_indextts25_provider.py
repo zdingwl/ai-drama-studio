@@ -66,6 +66,8 @@ def test_indextts_provider_uses_reference_audio_native_emotion_and_language(monk
 def test_indextts_runtime_readiness_requires_loaded_model(monkeypatch: pytest.MonkeyPatch) -> None:
     class Response:
         status_code = 200
+        headers = {"content-type": "application/json"}
+        text = "{}"
 
         def json(self):
             return {"data": [{"id": "IndexTeam/IndexTTS-2.5"}]}
@@ -88,6 +90,22 @@ def test_indextts_runtime_readiness_fails_closed_when_offline(monkeypatch: pytes
 
     assert ready is False
     assert "未启动" in message
+
+
+def test_indextts_runtime_readiness_explains_502_engine_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    class HealthResponse:
+        status_code = 502
+        headers = {"content-type": "application/json"}
+        text = '{"error":"stage worker failed to initialize"}'
+
+    monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: HealthResponse())
+    provider = IndexTTS25Provider(_settings(), target_language="en-US")
+    ready, message = _runtime_readiness(provider)
+
+    assert ready is False
+    assert "HTTP 502" in message
+    assert "模型引擎未就绪" in message
+    assert "stage worker failed" in message
 
 
 def test_indextts_provider_rejects_unsupported_target_language() -> None:
