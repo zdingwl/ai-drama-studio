@@ -126,24 +126,13 @@ def _popen(args: list[str], *, cwd: Path | None = None) -> subprocess.Popen:
 
 
 def _cleanup_stale_tts() -> None:
-    if _tts_ready() or not _port_open(8092):
+    # Windows listeners are verified and cleared centrally before any service
+    # starts. Never run a broad command-line kill after that ownership check.
+    if IS_WINDOWS or _tts_ready() or not _port_open(8092):
         return
     print("[Studio] port 8092 has a non-ready process; attempting one managed IndexTTS cleanup...")
-    if IS_WINDOWS:
-        command = (
-            "Get-CimInstance Win32_Process | "
-            "Where-Object { $_.CommandLine -and $_.CommandLine -match 'indextts25_native_server\\.py' } | "
-            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
-        )
-        subprocess.run(
-            ["powershell.exe", "-NoProfile", "-Command", command],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        pattern = "vllm serve .*IndexTTS-2.5.*--port 8092"
-        subprocess.run(["bash", "-lc", f"pkill -f {shlex.quote(pattern)} || true"], check=False)
+    pattern = "vllm serve .*IndexTTS-2.5.*--port 8092"
+    subprocess.run(["bash", "-lc", f"pkill -f {shlex.quote(pattern)} || true"], check=False)
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and _port_open(8092):
         time.sleep(0.25)
@@ -151,6 +140,11 @@ def _cleanup_stale_tts() -> None:
 
 def _start_tts() -> tuple[subprocess.Popen | None, bool]:
     if _tts_ready():
+        if IS_WINDOWS:
+            raise RuntimeError(
+                "Port 8092 became active after Windows lifecycle cleanup. "
+                "Studio will not reuse an unowned IndexTTS process because it could survive launcher exit."
+            )
         print("[Studio] IndexTTS-2.5 already READY; reusing it.")
         return None, False
     _cleanup_stale_tts()
@@ -171,6 +165,11 @@ def _start_tts() -> tuple[subprocess.Popen | None, bool]:
 
 def _start_backend(python: Path) -> tuple[subprocess.Popen | None, bool]:
     if _http_ok(BACKEND_HEALTH_URL):
+        if IS_WINDOWS:
+            raise RuntimeError(
+                "Port 8000 became active after Windows lifecycle cleanup. "
+                "Studio will not reuse an unowned backend because it could survive launcher exit."
+            )
         print("[Studio] backend already healthy; reusing it.")
         return None, False
     print("[Studio] applying database migrations...")
@@ -183,6 +182,11 @@ def _start_backend(python: Path) -> tuple[subprocess.Popen | None, bool]:
 
 def _start_frontend(npm: str) -> tuple[subprocess.Popen | None, bool]:
     if _http_ok(FRONTEND_URL):
+        if IS_WINDOWS:
+            raise RuntimeError(
+                "Port 5173 became active after Windows lifecycle cleanup. "
+                "Studio will not reuse an unowned frontend because it could survive launcher exit."
+            )
         print("[Studio] frontend already running; reusing it.")
         return None, False
     return _popen([npm, "run", "dev", "--", "--host", "127.0.0.1", "--port", "5173"], cwd=FRONTEND_DIR), True
