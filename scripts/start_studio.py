@@ -158,7 +158,7 @@ def _start_tts() -> tuple[subprocess.Popen | None, bool]:
         raise RuntimeError("Port 8092 is occupied by an unknown/non-ready process. Stop that process and run the unified launcher again.")
 
     if IS_WINDOWS:
-        native = REPO_ROOT / "scripts" / "start_indextts2525_native_windows.ps1"
+        native = REPO_ROOT / "scripts" / "start_indextts25_native_windows.ps1"
         print("[Studio] starting managed IndexTTS-2.5 natively on Windows (WSL is not required)...")
         return _popen(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(native)],
