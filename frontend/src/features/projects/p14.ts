@@ -11,6 +11,13 @@ export interface VoiceBinding {
   voice_label?: string
 }
 
+export interface DeliveryControl {
+  utterance_id: string
+  acting_direction?: string | null
+  emo_alpha: number
+  duration_factor: number
+}
+
 export interface AudioClip {
   clip_id: string
   utterance_id: string
@@ -19,6 +26,10 @@ export interface AudioClip {
   final_target_dialogue: string
   voice_id: string
   voice_label: string | null
+  acting_direction: string | null
+  emo_alpha: number
+  duration_factor: number
+  provider_job_id: string
   media_url: string
   actual_speech_duration_us: number
 }
@@ -29,10 +40,16 @@ export interface TargetAudioContent {
   clips: AudioClip[]
 }
 
+export interface AudioCandidateProvenance {
+  base_candidate_id?: string | null
+  retaken_utterance_ids?: string[]
+}
+
 export interface TargetAudioRead {
   status: 'NOT_BUILT' | 'CURRENT' | 'STALE'
   artifact_id: string | null
   content: TargetAudioContent | null
+  provenance?: { candidate_id: string } | null
 }
 
 export interface AudioCandidate {
@@ -40,6 +57,7 @@ export interface AudioCandidate {
   generation_sequence: number
   review_status: ReviewStatus
   content: TargetAudioContent
+  provenance?: AudioCandidateProvenance
 }
 
 export interface TimingItem {
@@ -75,8 +93,9 @@ export interface TimingCandidate {
 
 export const getTargetAudio = (projectId: string) => apiRequest<TargetAudioRead>(`/projects/${projectId}/target-audio`, { cache: 'no-store' })
 export const listAudioCandidates = (projectId: string) => apiRequest<AudioCandidate[]>(`/projects/${projectId}/target-audio/candidates`, { cache: 'no-store' })
-export const startTargetAudio = (projectId: string, bindings: VoiceBinding[], key: string) => apiRequest<TaskRead>(`/projects/${projectId}/commands/target-audio`, { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify({ bindings }) })
-export const reviewAudioCandidate = (projectId: string, candidate: AudioCandidate, accept: boolean, scriptId: string, bibleId: string, reason: string) => apiRequest( `/projects/${projectId}/target-audio/candidates/${candidate.id}/commands/${accept ? 'accept' : 'reject'}`, { method: 'POST', body: JSON.stringify({ expected_target_script_artifact_id: scriptId, expected_target_bible_artifact_id: bibleId, expected_generation_sequence: candidate.generation_sequence, reason }) })
+export const startTargetAudio = (projectId: string, bindings: VoiceBinding[], key: string, deliveryControls: DeliveryControl[] = []) => apiRequest<TaskRead>(`/projects/${projectId}/commands/target-audio`, { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify({ bindings, delivery_controls: deliveryControls }) })
+export const retakeTargetAudio = (projectId: string, candidate: AudioCandidate, retakes: DeliveryControl[], key: string) => apiRequest<TaskRead>(`/projects/${projectId}/target-audio/candidates/${candidate.id}/commands/retake`, { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify({ expected_target_script_artifact_id: candidate.content.target_script_artifact_id, expected_target_bible_artifact_id: candidate.content.target_bible_artifact_id, expected_generation_sequence: candidate.generation_sequence, retakes }) })
+export const reviewAudioCandidate = (projectId: string, candidate: AudioCandidate, accept: boolean, scriptId: string, bibleId: string, reason: string) => apiRequest(`/projects/${projectId}/target-audio/candidates/${candidate.id}/commands/${accept ? 'accept' : 'reject'}`, { method: 'POST', body: JSON.stringify({ expected_target_script_artifact_id: scriptId, expected_target_bible_artifact_id: bibleId, expected_generation_sequence: candidate.generation_sequence, reason }) })
 export const getTimingPlan = (projectId: string) => apiRequest<TimingRead>(`/projects/${projectId}/timing-plan`, { cache: 'no-store' })
 export const listTimingCandidates = (projectId: string) => apiRequest<TimingCandidate[]>(`/projects/${projectId}/timing-plan/candidates`, { cache: 'no-store' })
 export const startTimingPlan = (projectId: string, key: string) => apiRequest<TaskRead>(`/projects/${projectId}/commands/timing-plan`, { method: 'POST', headers: { 'Idempotency-Key': key } })

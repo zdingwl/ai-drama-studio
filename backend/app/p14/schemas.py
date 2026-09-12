@@ -1,12 +1,12 @@
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-P14_AUDIO_SCHEMA_VERSION = "1.0"
+P14_AUDIO_SCHEMA_VERSION = "1.1"
 P14_AUDIO_SKILL_ID = "replica-target-audio"
-P14_AUDIO_CONTRACT = "replica-target-audio-v1"
-P14_AUDIO_PROVIDER_CONTRACT = "target-dialogue-tts-media-v1"
+P14_AUDIO_CONTRACT = "replica-target-audio-v1.1"
+P14_AUDIO_PROVIDER_CONTRACT = "indextts-2.5-reference-audio-emotion-duration-v2"
 P14_TIMING_SCHEMA_VERSION = "1.0"
 P14_TIMING_SKILL_ID = "replica-dialogue-timing"
 P14_TIMING_CONTRACT = "actual-speech-duration-timing-v1"
@@ -47,8 +47,50 @@ class TargetVoiceBinding(BaseModel):
         return self
 
 
+class TargetDialogueDeliveryControl(BaseModel):
+    """Human-authored acting controls for one frozen target utterance."""
+
+    utterance_id: str = Field(min_length=1, max_length=160)
+    acting_direction: str | None = Field(default=None, max_length=600)
+    emo_alpha: float = Field(default=0.6, ge=0.0, le=1.0)
+    duration_factor: float = Field(default=1.0, ge=0.8, le=1.25)
+
+    @field_validator("acting_direction")
+    @classmethod
+    def normalize_acting_direction(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.split())
+        return normalized or None
+
+
 class TargetAudioGenerateCommand(BaseModel):
     bindings: list[TargetVoiceBinding] = Field(min_length=1, max_length=2000)
+    delivery_controls: list[TargetDialogueDeliveryControl] = Field(default_factory=list, max_length=2000)
+    base_candidate_id: str | None = Field(default=None, max_length=36)
+
+    @model_validator(mode="after")
+    def validate_delivery_controls(self) -> "TargetAudioGenerateCommand":
+        ids = [item.utterance_id for item in self.delivery_controls]
+        if len(ids) != len(set(ids)):
+            raise ValueError("delivery_controls cannot contain duplicate utterance_id")
+        if self.base_candidate_id and not self.delivery_controls:
+            raise ValueError("retake command requires at least one delivery control")
+        return self
+
+
+class TargetAudioRetakeCommand(BaseModel):
+    expected_target_script_artifact_id: str
+    expected_target_bible_artifact_id: str
+    expected_generation_sequence: int = Field(ge=1)
+    retakes: list[TargetDialogueDeliveryControl] = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_unique_retakes(self) -> "TargetAudioRetakeCommand":
+        ids = [item.utterance_id for item in self.retakes]
+        if len(ids) != len(set(ids)):
+            raise ValueError("retakes cannot contain duplicate utterance_id")
+        return self
 
 
 class TargetAudioClip(BaseModel):
@@ -62,6 +104,9 @@ class TargetAudioClip(BaseModel):
     final_target_dialogue_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     voice_id: str
     voice_label: str | None = None
+    acting_direction: str | None = None
+    emo_alpha: float = Field(default=0.6, ge=0.0, le=1.0)
+    duration_factor: float = Field(default=1.0, ge=0.5, le=2.0)
     provider: str
     model: str
     provider_job_id: str
@@ -100,6 +145,8 @@ class TargetAudioCandidateProvenance(BaseModel):
     provider_job_ids: list[str] = Field(default_factory=list)
     provider_contract: str = P14_AUDIO_PROVIDER_CONTRACT
     generated_by_task_id: str
+    base_candidate_id: str | None = None
+    retaken_utterance_ids: list[str] = Field(default_factory=list)
 
 
 class TargetAudioProvenance(TargetAudioCandidateProvenance):

@@ -10,6 +10,7 @@ import P9SourceResolutionPanel from '@/components/P9SourceResolutionPanel.vue'
 import SourceResultApprovalBar from '@/components/SourceResultApprovalBar.vue'
 import SourceScriptStoryboardWorkspace from '@/components/SourceScriptStoryboardWorkspace.vue'
 import TargetAssetsWorkspace from '@/components/TargetAssetsWorkspace.vue'
+import TargetAudioRetakeWorkspace from '@/components/TargetAudioRetakeWorkspace.vue'
 import TargetAudioTimingWorkspace from '@/components/TargetAudioTimingWorkspace.vue'
 import TargetBibleWorkspace from '@/components/TargetBibleWorkspace.vue'
 import TargetScriptWorkspace from '@/components/TargetScriptWorkspace.vue'
@@ -28,6 +29,7 @@ const debugMode = computed(() => route.query.debug === '1')
       <TargetScriptWorkspace v-if="isProjectWorkspace" />
       <TargetAssetsWorkspace v-if="isProjectWorkspace" />
       <TargetAudioTimingWorkspace v-if="isProjectWorkspace" />
+      <TargetAudioRetakeWorkspace v-if="isProjectWorkspace" />
 
       <template v-if="isProjectWorkspace && debugMode">
         <P6AcceptancePanel />

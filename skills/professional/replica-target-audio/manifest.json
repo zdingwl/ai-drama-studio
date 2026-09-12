@@ -1,9 +1,9 @@
 {
   "id": "replica-target-audio",
   "name": "Replica Target Audio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "category": "production",
-  "description": "Bind explicit reference voices to Final Target Dialogue, synthesize real speech with local IndexTTS-2.5, and measure actual duration from persisted audio.",
+  "description": "Bind explicit reference voices to frozen Final Target Dialogue, synthesize real speech with local IndexTTS-2.5, and support auditable per-utterance acting/duration retakes without regenerating unaffected clips.",
   "when_to_use": ["REPLICA has CURRENT TARGET_SCRIPT and CURRENT TARGET_BIBLE and needs target-language dialogue audio"],
   "when_not_to_use": ["Target dialogue is not final", "Reference voice is unresolved", "Storyboard or video generation is being requested"],
   "required_inputs": ["TARGET_SCRIPT", "TARGET_BIBLE"],
@@ -13,11 +13,12 @@
   "manual_path": "replica-target-audio/SKILL.md",
   "steps": [
     {"id":"validate_voice_bindings","phase":"配音与时序","title":"校验目标参考声线","description":"校验每条 Final Target Dialogue 都有唯一、显式、可追溯的 IndexTTS reference voice。","capabilities":["TTS"],"requires":["TARGET_SCRIPT","TARGET_BIBLE"],"produces":[]},
-    {"id":"synthesize_target_audio","phase":"配音与时序","title":"生成真实目标对白音频","description":"逐句持久化 ProviderJob 后调用本地 IndexTTS-2.5，保存真实 WAV 并由服务端探测实际语音时长。","capabilities":["TTS"],"requires":["TARGET_SCRIPT","TARGET_BIBLE"],"produces":["TARGET_AUDIO"]}
+    {"id":"synthesize_target_audio","phase":"配音与时序","title":"生成真实目标对白音频","description":"逐句持久化 ProviderJob 后调用本地 IndexTTS-2.5，保存真实 WAV 并由服务端探测实际语音时长。","capabilities":["TTS"],"requires":["TARGET_SCRIPT","TARGET_BIBLE"],"produces":["TARGET_AUDIO"]},
+    {"id":"retake_target_audio","phase":"配音与时序","title":"逐句表演与时长重录","description":"人工听审或 Timing overflow 后，只对显式选中的 utterance 应用 acting direction、emo_alpha、duration_factor 并重录；未选中媒体直接复用，不新增 ProviderJob。","capabilities":["TTS"],"requires":["TARGET_SCRIPT","TARGET_BIBLE"],"produces":["TARGET_AUDIO"]}
   ],
-  "fact_levels": ["Final Target Dialogue is immutable input", "Reference voice is explicit input", "Actual speech duration is server-probed media fact"],
-  "provider_rules": ["Only IndexTeam/IndexTTS-2.5 is allowed", "Persist ProviderJob before every synthesis call", "Provider cannot choose or rewrite Final Target Dialogue", "Default speed is 1.0", "Do not expose reference audio bytes in ProviderJob payloads", "Unknown target_character_id requires explicit utterance-level voice binding"],
+  "fact_levels": ["Final Target Dialogue is immutable input", "Reference voice is explicit input", "Acting direction is human-authored delivery control, not dialogue text", "Actual speech duration is server-probed media fact"],
+  "provider_rules": ["Only IndexTeam/IndexTTS-2.5 is allowed", "Persist ProviderJob before every real synthesis call", "Provider cannot choose or rewrite Final Target Dialogue", "Default duration_factor is 1.0", "Retake duration_factor is explicit and product-bounded to 0.8-1.25", "Do not expose reference audio bytes in ProviderJob payloads", "Unknown target_character_id requires explicit utterance-level voice binding", "Unchanged clips in a retake must be reused without another ProviderJob"],
   "output_contracts": ["TARGET_AUDIO"],
-  "completion_criteria": ["Every utterance is covered exactly once", "Every clip is real persisted decodable media", "Every clip has SHA256 and server-probed duration", "Candidate is explicitly accepted before CURRENT TARGET_AUDIO publication"],
-  "failure_policy": ["Missing binding fails closed", "Unsupported target language fails closed", "IndexTTS or media probe failure keeps previous CURRENT unchanged", "Candidate rejection never publishes TARGET_AUDIO"]
+  "completion_criteria": ["Every utterance is covered exactly once", "Every clip is real persisted decodable media", "Every clip has SHA256 and server-probed duration", "Retake lineage and retaken utterance ids are auditable", "Candidate is explicitly accepted before CURRENT TARGET_AUDIO publication"],
+  "failure_policy": ["Missing binding fails closed", "Unknown retake utterance fails closed", "Unsupported target language fails closed", "IndexTTS or media probe failure keeps previous CURRENT unchanged", "Candidate rejection never publishes TARGET_AUDIO"]
 }

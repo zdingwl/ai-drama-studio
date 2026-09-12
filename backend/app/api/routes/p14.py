@@ -4,12 +4,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.errors import AppError
 from app.db.session import get_db
 from app.p14.schemas import (
     ReplicaTargetAudioRead,
     ReplicaTimingPlanRead,
     TargetAudioCandidateRead,
     TargetAudioGenerateCommand,
+    TargetAudioRetakeCommand,
     TargetAudioReviewCommand,
     TimingPlanCandidateRead,
     TimingPlanReviewCommand,
@@ -17,6 +19,7 @@ from app.p14.schemas import (
 from app.p14.service import (
     accept_target_audio_candidate,
     accept_timing_plan_candidate,
+    create_target_audio_retake_task,
     create_target_audio_task,
     create_timing_plan_task,
     get_target_audio,
@@ -50,6 +53,12 @@ def _start_audio(
     db: Session,
     regenerate: bool,
 ) -> TaskRead:
+    if command.base_candidate_id is not None:
+        raise AppError(
+            "P14_RETAKE_ROUTE_REQUIRED",
+            "基于候选的逐句重录必须使用 candidate retake 接口，不能通过普通 generate/regenerate 绕过并发校验",
+            status_code=422,
+        )
     task = create_target_audio_task(
         db,
         project_id=project_id,
@@ -104,6 +113,31 @@ def regenerate_target_audio_route(
         db=db,
         regenerate=True,
     )
+
+
+@router.post(
+    "/projects/{project_id}/target-audio/candidates/{candidate_id}/commands/retake",
+    response_model=TaskRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retake_target_audio_candidate_route(
+    project_id: str,
+    candidate_id: str,
+    command: TargetAudioRetakeCommand,
+    background_tasks: BackgroundTasks,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    db: Session = Depends(get_db),
+) -> TaskRead:
+    task = create_target_audio_retake_task(
+        db,
+        project_id=project_id,
+        candidate_id=candidate_id,
+        idempotency_key=idempotency_key,
+        command=command,
+    )
+    if task.status == TaskStatus.QUEUED:
+        background_tasks.add_task(run_target_audio_task, _request_session_factory(db), task.id)
+    return task_to_read(task)
 
 
 @router.get("/projects/{project_id}/target-audio", response_model=ReplicaTargetAudioRead)

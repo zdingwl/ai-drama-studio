@@ -2,6 +2,8 @@ from app.p14.common import _text_sha
 from app.p14.audio_contract import (
     P14_AUDIO_TASK_TYPE,
     _binding_maps,
+    _delivery_control_map,
+    create_target_audio_retake_task,
     create_target_audio_task,
 )
 from app.p14.audio_runtime import run_target_audio_task
@@ -27,6 +29,7 @@ __all__ = [
     "P14_AUDIO_TASK_TYPE",
     "P14_TIMING_TASK_TYPE",
     "create_target_audio_task",
+    "create_target_audio_retake_task",
     "run_target_audio_task",
     "get_target_audio",
     "list_target_audio_candidates",
@@ -40,6 +43,7 @@ __all__ = [
     "accept_timing_plan_candidate",
     "reject_timing_plan_candidate",
     "_binding_maps",
+    "_delivery_control_map",
     "_compose_timing",
     "_text_sha",
 ]
