@@ -15,6 +15,8 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 import webbrowser
 
+from studio_windows_lifecycle import WindowsStudioLifetimeGuard, cleanup_repo_services
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = REPO_ROOT / "backend"
 FRONTEND_DIR = REPO_ROOT / "frontend"
@@ -23,6 +25,7 @@ TTS_MODELS_URL = "http://127.0.0.1:8092/v1/models"
 BACKEND_HEALTH_URL = "http://127.0.0.1:8000/api/v3/health"
 FRONTEND_URL = "http://127.0.0.1:5173"
 MODEL_ID = "IndexTeam/IndexTTS-2.5"
+LAUNCHER_PID_FILE = REPO_ROOT / ".runtime" / "studio-launcher.pid"
 
 
 def _http_json_text(url: str, timeout: float = 1.5) -> str | None:
@@ -112,6 +115,9 @@ def _ensure_frontend() -> str:
 def _popen(args: list[str], *, cwd: Path | None = None) -> subprocess.Popen:
     kwargs: dict = {"cwd": str(cwd) if cwd else None}
     if IS_WINDOWS:
+        # The launcher itself is already inside a KILL_ON_JOB_CLOSE Job Object.
+        # Descendants inherit that job automatically, so even closing the console
+        # window kills the full backend/frontend/TTS process tree.
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
@@ -152,7 +158,7 @@ def _start_tts() -> tuple[subprocess.Popen | None, bool]:
         raise RuntimeError("Port 8092 is occupied by an unknown/non-ready process. Stop that process and run the unified launcher again.")
 
     if IS_WINDOWS:
-        native = REPO_ROOT / "scripts" / "start_indextts25_native_windows.ps1"
+        native = REPO_ROOT / "scripts" / "start_indextts2525_native_windows.ps1"
         print("[Studio] starting managed IndexTTS-2.5 natively on Windows (WSL is not required)...")
         return _popen(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(native)],
@@ -199,9 +205,36 @@ def _terminate_tree(process: subprocess.Popen | None, owned: bool) -> None:
         pass
 
 
+def _write_launcher_pid() -> None:
+    LAUNCHER_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LAUNCHER_PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+
+
+def _clear_launcher_pid() -> None:
+    try:
+        if LAUNCHER_PID_FILE.exists() and LAUNCHER_PID_FILE.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            LAUNCHER_PID_FILE.unlink()
+    except OSError:
+        pass
+
+
 def main() -> int:
     processes: list[tuple[str, subprocess.Popen | None, bool]] = []
+    lifetime_guard: WindowsStudioLifetimeGuard | None = None
     try:
+        if IS_WINDOWS:
+            # Acquire single-instance ownership and join the launcher itself to a
+            # KILL_ON_JOB_CLOSE Job Object before starting any child process.
+            lifetime_guard = WindowsStudioLifetimeGuard(REPO_ROOT)
+            _write_launcher_pid()
+
+            # Older launcher versions could leave healthy-looking orphan
+            # services behind. A new managed session must not reuse them,
+            # otherwise closing this launcher could not guarantee cleanup.
+            # Only processes whose executable/command line resolves to this
+            # checkout are removed; unknown port owners fail closed.
+            cleanup_repo_services(REPO_ROOT)
+
         python = _backend_python()
         npm = _ensure_frontend()
 
@@ -229,6 +262,8 @@ def main() -> int:
             print("[Studio] IndexTTS-2.5 READY")
         else:
             print("[Studio] IndexTTS-2.5 is preparing in the same launcher; first run may install its isolated runtime and download a large model.")
+        if IS_WINDOWS:
+            print("[Studio] Windows lifecycle guard ACTIVE: closing this launcher will stop backend, frontend and IndexTTS.")
         if os.getenv("AI_DRAMA_NO_BROWSER", "0") != "1":
             webbrowser.open(FRONTEND_URL)
 
@@ -246,6 +281,11 @@ def main() -> int:
     finally:
         for _name, process, owned in reversed(processes):
             _terminate_tree(process, owned)
+        _clear_launcher_pid()
+        # Keep lifetime_guard referenced until process teardown. On Windows the
+        # OS closes its Job Object handle as this process exits and kills any
+        # descendant that escaped the explicit best-effort cleanup above.
+        _ = lifetime_guard
 
 
 if __name__ == "__main__":
