@@ -9,6 +9,12 @@ from app.evidence.models import (
     SourceEvidenceSet,
     SourceVisualTextSpan,
 )
+from app.p14.models import (
+    ReplicaTargetAudioCandidate,
+    ReplicaTargetAudioRevision,
+    ReplicaTimingPlanCandidate,
+    ReplicaTimingPlanRevision,
+)
 from app.preprocessing.models import ShotAnchor, ShotBoundarySet
 from app.projects.models import Project
 from app.shot_breakdown.models import SourceShotFactsRevision
@@ -35,8 +41,12 @@ __all__ = [
     "ProviderJob",
     "ReplicaTargetAssetsCandidate",
     "ReplicaTargetAssetsRevision",
+    "ReplicaTargetAudioCandidate",
+    "ReplicaTargetAudioRevision",
     "ReplicaTargetRevision",
     "ReplicaTargetScriptRevision",
+    "ReplicaTimingPlanCandidate",
+    "ReplicaTimingPlanRevision",
     "ShotAnchor",
     "ShotBoundarySet",
     "ShotDialogueProjection",

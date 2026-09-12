@@ -1,0 +1,23 @@
+{
+  "id": "replica-dialogue-timing",
+  "name": "Replica Dialogue Timing",
+  "version": "1.0.0",
+  "category": "production",
+  "description": "Deterministically compare server-probed target speech durations with original dialogue slots and publish a reviewed timing plan without rewriting script or storyboard.",
+  "when_to_use": ["REPLICA has CURRENT TARGET_SCRIPT and human-accepted CURRENT TARGET_AUDIO"],
+  "when_not_to_use": ["Target audio is only a candidate", "Dialogue text needs rewriting", "Storyboard redistribution is required"],
+  "required_inputs": ["TARGET_SCRIPT", "TARGET_AUDIO"],
+  "optional_inputs": [],
+  "readable_artifacts": ["TARGET_SCRIPT", "TARGET_AUDIO"],
+  "required_capabilities": ["TIMING"],
+  "manual_path": "replica-dialogue-timing/SKILL.md",
+  "steps": [
+    {"id":"validate_dialogue_audio_lineage","phase":"配音与时序","title":"校验对白与音频 lineage","description":"逐句核对 utterance、Final Target Dialogue hash 与真实音频覆盖。","capabilities":["TIMING"],"requires":["TARGET_SCRIPT","TARGET_AUDIO"],"produces":[]},
+    {"id":"compose_dialogue_timing","phase":"配音与时序","title":"计算对白时序","description":"以原 Source slot 和真实语音时长计算 residual hold / overflow；不调用外部 Provider。","capabilities":["TIMING"],"requires":["TARGET_SCRIPT","TARGET_AUDIO"],"produces":["TIMING_PLAN"]}
+  ],
+  "fact_levels": ["Source dialogue slot comes from TARGET_SCRIPT lineage", "Actual speech duration comes from TARGET_AUDIO"],
+  "provider_rules": ["This skill is deterministic and must not create ProviderJob", "Do not rewrite script, compress audio, stretch shots, or invent visual slack", "Overflow requires explicit upstream resolution"],
+  "output_contracts": ["TIMING_PLAN"],
+  "completion_criteria": ["Every target audio clip matches one target script utterance", "Timing math is exact in integer microseconds", "No unresolved overflow exists before formal publication", "Candidate is explicitly accepted"],
+  "failure_policy": ["Lineage mismatch fails closed", "Any overflow blocks formal TIMING_PLAN acceptance", "Previous CURRENT remains unchanged on rejection/failure"]
+}

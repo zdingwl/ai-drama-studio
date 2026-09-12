@@ -58,12 +58,18 @@ class Settings(BaseSettings):
     p7_qwen38_local_model: str = "Qwen/Qwen3.8-27B"
 
     # P7 model C: Qwen3-VL-8B-Thinking on a second local/shared vLLM service.
-    # Keeping a separate endpoint lets both models stay loaded at the same time. A multi-model proxy
-    # may intentionally point both settings to the same URL.
     p7_qwen3_vl_8b_local_base_url: str = "http://127.0.0.1:8001/v1"
     p7_qwen3_vl_8b_local_api_key: SecretStr | None = None
     p7_qwen3_vl_8b_local_model: str = "Qwen/Qwen3-VL-8B-Thinking"
     p7_qwen_local_request_timeout_seconds: float = 3600.0
+
+    # P14 Target Audio: OpenAI-compatible /audio/speech runtime. This is engineering-ready
+    # configuration only; TTS/TIMING stay PLANNED until real provider and human acceptance pass.
+    p14_tts_base_url: str = "http://127.0.0.1:8002/v1"
+    p14_tts_api_key: SecretStr | None = None
+    p14_tts_model: str = "tts-1"
+    p14_tts_response_format: str = "wav"
+    p14_tts_request_timeout_seconds: float = 300.0
 
     @model_validator(mode="after")
     def anchor_runtime_paths(self) -> "Settings":
@@ -92,6 +98,7 @@ class Settings(BaseSettings):
         for name, value in (
             ("p7_qwen38_local_base_url", self.p7_qwen38_local_base_url),
             ("p7_qwen3_vl_8b_local_base_url", self.p7_qwen3_vl_8b_local_base_url),
+            ("p14_tts_base_url", self.p14_tts_base_url),
         ):
             if not value.startswith(("http://", "https://")):
                 raise ValueError(f"{name} must be http(s)")
@@ -99,6 +106,12 @@ class Settings(BaseSettings):
             raise ValueError("p7_qwen38_local_model must not be empty")
         if not self.p7_qwen3_vl_8b_local_model.strip():
             raise ValueError("p7_qwen3_vl_8b_local_model must not be empty")
+        if not self.p14_tts_model.strip():
+            raise ValueError("p14_tts_model must not be empty")
+        if self.p14_tts_request_timeout_seconds <= 0:
+            raise ValueError("p14_tts_request_timeout_seconds must be positive")
+        if self.p14_tts_response_format not in {"wav", "mp3", "ogg", "flac", "aac"}:
+            raise ValueError("p14_tts_response_format must be wav/mp3/ogg/flac/aac")
         return self
 
     def ensure_runtime_directories(self) -> None:

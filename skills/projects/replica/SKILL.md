@@ -7,32 +7,28 @@
 - 故事不乱改，节奏不重做，文化和表达才本土化。
 - 必须先完成整集理解，再做逐镜语义拉片。
 - P10 `SOURCE_VIDEO_SNAPSHOT` 是 Target 阶段唯一当前 Source 世界版本锚点；Target 不得绕过 Snapshot 自行拼装当前 Source Facts。
-- 故事骨架（Story Skeleton）与节奏骨架（Rhythm Skeleton）通过 Snapshot 冻结后，作为目标版本的权威 preservation locks。
-- P11 只建立 `ADAPTATION_PLAN + TARGET_BIBLE`；不得提前生成正式 `TARGET_SCRIPT`、Target Storyboard、TTS、Timing 或视频生成参数。
-- P12 正式硬输入必须同时是 CURRENT `SOURCE_VIDEO_SNAPSHOT + ADAPTATION_PLAN + TARGET_BIBLE`；P11 已真实人工 PASS 后 P12 才允许执行。
-- P12 的 Source Dialogue 只能来自 Snapshot 冻结的 P6 canonical dialogue；不得重新 ASR/OCR/猜词或静默修正 Source 台词。
-- P13 正式硬输入只有 CURRENT `TARGET_BIBLE`；不得因为 Source Snapshot、Adaptation Plan 或 Target Script “可能有帮助”就把它们静默升级成硬输入。
-- P13 `Target Bible = semantic truth`，`Target Assets = visual realization`；Provider 只能具体化已有 Target Character / Scene / Prop 的视觉表现，不能改变人物故事身份、场景功能、关键道具功能或 Target entity identity。
-- P13 asset continuity 必须是 asset-local visual continuity；Target Bible 的 Story Beat / shot order / dialogue / rhythm / cliffhanger 等全局 preservation locks 不复制进每个 Target Asset packet。
-- P13 Character wardrobe 只定义 baseline；除非 Target Bible 已明确确认 variation，否则不得自行建立逐 Scene / Shot 换装计划。
-- P13 Scene time-of-day 只定义视觉基线；Target Bible 未明确时不得根据 Scene 顺序、闪回或情绪推断剧情时间跳变。
-- P13 Provider 结果必须先进入 `NEEDS_REVIEW` candidate；只有用户显式确认后才能发布 CURRENT `TARGET_ASSETS`。
-- Target 人物 / 场景 / 道具必须保留 Source lineage，但 Target identity 与 Source identity 严格分离。
-- 对白链固定为 `Source Dialogue → Translation → Localization → Final Target Dialogue → Target Speaker/Voice → TTS → Actual Speech Duration → Timing Plan`；P12 只到 Final Target Dialogue。
-- 原片事实、目标世界、生产计划严格分层。
+- P11 只建立 `ADAPTATION_PLAN + TARGET_BIBLE`；P12 只到 Final Target Dialogue；P13 只做 Target Character / Scene / Prop 视觉身份实现。
+- P13 正式硬输入只有 CURRENT `TARGET_BIBLE`；`TARGET_ASSETS = AVAILABLE` 已经由真实人工验收确认。
+- 对白链固定为 `Source Dialogue → Translation → Localization → Final Target Dialogue → Target Voice → TTS → Actual Speech Duration → Timing Plan`。
+- P14 正式拆成 `target_audio` 与 `dialogue_timing` 两个内部 step，产品阶段统一为“配音与时序”。
+- P14 Target Audio 硬输入只有 CURRENT `TARGET_SCRIPT + TARGET_BIBLE` 与用户显式 voice binding；`TARGET_ASSETS` 不是硬输入。
+- 已知 `target_character_id` 可用 CHARACTER voice binding；未知人物对白必须显式使用 UTTERANCE binding，禁止猜默认 narrator。
+- 每条外部 TTS 调用必须先持久化 ProviderJob；Provider 不得改写 Final Target Dialogue，也不得决定正式 Artifact id/revision。
+- `actual_speech_duration_us` 唯一权威来源是服务端对已持久化真实音频的 ffprobe；Provider duration、字数估算、前端计时和人工填写都不是正式事实。
+- Target Audio Task succeeded 只产生 `NEEDS_REVIEW` candidate；人工听审 ACCEPT 后才发布 CURRENT `TARGET_AUDIO`。
+- P14 Timing 硬输入只有 CURRENT `TARGET_SCRIPT + TARGET_AUDIO`；完全确定性执行，不调用 Provider、不创建 ProviderJob。
+- Timing 只做原对白 slot conformance：短于 slot 保留 residual hold；长于 slot 标记 OVERFLOW。存在任何 OVERFLOW 时禁止 ACCEPT 正式 `TIMING_PLAN`。
+- P14 v1 不静默改写对白、不压缩/变速音频、不拉伸 Shot、不重排视觉节奏、不使用未来 Storyboard slack。
+- Target / Production 不得反向写入 Source；上游新 revision 必须按 Artifact Graph 正确使依赖结果 STALE。
 - 未经过生成质检与正式选择的尝试不能进入后期。
 
 ## 正式顺序
-原片 → 证据 → 整集理解 → 故事骨架 / 节奏骨架 → 逐镜拉片与角色 / 场景 / 道具归一 → 原片分析定稿 → **目标设定（ADAPTATION_PLAN + TARGET_BIBLE）** → **目标剧本 / 对白（Translation → Localization → Final Target Dialogue）** → **目标资产（Character / Scene / Prop Visual Identity Packets）** → Target Speaker/Voice → TTS / 真实语音时长 → Timing → 复刻分镜 → 视频生成与选择 → 口型 / 字幕 / 剪辑 → 成片。
+原片 → 证据 → 整集理解 → 故事骨架 / 节奏骨架 → 逐镜拉片与角色 / 场景 / 道具归一 → 原片分析定稿 → **目标设定** → **目标剧本 / 对白** → **目标资产** → **目标配音（真实媒体 + Actual Speech Duration）** → **对白时序** → 复刻分镜 → 视频生成与选择 → 口型 / 字幕 / 剪辑 → 成片。
 
 ## P11 目标设定
-P11 读取且只锚定 CURRENT `SOURCE_VIDEO_SNAPSHOT`，确定性锁定：故事主线、Hook、冲突、反转、信息揭示顺序、情绪峰值、Payoff、Cliffhanger、Story Beat timing、Shot rhythm / Scene order / Shot logic / Action rhythm baseline。
+P11 读取且只锚定 CURRENT `SOURCE_VIDEO_SNAPSHOT`，确定性锁定故事与节奏 preservation locks，建立目标地区人物、场景、道具、世界、表达策略和 visual continuity。
 
-允许自动设计：目标地区人物身份 / 姓名 / 外形方向、场景文化环境、关键道具、世界语境、称谓与表达策略、visual style、continuity rules。
-
-外部 Provider 只返回 Target 设计语义；Target ID、preservation locks、Artifact revision / fingerprint / provenance 与 Graph 由服务端控制。
-
-P11 已完成真实人工验收：
+正式状态：
 
 ```text
 LOCALIZATION = AVAILABLE
@@ -40,79 +36,88 @@ TARGET_BIBLE = AVAILABLE
 ```
 
 ## P12 目标剧本 / 本土化
-P12 已完成真实 Provider、真实项目端到端与用户人工质量验收，用户已明确 `P12 PASS`：
+P12 同时读取 CURRENT Snapshot、Adaptation Plan、Target Bible，只允许针对已有 canonical utterance 输出 `translation_text / localization_text / final_target_dialogue`。Source Speaker → Source Character → Target Character lineage 无法证明时保持空，不让模型猜。
+
+正式状态：
 
 ```text
 TARGET_SCRIPT = AVAILABLE
 ```
 
-P12 同时读取 CURRENT Snapshot、Adaptation Plan、Target Bible，从 Snapshot 中确定性提取 canonical dialogue manifest。Provider 只能针对已有 `utterance_id` 输出 `translation_text / localization_text / final_target_dialogue`，不得改变 Source text、时间或 utterance 集合。
-
-若 Source Speaker → Source Character → Target Character lineage 可证明，服务端可绑定 `target_character_id`；否则保持未绑定，不能让模型猜。Target Voice / TTS / Duration / Timing 属于后续阶段。
-
-普通产品页面加载只读；只有 P11 Target Bible 当前有效且用户显式点击“生成目标剧本 / 重新生成目标剧本”时才启动 P12。
-
-P12 最终验收记录见 `docs/27_P12最终验收与后续阶段准入评估.md`。
-
 ## P13 目标资产
-P13 基础合同见 `docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`，审核语言见 `docs/29_P13中文审核语言与生成执行语言分层.md`，真实项目整改基线见 `docs/30_P13真实项目验收_资产作用域与时序约束整改.md`，最终验收状态见 `docs/31_P13最终验收与P14准入评估.md`。
-
-当前 Professional Skill / runtime contract：
+P13 合同见 `docs/28`、`docs/29`、`docs/30`，最终验收见 `docs/31_P13最终验收与P14准入评估.md`。
 
 ```text
 replica-target-assets@1.1.0
 p13-replica-target-assets-v3
 replica-target-visual-identity-v2
-```
-
-P13 只读取 CURRENT `TARGET_BIBLE`，把已有 Target Character / Scene / Prop 转成可被后续分镜和视频生成稳定引用的 typed visual identity packet。
-
-资产设计要求：
-
-```text
-Character
-= identity / demographic / face / hair / body / wardrobe baseline
-+ signature visual features
-+ asset-local visual continuity / generation guidance / negative constraints
-
-Scene
-= spatial identity / layout / architecture / material palette / fixed landmarks
-+ lighting / time-of-day visual baseline
-+ asset-local visual continuity / generation guidance / negative constraints
-
-Prop
-= functional identity / form / material / color / scale / signature features
-+ asset-local visual continuity / generation guidance / negative constraints
-```
-
-稳定 `target_asset_id`、Target Bible entity binding、单资产 fingerprint/revision、Artifact Graph 和 stale propagation 都由服务端确定性控制。Target Bible 的全局故事 / 镜头 preservation locks 继续通过 lineage 保持权威，但不机械复制进每个 asset packet。
-
-当前仓库没有已接入并验收的图片生成 Provider，因此 P13 不伪造图片 URI / hash / 尺寸；正式资产先以 typed visual identity packet 成立，并为未来真实 reference media 保留受控槽位。
-
-Provider 成功不等于正式资产可用：
-
-```text
-Provider succeeded
-→ NEEDS_REVIEW candidate
-→ 用户显式 ACCEPT / REJECT
-→ ACCEPT 才发布 CURRENT TARGET_ASSETS
-```
-
-v3 / visual-identity-v2 已完成真实 Provider、真实项目重跑与用户人工质量复验，用户已明确 `P13 PASS`。正式能力状态为：
-
-```text
 TARGET_ASSETS = AVAILABLE
 ```
 
-旧 `replica-target-visual-identity-v1` 正式 revision 继续只作为历史保留；当前可用基线以 v3 / visual-identity-v2 为准。
+P13 只读取 CURRENT `TARGET_BIBLE`，把既有 Target Character / Scene / Prop semantic truth 具体化为跨镜稳定视觉身份包。Provider 成功只产生候选，用户显式 ACCEPT 后才发布正式资产。
 
-P13 自身不创建 Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Lip Sync / Post Artifact。P13 PASS 也不自动准入这些后续能力；它们继续 `PLANNED`，必须先建立下一阶段正式合同，再分别完成工程与真实人工验收。
+## P14 目标配音与对白时序
+正式合同见 `docs/32_P14目标配音与对白时序ProfessionalSkill与数据契约.md`。
 
-## 下一阶段边界
-Root Skill 的长期顺序在 `target_assets` 后是 `voice_timing`，但当前只表示依赖顺序，不等于 P14 已实现或已准入。P14 正式合同尚未建立；在新的编号合同明确 Target Voice / TTS / Timing 的硬输入、typed output、Provider、时长权威来源、Artifact Graph 与验收规则前，不进入 P14 实现。
+### P14A Target Audio
+
+```text
+Professional Skill: replica-target-audio@1.0.0
+hard inputs: CURRENT TARGET_SCRIPT + CURRENT TARGET_BIBLE + explicit voice bindings
+capability: TTS
+output: TARGET_AUDIO
+namespace: PRODUCTION
+```
+
+一条 canonical target utterance 对应一条真实音频 clip 和独立 ProviderJob provenance。媒体落盘后服务端探测真实时长；候选必须人工听审。
+
+### P14B Dialogue Timing
+
+```text
+Professional Skill: replica-dialogue-timing@1.0.0
+hard inputs: CURRENT TARGET_SCRIPT + CURRENT TARGET_AUDIO
+capability: TIMING
+output: TIMING_PLAN
+namespace: PRODUCTION
+```
+
+逐句计算：
+
+```text
+source_slot_duration_us = source_end_us - source_start_us
+planned_speech_start_us = source_start_us
+planned_speech_end_us = source_start_us + actual_speech_duration_us
+residual_hold_us = max(0, source_slot_duration_us - actual_speech_duration_us)
+overflow_us = max(0, actual_speech_duration_us - source_slot_duration_us)
+```
+
+有 overflow 只能返回 TTS 重录/换 voice/调整 provider 支持的自然语速，或回到 P12 修改 Final Target Dialogue；当前 P14 不替 Storyboard 做视觉时长重排。
+
+### Artifact Graph
+
+```text
+TARGET_SCRIPT --DERIVED_FROM--> TARGET_AUDIO
+TARGET_BIBLE  --USES----------> TARGET_AUDIO
+TARGET_AUDIO  --DERIVED_FROM--> TIMING_PLAN
+TARGET_SCRIPT --USES----------> TIMING_PLAN
+```
+
+Target Script 新 revision 会递归 stale Target Audio / Timing；Target Bible 新 revision stale Target Audio 并继续 stale Timing；Target Audio 新 revision stale Timing；Target Assets revision 不 stale P14。
+
+### 当前准入状态
+P14 合同和工程实现可以存在，但在真实 TTS Provider、真实媒体、逐句人工听审、Timing 人工审核和用户明确 `P14 PASS` 前：
+
+```text
+TTS = PLANNED
+TIMING = PLANNED
+P14 PASS = NO
+```
+
+## 后续边界
+P14 不进入 `TARGET_STORYBOARD / VIDEO_GENERATION / QC_SELECTION / LIP_SYNC / POST_PRODUCTION`。后续阶段必须另行建立正式合同与真实验收。
 
 ## 需要用户决策
-只有在故事或节奏必须偏离原片、文化替换会改变核心人物关系，或存在多个会显著改变目标世界的合理方向且系统不能安全自动选择时才询问用户。P13 的视觉身份候选属于正式人工确认边界，必须由用户显式接受或拒绝。
+故事/节奏偏离、核心关系改变、P13 视觉身份候选、P14 voice binding、P14 音频听审以及 Timing overflow 的解决方式都属于显式用户决策边界。
 
 ## 完成标准
-原片分析定稿可追溯；Target Bible 与 Source Snapshot lineage 明确；Target Script 保留 canonical Source Dialogue 与三层目标对白的可审计 lineage；目标人物 / 场景 / 道具属于同一目标世界且使用独立 Target identity；P13 资产必须保持 Target Bible semantic truth、稳定 Target Asset ID 与 per-asset revision，保持 asset-local visual scope，并经过显式人工确认；后续目标语音与时间计划成立；复刻分镜保持原故事和节奏；最终成片来自正式 GenerationSelection。
+Source / Target / Production lineage 清晰；P11~P13 正式结果保持既有验收状态；P14 每条目标对白有真实音频、可验证 SHA、服务端实际时长和 voice provenance；Timing 完整覆盖且正式版本无 unresolved overflow；未来 Storyboard、Generation、Post 仍需独立准入。

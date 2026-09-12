@@ -24,7 +24,7 @@ EXPECTED_SKILLS = {
     "SCRIPT_LOCALIZATION": "project.script_localization",
 }
 EXPECTED_SKILL_VERSIONS = {
-    "REPLICA": "1.3.0",
+    "REPLICA": "1.4.0",
     "REDRAW": "1.0.0",
     "TRANSLATION": "1.0.0",
     "NOVEL_TO_DRAMA": "1.0.0",
@@ -98,12 +98,16 @@ def test_plan_must_be_explicitly_compiled_then_get_is_read_only(client: TestClie
 
     plan = _compile(client, project["id"])
     assert plan["skill_id"] == "project.replica"
-    assert plan["skill_version"] == "1.3.0"
+    assert plan["skill_version"] == "1.4.0"
     assert plan["revision"] == 1
     assert len(plan["input_fingerprint"]) == 64
     assert plan["steps"][0]["id"] == "source_input"
     assert plan["steps"][0]["status"] == "READY"
     assert plan["steps"][1]["status"] == "BLOCKED_DEPENDENCY"
+    step_ids = {step["id"] for step in plan["steps"]}
+    assert "target_audio" in step_ids
+    assert "dialogue_timing" in step_ids
+    assert "voice_timing" not in step_ids
 
     persisted = client.get(f"/api/v3/projects/{project['id']}/plan")
     assert persisted.status_code == 200
