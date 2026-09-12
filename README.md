@@ -2,6 +2,28 @@
 
 AI 短剧生产工作台，当前处于 V3 从零重建阶段。
 
+## 推荐启动方式
+
+本地开发 / 验收统一使用仓库根目录的一体化启动器，不再分别手工启动 IndexTTS、FastAPI 和 Vite。
+
+Windows：
+
+```text
+start.cmd
+```
+
+也可以直接双击 `start.cmd`。Linux / WSL：
+
+```bash
+./start.sh
+```
+
+统一启动器会自动检查/准备后端虚拟环境、数据库 migration、前端依赖，以及 P14 的 IndexTTS-2.5 托管运行时；缺少模型时自动从 ModelScope 下载到 `.models/IndexTTS-2.5`。Windows 下 TTS sidecar 自动运行在 WSL2，Web 后端和前端继续运行在 Windows 本机。
+
+系统级前置条件仍包括 Python 3.12+、Node.js 22+，以及 Windows 下已启用且具有 GPU passthrough 的 WSL2。启动器不会静默安装 GPU 驱动或触发系统重启。
+
+P14 运行细节以 `docs/37_统一启动器与IndexTTS25托管运行时.md` 为准。
+
 正式规划：
 
 1. `docs/00_V3产品与系统详细规划.md`
