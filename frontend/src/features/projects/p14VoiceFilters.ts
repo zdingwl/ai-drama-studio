@@ -1,6 +1,6 @@
 export type VoiceGender = 'UNKNOWN' | 'FEMALE' | 'MALE' | 'NEUTRAL'
 export type VoiceAgeRange = 'UNKNOWN' | 'CHILD' | 'TEEN' | 'YOUNG_ADULT' | 'ADULT' | 'MATURE' | 'SENIOR'
-export type VoiceMetadataStatus = 'ALL' | 'USER' | 'UNLABELED' | 'STALE'
+export type VoiceMetadataStatus = 'ALL' | 'USER' | 'CATALOG' | 'UNLABELED' | 'STALE'
 
 export interface VoiceFilterable {
   voice_key: string
@@ -13,6 +13,11 @@ export interface VoiceFilterable {
   style_tags: string[]
   notes: string | null
   metadata_source: 'CATALOG' | 'USER'
+  catalog_metadata_available: boolean
+  catalog_description: string | null
+  source_name: string | null
+  license_name: string | null
+  usage_notice: string | null
   metadata_stale: boolean
 }
 
@@ -51,7 +56,8 @@ function matchesMetadataStatus(voice: VoiceFilterable, status: VoiceMetadataStat
   if (status === 'ALL') return true
   if (status === 'STALE') return voice.metadata_stale
   if (status === 'USER') return voice.metadata_source === 'USER' && !voice.metadata_stale
-  return voice.metadata_source !== 'USER' && !voice.metadata_stale
+  if (status === 'CATALOG') return voice.metadata_source === 'CATALOG' && voice.catalog_metadata_available && !voice.metadata_stale
+  return voice.metadata_source === 'CATALOG' && !voice.catalog_metadata_available && !voice.metadata_stale
 }
 
 function matchesQuery(voice: VoiceFilterable, query: string): boolean {
@@ -63,6 +69,10 @@ function matchesQuery(voice: VoiceFilterable, query: string): boolean {
     voice.voice_key,
     voice.locale,
     voice.notes,
+    voice.catalog_description,
+    voice.source_name,
+    voice.license_name,
+    voice.usage_notice,
     voice.gender,
     voice.age_range,
     ...voice.style_tags,

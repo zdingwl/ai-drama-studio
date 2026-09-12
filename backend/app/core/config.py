@@ -14,16 +14,63 @@ DEFAULT_ARTIFACT_ROOT = BACKEND_ROOT / "artifacts"
 # recordings used by the upstream IndexTTS repository. They are useful for local engineering
 # validation only; formal production acceptance should replace them with authorized references.
 _INDEXTTS_DEMO_BASE = "https://hf-mirror.com/spaces/IndexTeam/IndexTTS-2-Demo/resolve/main/examples"
-DEFAULT_P14_INDEXTTS_VOICE_CATALOG = tuple(
+_CREMAD_AUDIO_BASE = "https://media.githubusercontent.com/media/CheyneyComputerScience/CREMA-D/master/AudioWAV"
+_CREMAD_SOURCE_URL = "https://github.com/CheyneyComputerScience/CREMA-D"
+_CREMAD_LICENSE_URL = "https://raw.githubusercontent.com/CheyneyComputerScience/CREMA-D/master/LICENSE.txt"
+
+
+def _cremad_neutral_references(actor_id: int) -> list[str]:
+    return [
+        f"{_CREMAD_AUDIO_BASE}/{actor_id}_{sentence}_NEU_XX.wav"
+        for sentence in ("IEO", "IOM", "IWW", "ITH")
+    ]
+
+
+_INDEXTTS_DEMO_VOICES = tuple(
     {
         "voice_key": f"indextts-demo-{number:02d}",
         "display_name": f"IndexTTS 示例声线 {number:02d}",
         "reference_audio_url": f"{_INDEXTTS_DEMO_BASE}/voice_{number:02d}.wav",
         "locale": None,
         "tags": ["IndexTTS-2.5", "官方示例", "开发验收"],
+        "source_name": "IndexTTS-2.5 官方 Demo",
+        "source_url": "https://huggingface.co/spaces/IndexTeam/IndexTTS-2-Demo/tree/main/examples",
+        "usage_notice": "上游未提供可作为产品事实使用的性别、年龄或风格标签；仅用于工程联调与试听。",
     }
     for number in (1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12)
 )
+
+_CREMAD_VOICE_DEMOGRAPHICS = (
+    (1091, "FEMALE", "YOUNG_ADULT", 29),
+    (1011, "MALE", "ADULT", 32),
+    (1020, "FEMALE", "MATURE", 61),
+    (1024, "FEMALE", "MATURE", 59),
+)
+
+_CREMAD_VOICES = tuple(
+    {
+        "voice_key": f"cremad-{actor_id}-neutral",
+        "display_name": f"CREMA-D Actor {actor_id}",
+        "reference_audio_urls": _cremad_neutral_references(actor_id),
+        "locale": "en-US",
+        "tags": ["IndexTTS-2.5", "CREMA-D", "英语", "授权数据集"],
+        "catalog_gender": gender,
+        "catalog_age_range": age_range,
+        "catalog_style_tags": ["中性情绪", "英语"],
+        "catalog_description": (
+            f"CREMA-D 人口学记录：演员录制时 {age_years} 岁，"
+            f"{'女性' if gender == 'FEMALE' else '男性'}；参考音频由同一演员 4 条英语 Neutral WAV 片段拼接。"
+        ),
+        "source_name": "CREMA-D (Crowd-sourced Emotional Multimodal Actors Dataset)",
+        "source_url": _CREMAD_SOURCE_URL,
+        "license_name": "ODbL 1.0 / DbCL 1.0",
+        "license_url": _CREMAD_LICENSE_URL,
+        "usage_notice": "数据集与内容许可可复核；真人声纹、人格权及具体商用场景仍需使用者另行确认。",
+    }
+    for actor_id, gender, age_range, age_years in _CREMAD_VOICE_DEMOGRAPHICS
+)
+
+DEFAULT_P14_INDEXTTS_VOICE_CATALOG = _INDEXTTS_DEMO_VOICES + _CREMAD_VOICES
 DEFAULT_P14_INDEXTTS_VOICE_CATALOG_JSON = json.dumps(
     DEFAULT_P14_INDEXTTS_VOICE_CATALOG,
     ensure_ascii=False,

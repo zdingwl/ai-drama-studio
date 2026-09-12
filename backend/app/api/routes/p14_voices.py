@@ -1,7 +1,5 @@
 import base64
 import binascii
-import hashlib
-import json
 from datetime import datetime
 from typing import Literal
 from urllib.parse import quote
@@ -39,6 +37,13 @@ class TTSVoiceOptionRead(BaseModel):
     style_tags: list[str] = Field(default_factory=list)
     notes: str | None = None
     metadata_source: Literal["CATALOG", "USER"] = "CATALOG"
+    catalog_metadata_available: bool = False
+    catalog_description: str | None = None
+    source_name: str | None = None
+    source_url: str | None = None
+    license_name: str | None = None
+    license_url: str | None = None
+    usage_notice: str | None = None
     metadata_stale: bool = False
     metadata_updated_at: datetime | None = None
 
@@ -164,9 +169,7 @@ def _decode_reference_audio(data_url: str) -> tuple[bytes, str]:
 
 
 def _voice_source_fingerprint(provider: IndexTTS25Provider, voice_key: str) -> str:
-    entry = provider.resolve_voice(voice_key)
-    payload = {"voice_key": entry.voice_key, "reference_audio_url": entry.reference_audio_url}
-    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return provider.voice_source_fingerprint(voice_key)
 
 
 def _voice_preview_url(project_id: str, voice_key: str) -> str:
@@ -177,6 +180,15 @@ def _voice_preview_url(project_id: str, voice_key: str) -> str:
 def _public_voice_option(project_id: str, provider: IndexTTS25Provider, item: dict, metadata: IndexTTSVoiceMetadata | None) -> TTSVoiceOptionRead:
     source_fingerprint = _voice_source_fingerprint(provider, item["voice_key"])
     metadata_stale = metadata is not None and metadata.source_fingerprint != source_fingerprint
+    catalog_fields = {
+        "catalog_metadata_available": bool(item.get("catalog_metadata_available")),
+        "catalog_description": item.get("catalog_description"),
+        "source_name": item.get("source_name"),
+        "source_url": item.get("source_url"),
+        "license_name": item.get("license_name"),
+        "license_url": item.get("license_url"),
+        "usage_notice": item.get("usage_notice"),
+    }
     if metadata is not None and not metadata_stale:
         style_tags = metadata.style_tags_json if isinstance(metadata.style_tags_json, list) else []
         return TTSVoiceOptionRead(
@@ -192,6 +204,7 @@ def _public_voice_option(project_id: str, provider: IndexTTS25Provider, item: di
             notes=metadata.notes,
             metadata_source="USER",
             metadata_updated_at=metadata.updated_at,
+            **catalog_fields,
         )
     return TTSVoiceOptionRead(
         voice_key=item["voice_key"],
@@ -200,8 +213,12 @@ def _public_voice_option(project_id: str, provider: IndexTTS25Provider, item: di
         preview_url=_voice_preview_url(project_id, item["voice_key"]),
         locale=item.get("locale"),
         tags=list(item.get("tags") or []),
+        gender=item.get("catalog_gender") or "UNKNOWN",
+        age_range=item.get("catalog_age_range") or "UNKNOWN",
+        style_tags=list(item.get("catalog_style_tags") or []),
         metadata_source="CATALOG",
         metadata_stale=metadata_stale,
+        **catalog_fields,
     )
 
 
@@ -210,6 +227,13 @@ def _voice_metadata_map(db: Session, voice_keys: list[str]) -> dict[str, IndexTT
         return {}
     rows = db.execute(select(IndexTTSVoiceMetadata).where(IndexTTSVoiceMetadata.voice_key.in_(voice_keys))).scalars()
     return {row.voice_key: row for row in rows}
+
+
+def _catalog_item(provider: IndexTTS25Provider, voice_key: str) -> dict:
+    for item in provider.public_voice_catalog():
+        if item["voice_key"] == voice_key:
+            return item
+    raise AppError("P14_INDEXTTS_VOICE_UNKNOWN", "选择的参考声线不在当前 Voice Catalog 中", status_code=422)
 
 
 @router.get("/projects/{project_id}/target-audio/voices", response_model=TTSVoiceCatalogRead)
@@ -265,7 +289,7 @@ def put_target_audio_voice_metadata_route(project_id: str, voice_key: str, comma
     return _public_voice_option(
         project_id,
         provider,
-        {"voice_key": entry.voice_key, "display_name": entry.display_name, "locale": entry.locale, "tags": list(entry.tags)},
+        _catalog_item(provider, entry.voice_key),
         row,
     )
 
@@ -283,7 +307,7 @@ def delete_target_audio_voice_metadata_route(project_id: str, voice_key: str, db
     return _public_voice_option(
         project_id,
         provider,
-        {"voice_key": entry.voice_key, "display_name": entry.display_name, "locale": entry.locale, "tags": list(entry.tags)},
+        _catalog_item(provider, entry.voice_key),
         None,
     )
 

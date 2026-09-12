@@ -1,7 +1,9 @@
 import base64
 import hashlib
+import io
 import json
 import subprocess
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,9 +32,31 @@ class ProbedAudio:
 class TTSVoiceCatalogEntry:
     voice_key: str
     display_name: str
-    reference_audio_url: str
+    reference_audio_urls: tuple[str, ...]
     locale: str | None = None
     tags: tuple[str, ...] = ()
+    catalog_gender: str = "UNKNOWN"
+    catalog_age_range: str = "UNKNOWN"
+    catalog_style_tags: tuple[str, ...] = ()
+    catalog_description: str | None = None
+    source_name: str | None = None
+    source_url: str | None = None
+    license_name: str | None = None
+    license_url: str | None = None
+    usage_notice: str | None = None
+
+    @property
+    def reference_audio_url(self) -> str:
+        return self.reference_audio_urls[0]
+
+    @property
+    def catalog_metadata_available(self) -> bool:
+        return bool(
+            self.catalog_gender != "UNKNOWN"
+            or self.catalog_age_range != "UNKNOWN"
+            or self.catalog_style_tags
+            or self.catalog_description
+        )
 
 
 def _load_voice_catalog(raw: str) -> tuple[TTSVoiceCatalogEntry, ...]:
@@ -49,35 +73,71 @@ def _load_voice_catalog(raw: str) -> tuple[TTSVoiceCatalogEntry, ...]:
             raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "IndexTTS 参考声线条目必须是对象", status_code=500)
         voice_key = str(item.get("voice_key") or "").strip()
         display_name = str(item.get("display_name") or "").strip()
-        reference_audio_url = str(item.get("reference_audio_url") or "").strip()
-        if not voice_key or not display_name or not reference_audio_url:
+        raw_reference_audio_urls = item.get("reference_audio_urls")
+        if raw_reference_audio_urls is None:
+            raw_reference_audio_urls = [item.get("reference_audio_url")]
+        if not isinstance(raw_reference_audio_urls, list):
             raise AppError(
                 "P14_INDEXTTS_VOICE_CATALOG_INVALID",
-                "IndexTTS 参考声线条目缺少 voice_key/display_name/reference_audio_url",
+                "IndexTTS reference_audio_urls 必须是数组",
                 status_code=500,
                 details={"index": index},
             )
-        if voice_key in seen:
-            raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "IndexTTS voice_key 不能重复", status_code=500)
-        if not reference_audio_url.startswith(("http://", "https://", "data:audio/")):
+        reference_audio_urls = tuple(str(value or "").strip() for value in raw_reference_audio_urls)
+        if not voice_key or not display_name or not reference_audio_urls or any(not value for value in reference_audio_urls):
             raise AppError(
                 "P14_INDEXTTS_VOICE_CATALOG_INVALID",
-                "reference_audio_url 只允许 http(s) 或 data:audio URL",
+                "IndexTTS 参考声线条目缺少 voice_key/display_name/reference_audio_url(s)",
+                status_code=500,
+                details={"index": index},
+            )
+        if len(reference_audio_urls) > 12:
+            raise AppError(
+                "P14_INDEXTTS_VOICE_CATALOG_INVALID",
+                "单条参考声线最多允许 12 个音频片段",
                 status_code=500,
                 details={"voice_key": voice_key},
             )
+        if voice_key in seen:
+            raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "IndexTTS voice_key 不能重复", status_code=500)
+        for reference_audio_url in reference_audio_urls:
+            if not reference_audio_url.startswith(("http://", "https://", "data:audio/")):
+                raise AppError(
+                    "P14_INDEXTTS_VOICE_CATALOG_INVALID",
+                    "reference_audio_url 只允许 http(s) 或 data:audio URL",
+                    status_code=500,
+                    details={"voice_key": voice_key},
+                )
         seen.add(voice_key)
         raw_tags = item.get("tags") or []
         if not isinstance(raw_tags, list) or not all(isinstance(tag, str) for tag in raw_tags):
             raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "IndexTTS tags 必须是字符串数组", status_code=500)
+        raw_catalog_style_tags = item.get("catalog_style_tags") or []
+        if not isinstance(raw_catalog_style_tags, list) or not all(isinstance(tag, str) for tag in raw_catalog_style_tags):
+            raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "catalog_style_tags 必须是字符串数组", status_code=500)
+        catalog_gender = str(item.get("catalog_gender") or "UNKNOWN").strip().upper()
+        catalog_age_range = str(item.get("catalog_age_range") or "UNKNOWN").strip().upper()
+        if catalog_gender not in {"UNKNOWN", "FEMALE", "MALE", "NEUTRAL"}:
+            raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "catalog_gender 无效", status_code=500)
+        if catalog_age_range not in {"UNKNOWN", "CHILD", "TEEN", "YOUNG_ADULT", "ADULT", "MATURE", "SENIOR"}:
+            raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "catalog_age_range 无效", status_code=500)
         locale = str(item.get("locale") or "").strip() or None
         entries.append(
             TTSVoiceCatalogEntry(
                 voice_key=voice_key,
                 display_name=display_name,
-                reference_audio_url=reference_audio_url,
+                reference_audio_urls=reference_audio_urls,
                 locale=locale,
                 tags=tuple(tag.strip() for tag in raw_tags if tag.strip()),
+                catalog_gender=catalog_gender,
+                catalog_age_range=catalog_age_range,
+                catalog_style_tags=tuple(tag.strip() for tag in raw_catalog_style_tags if tag.strip()),
+                catalog_description=str(item.get("catalog_description") or "").strip() or None,
+                source_name=str(item.get("source_name") or "").strip() or None,
+                source_url=str(item.get("source_url") or "").strip() or None,
+                license_name=str(item.get("license_name") or "").strip() or None,
+                license_url=str(item.get("license_url") or "").strip() or None,
+                usage_notice=str(item.get("usage_notice") or "").strip() or None,
             )
         )
     return tuple(entries)
@@ -130,6 +190,16 @@ class IndexTTS25Provider:
                 "display_name": item.display_name,
                 "locale": item.locale,
                 "tags": list(item.tags),
+                "catalog_gender": item.catalog_gender,
+                "catalog_age_range": item.catalog_age_range,
+                "catalog_style_tags": list(item.catalog_style_tags),
+                "catalog_description": item.catalog_description,
+                "catalog_metadata_available": item.catalog_metadata_available,
+                "source_name": item.source_name,
+                "source_url": item.source_url,
+                "license_name": item.license_name,
+                "license_url": item.license_url,
+                "usage_notice": item.usage_notice,
             }
             for item in self._voice_catalog
         ]
@@ -156,9 +226,14 @@ class IndexTTS25Provider:
             {
                 "voice_key": item.voice_key,
                 "display_name": item.display_name,
-                "reference_audio_url": item.reference_audio_url,
+                "reference_audio_urls": list(item.reference_audio_urls),
                 "locale": item.locale,
                 "tags": list(item.tags),
+                "catalog_gender": item.catalog_gender,
+                "catalog_age_range": item.catalog_age_range,
+                "catalog_style_tags": list(item.catalog_style_tags),
+                "source_name": item.source_name,
+                "license_name": item.license_name,
             }
             for item in self._voice_catalog
         ]
@@ -178,12 +253,18 @@ class IndexTTS25Provider:
             "voice_catalog_fingerprint": catalog_fingerprint,
         }
 
-    def _reference_data_url(self, voice_key: str) -> tuple[str, str]:
-        cached = self._reference_cache.get(voice_key)
-        if cached is not None:
-            return cached
+    def voice_source_fingerprint(self, voice_key: str) -> str:
         entry = self.resolve_voice(voice_key)
-        source = entry.reference_audio_url
+        payload = (
+            {"voice_key": entry.voice_key, "reference_audio_url": entry.reference_audio_url}
+            if len(entry.reference_audio_urls) == 1
+            else {"voice_key": entry.voice_key, "reference_audio_urls": list(entry.reference_audio_urls)}
+        )
+        return hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+    def _fetch_reference_bytes(self, source: str) -> tuple[bytes, str]:
         if source.startswith("data:audio/"):
             try:
                 header, encoded = source.split(",", 1)
@@ -192,10 +273,7 @@ class IndexTTS25Provider:
                 raise AppError("P14_INDEXTTS_REFERENCE_INVALID", "IndexTTS 参考音频 data URL 无效", status_code=500) from exc
             if not raw:
                 raise AppError("P14_INDEXTTS_REFERENCE_INVALID", "IndexTTS 参考音频为空", status_code=500)
-            sha = hashlib.sha256(raw).hexdigest()
-            result = (source, sha)
-            self._reference_cache[voice_key] = result
-            return result
+            return raw, header[5:].split(";", 1)[0]
 
         urls = [source]
         if source.startswith("https://hf-mirror.com/"):
@@ -217,9 +295,61 @@ class IndexTTS25Provider:
         content_type = response.headers.get("content-type", "audio/wav").split(";", 1)[0].strip().lower()
         if content_type.startswith("text/"):
             raise AppError("P14_INDEXTTS_REFERENCE_INVALID", "IndexTTS 参考音频 URL 返回了文本内容", status_code=502)
-        mime = content_type if content_type.startswith("audio/") else "audio/wav"
-        data_url = f"data:{mime};base64,{base64.b64encode(response.content).decode('ascii')}"
-        sha = hashlib.sha256(response.content).hexdigest()
+        return response.content, content_type if content_type.startswith("audio/") else "audio/wav"
+
+    @staticmethod
+    def _concatenate_wav_clips(clips: list[bytes]) -> bytes:
+        output = io.BytesIO()
+        expected: tuple[int, int, int, str] | None = None
+        frames: list[bytes] = []
+        try:
+            for raw in clips:
+                with wave.open(io.BytesIO(raw), "rb") as reader:
+                    parameters = (
+                        reader.getnchannels(),
+                        reader.getsampwidth(),
+                        reader.getframerate(),
+                        reader.getcomptype(),
+                    )
+                    if expected is None:
+                        expected = parameters
+                    elif parameters != expected:
+                        raise AppError(
+                            "P14_INDEXTTS_REFERENCE_FORMAT_MISMATCH",
+                            "同一参考声线的多个 WAV 片段采样参数不一致",
+                            status_code=422,
+                        )
+                    if reader.getcomptype() != "NONE":
+                        raise AppError("P14_INDEXTTS_REFERENCE_INVALID", "参考声线 WAV 必须是未压缩 PCM", status_code=422)
+                    frames.append(reader.readframes(reader.getnframes()))
+            if expected is None:
+                raise AppError("P14_INDEXTTS_REFERENCE_INVALID", "参考声线音频为空", status_code=422)
+            with wave.open(output, "wb") as writer:
+                writer.setnchannels(expected[0])
+                writer.setsampwidth(expected[1])
+                writer.setframerate(expected[2])
+                writer.setcomptype("NONE", "not compressed")
+                for frame_bytes in frames:
+                    writer.writeframes(frame_bytes)
+        except wave.Error as exc:
+            raise AppError("P14_INDEXTTS_REFERENCE_INVALID", "参考声线包含无效 WAV 音频", status_code=422) from exc
+        return output.getvalue()
+
+    def _reference_data_url(self, voice_key: str) -> tuple[str, str]:
+        cached = self._reference_cache.get(voice_key)
+        if cached is not None:
+            return cached
+        entry = self.resolve_voice(voice_key)
+        fetched = [self._fetch_reference_bytes(source) for source in entry.reference_audio_urls]
+        if len(fetched) == 1:
+            raw, mime = fetched[0]
+        else:
+            raw = self._concatenate_wav_clips([item[0] for item in fetched])
+            mime = "audio/wav"
+        if len(raw) > 25 * 1024 * 1024:
+            raise AppError("P14_INDEXTTS_REFERENCE_TOO_LARGE", "拼接后的 IndexTTS 参考音频超过 25MB", status_code=422)
+        data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+        sha = hashlib.sha256(raw).hexdigest()
         result = (data_url, sha)
         self._reference_cache[voice_key] = result
         return result

@@ -14,6 +14,11 @@ const voices: VoiceFilterable[] = [
     style_tags: ['温柔', '自然'],
     notes: '适合年轻女主角',
     metadata_source: 'USER',
+    catalog_metadata_available: false,
+    catalog_description: null,
+    source_name: null,
+    license_name: null,
+    usage_notice: null,
     metadata_stale: false,
   },
   {
@@ -27,6 +32,11 @@ const voices: VoiceFilterable[] = [
     style_tags: ['低沉', '沉稳'],
     notes: '适合成熟男性角色',
     metadata_source: 'USER',
+    catalog_metadata_available: false,
+    catalog_description: null,
+    source_name: null,
+    license_name: null,
+    usage_notice: null,
     metadata_stale: false,
   },
   {
@@ -40,6 +50,11 @@ const voices: VoiceFilterable[] = [
     style_tags: [],
     notes: null,
     metadata_source: 'CATALOG',
+    catalog_metadata_available: false,
+    catalog_description: null,
+    source_name: 'IndexTTS Demo',
+    license_name: null,
+    usage_notice: '仅用于工程联调',
     metadata_stale: false,
   },
   {
@@ -53,7 +68,30 @@ const voices: VoiceFilterable[] = [
     style_tags: [],
     notes: null,
     metadata_source: 'CATALOG',
+    catalog_metadata_available: false,
+    catalog_description: null,
+    source_name: null,
+    license_name: null,
+    usage_notice: null,
     metadata_stale: true,
+  },
+  {
+    voice_key: 'cremad-1091-neutral',
+    default_display_name: 'CREMA-D Actor 1091',
+    display_name: 'CREMA-D Actor 1091',
+    locale: 'en-US',
+    tags: ['CREMA-D'],
+    gender: 'FEMALE',
+    age_range: 'YOUNG_ADULT',
+    style_tags: ['中性情绪', '英语'],
+    notes: null,
+    metadata_source: 'CATALOG',
+    catalog_metadata_available: true,
+    catalog_description: '演员录制时 29 岁，女性',
+    source_name: 'CREMA-D',
+    license_name: 'ODbL 1.0 / DbCL 1.0',
+    usage_notice: '具体商用场景需另行确认',
+    metadata_stale: false,
   },
 ]
 
@@ -82,11 +120,17 @@ describe('P14 voice catalog classification filters', () => {
     expect(filterVoices(voices, filters({ metadata_status: 'USER' }))).toEqual([voices[0], voices[1]])
     expect(filterVoices(voices, filters({ metadata_status: 'UNLABELED' }))).toEqual([voices[2]])
     expect(filterVoices(voices, filters({ metadata_status: 'STALE' }))).toEqual([voices[3]])
+    expect(filterVoices(voices, filters({ metadata_status: 'CATALOG' }))).toEqual([voices[4]])
+  })
+
+  it('searches source descriptions and license notices', () => {
+    expect(filterVoices(voices, filters({ query: '29 岁' }))).toEqual([voices[4]])
+    expect(filterVoices(voices, filters({ query: 'DbCL' }))).toEqual([voices[4]])
   })
 
   it('collects reusable style and locale categories from the catalog', () => {
     expect(collectVoiceFilterOptions(voices)).toEqual({
-      style_tags: ['低沉', '沉稳', '温柔', '自然'],
+      style_tags: ['沉稳', '低沉', '温柔', '英语', '中性情绪', '自然'],
       locales: ['en-US', 'zh-CN'],
     })
   })
