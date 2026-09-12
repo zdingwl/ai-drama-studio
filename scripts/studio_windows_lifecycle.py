@@ -10,11 +10,14 @@ from pathlib import Path
 import socket
 import subprocess
 import time
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 IS_WINDOWS = os.name == "nt"
 ERROR_ALREADY_EXISTS = 183
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9
+BACKEND_HEALTH_URL = "http://127.0.0.1:8000/api/v3/health"
 
 
 class _IoCounters(ctypes.Structure):
@@ -185,6 +188,45 @@ def _powershell_json(script: str) -> dict | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _http_json(url: str, *, timeout: float = 1.5) -> dict | None:
+    try:
+        with urlopen(Request(url, headers={"Accept": "application/json"}), timeout=timeout) as response:
+            if response.status >= 400:
+                return None
+            payload = json.loads(response.read().decode("utf-8"))
+            return payload if isinstance(payload, dict) else None
+    except (OSError, URLError, TimeoutError, json.JSONDecodeError):
+        return None
+
+
+def backend_source_fingerprint(repo_root: Path) -> str:
+    """Match backend/app/core/runtime_identity.py without importing the backend."""
+    app_root = (repo_root / "backend" / "app").resolve()
+    digest = hashlib.sha256()
+    for path in sorted(app_root.rglob("*.py"), key=lambda item: item.relative_to(app_root).as_posix()):
+        relative = path.relative_to(app_root).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def backend_runtime_matches_checkout(repo_root: Path) -> bool:
+    """Use the live backend's immutable startup fingerprint as checkout identity.
+
+    uv-managed Python executables live outside the repository and a perfectly
+    valid Studio backend command line may therefore contain no repo path at all.
+    The health fingerprint is stronger evidence: it hashes the exact backend
+    Python source snapshot captured when that server process started.
+    """
+    payload = _http_json(BACKEND_HEALTH_URL)
+    if payload is None:
+        return False
+    running = str(payload.get("runtime_fingerprint") or "")
+    return bool(payload.get("status") == "ok" and running and running == backend_source_fingerprint(repo_root))
+
+
 def process_info(process_id: int) -> WindowsProcessInfo | None:
     if not IS_WINDOWS or process_id <= 0:
         return None
@@ -244,8 +286,15 @@ def terminate_tree(process_id: int) -> None:
     )
 
 
-def cleanup_repo_listener(repo_root: Path, port: int, label: str, *, timeout: float = 8.0) -> bool:
-    """Stop a listener only when its process identity belongs to this checkout."""
+def cleanup_repo_listener(
+    repo_root: Path,
+    port: int,
+    label: str,
+    *,
+    trusted_identity: bool = False,
+    timeout: float = 8.0,
+) -> bool:
+    """Stop a listener only when its identity is proven to belong to this checkout."""
     if not port_open(port):
         return False
 
@@ -255,14 +304,18 @@ def cleanup_repo_listener(repo_root: Path, port: int, label: str, *, timeout: fl
             f"Port {port} is occupied, but Studio could not identify its Windows owner. "
             "It was not terminated."
         )
-    if not belongs_to_repo(info, repo_root):
+    if not trusted_identity and not belongs_to_repo(info, repo_root):
         detail = info.command_line or info.executable_path or f"PID {info.process_id}"
         raise RuntimeError(
             f"Port {port} is occupied by a process outside this AI Drama Studio checkout: {detail}. "
             "It was not terminated."
         )
 
-    print(f"[Studio] removing orphaned {label} from this checkout (PID {info.process_id})...")
+    identity_note = "runtime fingerprint" if trusted_identity and not belongs_to_repo(info, repo_root) else "repo path"
+    print(
+        f"[Studio] removing orphaned {label} from this checkout "
+        f"(PID {info.process_id}, verified by {identity_note})..."
+    )
     terminate_tree(info.process_id)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline and port_open(port):
@@ -275,10 +328,22 @@ def cleanup_repo_listener(repo_root: Path, port: int, label: str, *, timeout: fl
 def cleanup_repo_services(repo_root: Path) -> None:
     if not IS_WINDOWS:
         return
+
+    # The backend may be launched by uv-managed Python outside the repository,
+    # so path-based ownership alone is insufficient. Compute this before any
+    # cleanup and trust it only for port 8000 when the live server reports the
+    # exact immutable source fingerprint for this checkout.
+    backend_identity_matches = backend_runtime_matches_checkout(repo_root)
+
     errors: list[str] = []
     for port, label in ((5173, "frontend"), (8000, "backend"), (8092, "IndexTTS-2.5")):
         try:
-            cleanup_repo_listener(repo_root, port, label)
+            cleanup_repo_listener(
+                repo_root,
+                port,
+                label,
+                trusted_identity=(port == 8000 and backend_identity_matches),
+            )
         except RuntimeError as exc:
             errors.append(str(exc))
     if errors:
