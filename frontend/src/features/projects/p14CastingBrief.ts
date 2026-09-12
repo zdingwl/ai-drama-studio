@@ -1,8 +1,24 @@
-export interface CharacterDialogueSample {
+export interface CastingCharacter {
+  target_character_id: string
+  display_name: string
+  localized_identity?: string | null
+  personality_constraints?: unknown[]
+}
+
+export interface CastingDialogueLine {
+  utterance_id: string
+  utterance_number: number
+  target_character_id: string | null
+  final_target_dialogue?: string | null
+}
+
+export interface CastingDialogueSample {
   utterance_id: string
   utterance_number: number
   text: string
 }
+
+export type CharacterDialogueSample = CastingDialogueSample
 
 export interface CharacterCastingBrief {
   target_character_id: string
@@ -13,7 +29,7 @@ export interface CharacterCastingBrief {
   dialogue_count: number
   personality_constraints: string[]
   dialogue_style_rules: string[]
-  dialogue_samples: CharacterDialogueSample[]
+  dialogue_samples: CastingDialogueSample[]
 }
 
 function uniqueStrings(values: unknown[]): string[] {
@@ -28,26 +44,30 @@ function uniqueStrings(values: unknown[]): string[] {
   return result
 }
 
+function representativeLines(lines: CastingDialogueLine[]): CastingDialogueLine[] {
+  if (lines.length <= 3) return lines
+  const indexes = [0, Math.floor((lines.length - 1) / 2), lines.length - 1]
+  return [...new Set(indexes)].map((index) => lines[index])
+}
+
 export function buildCharacterCastingBrief(
-  character: any,
-  dialogueLines: any[],
+  character: CastingCharacter,
+  dialogueLines: CastingDialogueLine[],
   targetLanguage: string,
   targetRegion: string,
   dialogueStyleRules: unknown[] = [],
 ): CharacterCastingBrief {
-  const targetCharacterId = String(character?.target_character_id ?? '')
-  const displayName = String(character?.display_name ?? targetCharacterId ?? '').trim() || '未命名角色'
-  const lines = dialogueLines.filter((line) => line?.target_character_id === targetCharacterId)
-  const samples = lines
-    .filter((line) => String(line?.final_target_dialogue ?? '').trim())
-    .slice(0, 3)
+  const targetCharacterId = String(character.target_character_id ?? '')
+  const displayName = String(character.display_name ?? targetCharacterId).trim() || '未命名角色'
+  const lines = dialogueLines.filter((line) => line.target_character_id === targetCharacterId)
+  const samples = representativeLines(lines.filter((line) => String(line.final_target_dialogue ?? '').trim()))
     .map((line) => ({
       utterance_id: String(line.utterance_id),
       utterance_number: Number(line.utterance_number ?? 0),
-      text: String(line.final_target_dialogue).trim(),
+      text: String(line.final_target_dialogue ?? '').trim(),
     }))
   const locale = [String(targetLanguage ?? '').trim(), String(targetRegion ?? '').trim()].filter(Boolean).join(' / ') || '未指定'
-  const roleIdentity = String(character?.localized_identity ?? '').trim() || displayName
+  const roleIdentity = String(character.localized_identity ?? '').trim() || displayName
   return {
     target_character_id: targetCharacterId,
     display_name: displayName,
@@ -55,7 +75,7 @@ export function buildCharacterCastingBrief(
     role_identity: roleIdentity,
     target_locale: locale,
     dialogue_count: lines.length,
-    personality_constraints: uniqueStrings(Array.isArray(character?.personality_constraints) ? character.personality_constraints : []),
+    personality_constraints: uniqueStrings(Array.isArray(character.personality_constraints) ? character.personality_constraints : []),
     dialogue_style_rules: uniqueStrings(Array.isArray(dialogueStyleRules) ? dialogueStyleRules : []),
     dialogue_samples: samples,
   }
