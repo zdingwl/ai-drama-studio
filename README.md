@@ -12,17 +12,19 @@ Windows：
 start.cmd
 ```
 
-也可以直接双击 `start.cmd`。Linux / WSL：
+也可以直接双击 `start.cmd`。**Windows 不再要求安装 WSL2**：P14 的 IndexTTS-2.5 会在 `.runtime/indextts25-native-windows/` 中建立独立的官方 `uv` 环境并使用 Windows 原生 CUDA 推理；Studio backend 继续使用仓库根目录的 Python 3.12+ `.venv`。
+
+Linux：
 
 ```bash
 ./start.sh
 ```
 
-统一启动器会自动检查/准备后端虚拟环境、数据库 migration、前端依赖，以及 P14 的 IndexTTS-2.5 托管运行时；缺少模型时自动从 ModelScope 下载到 `.models/IndexTTS-2.5`。Windows 下 TTS sidecar 自动运行在 WSL2，Web 后端和前端继续运行在 Windows 本机。
+统一启动器会自动检查/准备后端虚拟环境、数据库 migration、前端依赖，以及 P14 的 IndexTTS-2.5 托管运行时；缺少模型时自动从 ModelScope 下载到 `.models/IndexTTS-2.5`。Windows 使用官方 IndexTTS 原生推理 + 本地 8092 adapter，Linux 继续使用 vLLM-Omni；两者对 P14 都是同一个 `IndexTeam/IndexTTS-2.5` 模型合同。
 
-系统级前置条件仍包括 Python 3.12+、Node.js 22+，以及 Windows 下已启用且具有 GPU passthrough 的 WSL2。启动器不会静默安装 GPU 驱动或触发系统重启。
+系统级前置条件包括 Python 3.12+、Node.js 22+、Git，以及用于本地高质量 TTS 的 NVIDIA/CUDA 可用环境。Windows 不需要 WSL；IndexTTS 自己要求的 Python 3.10/3.11 由 `uv` 隔离环境自动管理。启动器不会静默安装或升级 GPU 驱动，也不会触发系统重启。
 
-P14 运行细节以 `docs/37_统一启动器与IndexTTS25托管运行时.md` 为准。
+P14 Windows 原生运行细节以 `docs/38_Windows原生IndexTTS25无需WSL统一运行时.md` 为准；Linux vLLM-Omni 细节可参考 `docs/37_统一启动器与IndexTTS25托管运行时.md`。
 
 正式规划：
 
@@ -197,4 +199,4 @@ npm test
 npm run build
 ```
 
-P4 已通过 migration、pytest、frontend typecheck/test/build 的完整 GitHub Actions V3 CI。当前状态和下一步以 `docs/02_V3当前开发状态.md` 为准。
+P4 已通过 migration、pytest、frontend typecheck/test/build 的完整 GitHub Actions V3 CI。当前状态和下一步以编号更高、日期更新的 docs 与 `AGENTS.md` 冲突处理规则为准。

@@ -119,27 +119,24 @@ def _popen(args: list[str], *, cwd: Path | None = None) -> subprocess.Popen:
     return subprocess.Popen(args, **kwargs)
 
 
-def _wsl_repo_root() -> tuple[str, str]:
-    wsl = shutil.which("wsl.exe")
-    if not wsl:
-        raise RuntimeError(
-            "IndexTTS-2.5/vLLM-Omni is Linux-only. On Windows, enable WSL2 with GPU passthrough first."
-        )
-    linux_root = subprocess.check_output([wsl, "wslpath", "-a", str(REPO_ROOT)], text=True).strip()
-    if not linux_root:
-        raise RuntimeError("Failed to translate repository path into WSL.")
-    return wsl, linux_root
-
-
 def _cleanup_stale_tts() -> None:
     if _tts_ready() or not _port_open(8092):
         return
     print("[Studio] port 8092 has a non-ready process; attempting one managed IndexTTS cleanup...")
-    pattern = "vllm serve .*IndexTTS-2.5.*--port 8092"
     if IS_WINDOWS:
-        wsl, _ = _wsl_repo_root()
-        subprocess.run([wsl, "bash", "-lc", f"pkill -f {shlex.quote(pattern)} || true"], check=False)
+        command = (
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { $_.CommandLine -and $_.CommandLine -match 'indextts25_native_server\\.py' } | "
+            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+        )
+        subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", command],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
     else:
+        pattern = "vllm serve .*IndexTTS-2.5.*--port 8092"
         subprocess.run(["bash", "-lc", f"pkill -f {shlex.quote(pattern)} || true"], check=False)
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and _port_open(8092):
@@ -155,12 +152,14 @@ def _start_tts() -> tuple[subprocess.Popen | None, bool]:
         raise RuntimeError("Port 8092 is occupied by an unknown/non-ready process. Stop that process and run the unified launcher again.")
 
     if IS_WINDOWS:
-        wsl, linux_root = _wsl_repo_root()
-        command = f"cd {shlex.quote(linux_root)} && exec ./scripts/start_indextts25.sh"
-        print("[Studio] starting managed IndexTTS-2.5 inside WSL2...")
-        return _popen([wsl, "bash", "-lc", command]), True
+        native = REPO_ROOT / "scripts" / "start_indextts25_native_windows.ps1"
+        print("[Studio] starting managed IndexTTS-2.5 natively on Windows (WSL is not required)...")
+        return _popen(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(native)],
+            cwd=REPO_ROOT,
+        ), True
 
-    print("[Studio] starting managed IndexTTS-2.5 sidecar...")
+    print("[Studio] starting managed IndexTTS-2.5 vLLM-Omni sidecar...")
     return _popen([str(REPO_ROOT / "scripts" / "start_indextts25.sh")], cwd=REPO_ROOT), True
 
 
@@ -229,7 +228,7 @@ def main() -> int:
         if _tts_ready():
             print("[Studio] IndexTTS-2.5 READY")
         else:
-            print("[Studio] IndexTTS-2.5 is preparing in the same launcher; first run may download/install a large runtime.")
+            print("[Studio] IndexTTS-2.5 is preparing in the same launcher; first run may install its isolated runtime and download a large model.")
         if os.getenv("AI_DRAMA_NO_BROWSER", "0") != "1":
             webbrowser.open(FRONTEND_URL)
 
