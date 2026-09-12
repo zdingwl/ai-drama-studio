@@ -10,6 +10,7 @@ from app.evidence.models import (
     SourceVisualTextSpan,
 )
 from app.p14.models import (
+    IndexTTSVoiceMetadata,
     ReplicaTargetAudioCandidate,
     ReplicaTargetAudioRevision,
     ReplicaTimingPlanCandidate,
@@ -34,6 +35,7 @@ __all__ = [
     "ArtifactNode",
     "AsrEvidenceSegment",
     "Episode",
+    "IndexTTSVoiceMetadata",
     "OcrEvidenceObservation",
     "Project",
     "ProjectExecutionPlanRecord",
