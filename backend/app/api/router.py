@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.routes.evidence import router as evidence_router
 from app.api.routes.health import router as health_router
 from app.api.routes.p14 import router as p14_router
+from app.api.routes.p14_voice_catalog import router as p14_voice_catalog_router
 from app.api.routes.preprocessing import router as preprocessing_router
 from app.api.routes.projects import router as projects_router
 from app.api.routes.shot_breakdown import router as shot_breakdown_router
@@ -33,4 +34,5 @@ api_router.include_router(target_bible_router)
 api_router.include_router(target_script_router)
 api_router.include_router(target_assets_router)
 api_router.include_router(p14_router)
+api_router.include_router(p14_voice_catalog_router)
 api_router.include_router(tasks_router)

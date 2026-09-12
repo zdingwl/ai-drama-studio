@@ -5,6 +5,22 @@ import { useRoute } from 'vue-router'
 import { getReplicaTargetBible } from '@/features/projects/targetBible'
 import { getReplicaTargetScript } from '@/features/projects/targetScript'
 import { getTargetAudio, getTimingPlan, listAudioCandidates, listTimingCandidates, reviewAudioCandidate, reviewTimingCandidate, startTargetAudio, startTimingPlan, type AudioCandidate, type TimingCandidate, type VoiceBinding } from '@/features/projects/p14'
+import { apiRequest } from '@/lib/api'
+
+interface VoiceOption {
+  voice_key: string
+  display_name: string
+  locale: string | null
+  tags: string[]
+}
+
+interface VoiceCatalogRead {
+  provider: string
+  model: string
+  target_language: string
+  configured: boolean
+  voices: VoiceOption[]
+}
 
 const route = useRoute()
 const projectId = computed(() => String(route.params.id ?? ''))
@@ -16,21 +32,43 @@ const audio = ref<any>(null)
 const audioCandidates = ref<AudioCandidate[]>([])
 const timing = ref<any>(null)
 const timingCandidates = ref<TimingCandidate[]>([])
+const voiceCatalog = ref<VoiceCatalogRead | null>(null)
 const characterVoices = reactive<Record<string, string>>({})
 const utteranceVoices = reactive<Record<string, string>>({})
 const reviewReason = ref('已逐句听审目标配音与时序结果')
 
 const latestAudioCandidate = computed(() => audioCandidates.value.find((item) => item.review_status === 'NEEDS_REVIEW') ?? null)
 const latestTimingCandidate = computed(() => timingCandidates.value.find((item) => item.review_status === 'NEEDS_REVIEW') ?? null)
-const unresolvedLines = computed(() => (script.value?.content?.episodes ?? []).flatMap((episode: any) => episode.dialogue ?? []).filter((line: any) => !line.target_character_id))
+const scriptLines = computed(() => (script.value?.content?.episodes ?? []).flatMap((episode: any) => episode.dialogue ?? []))
+const unresolvedLines = computed(() => scriptLines.value.filter((line: any) => !line.target_character_id))
+const speakingCharacterIds = computed(() => new Set(scriptLines.value.map((line: any) => line.target_character_id).filter(Boolean)))
+const speakingCharacters = computed(() => (bible.value?.content?.characters ?? []).filter((character: any) => speakingCharacterIds.value.has(character.target_character_id)))
+const availableVoices = computed(() => voiceCatalog.value?.voices ?? [])
+const catalogConfigured = computed(() => Boolean(voiceCatalog.value?.configured && availableVoices.value.length))
+
+function voiceOption(key: string): VoiceOption | undefined {
+  return availableVoices.value.find((item) => item.voice_key === key)
+}
+
+const allBindingsResolved = computed(() => {
+  if (!catalogConfigured.value) return false
+  return speakingCharacters.value.every((character: any) => Boolean(characterVoices[character.target_character_id]))
+    && unresolvedLines.value.every((line: any) => Boolean(utteranceVoices[line.utterance_id]))
+})
 
 async function refresh() {
   if (!projectId.value) return
   loading.value = true
   error.value = ''
   try {
-    const [scriptResult, bibleResult, audioResult, candidates, timingResult, timingCandidateRows] = await Promise.all([
-      getReplicaTargetScript(projectId.value), getReplicaTargetBible(projectId.value), getTargetAudio(projectId.value), listAudioCandidates(projectId.value), getTimingPlan(projectId.value), listTimingCandidates(projectId.value),
+    const [scriptResult, bibleResult, audioResult, candidates, timingResult, timingCandidateRows, catalogResult] = await Promise.all([
+      getReplicaTargetScript(projectId.value),
+      getReplicaTargetBible(projectId.value),
+      getTargetAudio(projectId.value),
+      listAudioCandidates(projectId.value),
+      getTimingPlan(projectId.value),
+      listTimingCandidates(projectId.value),
+      apiRequest<VoiceCatalogRead>(`/projects/${projectId.value}/target-audio/voices`, { cache: 'no-store' }),
     ])
     script.value = scriptResult
     bible.value = bibleResult.target_bible
@@ -38,6 +76,7 @@ async function refresh() {
     audioCandidates.value = candidates
     timing.value = timingResult
     timingCandidates.value = timingCandidateRows
+    voiceCatalog.value = catalogResult
   } catch (exc) {
     error.value = exc instanceof Error ? exc.message : '加载配音与时序失败'
   } finally {
@@ -47,13 +86,15 @@ async function refresh() {
 
 function bindings(): VoiceBinding[] {
   const rows: VoiceBinding[] = []
-  for (const character of bible.value?.content?.characters ?? []) {
-    const voice = characterVoices[character.target_character_id]?.trim()
-    if (voice) rows.push({ scope: 'CHARACTER', target_character_id: character.target_character_id, voice_id: voice })
+  for (const character of speakingCharacters.value) {
+    const voiceKey = characterVoices[character.target_character_id]
+    const option = voiceOption(voiceKey)
+    if (option) rows.push({ scope: 'CHARACTER', target_character_id: character.target_character_id, voice_id: option.voice_key, voice_label: option.display_name })
   }
   for (const line of unresolvedLines.value) {
-    const voice = utteranceVoices[line.utterance_id]?.trim()
-    if (voice) rows.push({ scope: 'UTTERANCE', utterance_id: line.utterance_id, voice_id: voice })
+    const voiceKey = utteranceVoices[line.utterance_id]
+    const option = voiceOption(voiceKey)
+    if (option) rows.push({ scope: 'UTTERANCE', utterance_id: line.utterance_id, voice_id: option.voice_key, voice_label: option.display_name })
   }
   return rows
 }
@@ -100,16 +141,29 @@ onMounted(refresh)
     <template v-if="script?.status === 'CURRENT' && bible?.status === 'CURRENT'">
       <div class="panel">
         <h3>1. 目标声线绑定</h3>
-        <p>声线必须显式绑定；未知人物对白不能自动猜默认 narrator。</p>
-        <label v-for="character in bible.content.characters" :key="character.target_character_id">
-          <span>{{ character.display_name }}</span>
-          <input v-model="characterVoices[character.target_character_id]" placeholder="Provider voice id" />
-        </label>
-        <label v-for="line in unresolvedLines" :key="line.utterance_id">
-          <span>未绑定人物 · #{{ line.utterance_number }} {{ line.final_target_dialogue }}</span>
-          <input v-model="utteranceVoices[line.utterance_id]" placeholder="该句 Provider voice id" />
-        </label>
-        <button type="button" :disabled="bindings().length === 0" @click="generateAudio">生成目标配音候选</button>
+        <p>从当前 TTS 服务端已配置的声线目录中选择。Provider voice id 只在服务端映射，不需要用户填写，也不会自动猜默认 narrator。</p>
+        <p v-if="!catalogConfigured" class="error">当前 TTS 运行时尚未配置可用声线目录。请先在服务端配置真实 Provider 声线，再生成目标配音。</p>
+        <template v-else>
+          <label v-for="character in speakingCharacters" :key="character.target_character_id">
+            <span>{{ character.display_name }}</span>
+            <select v-model="characterVoices[character.target_character_id]">
+              <option value="" disabled>选择目标声线</option>
+              <option v-for="voice in availableVoices" :key="voice.voice_key" :value="voice.voice_key">
+                {{ voice.display_name }}{{ voice.locale ? ` · ${voice.locale}` : '' }}{{ voice.tags.length ? ` · ${voice.tags.join(' / ')}` : '' }}
+              </option>
+            </select>
+          </label>
+          <label v-for="line in unresolvedLines" :key="line.utterance_id">
+            <span>未绑定人物 · #{{ line.utterance_number }} {{ line.final_target_dialogue }}</span>
+            <select v-model="utteranceVoices[line.utterance_id]">
+              <option value="" disabled>为该句选择声线</option>
+              <option v-for="voice in availableVoices" :key="voice.voice_key" :value="voice.voice_key">
+                {{ voice.display_name }}{{ voice.locale ? ` · ${voice.locale}` : '' }}{{ voice.tags.length ? ` · ${voice.tags.join(' / ')}` : '' }}
+              </option>
+            </select>
+          </label>
+        </template>
+        <button type="button" :disabled="!allBindingsResolved" @click="generateAudio">生成目标配音候选</button>
       </div>
 
       <div v-if="latestAudioCandidate" class="panel">
@@ -117,7 +171,7 @@ onMounted(refresh)
         <article v-for="clip in latestAudioCandidate.content.clips" :key="clip.clip_id" class="clip">
           <div><strong>#{{ clip.utterance_number }}</strong> {{ clip.final_target_dialogue }}</div>
           <audio :src="clip.media_url" controls preload="none" />
-          <small>voice {{ clip.voice_id }} · 实际时长 {{ seconds(clip.actual_speech_duration_us) }}</small>
+          <small>{{ clip.voice_label || '已选目标声线' }} · 实际时长 {{ seconds(clip.actual_speech_duration_us) }}</small>
         </article>
         <input v-model="reviewReason" placeholder="审核理由" />
         <div class="actions"><button type="button" @click="reviewAudio(latestAudioCandidate, true)">确认配音</button><button type="button" @click="reviewAudio(latestAudioCandidate, false)">拒绝</button></div>
@@ -139,5 +193,5 @@ onMounted(refresh)
 </template>
 
 <style scoped>
-.p14-workspace{margin:24px 0;padding:24px;border:1px solid var(--border-color,#ddd);border-radius:16px}.p14-workspace header{display:flex;justify-content:space-between;align-items:center}.eyebrow{margin:0;font-size:12px;opacity:.65}.panel{margin-top:18px;padding:18px;border-radius:12px;background:rgba(127,127,127,.06)}label{display:grid;gap:6px;margin:12px 0}input{padding:9px 11px}.clip{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid rgba(127,127,127,.2)}audio{width:100%}.actions{display:flex;gap:10px;margin-top:12px}.error{color:#b42318}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:8px;border-bottom:1px solid rgba(127,127,127,.2);font-size:13px}
+.p14-workspace{margin:24px 0;padding:24px;border:1px solid var(--border-color,#ddd);border-radius:16px}.p14-workspace header{display:flex;justify-content:space-between;align-items:center}.eyebrow{margin:0;font-size:12px;opacity:.65}.panel{margin-top:18px;padding:18px;border-radius:12px;background:rgba(127,127,127,.06)}label{display:grid;gap:6px;margin:12px 0}input,select{padding:9px 11px}.clip{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid rgba(127,127,127,.2)}audio{width:100%}.actions{display:flex;gap:10px;margin-top:12px}.error{color:#b42318}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:8px;border-bottom:1px solid rgba(127,127,127,.2);font-size:13px}
 </style>

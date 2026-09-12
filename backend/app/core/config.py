@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     p14_tts_model: str = "tts-1"
     p14_tts_response_format: str = "wav"
     p14_tts_request_timeout_seconds: float = 300.0
+    # Server-owned voice catalog. Browser receives only voice_key/display_name/locale/tags;
+    # provider_voice_id stays server-side and is resolved immediately before /audio/speech.
+    p14_tts_voice_catalog_json: str = "[]"
 
     @model_validator(mode="after")
     def anchor_runtime_paths(self) -> "Settings":
