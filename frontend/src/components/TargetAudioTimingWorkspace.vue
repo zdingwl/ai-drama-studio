@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { getReplicaTargetBible } from '@/features/projects/targetBible'
@@ -38,6 +38,7 @@ const voiceCatalog = ref<VoiceCatalogRead | null>(null)
 const characterVoices = reactive<Record<string, string>>({})
 const utteranceVoices = reactive<Record<string, string>>({})
 const reviewReason = ref('已逐句听审目标配音与时序结果')
+let runtimePoll: number | undefined
 
 const latestAudioCandidate = computed(() => audioCandidates.value.find((item) => item.review_status === 'NEEDS_REVIEW') ?? null)
 const latestTimingCandidate = computed(() => timingCandidates.value.find((item) => item.review_status === 'NEEDS_REVIEW') ?? null)
@@ -58,6 +59,11 @@ const allBindingsResolved = computed(() => {
   return speakingCharacters.value.every((character: any) => Boolean(characterVoices[character.target_character_id]))
     && unresolvedLines.value.every((line: any) => Boolean(utteranceVoices[line.utterance_id]))
 })
+
+async function readVoiceCatalog() {
+  if (!projectId.value) return
+  voiceCatalog.value = await apiRequest<VoiceCatalogRead>(`/projects/${projectId.value}/target-audio/voices`, { cache: 'no-store' })
+}
 
 async function refresh() {
   if (!projectId.value) return
@@ -132,7 +138,16 @@ async function reviewTiming(candidate: TimingCandidate, accept: boolean) {
 }
 
 const seconds = (us: number) => `${(us / 1_000_000).toFixed(2)}s`
-onMounted(refresh)
+onMounted(() => {
+  void refresh()
+  runtimePoll = window.setInterval(() => {
+    if (runtimeReady.value || !projectId.value) return
+    void readVoiceCatalog().catch(() => undefined)
+  }, 5000)
+})
+onBeforeUnmount(() => {
+  if (runtimePoll !== undefined) window.clearInterval(runtimePoll)
+})
 </script>
 
 <template>
@@ -147,7 +162,7 @@ onMounted(refresh)
         <p>每个声线都对应一段 Reference Audio，由本地 IndexTTS-2.5 做 zero-shot voice cloning；这里不存在需要用户填写的 Provider voice id，也不会自动从原剧演员音轨克隆。</p>
         <p :class="runtimeReady ? 'runtime-ok' : 'error'">本地 IndexTTS-2.5：{{ voiceCatalog?.runtime_message || '正在探测…' }}</p>
         <p v-if="!catalogConfigured" class="error">当前 IndexTTS-2.5 参考声线目录为空。请先配置有使用授权的 Reference Audio，再生成目标配音。</p>
-        <p v-else-if="!runtimeReady" class="error">请先启动本地 IndexTTS-2.5 服务；服务 READY 后才允许生成正式候选。</p>
+        <p v-else-if="!runtimeReady" class="error">IndexTTS-2.5 由 AI Drama Studio 统一启动器自动管理。若当前应用是手工启动的，请关闭旧进程并从仓库根目录运行 start.cmd（Windows）或 ./start.sh（Linux / WSL）。首次启动会自动准备运行时和模型，本页会自动等待 READY。</p>
         <template v-else>
           <label v-for="character in speakingCharacters" :key="character.target_character_id">
             <span>{{ character.display_name }}</span>

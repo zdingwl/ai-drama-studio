@@ -6,8 +6,9 @@ __pycache__/
 venv/
 *.egg-info/
 
-# Local model bundles
+# Local model / managed runtime bundles
 /.models/
+/.runtime/
 
 # Backend runtime
 backend/.env
