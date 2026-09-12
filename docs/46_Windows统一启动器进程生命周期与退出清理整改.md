@@ -56,7 +56,10 @@ start.cmd
 因此新 launcher 第一次运行时会检查 5173 / 8000 / 8092：
 
 - listener 的 executable / command line 明确属于当前仓库 checkout：视为旧统一启动器遗留进程，安全回收后重新启动并纳入新 Job；
-- listener 无法识别或属于其他程序 / 其他 checkout：fail closed，不杀未知进程。
+- 8000 backend 有一个额外的强身份规则：如果 `/api/v3/health` 返回的 `runtime_fingerprint` 与当前 checkout 按相同源码哈希规则计算的 fingerprint 完全一致，则即使该 backend 由仓库外的 uv-managed Python 可执行文件启动、命令行中没有仓库绝对路径，也确认属于当前 checkout 并允许安全回收；
+- listener 无法识别、backend fingerprint 不匹配、或属于其他程序 / 其他 checkout：fail closed，不杀未知进程。
+
+`runtime_fingerprint` 在 backend 启动时冻结，来自当前 `backend/app/**/*.py` 的路径感知 SHA256；因此一次 `git pull` 后，旧 backend 即使仍然健康，也不能伪装成当前源码实例。
 
 Windows 新生命周期不再为了节省一次启动而复用当前 checkout 的旧后台服务，因为一旦复用，launcher 退出时就无法保证它们一起结束。
 
