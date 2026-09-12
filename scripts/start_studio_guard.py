@@ -56,29 +56,12 @@ def _port_open(port: int) -> bool:
 
 def _stop_stale_backend() -> None:
     print("[Studio] backend is healthy but belongs to an older source snapshot; replacing it...")
-    if IS_WINDOWS:
-        command = (
-            "Get-CimInstance Win32_Process | "
-            "Where-Object { "
-            "$_.CommandLine -and "
-            "$_.CommandLine -match 'app\\.main:app' -and "
-            "$_.CommandLine -match '--port\\s+8000' "
-            "} | "
-            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
-        )
-        subprocess.run(
-            ["powershell.exe", "-NoProfile", "-Command", command],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        subprocess.run(
-            ["bash", "-lc", "pkill -f 'app\\.main:app.*--port 8000' || true"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+    subprocess.run(
+        ["bash", "-lc", "pkill -f 'app\\.main:app.*--port 8000' || true"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
 
     deadline = time.monotonic() + 6
     while time.monotonic() < deadline and _port_open(8000):
@@ -98,13 +81,22 @@ def main() -> int:
         running = str(payload.get("runtime_fingerprint") or "")
         if running == wanted:
             print(f"[Studio] backend runtime matches current source ({wanted[:12]}).")
+        elif IS_WINDOWS:
+            # Windows lifecycle ownership is verified centrally by
+            # start_studio.py. Do not kill by a broad command-line pattern here;
+            # the launcher will only stop a listener proven to belong to this
+            # checkout before creating a fresh Job-owned process tree.
+            print("[Studio] an older backend is present; Windows lifecycle guard will verify and replace it safely.")
         else:
             _stop_stale_backend()
     elif _port_open(8000):
-        raise RuntimeError(
-            "Port 8000 is occupied by a process that is not a readable AI Drama Studio backend. "
-            "Stop that process before starting Studio."
-        )
+        if IS_WINDOWS:
+            print("[Studio] port 8000 is occupied; Windows lifecycle guard will verify ownership before taking action.")
+        else:
+            raise RuntimeError(
+                "Port 8000 is occupied by a process that is not a readable AI Drama Studio backend. "
+                "Stop that process before starting Studio."
+            )
 
     launcher = REPO_ROOT / "scripts" / "start_studio.py"
     return subprocess.call([sys.executable, str(launcher), *sys.argv[1:]], cwd=str(REPO_ROOT))
