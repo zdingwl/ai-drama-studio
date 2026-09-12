@@ -277,6 +277,38 @@ def belongs_to_repo(info: WindowsProcessInfo, repo_root: Path) -> bool:
     return bool(repo and repo in haystack)
 
 
+def _is_uvicorn_backend_process(info: WindowsProcessInfo) -> bool:
+    command = info.command_line.replace("\\", "/").casefold()
+    return (
+        "uvicorn" in command
+        and "app.main:app" in command
+        and "--port" in command
+        and "8000" in command
+    )
+
+
+def _verified_backend_tree_root(listener: WindowsProcessInfo) -> WindowsProcessInfo:
+    """Walk from a verified listener to its Uvicorn reload parent, if present.
+
+    With ``uvicorn --reload`` the process that owns port 8000 can be a worker.
+    Killing only that PID lets the reload supervisor immediately recreate it.
+    Once the health fingerprint has already proven checkout ownership it is
+    safe to walk the direct parent chain and terminate the highest matching
+    Uvicorn supervisor instead.
+    """
+    root = listener
+    current_parent_id = listener.parent_process_id
+    seen = {listener.process_id}
+    while current_parent_id > 0 and current_parent_id not in seen:
+        seen.add(current_parent_id)
+        parent = process_info(current_parent_id)
+        if parent is None or not _is_uvicorn_backend_process(parent):
+            break
+        root = parent
+        current_parent_id = parent.parent_process_id
+    return root
+
+
 def terminate_tree(process_id: int) -> None:
     subprocess.run(
         ["taskkill", "/PID", str(process_id), "/T", "/F"],
@@ -311,12 +343,14 @@ def cleanup_repo_listener(
             "It was not terminated."
         )
 
+    target = _verified_backend_tree_root(info) if port == 8000 and trusted_identity else info
     identity_note = "runtime fingerprint" if trusted_identity and not belongs_to_repo(info, repo_root) else "repo path"
+    root_note = f", tree root PID {target.process_id}" if target.process_id != info.process_id else ""
     print(
         f"[Studio] removing orphaned {label} from this checkout "
-        f"(PID {info.process_id}, verified by {identity_note})..."
+        f"(listener PID {info.process_id}{root_note}, verified by {identity_note})..."
     )
-    terminate_tree(info.process_id)
+    terminate_tree(target.process_id)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline and port_open(port):
         time.sleep(0.2)
