@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { apiRequest } from '@/lib/api'
+import { ApiError, apiRequest } from '@/lib/api'
 
 interface P14AcceptanceReadiness {
   project_id: string
@@ -37,7 +37,16 @@ async function runCheck() {
       { cache: 'no-store' },
     )
   } catch (exc) {
-    error.value = exc instanceof Error ? exc.message : 'P14 技术验收检查失败'
+    if (
+      exc instanceof ApiError
+      && exc.status === 404
+      && exc.code === 'HTTP_ERROR'
+      && exc.message === 'Not Found'
+    ) {
+      error.value = '当前页面代码已更新，但 8000 后端仍是旧版本。请退出旧的 Studio / backend 进程并重新运行 start.cmd（Linux / WSL 使用 ./start.sh），然后刷新页面。'
+    } else {
+      error.value = exc instanceof Error ? exc.message : 'P14 技术验收检查失败'
+    }
   } finally {
     checking.value = false
   }
