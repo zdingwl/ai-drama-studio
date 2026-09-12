@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import subprocess
@@ -29,7 +30,7 @@ class ProbedAudio:
 class TTSVoiceCatalogEntry:
     voice_key: str
     display_name: str
-    provider_voice_id: str
+    reference_audio_url: str
     locale: str | None = None
     tags: tuple[str, ...] = ()
 
@@ -38,36 +39,43 @@ def _load_voice_catalog(raw: str) -> tuple[TTSVoiceCatalogEntry, ...]:
     try:
         payload = json.loads(raw or "[]")
     except json.JSONDecodeError as exc:
-        raise AppError("P14_TTS_VOICE_CATALOG_INVALID", "P14 TTS Voice Catalog 不是合法 JSON", status_code=500) from exc
+        raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "IndexTTS 参考声线目录不是合法 JSON", status_code=500) from exc
     if not isinstance(payload, list):
-        raise AppError("P14_TTS_VOICE_CATALOG_INVALID", "P14 TTS Voice Catalog 必须是数组", status_code=500)
+        raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "IndexTTS 参考声线目录必须是数组", status_code=500)
     entries: list[TTSVoiceCatalogEntry] = []
     seen: set[str] = set()
     for index, item in enumerate(payload):
         if not isinstance(item, dict):
-            raise AppError("P14_TTS_VOICE_CATALOG_INVALID", "P14 TTS Voice Catalog 条目必须是对象", status_code=500)
+            raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "IndexTTS 参考声线条目必须是对象", status_code=500)
         voice_key = str(item.get("voice_key") or "").strip()
         display_name = str(item.get("display_name") or "").strip()
-        provider_voice_id = str(item.get("provider_voice_id") or "").strip()
-        if not voice_key or not display_name or not provider_voice_id:
+        reference_audio_url = str(item.get("reference_audio_url") or "").strip()
+        if not voice_key or not display_name or not reference_audio_url:
             raise AppError(
-                "P14_TTS_VOICE_CATALOG_INVALID",
-                "P14 TTS Voice Catalog 条目缺少 voice_key/display_name/provider_voice_id",
+                "P14_INDEXTTS_VOICE_CATALOG_INVALID",
+                "IndexTTS 参考声线条目缺少 voice_key/display_name/reference_audio_url",
                 status_code=500,
                 details={"index": index},
             )
         if voice_key in seen:
-            raise AppError("P14_TTS_VOICE_CATALOG_INVALID", "P14 TTS Voice Catalog voice_key 不能重复", status_code=500)
+            raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "IndexTTS voice_key 不能重复", status_code=500)
+        if not reference_audio_url.startswith(("http://", "https://", "data:audio/")):
+            raise AppError(
+                "P14_INDEXTTS_VOICE_CATALOG_INVALID",
+                "reference_audio_url 只允许 http(s) 或 data:audio URL",
+                status_code=500,
+                details={"voice_key": voice_key},
+            )
         seen.add(voice_key)
         raw_tags = item.get("tags") or []
         if not isinstance(raw_tags, list) or not all(isinstance(tag, str) for tag in raw_tags):
-            raise AppError("P14_TTS_VOICE_CATALOG_INVALID", "P14 TTS Voice Catalog tags 必须是字符串数组", status_code=500)
+            raise AppError("P14_INDEXTTS_VOICE_CATALOG_INVALID", "IndexTTS tags 必须是字符串数组", status_code=500)
         locale = str(item.get("locale") or "").strip() or None
         entries.append(
             TTSVoiceCatalogEntry(
                 voice_key=voice_key,
                 display_name=display_name,
-                provider_voice_id=provider_voice_id,
+                reference_audio_url=reference_audio_url,
                 locale=locale,
                 tags=tuple(tag.strip() for tag in raw_tags if tag.strip()),
             )
@@ -75,21 +83,45 @@ def _load_voice_catalog(raw: str) -> tuple[TTSVoiceCatalogEntry, ...]:
     return tuple(entries)
 
 
-class OpenAICompatibleTTSProvider:
-    provider_name = "openai-compatible-tts"
+def _index_language(target_language: str) -> str:
+    normalized = (target_language or "").strip().lower().replace("_", "-")
+    if normalized.startswith("zh"):
+        return "zh"
+    if normalized.startswith("en"):
+        return "en"
+    if normalized.startswith(("ja", "jp")):
+        return "ja"
+    if normalized.startswith("es"):
+        return "es"
+    if normalized.startswith("ar"):
+        return "ar"
+    raise AppError(
+        "P14_INDEXTTS_LANGUAGE_UNSUPPORTED",
+        "IndexTTS-2.5 当前正式支持 zh/en/ja/es/ar；项目目标语言不在支持范围",
+        status_code=409,
+        details={"target_language": target_language},
+    )
 
-    def __init__(self, settings: Settings) -> None:
-        self.base_url = settings.p14_tts_base_url.rstrip("/")
-        self.api_key = settings.p14_tts_api_key.get_secret_value() if settings.p14_tts_api_key else None
-        self.model_name = settings.p14_tts_model
-        self.response_format = settings.p14_tts_response_format
-        self.timeout_seconds = settings.p14_tts_request_timeout_seconds
-        self._voice_catalog = _load_voice_catalog(settings.p14_tts_voice_catalog_json)
+
+class IndexTTS25Provider:
+    provider_name = "indextts-2.5-vllm-omni"
+    response_format = "wav"
+
+    def __init__(self, settings: Settings, *, target_language: str) -> None:
+        self.base_url = settings.p14_indextts_base_url.rstrip("/")
+        self.model_name = settings.p14_indextts_model
+        self.timeout_seconds = settings.p14_indextts_request_timeout_seconds
+        self.default_speed = settings.p14_indextts_default_speed
+        self.default_emo_alpha = settings.p14_indextts_default_emo_alpha
+        self.target_language = target_language
+        self.language_code = _index_language(target_language)
+        self._voice_catalog = _load_voice_catalog(settings.p14_indextts_voice_catalog_json)
         self._voice_by_key = {item.voice_key: item for item in self._voice_catalog}
+        self._reference_cache: dict[str, tuple[str, str]] = {}
         if not self.base_url.startswith(("http://", "https://")):
-            raise AppError("P14_TTS_RUNTIME_INVALID", "P14 TTS base URL 必须是 http(s)", status_code=500)
-        if not self.model_name.strip():
-            raise AppError("P14_TTS_RUNTIME_INVALID", "P14 TTS model 未配置", status_code=500)
+            raise AppError("P14_INDEXTTS_RUNTIME_INVALID", "IndexTTS base URL 必须是 http(s)", status_code=500)
+        if self.model_name != "IndexTeam/IndexTTS-2.5":
+            raise AppError("P14_INDEXTTS_RUNTIME_INVALID", "P14 只允许 IndexTeam/IndexTTS-2.5", status_code=500)
 
     def public_voice_catalog(self) -> list[dict]:
         return [
@@ -105,15 +137,15 @@ class OpenAICompatibleTTSProvider:
     def resolve_voice(self, voice_key: str) -> TTSVoiceCatalogEntry:
         if not self._voice_catalog:
             raise AppError(
-                "P14_TTS_VOICE_CATALOG_REQUIRED",
-                "尚未配置 P14 TTS 可用声线目录，不能生成目标配音",
+                "P14_INDEXTTS_VOICE_CATALOG_REQUIRED",
+                "尚未配置 IndexTTS-2.5 参考声线，不能生成目标配音",
                 status_code=409,
             )
         entry = self._voice_by_key.get(voice_key)
         if entry is None:
             raise AppError(
-                "P14_TTS_VOICE_UNKNOWN",
-                "选择的目标声线不在当前服务端 Voice Catalog 中",
+                "P14_INDEXTTS_VOICE_UNKNOWN",
+                "选择的参考声线不在当前 IndexTTS-2.5 Voice Catalog 中",
                 status_code=422,
                 details={"voice_key": voice_key},
             )
@@ -124,7 +156,7 @@ class OpenAICompatibleTTSProvider:
             {
                 "voice_key": item.voice_key,
                 "display_name": item.display_name,
-                "provider_voice_id": item.provider_voice_id,
+                "reference_audio_url": item.reference_audio_url,
                 "locale": item.locale,
                 "tags": list(item.tags),
             }
@@ -138,54 +170,100 @@ class OpenAICompatibleTTSProvider:
             "model": self.model_name,
             "base_url": self.base_url,
             "response_format": self.response_format,
+            "target_language": self.target_language,
+            "lang": self.language_code,
+            "speed": self.default_speed,
+            "use_emo_text": True,
+            "emo_alpha": self.default_emo_alpha,
             "voice_catalog_fingerprint": catalog_fingerprint,
         }
 
+    def _reference_data_url(self, voice_key: str) -> tuple[str, str]:
+        cached = self._reference_cache.get(voice_key)
+        if cached is not None:
+            return cached
+        entry = self.resolve_voice(voice_key)
+        source = entry.reference_audio_url
+        if source.startswith("data:audio/"):
+            try:
+                header, encoded = source.split(",", 1)
+                raw = base64.b64decode(encoded, validate=True)
+            except (ValueError, base64.binascii.Error) as exc:
+                raise AppError("P14_INDEXTTS_REFERENCE_INVALID", "IndexTTS 参考音频 data URL 无效", status_code=500) from exc
+            if not raw:
+                raise AppError("P14_INDEXTTS_REFERENCE_INVALID", "IndexTTS 参考音频为空", status_code=500)
+            sha = hashlib.sha256(raw).hexdigest()
+            result = (source, sha)
+            self._reference_cache[voice_key] = result
+            return result
+
+        urls = [source]
+        if source.startswith("https://hf-mirror.com/"):
+            urls.append(source.replace("https://hf-mirror.com/", "https://huggingface.co/", 1))
+        response = None
+        last_error: Exception | None = None
+        for url in urls:
+            try:
+                candidate = httpx.get(url, timeout=min(self.timeout_seconds, 120.0), follow_redirects=True)
+                if candidate.status_code < 400 and candidate.content:
+                    response = candidate
+                    break
+            except httpx.HTTPError as exc:
+                last_error = exc
+        if response is None:
+            raise AppError("P14_INDEXTTS_REFERENCE_FETCH_FAILED", "无法读取 IndexTTS 参考音频", status_code=502) from last_error
+        if len(response.content) > 25 * 1024 * 1024:
+            raise AppError("P14_INDEXTTS_REFERENCE_TOO_LARGE", "IndexTTS 参考音频超过 25MB", status_code=422)
+        content_type = response.headers.get("content-type", "audio/wav").split(";", 1)[0].strip().lower()
+        if content_type.startswith("text/"):
+            raise AppError("P14_INDEXTTS_REFERENCE_INVALID", "IndexTTS 参考音频 URL 返回了文本内容", status_code=502)
+        mime = content_type if content_type.startswith("audio/") else "audio/wav"
+        data_url = f"data:{mime};base64,{base64.b64encode(response.content).decode('ascii')}"
+        sha = hashlib.sha256(response.content).hexdigest()
+        result = (data_url, sha)
+        self._reference_cache[voice_key] = result
+        return result
+
     def synthesize(self, *, text: str, voice_id: str) -> SynthesizedAudio:
-        # `voice_id` is the existing P14 wire-field name. It now carries the stable application
-        # voice key; the provider-specific voice id is resolved server-side and never exposed in UI.
-        provider_voice_id = self.resolve_voice(voice_id).provider_voice_id
-        headers = {"Accept": "audio/*"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        # `voice_id` is retained as the pre-P14-PASS wire-field name. It now means an
+        # application reference-voice key, never an OpenAI/provider preset voice id.
+        ref_audio, _reference_sha = self._reference_data_url(voice_id)
         payload = {
             "model": self.model_name,
             "input": text,
-            "voice": provider_voice_id,
             "response_format": self.response_format,
+            "ref_audio": ref_audio,
+            "speed": self.default_speed,
+            "extra_params": {
+                "lang": self.language_code,
+                "text_normalization": True,
+                "use_emo_text": True,
+                "emo_alpha": self.default_emo_alpha,
+            },
         }
         try:
             response = httpx.post(
                 f"{self.base_url}/audio/speech",
                 json=payload,
-                headers=headers,
+                headers={"Accept": "audio/wav"},
                 timeout=self.timeout_seconds,
             )
         except httpx.HTTPError as exc:
-            raise AppError("P14_TTS_TRANSPORT_FAILED", "TTS Provider 连接失败", status_code=502) from exc
+            raise AppError("P14_INDEXTTS_TRANSPORT_FAILED", "IndexTTS-2.5 服务连接失败", status_code=502) from exc
         if response.status_code >= 400:
             raise AppError(
-                "P14_TTS_PROVIDER_REJECTED",
-                f"TTS Provider 返回 HTTP {response.status_code}",
+                "P14_INDEXTTS_REJECTED",
+                f"IndexTTS-2.5 返回 HTTP {response.status_code}",
                 status_code=502,
             )
         if not response.content:
-            raise AppError("P14_TTS_EMPTY_AUDIO", "TTS Provider 返回空音频", status_code=502)
+            raise AppError("P14_INDEXTTS_EMPTY_AUDIO", "IndexTTS-2.5 返回空音频", status_code=502)
         content_type = response.headers.get("content-type", "audio/wav").split(";", 1)[0].strip().lower()
-        extension = {
-            "audio/wav": "wav",
-            "audio/x-wav": "wav",
-            "audio/mpeg": "mp3",
-            "audio/mp3": "mp3",
-            "audio/ogg": "ogg",
-            "audio/flac": "flac",
-            "audio/aac": "aac",
-        }.get(content_type, self.response_format.strip().lower() or "wav")
         remote_job_id = response.headers.get("x-request-id") or response.headers.get("request-id")
         return SynthesizedAudio(
             audio_bytes=response.content,
-            mime_type=content_type or "application/octet-stream",
-            file_extension=extension,
+            mime_type=content_type or "audio/wav",
+            file_extension="wav",
             remote_job_id=remote_job_id,
         )
 

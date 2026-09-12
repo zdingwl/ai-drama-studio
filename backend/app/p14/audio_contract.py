@@ -6,7 +6,7 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.p14.common import _assert_replica, _current_artifact, _existing_command_task, _next_generation_sequence, _sha
 from app.p14.models import ReplicaTargetAudioCandidate
-from app.p14.provider import OpenAICompatibleTTSProvider
+from app.p14.provider import IndexTTS25Provider
 from app.p14.schemas import TargetAudioGenerateCommand, TargetVoiceBinding, VoiceBindingScope
 from app.projects.models import Project
 from app.projects.service import get_project
@@ -109,7 +109,7 @@ def _binding_maps(
             continue
         raise AppError(
             "P14_VOICE_BINDING_REQUIRED",
-            "每条目标对白都必须能解析到显式 voice；未知说话人必须使用 utterance-level binding，禁止猜 voice",
+            "每条目标对白都必须能解析到显式 reference voice；未知说话人必须使用 utterance-level binding，禁止猜 voice",
             status_code=409,
             details={"utterance_id": line.utterance_id, "target_character_id": line.target_character_id},
         )
@@ -127,7 +127,7 @@ def _select_binding(
     target_character_id = line.target_character_id
     if target_character_id and target_character_id in character_bindings:
         return character_bindings[target_character_id]
-    raise AppError("P14_VOICE_BINDING_REQUIRED", "目标对白缺少显式 voice binding", status_code=409)
+    raise AppError("P14_VOICE_BINDING_REQUIRED", "目标对白缺少显式 reference voice binding", status_code=409)
 
 
 def create_target_audio_task(
@@ -150,17 +150,19 @@ def create_target_audio_task(
     if existing is not None:
         return existing
     _binding_maps(command, script, bible)
+    provider = IndexTTS25Provider(get_settings(), target_language=project.target_language)
+    for binding in command.bindings:
+        provider.resolve_voice(binding.voice_id)
     current = _current_artifact(db, project_id, ArtifactType.TARGET_AUDIO)
     if current is not None and not regenerate:
         raise AppError("P14_TARGET_AUDIO_ALREADY_CURRENT", "已有 CURRENT TARGET_AUDIO；重新生成必须使用显式 regenerate", status_code=409)
     sequence = _next_generation_sequence(db, project_id, ReplicaTargetAudioCandidate)
-    provider = OpenAICompatibleTTSProvider(get_settings())
     fingerprint = _sha(
         {
             "target_script": [script_artifact.id, script_artifact.revision, script_artifact.input_fingerprint],
             "target_bible": [bible_artifact.id, bible_artifact.revision, bible_artifact.input_fingerprint],
             "bindings": command_payload,
-            "provider": {"provider": provider.provider_name, "model": provider.model_name},
+            "provider": provider.profile(),
             "generation_sequence": sequence,
         }
     )
@@ -169,7 +171,7 @@ def create_target_audio_task(
         project_id=project.id,
         payload=TaskCommandCreate(
             task_type=P14_AUDIO_TASK_TYPE,
-            task_name="生成目标配音",
+            task_name="生成 IndexTTS-2.5 目标配音",
             input_fingerprint=fingerprint,
             input_artifact_ids=[script_artifact.id, bible_artifact.id],
             max_attempts=3,

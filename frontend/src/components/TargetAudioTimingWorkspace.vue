@@ -140,14 +140,14 @@ onMounted(refresh)
 
     <template v-if="script?.status === 'CURRENT' && bible?.status === 'CURRENT'">
       <div class="panel">
-        <h3>1. 目标声线绑定</h3>
-        <p>从当前 TTS 服务端已配置的声线目录中选择。Provider voice id 只在服务端映射，不需要用户填写，也不会自动猜默认 narrator。</p>
-        <p v-if="!catalogConfigured" class="error">当前 TTS 运行时尚未配置可用声线目录。请先在服务端配置真实 Provider 声线，再生成目标配音。</p>
+        <h3>1. IndexTTS-2.5 参考声线绑定</h3>
+        <p>每个声线都对应一段 Reference Audio，由本地 IndexTTS-2.5 做 zero-shot voice cloning；这里不存在需要用户填写的 Provider voice id，也不会自动从原剧演员音轨克隆。</p>
+        <p v-if="!catalogConfigured" class="error">当前 IndexTTS-2.5 参考声线目录为空。请先配置有使用授权的 Reference Audio，再生成目标配音。</p>
         <template v-else>
           <label v-for="character in speakingCharacters" :key="character.target_character_id">
             <span>{{ character.display_name }}</span>
             <select v-model="characterVoices[character.target_character_id]">
-              <option value="" disabled>选择目标声线</option>
+              <option value="" disabled>选择参考声线</option>
               <option v-for="voice in availableVoices" :key="voice.voice_key" :value="voice.voice_key">
                 {{ voice.display_name }}{{ voice.locale ? ` · ${voice.locale}` : '' }}{{ voice.tags.length ? ` · ${voice.tags.join(' / ')}` : '' }}
               </option>
@@ -156,14 +156,14 @@ onMounted(refresh)
           <label v-for="line in unresolvedLines" :key="line.utterance_id">
             <span>未绑定人物 · #{{ line.utterance_number }} {{ line.final_target_dialogue }}</span>
             <select v-model="utteranceVoices[line.utterance_id]">
-              <option value="" disabled>为该句选择声线</option>
+              <option value="" disabled>为该句选择参考声线</option>
               <option v-for="voice in availableVoices" :key="voice.voice_key" :value="voice.voice_key">
                 {{ voice.display_name }}{{ voice.locale ? ` · ${voice.locale}` : '' }}{{ voice.tags.length ? ` · ${voice.tags.join(' / ')}` : '' }}
               </option>
             </select>
           </label>
         </template>
-        <button type="button" :disabled="!allBindingsResolved" @click="generateAudio">生成目标配音候选</button>
+        <button type="button" :disabled="!allBindingsResolved" @click="generateAudio">生成 IndexTTS-2.5 配音候选</button>
       </div>
 
       <div v-if="latestAudioCandidate" class="panel">
@@ -171,7 +171,7 @@ onMounted(refresh)
         <article v-for="clip in latestAudioCandidate.content.clips" :key="clip.clip_id" class="clip">
           <div><strong>#{{ clip.utterance_number }}</strong> {{ clip.final_target_dialogue }}</div>
           <audio :src="clip.media_url" controls preload="none" />
-          <small>{{ clip.voice_label || '已选目标声线' }} · 实际时长 {{ seconds(clip.actual_speech_duration_us) }}</small>
+          <small>{{ clip.voice_label || '已选参考声线' }} · 实际时长 {{ seconds(clip.actual_speech_duration_us) }}</small>
         </article>
         <input v-model="reviewReason" placeholder="审核理由" />
         <div class="actions"><button type="button" @click="reviewAudio(latestAudioCandidate, true)">确认配音</button><button type="button" @click="reviewAudio(latestAudioCandidate, false)">拒绝</button></div>

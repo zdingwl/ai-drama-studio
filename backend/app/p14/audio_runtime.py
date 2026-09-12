@@ -11,7 +11,7 @@ from app.core.errors import AppError
 from app.p14.audio_contract import P14_AUDIO_TASK_TYPE, _binding_maps, _flatten_dialogue, _load_target_audio_inputs, _select_binding
 from app.p14.common import _checkpoint, _claim_specific, _mark_stage_failed, _text_sha
 from app.p14.models import ReplicaTargetAudioCandidate
-from app.p14.provider import OpenAICompatibleTTSProvider, probe_audio
+from app.p14.provider import IndexTTS25Provider, probe_audio
 from app.p14.schemas import P14_AUDIO_SCHEMA_VERSION, P14_AUDIO_SKILL_ID, CandidateReviewStatus, ReplicaTargetAudioContent, TargetAudioCandidateProvenance, TargetAudioClip, TargetAudioGenerateCommand, TargetVoiceBinding
 from app.projects.models import Project
 from app.skills.models import Capability
@@ -84,7 +84,7 @@ def _synthesize_clip(
     episode_order: int,
     line: object,
     binding: TargetVoiceBinding,
-    provider: OpenAICompatibleTTSProvider,
+    provider: IndexTTS25Provider,
 ) -> TargetAudioClip:
     clip_id = str(uuid5(NAMESPACE_URL, f"p14-target-audio:{project.id}:{line.utterance_id}"))
     text_sha = _text_sha(line.final_target_dialogue)
@@ -100,13 +100,17 @@ def _synthesize_clip(
         return recovered
 
     job_payload = {
-        "contract": "target-dialogue-tts-media-v1",
+        "contract": "indextts-2.5-target-dialogue-v1",
         "utterance_id": line.utterance_id,
         "target_character_id": line.target_character_id,
         "final_target_dialogue_sha256": text_sha,
-        "voice_id": binding.voice_id,
+        "voice_reference_key": binding.voice_id,
         "model": provider.model_name,
         "response_format": provider.response_format,
+        "lang": provider.language_code,
+        "speed": provider.default_speed,
+        "use_emo_text": True,
+        "emo_alpha": provider.default_emo_alpha,
     }
     storage_dir = _audio_storage_dir(project.id, task.id)
 
@@ -117,6 +121,7 @@ def _synthesize_clip(
         _write_atomic(media_path, result.audio_bytes)
         media_sha = hashlib.sha256(result.audio_bytes).hexdigest()
         probed = probe_audio(get_settings(), media_path)
+        voice = provider.resolve_voice(binding.voice_id)
         clip = TargetAudioClip(
             clip_id=clip_id,
             episode_id=episode_id,
@@ -127,7 +132,7 @@ def _synthesize_clip(
             final_target_dialogue=line.final_target_dialogue,
             final_target_dialogue_sha256=text_sha,
             voice_id=binding.voice_id,
-            voice_label=binding.voice_label,
+            voice_label=voice.display_name,
             provider=provider.provider_name,
             model=provider.model_name,
             provider_job_id=job.id,
@@ -174,7 +179,9 @@ def run_target_audio_task(factory: sessionmaker[Session], task_id: str) -> None:
             if snapshot.input_artifact_ids_json != [script_artifact.id, bible_artifact.id]:
                 raise AppError("P14_AUDIO_INPUT_CHANGED", "P14 目标配音输入已变化，请重新生成", status_code=409)
             character_bindings, utterance_bindings = _binding_maps(command, script, bible)
-            provider = OpenAICompatibleTTSProvider(get_settings())
+            provider = IndexTTS25Provider(get_settings(), target_language=project.target_language)
+            for binding in command.bindings:
+                provider.resolve_voice(binding.voice_id)
             lines = _flatten_dialogue(script)
             clips: list[TargetAudioClip] = []
             for index, (episode_id, episode_order, line) in enumerate(lines):

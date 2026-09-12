@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.p14.common import _assert_replica
-from app.p14.provider import OpenAICompatibleTTSProvider
+from app.p14.provider import IndexTTS25Provider
 from app.projects.service import get_project
 
 
@@ -37,7 +37,7 @@ def get_target_audio_voice_catalog_route(
 ) -> TTSVoiceCatalogRead:
     project = get_project(db, project_id)
     _assert_replica(project)
-    provider = OpenAICompatibleTTSProvider(get_settings())
+    provider = IndexTTS25Provider(get_settings(), target_language=project.target_language)
     voices = [TTSVoiceOptionRead.model_validate(item) for item in provider.public_voice_catalog()]
     return TTSVoiceCatalogRead(
         provider=provider.provider_name,

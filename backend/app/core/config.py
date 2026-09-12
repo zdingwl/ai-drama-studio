@@ -10,26 +10,22 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE_PATH = BACKEND_ROOT / "data" / "ai_drama_studio.db"
 DEFAULT_ARTIFACT_ROOT = BACKEND_ROOT / "artifacts"
 
-# OpenAI's documented built-in /v1/audio/speech voices, verified 2026-09-12.
-# The application still exposes only voice_key/display_name/locale/tags to the browser;
-# provider_voice_id remains server-side. Override the catalog for a different compatible provider.
-DEFAULT_P14_TTS_VOICE_CATALOG = (
-    {"voice_key": "alloy", "display_name": "Alloy", "provider_voice_id": "alloy", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "ash", "display_name": "Ash", "provider_voice_id": "ash", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "ballad", "display_name": "Ballad", "provider_voice_id": "ballad", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "coral", "display_name": "Coral", "provider_voice_id": "coral", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "echo", "display_name": "Echo", "provider_voice_id": "echo", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "fable", "display_name": "Fable", "provider_voice_id": "fable", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "onyx", "display_name": "Onyx", "provider_voice_id": "onyx", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "nova", "display_name": "Nova", "provider_voice_id": "nova", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "sage", "display_name": "Sage", "provider_voice_id": "sage", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "shimmer", "display_name": "Shimmer", "provider_voice_id": "shimmer", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "verse", "display_name": "Verse", "provider_voice_id": "verse", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "marin", "display_name": "Marin", "provider_voice_id": "marin", "locale": None, "tags": ["openai", "built-in"]},
-    {"voice_key": "cedar", "display_name": "Cedar", "provider_voice_id": "cedar", "locale": None, "tags": ["openai", "built-in"]},
+# IndexTTS-2.5 ships no text-only preset speakers. These are the official demo reference
+# recordings used by the upstream IndexTTS repository. They are useful for local engineering
+# validation only; formal production acceptance should replace them with authorized references.
+_INDEXTTS_DEMO_BASE = "https://hf-mirror.com/spaces/IndexTeam/IndexTTS-2-Demo/resolve/main/examples"
+DEFAULT_P14_INDEXTTS_VOICE_CATALOG = tuple(
+    {
+        "voice_key": f"indextts-demo-{number:02d}",
+        "display_name": f"IndexTTS 示例声线 {number:02d}",
+        "reference_audio_url": f"{_INDEXTTS_DEMO_BASE}/voice_{number:02d}.wav",
+        "locale": None,
+        "tags": ["IndexTTS-2.5", "官方示例", "开发验收"],
+    }
+    for number in (1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12)
 )
-DEFAULT_P14_TTS_VOICE_CATALOG_JSON = json.dumps(
-    DEFAULT_P14_TTS_VOICE_CATALOG,
+DEFAULT_P14_INDEXTTS_VOICE_CATALOG_JSON = json.dumps(
+    DEFAULT_P14_INDEXTTS_VOICE_CATALOG,
     ensure_ascii=False,
     separators=(",", ":"),
 )
@@ -88,15 +84,13 @@ class Settings(BaseSettings):
     p7_qwen3_vl_8b_local_model: str = "Qwen/Qwen3-VL-8B-Thinking"
     p7_qwen_local_request_timeout_seconds: float = 3600.0
 
-    # P14 Target Audio: OpenAI-compatible /audio/speech runtime. This is engineering-ready
-    # configuration only; TTS/TIMING stay PLANNED until real provider and human acceptance pass.
-    p14_tts_base_url: str = "http://127.0.0.1:8002/v1"
-    p14_tts_api_key: SecretStr | None = None
-    p14_tts_model: str = "tts-1"
-    p14_tts_response_format: str = "wav"
-    p14_tts_request_timeout_seconds: float = 300.0
-    # Defaults to the official OpenAI built-in voice names. Override for another provider.
-    p14_tts_voice_catalog_json: str = DEFAULT_P14_TTS_VOICE_CATALOG_JSON
+    # P14 has exactly one TTS implementation: IndexTTS-2.5 served locally by vLLM-Omni.
+    p14_indextts_base_url: str = "http://127.0.0.1:8092/v1"
+    p14_indextts_model: str = "IndexTeam/IndexTTS-2.5"
+    p14_indextts_request_timeout_seconds: float = 600.0
+    p14_indextts_default_speed: float = 1.0
+    p14_indextts_default_emo_alpha: float = 0.6
+    p14_indextts_voice_catalog_json: str = DEFAULT_P14_INDEXTTS_VOICE_CATALOG_JSON
 
     @model_validator(mode="after")
     def anchor_runtime_paths(self) -> "Settings":
@@ -125,7 +119,7 @@ class Settings(BaseSettings):
         for name, value in (
             ("p7_qwen38_local_base_url", self.p7_qwen38_local_base_url),
             ("p7_qwen3_vl_8b_local_base_url", self.p7_qwen3_vl_8b_local_base_url),
-            ("p14_tts_base_url", self.p14_tts_base_url),
+            ("p14_indextts_base_url", self.p14_indextts_base_url),
         ):
             if not value.startswith(("http://", "https://")):
                 raise ValueError(f"{name} must be http(s)")
@@ -133,12 +127,14 @@ class Settings(BaseSettings):
             raise ValueError("p7_qwen38_local_model must not be empty")
         if not self.p7_qwen3_vl_8b_local_model.strip():
             raise ValueError("p7_qwen3_vl_8b_local_model must not be empty")
-        if not self.p14_tts_model.strip():
-            raise ValueError("p14_tts_model must not be empty")
-        if self.p14_tts_request_timeout_seconds <= 0:
-            raise ValueError("p14_tts_request_timeout_seconds must be positive")
-        if self.p14_tts_response_format not in {"wav", "mp3", "ogg", "flac", "aac"}:
-            raise ValueError("p14_tts_response_format must be wav/mp3/ogg/flac/aac")
+        if self.p14_indextts_model != "IndexTeam/IndexTTS-2.5":
+            raise ValueError("p14_indextts_model is fixed to IndexTeam/IndexTTS-2.5")
+        if self.p14_indextts_request_timeout_seconds <= 0:
+            raise ValueError("p14_indextts_request_timeout_seconds must be positive")
+        if not 0.5 <= self.p14_indextts_default_speed <= 2.0:
+            raise ValueError("p14_indextts_default_speed must be between 0.5 and 2.0")
+        if not 0.0 <= self.p14_indextts_default_emo_alpha <= 1.0:
+            raise ValueError("p14_indextts_default_emo_alpha must be between 0 and 1")
         return self
 
     def ensure_runtime_directories(self) -> None:

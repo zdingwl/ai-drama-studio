@@ -3,21 +3,21 @@
   "name": "Replica Target Audio",
   "version": "1.0.0",
   "category": "production",
-  "description": "Bind explicit target voices to Final Target Dialogue, synthesize real target speech media, and measure actual speech duration from persisted audio.",
+  "description": "Bind explicit reference voices to Final Target Dialogue, synthesize real speech with local IndexTTS-2.5, and measure actual duration from persisted audio.",
   "when_to_use": ["REPLICA has CURRENT TARGET_SCRIPT and CURRENT TARGET_BIBLE and needs target-language dialogue audio"],
-  "when_not_to_use": ["Target dialogue is not final", "Voice identity is unresolved", "Storyboard or video generation is being requested"],
+  "when_not_to_use": ["Target dialogue is not final", "Reference voice is unresolved", "Storyboard or video generation is being requested"],
   "required_inputs": ["TARGET_SCRIPT", "TARGET_BIBLE"],
   "optional_inputs": [],
   "readable_artifacts": ["TARGET_SCRIPT", "TARGET_BIBLE"],
   "required_capabilities": ["TTS"],
   "manual_path": "replica-target-audio/SKILL.md",
   "steps": [
-    {"id":"validate_voice_bindings","phase":"配音与时序","title":"校验目标声线绑定","description":"校验每条 Final Target Dialogue 都有唯一、显式、可追溯的目标声线。","capabilities":["TTS"],"requires":["TARGET_SCRIPT","TARGET_BIBLE"],"produces":[]},
-    {"id":"synthesize_target_audio","phase":"配音与时序","title":"生成真实目标对白音频","description":"逐句持久化 ProviderJob 后调用 TTS，保存真实媒体并由服务端探测实际语音时长。","capabilities":["TTS"],"requires":["TARGET_SCRIPT","TARGET_BIBLE"],"produces":["TARGET_AUDIO"]}
+    {"id":"validate_voice_bindings","phase":"配音与时序","title":"校验目标参考声线","description":"校验每条 Final Target Dialogue 都有唯一、显式、可追溯的 IndexTTS reference voice。","capabilities":["TTS"],"requires":["TARGET_SCRIPT","TARGET_BIBLE"],"produces":[]},
+    {"id":"synthesize_target_audio","phase":"配音与时序","title":"生成真实目标对白音频","description":"逐句持久化 ProviderJob 后调用本地 IndexTTS-2.5，保存真实 WAV 并由服务端探测实际语音时长。","capabilities":["TTS"],"requires":["TARGET_SCRIPT","TARGET_BIBLE"],"produces":["TARGET_AUDIO"]}
   ],
-  "fact_levels": ["Final Target Dialogue is immutable input", "Actual speech duration is server-probed media fact"],
-  "provider_rules": ["Persist ProviderJob before every external synthesis call", "Provider cannot choose or rewrite Final Target Dialogue", "Provider-reported duration is diagnostic only", "Do not expose credentials in task/provider/artifact payloads", "Unknown target_character_id requires explicit utterance-level voice binding"],
+  "fact_levels": ["Final Target Dialogue is immutable input", "Reference voice is explicit input", "Actual speech duration is server-probed media fact"],
+  "provider_rules": ["Only IndexTeam/IndexTTS-2.5 is allowed", "Persist ProviderJob before every synthesis call", "Provider cannot choose or rewrite Final Target Dialogue", "Default speed is 1.0", "Do not expose reference audio bytes in ProviderJob payloads", "Unknown target_character_id requires explicit utterance-level voice binding"],
   "output_contracts": ["TARGET_AUDIO"],
   "completion_criteria": ["Every utterance is covered exactly once", "Every clip is real persisted decodable media", "Every clip has SHA256 and server-probed duration", "Candidate is explicitly accepted before CURRENT TARGET_AUDIO publication"],
-  "failure_policy": ["Missing binding fails closed", "Provider or media probe failure keeps previous CURRENT unchanged", "Candidate rejection never publishes TARGET_AUDIO"]
+  "failure_policy": ["Missing binding fails closed", "Unsupported target language fails closed", "IndexTTS or media probe failure keeps previous CURRENT unchanged", "Candidate rejection never publishes TARGET_AUDIO"]
 }
