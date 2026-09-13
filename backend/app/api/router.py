@@ -9,6 +9,7 @@ from app.api.routes.p16 import router as p16_router
 from app.api.routes.p17 import router as p17_router
 from app.api.routes.preprocessing import router as preprocessing_router
 from app.api.routes.projects import router as projects_router
+from app.api.routes.replica_product import router as replica_product_router
 from app.api.routes.shot_breakdown import router as shot_breakdown_router
 from app.api.routes.skills import router as skills_router
 from app.api.routes.source_analysis import router as source_analysis_router
@@ -41,4 +42,5 @@ api_router.include_router(p14_router)
 api_router.include_router(p15_router)
 api_router.include_router(p16_router)
 api_router.include_router(p17_router)
+api_router.include_router(replica_product_router)
 api_router.include_router(tasks_router)
