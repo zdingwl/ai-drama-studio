@@ -5,6 +5,7 @@ import { useRoute } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
 import P14AcceptanceReadinessPanel from '@/components/P14AcceptanceReadinessPanel.vue'
 import P14TimingOverflowTriage from '@/components/P14TimingOverflowTriage.vue'
+import ReplicaProductionWorkspace from '@/components/ReplicaProductionWorkspace.vue'
 import P6AcceptancePanel from '@/components/P6AcceptancePanel.vue'
 import P7SourceUnderstandingWorkspace from '@/components/P7SourceUnderstandingWorkspace.vue'
 import P8ShotBreakdownPanel from '@/components/P8ShotBreakdownPanel.vue'
@@ -34,6 +35,7 @@ const debugMode = computed(() => route.query.debug === '1')
       <P14TimingOverflowTriage v-if="isProjectWorkspace" />
       <TargetAudioRetakeWorkspace v-if="isProjectWorkspace" />
       <P14AcceptanceReadinessPanel v-if="isProjectWorkspace" />
+      <ReplicaProductionWorkspace v-if="isProjectWorkspace" />
 
       <template v-if="isProjectWorkspace && debugMode">
         <P6AcceptancePanel />
@@ -49,7 +51,7 @@ const debugMode = computed(() => route.query.debug === '1')
 <style>
 /*
  * Product mode exposes one source-analysis action and the resulting script / storyboard,
- * followed by business-facing Target Bible, Target Script, Target Assets and P14 audio/timing workspaces for Replica projects.
+ * followed by business-facing Target Bible, Target Script, Target Assets, audio/timing, storyboard, generation and final-output workspaces for Replica projects.
  * The existing P5-P10 engineering surfaces stay available at ?debug=1 for acceptance
  * and diagnostics without making ordinary users operate the internal pipeline.
  */

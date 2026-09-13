@@ -1,7 +1,7 @@
 # AI Drama Studio V3 — 开发规则
 
-> 当前状态日期：2026-09-11。  
-> 当前最高优先级：`docs/30_P13真实项目验收_资产作用域与时序约束整改.md`。  
+> 当前状态日期：2026-09-13。
+> 当前最高优先级：`docs/52_P14-P17Replica生产链工程收口与统一真实验收准入.md`。
 > 原则：仓库当前 `main` + 编号更高、日期更新的状态/验收文档是唯一事实源；历史文档只能解释演进，不能覆盖最新口径。
 
 ## 1. 开发前读取顺序
@@ -40,7 +40,29 @@
 30. `docs/28_P13TargetAssetsProfessionalSkill与数据契约.md`
 31. `docs/29_P13中文审核语言与生成执行语言分层.md`
 32. `docs/30_P13真实项目验收_资产作用域与时序约束整改.md`
-33. 当前相关代码与测试
+33. `docs/31_P13最终验收与P14准入评估.md`
+34. `docs/32_P14目标配音与对白时序ProfessionalSkill与数据契约.md`
+35. `docs/33_P14声线目录与ProviderVoiceId隔离整改.md`
+36. `docs/34_P14IndexTTS25单Provider与情绪语速控制整改.md`
+37. `docs/35_P14IndexTTS25本地运行时启动与健康检查.md`
+38. `docs/36_P14中国环境IndexTTS25本地模型部署与502诊断.md`
+39. `docs/37_统一启动器与IndexTTS25托管运行时.md`
+40. `docs/38_Windows原生IndexTTS25无需WSL统一运行时.md`
+41. `docs/39_P14参考声线试听与可读选角整改.md`
+42. `docs/40_P14可编辑VoiceCatalog元数据与人工命名整改.md`
+43. `docs/41_P14声线分类筛选与选角效率整改.md`
+44. `docs/42_P14逐句表演指令与可控Retake数据契约.md`
+45. `docs/43_P14技术验收就绪检查与最终人工验收入口.md`
+46. `docs/44_P14新前端旧后端混合运行诊断与统一启动器源码身份校验.md`
+47. `docs/45_P14Retake分组折叠与Overflow筛选工作台整改.md`
+48. `docs/46_Windows统一启动器进程生命周期与退出清理整改.md`
+49. `docs/47_P14TimingOverflow分诊与P12回退决策整改.md`
+50. `docs/48_P14Timing回退P12定向对白修订闭环.md`
+51. `docs/49_P15ReplicaStoryboard与GenerationSegments数据契约.md`
+52. `docs/50_P16VideoGenerationQCSelection数据契约.md`
+53. `docs/51_P17PostProductionFinalOutput数据契约.md`
+54. `docs/52_P14-P17Replica生产链工程收口与统一真实验收准入.md`
+55. 当前相关代码与测试
 
 冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。**
 
@@ -54,10 +76,13 @@
 - `docs/24`：P11 正式 Professional Skill、typed Target Artifact、revision/fingerprint/provenance、原子发布、Artifact Graph、Provider 与 UI/验收契约；
 - `docs/25`：P12 Target Script / Localization 正式数据与 Professional Skill 合同；
 - `docs/26`：用户已明确 `P11 PASS`，`LOCALIZATION / TARGET_BIBLE = AVAILABLE`，P12 正式准入；
-- `docs/27`：用户已明确 `P12 PASS`，`TARGET_SCRIPT = AVAILABLE`；后续能力仍需独立合同与真实验收；
-- `docs/28`：P13 Target Assets 正式合同已经建立；P13 可以实现、测试和进入真实验收，但用户明确 `P13 PASS` 前 `TARGET_ASSETS = PLANNED`，且不得进入 P14+；
-- `docs/29`：P13 用户审核语言固定中文优先；目标受众成品语言与未来模型执行 prompt 语言分层；
-- `docs/30`：P13 已真实执行 Provider → candidate → explicit ACCEPT → CURRENT TARGET_ASSETS 路径，但真实内容质量验收发现旧 visual-identity-v1 把 Target Bible 全局英文叙事规则注入每个 asset、出现逐场景 wardrobe 与未经上游确认的剧情时段推断，因此该轮**不 PASS**；当前必须按 `p13-replica-target-assets-v3 / replica-target-visual-identity-v2` 显式 regenerate 并重新人工验收。
+- `docs/27`：用户已明确 `P12 PASS`，`TARGET_SCRIPT = AVAILABLE`；
+- `docs/31`：用户已明确 `P13 PASS`，`TARGET_ASSETS = AVAILABLE`，P14 正式准入；
+- `docs/32~48`：P14 Target Audio / Timing、IndexTTS 2.5、Retake、Overflow 分诊和 P12 定向 Timing Rewrite 合同与工程闭环；P14 尚未最终人工 PASS；
+- `docs/49`：P15 Replica Storyboard / Generation Segments 正式工程合同；
+- `docs/50`：P16 MiniMax H3 Video Generation / Technical QC / Human Selection 正式工程合同；
+- `docs/51`：P17 Lip Sync / Post Production / Final Output 正式工程合同；
+- `docs/52`：P14–P17 工程链已完成到统一真实验收入口；P14~P17 当前都 `PASS = NO`，对应 capability 继续 `PLANNED`，下一步必须统一跑真实 Replica 项目端到端验收。
 
 历史分支只能参考，不能覆盖当前 V3 规划。
 
@@ -81,6 +106,7 @@ P9 Character / Speaker / Scene / Prop 最终归一
 P10 SourceVideoSnapshot / 一键原片解析产品链
 P11 Replica Target Bible
 P12 Target Script / Localization
+P13 Target Assets
 ```
 
 当前 `AVAILABLE` 至少包括：
@@ -101,35 +127,36 @@ SOURCE_SNAPSHOT
 LOCALIZATION
 TARGET_BIBLE
 TARGET_SCRIPT
+TARGET_ASSETS
 ```
 
-当前下一工程 / 验收切片：
+当前下一工程 / 验收切片不是新增 P18，而是统一真实验收：
 
 ```text
-P13 Target Assets / 目标资产
+P14 TARGET_AUDIO / TIMING
+→ P15 TARGET_STORYBOARD / GENERATION_SEGMENTS
+→ P16 MiniMax H3 Generation / QC / Selection
+→ P17 Lip Sync / Post / FINAL_OUTPUT
 ```
 
-P13 已有正式数据契约 / Professional Skill / 工程实现；真实 Provider 与真实项目 formal publication 路径也已经执行成功。但本轮真实内容质量验收发现旧合同存在资产作用域、审核语言注入、wardrobe 与时序越权问题，已进入 v3 / visual-identity-v2 整改后复验。因此：
+P14–P17 合同、typed schema、service/provider、API、migration、UI 和自动测试已经工程收口；但尚未完成同一真实 Replica 项目的完整 Provider / Runtime / 人工看听验收。因此当前必须保持：
 
 ```text
-P13 real Provider path = EXECUTED
-P13 real project review = BLOCKED / RERUN REQUIRED
-TARGET_ASSETS = PLANNED
-P13 PASS = NO
+P14 PASS = NO
+P15 PASS = NO
+P16 PASS = NO
+P17 PASS = NO
+
+TTS = PLANNED
+TIMING = PLANNED
+STORYBOARD = PLANNED
+VIDEO_GENERATION = PLANNED
+QC_SELECTION = PLANNED
+LIP_SYNC = PLANNED
+POST_PRODUCTION = PLANNED
 ```
 
-以下后续能力同样继续 `PLANNED`：
-
-```text
-TARGET_STORYBOARD
-TTS / Timing
-Generation / QC / Selection
-Lip Sync
-Post / Final Output
-以及尚未完成的其他项目类型完整业务链
-```
-
-Root Replica Skill 中 `target_script` 后的当前内部步骤是 `target_assets`。P13 工程成功、真实 ProviderJob succeeded、候选可预览、甚至旧合同候选被人工 ACCEPT 并发布正式 Artifact，都不等于阶段 PASS；只有 v3 真实复验通过且用户明确 `P13 PASS` 后才允许另行评估 `TARGET_ASSETS` 是否升级为 `AVAILABLE`。
+工程成功、Task succeeded、candidate 可预览、migration / 自动测试通过都不能替代统一真实人工验收。
 
 ---
 
@@ -162,9 +189,10 @@ REDRAW
 ```text
 REPLICA Target Bible
 REPLICA Target Script / Localization
+REPLICA Target Assets
 ```
 
-P13 当前合同只允许 `REPLICA`。不得借 P13 工程实现顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Target Assets，也不得实现 `Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Selection / Lip Sync / Post`。
+P14–P17 当前工程实现也只正式面向 `REPLICA`，不得借工程收口顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Production 链。对应 capability 在统一真实验收前继续 `PLANNED`。
 
 ---
 
@@ -269,11 +297,12 @@ TARGET_BIBLE
 P12：
 
 ```text
-target-script-localization@1.0.0
+target-script-localization@1.1.0
 p12-target-script-localization-v1
 TARGET_SCRIPT schema 1.0
 replica-target-script-localization-v1
 p6-canonical-dialogue-frozen-in-p10-v1
+p12-target-script-timing-rewrite-v1
 ```
 
 P12 正式硬输入固定为 CURRENT `SOURCE_VIDEO_SNAPSHOT + ADAPTATION_PLAN + TARGET_BIBLE`；Source Dialogue 只能来自 Snapshot 冻结的 P6 canonical dialogue。正式对白链固定为：
@@ -282,9 +311,9 @@ P12 正式硬输入固定为 CURRENT `SOURCE_VIDEO_SNAPSHOT + ADAPTATION_PLAN + 
 Source Dialogue → Translation → Localization → Final Target Dialogue → Target Speaker/Voice → TTS → Actual Speech Duration → Timing Plan
 ```
 
-P12 只到 `Final Target Dialogue`。P12 已真实人工验收 PASS，`TARGET_SCRIPT = AVAILABLE`。
+P12 首次正式生成仍只到 `Final Target Dialogue`。P12 已真实人工验收 PASS，`TARGET_SCRIPT = AVAILABLE`；`docs/48` 额外允许在 P14 真实 ffprobe Timing 已证明 selected utterance 严重 OVERFLOW 时，走受门禁的定向 Timing Rewrite 新 revision，不重新验收 P12。
 
-P13 当前整改基线：
+P13 最终验收基线：
 
 ```text
 replica-target-assets@1.1.0
@@ -301,7 +330,7 @@ P13 正式硬输入只有 CURRENT `TARGET_BIBLE`。当前仓库没有已接入�
 
 v2 visual identity contract 额外要求：asset `continuity_constraints / generation_guidance / negative_constraints` 只描述当前人物/场景/道具的视觉稳定性，不复制 Target Bible 的 Story Beat / shot order / dialogue / rhythm / cliffhanger 等全局叙事 preservation locks；Character wardrobe 只做 baseline，不擅自建立逐 Scene/Shot 换装计划；Scene time-of-day 只做视觉基线，不凭 Scene 顺序或闪回推断剧情时间跳变。
 
-在 v3 真实人工复验通过前 capability 继续 `PLANNED`。
+P13 v3 / visual-identity-v2 已在 `docs/31` 完成真实人工复验 PASS，`TARGET_ASSETS = AVAILABLE`。后续 P14–P17 仍须独立统一真实验收。
 
 ---
 
@@ -562,7 +591,7 @@ Source Dialogue 规则：
 
 ## 11. P13 Target Assets 硬边界
 
-P13 正式契约见 `docs/28`，中文审核语言补充合同见 `docs/29`，真实项目验收后的资产作用域与时序整改见 `docs/30`。唯一硬输入：
+P13 正式契约见 `docs/28`，中文审核语言补充合同见 `docs/29`，真实项目验收后的资产作用域与时序整改见 `docs/30`，最终验收见 `docs/31`。唯一硬输入：
 
 ```text
 CURRENT TARGET_BIBLE
@@ -610,19 +639,62 @@ Target Prop      → Target Prop Asset
 - 外部 Provider 请求前先持久化 ProviderJob 并绑定 CURRENT TARGET_BIBLE；
 - P13 不创建 Target Voice / TTS / Timing / Target Storyboard / Generation / QC / Selection / Lip Sync / Post Artifact。
 
-旧 `replica-target-visual-identity-v1` 已 ACCEPT 正式资产保留历史，不由 migration 自动改写；但本轮真实验收已证明它不满足最终 P13 质量合同，因此必须由用户显式 regenerate → review → ACCEPT 生成 v2 新 revision，才能继续 P13 最终验收。
+旧 `replica-target-visual-identity-v1` 已 ACCEPT 正式资产保留历史，不由 migration 自动改写；最终通过验收的是 v3 / `replica-target-visual-identity-v2` 路径。
 
-用户明确 `P13 PASS` 前：
+`docs/31` 已记录用户明确 `P13 PASS`：
 
 ```text
-TARGET_ASSETS = PLANNED
+TARGET_ASSETS = AVAILABLE
 ```
 
-工程 CI、真实 ProviderJob succeeded、候选可预览或旧合同人工 accept 均不能替代阶段最终真实验收。
+该 PASS 只准入后续 Replica Production 工程，不替代 P14–P17 自身真实 Provider / Runtime 与人工验收。
 
 ---
 
-## 12. Workflow / Provider / 安全硬规则
+## 12. P14–P17 Replica Production 硬边界
+
+当前 Root Replica Skill 工程合同版本为：
+
+```text
+project.replica@1.5.0
+```
+
+P14：
+
+- Target Audio 硬输入为 CURRENT `TARGET_SCRIPT + TARGET_BIBLE` 与显式 voice binding；
+- Actual Speech Duration 只认服务端对真实持久化音频的 ffprobe；
+- Timing 只做确定性 source-slot conformance；存在 unresolved overflow 不得 ACCEPT；
+- 严重 overflow 可按 `docs/48` 回 P12 定向修订 selected utterance，未选对白与 Source Truth 必须保持不变。
+
+P15：
+
+- 硬输入为 CURRENT `SOURCE_VIDEO_SNAPSHOT + TARGET_BIBLE + TARGET_SCRIPT + TARGET_ASSETS + TARGET_AUDIO + TIMING_PLAN`；
+- Source Shot / TargetStoryboardShot / GenerationSegment 必须分离；
+- compile 为 deterministic Replica director，不重新编故事；
+- candidate 人工 ACCEPT 后才原子发布 `TARGET_STORYBOARD + GENERATION_SEGMENTS`。
+
+P16：
+
+- 只消费 CURRENT `TARGET_STORYBOARD + GENERATION_SEGMENTS + TARGET_ASSETS`；
+- MiniMax H3 每次远端调用前先持久化 ProviderJob；
+- 远程媒体必须本地持久化、SHA256、ffprobe；
+- GenerationAttempt 永远不是正式结果；只有 Technical QC PASS attempt 可进入 human Selection；
+- explicit ACCEPT 后才发布 `GENERATED_VIDEO + GENERATION_SELECTION`。
+
+P17：
+
+- 只消费 CURRENT `GENERATION_SELECTION + TARGET_AUDIO + TARGET_SCRIPT + TIMING_PLAN`；
+- 不得绕过 Selection 直接拿任意 GenerationAttempt 进入后期；
+- `requires_lip_sync=true` 才调用 Lip Sync Runtime，调用前先 ProviderJob；Runtime 未配置时 fail closed；
+- segment 按 authoritative timing trim / pad，Episode 按 `episode_order -> segment_number` 拼接；
+- 丢弃生成视频未知音轨，只混正式 Target Audio；字幕只来自正式 Target Script + Timing；
+- Post Task 只产生 `NEEDS_REVIEW` candidate，用户显式 ACCEPT 后才发布 `FINAL_OUTPUT`。
+
+`docs/52` 已确认 P14–P17 工程链完成，但统一真实验收尚未完成，因此所有对应 capability 继续 `PLANNED`，且四个阶段当前均 `PASS = NO`。
+
+---
+
+## 13. Workflow / Provider / 安全硬规则
 
 - 页面 GET 必须只读，不能写 DB、建 Task、运行 Agent、启动模型或自动重算；
 - 重任务必须由明确 POST / Command 启动；
@@ -640,7 +712,7 @@ TARGET_ASSETS = PLANNED
 
 ---
 
-## 13. 完成定义
+## 14. 完成定义
 
 任何能力都必须分别说明并验证：
 
@@ -656,11 +728,11 @@ TARGET_ASSETS = PLANNED
 
 不能用其中一层替代另一层。
 
-P11 与 P12 都已经由用户明确真实人工 PASS，因此 `LOCALIZATION / TARGET_BIBLE / TARGET_SCRIPT = AVAILABLE`。P13 已真实执行 Provider 与 formal publication 路径，但本轮真实内容质量验收未通过，当前是 v3 / visual-identity-v2 整改复验阶段。后续任何能力仍必须单独完成正式契约、工程门禁、真实 Provider / Runtime、真实项目端到端与用户人工验收后，才能从 `PLANNED` 升为 `AVAILABLE`；不能把 P12 PASS、P13 工程测试、旧合同 ACCEPT 或真实 Provider 路径跑通当作后续阶段的替代验收。
+P11、P12、P13 都已经由用户明确真实人工 PASS，因此 `LOCALIZATION / TARGET_BIBLE / TARGET_SCRIPT / TARGET_ASSETS = AVAILABLE`。P14–P17 已完成正式契约、工程实现、migration、UI 与自动回归，但按 `docs/52` 尚未完成同一真实 Replica 项目的统一 Provider / Runtime / 人工看听验收，因此 `TTS / TIMING / STORYBOARD / VIDEO_GENERATION / QC_SELECTION / LIP_SYNC / POST_PRODUCTION` 继续 `PLANNED`，P14~P17 当前均 `PASS = NO`。任何后续状态升级都必须以真实端到端事实和用户明确结论为准。
 
 ---
 
-## 14. Git 规则
+## 15. Git 规则
 
 ```text
 main = V3 当前稳定开发基线

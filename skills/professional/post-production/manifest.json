@@ -1,0 +1,24 @@
+{
+  "id": "post-production",
+  "name": "Replica Post Production",
+  "version": "1.0.0",
+  "category": "production",
+  "description": "Consume the formal generation selection, target dialogue audio, target script and timing plan; conditionally run lip sync, then deterministically assemble episode video, formal audio and subtitles into a reviewed FINAL_OUTPUT candidate.",
+  "when_to_use": ["REPLICA has CURRENT GENERATION_SELECTION, TARGET_AUDIO, TARGET_SCRIPT and overflow-free TIMING_PLAN"],
+  "when_not_to_use": ["Generation attempts have not been formally selected", "Timing still has overflow", "Required lip-sync runtime is unavailable"],
+  "required_inputs": ["GENERATION_SELECTION", "TARGET_AUDIO", "TARGET_SCRIPT", "TIMING_PLAN"],
+  "optional_inputs": [],
+  "readable_artifacts": ["GENERATION_SELECTION", "TARGET_AUDIO", "TARGET_SCRIPT", "TIMING_PLAN", "GENERATED_VIDEO"],
+  "required_capabilities": ["LIP_SYNC", "POST_PRODUCTION"],
+  "manual_path": "post-production/SKILL.md",
+  "steps": [
+    {"id":"validate_formal_inputs","phase":"成片","title":"校验正式生产输入","description":"确认正式选片、目标音频、目标剧本和时序属于同一 CURRENT production lineage，且 Timing 无 overflow。","capabilities":["POST_PRODUCTION"],"requires":["GENERATION_SELECTION","TARGET_AUDIO","TARGET_SCRIPT","TIMING_PLAN"],"produces":[]},
+    {"id":"conditional_lip_sync","phase":"成片","title":"按需口型同步","description":"只对 requires_lip_sync 的正式 selected segment 调用配置好的 Lip Sync Runtime；请求前必须持久化 ProviderJob。","capabilities":["LIP_SYNC"],"requires":["GENERATION_SELECTION","TARGET_AUDIO","TIMING_PLAN"],"produces":[]},
+    {"id":"assemble_final_output","phase":"成片","title":"确定性剪辑成片","description":"按 production timeline trim/pad/concat，混入正式 Target Audio，导出 Target Script SRT 并形成待人工审核的 FINAL_OUTPUT candidate。","capabilities":["POST_PRODUCTION"],"requires":["GENERATION_SELECTION","TARGET_AUDIO","TARGET_SCRIPT","TIMING_PLAN"],"produces":["FINAL_OUTPUT"]}
+  ],
+  "fact_levels": ["Formal video identity comes only from CURRENT GENERATION_SELECTION", "Dialogue media comes only from CURRENT TARGET_AUDIO", "Subtitle text comes only from CURRENT TARGET_SCRIPT", "Dialogue placement comes only from CURRENT TIMING_PLAN"],
+  "provider_rules": ["Lip Sync is conditional and must create ProviderJob before remote/runtime execution", "FFmpeg post steps are deterministic local tools and must not create fake ProviderJobs", "Provider output must be persisted, hashed and probed before use", "Generated video audio is discarded; final dialogue audio is mixed only from formal TARGET_AUDIO"],
+  "output_contracts": ["FINAL_OUTPUT"],
+  "completion_criteria": ["Every formal selected segment is assembled in episode/segment order", "Required lip-sync segments have real persisted ProviderJob provenance", "Final episode video is ffprobe-valid and matches production timeline tolerance", "SRT comes from formal script/timing", "Candidate is explicitly accepted before CURRENT FINAL_OUTPUT publication"],
+  "failure_policy": ["Any stale lineage or timing overflow fails closed", "Missing required lip-sync runtime fails closed", "Media hash/probe mismatch fails closed", "Failure or rejection does not overwrite previous CURRENT FINAL_OUTPUT"]
+}

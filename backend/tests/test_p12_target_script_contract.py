@@ -93,7 +93,7 @@ def _semantic(utterance_id: str = "utt-1") -> TargetScriptSemantic:
 
 def test_p12_professional_skill_root_contract_and_p11_acceptance_admit_execution() -> None:
     skill = get_professional_skill("target-script-localization")
-    assert skill.version == "1.0.0"
+    assert skill.version == "1.1.0"
     assert skill.required_inputs == (
         ArtifactType.SOURCE_VIDEO_SNAPSHOT,
         ArtifactType.ADAPTATION_PLAN,
@@ -103,7 +103,7 @@ def test_p12_professional_skill_root_contract_and_p11_acceptance_admit_execution
     assert skill.output_contracts == (ArtifactType.TARGET_SCRIPT,)
 
     root = get_root_skill(ProjectType.REPLICA)
-    assert root.version == "1.3.0"
+    assert root.version == "1.5.0"
     target_script = next(step for step in root.steps if step.id == "target_script")
     assert target_script.requires == (
         ArtifactType.SOURCE_VIDEO_SNAPSHOT,

@@ -1,0 +1,24 @@
+{
+  "id": "storyboard-directing",
+  "name": "Replica Storyboard Directing",
+  "version": "1.0.0",
+  "category": "production",
+  "description": "Deterministically compile accepted Replica source/target/audio/timing facts into TARGET_STORYBOARD and provider-sized GENERATION_SEGMENTS without re-inventing story or shot rhythm.",
+  "when_to_use": ["REPLICA has CURRENT SOURCE_VIDEO_SNAPSHOT, TARGET_BIBLE, TARGET_SCRIPT, TARGET_ASSETS, TARGET_AUDIO and overflow-free TIMING_PLAN"],
+  "when_not_to_use": ["Any hard input is missing or STALE", "Timing still has overflow", "The user wants to re-author story, scene order, or shot rhythm"],
+  "required_inputs": ["SOURCE_VIDEO_SNAPSHOT", "TARGET_BIBLE", "TARGET_SCRIPT", "TARGET_ASSETS", "TARGET_AUDIO", "TIMING_PLAN"],
+  "optional_inputs": [],
+  "readable_artifacts": ["SOURCE_VIDEO_SNAPSHOT", "TARGET_BIBLE", "TARGET_SCRIPT", "TARGET_ASSETS", "TARGET_AUDIO", "TIMING_PLAN"],
+  "required_capabilities": ["STORYBOARD"],
+  "manual_path": "storyboard-directing/SKILL.md",
+  "steps": [
+    {"id":"validate_replica_production_lineage","phase":"分镜","title":"校验生产链 lineage","description":"Require all six CURRENT inputs and an overflow-free Timing Plan.","capabilities":["STORYBOARD"],"requires":["SOURCE_VIDEO_SNAPSHOT","TARGET_BIBLE","TARGET_SCRIPT","TARGET_ASSETS","TARGET_AUDIO","TIMING_PLAN"],"produces":[]},
+    {"id":"compile_target_storyboard","phase":"分镜","title":"编译目标分镜","description":"Inherit Source Shot order/timing/camera language and deterministically replace source identities with accepted target identities/assets.","capabilities":["STORYBOARD"],"requires":["SOURCE_VIDEO_SNAPSHOT","TARGET_BIBLE","TARGET_SCRIPT","TARGET_ASSETS","TARGET_AUDIO","TIMING_PLAN"],"produces":["TARGET_STORYBOARD"]},
+    {"id":"split_generation_segments","phase":"分镜","title":"拆分生成段","description":"Split each target storyboard shot into bounded provider inference windows without changing shot identity or timing lineage.","capabilities":["STORYBOARD"],"requires":["TARGET_STORYBOARD"],"produces":["GENERATION_SEGMENTS"]}
+  ],
+  "fact_levels": ["FROZEN_SOURCE_SHOT", "ACCEPTED_TARGET_IDENTITY", "FORMAL_TARGET_AUDIO", "FORMAL_TIMING"],
+  "provider_rules": ["This skill is deterministic and must not create ProviderJob", "Do not reorder scenes or shots, rewrite dialogue, or invent story events", "Source actor/scene/prop identities must be mapped through TARGET_BIBLE before appearing in target visual prompts", "GenerationSegment splitting changes inference windows only, never authoritative Source Shot timing"],
+  "output_contracts": ["TARGET_STORYBOARD", "GENERATION_SEGMENTS"],
+  "completion_criteria": ["Every Source Shot is represented exactly once as a TargetStoryboardShot", "All referenced target identities have CURRENT target assets", "Target dialogue/audio/timing refs are complete", "Every GenerationSegment stays within configured max duration", "Candidate is explicitly accepted before formal publication"],
+  "failure_policy": ["Missing or stale hard input fails closed", "Missing target mapping/asset fails closed", "Any Timing overflow blocks compilation", "No formal output is published before explicit review"]
+}

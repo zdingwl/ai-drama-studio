@@ -113,11 +113,35 @@ TIMING = PLANNED
 P14 PASS = NO
 ```
 
-## 后续边界
-P14 不进入 `TARGET_STORYBOARD / VIDEO_GENERATION / QC_SELECTION / LIP_SYNC / POST_PRODUCTION`。后续阶段必须另行建立正式合同与真实验收。
+## P15 复刻分镜 / Generation Segments
+
+正式合同见 `docs/49_P15ReplicaStoryboard与GenerationSegments数据契约.md`。P15 不调用自由创作 Provider，确定性继承 CURRENT Source Snapshot 的 Shot 顺序、authoritative timing 与 camera language，把 CURRENT Target Bible / Script / Assets / Audio / Timing 编译成 `TARGET_STORYBOARD + GENERATION_SEGMENTS` candidate。显式 ACCEPT 后才原子发布正式两个 Artifact。
+
+## P16 视频生成 / QC / Selection
+
+正式合同见 `docs/50_P16VideoGenerationQCSelection数据契约.md`。每个 MiniMax H3 GenerationAttempt 请求前先持久化 ProviderJob，远程视频必须下载本地、SHA256 + ffprobe。Technical QC 只判断媒体技术可用，不冒充人物/动作/连续性语义审核。每个 Segment 的正式 selected attempt 必须由用户显式确认后才发布 `GENERATED_VIDEO + GENERATION_SELECTION`。
+
+## P17 Lip Sync / Post / Final Output
+
+正式合同见 `docs/51_P17PostProductionFinalOutput数据契约.md`。只消费 CURRENT `GENERATION_SELECTION + TARGET_AUDIO + TARGET_SCRIPT + TIMING_PLAN`。需要可见口型的正式 segment 才调用 Lip Sync Runtime；随后按 authoritative segment timing trim/pad/concat，丢弃生成视频未知音轨，只混入正式 Target Audio；SRT 只来自 Target Script + Timing。Task 成功只产生待审核成片，用户显式 ACCEPT 后才发布 `FINAL_OUTPUT`。
+
+## 当前 P14-P17 准入状态
+
+这些阶段现在可以有完整工程合同、代码和自动测试，但在统一真实项目端到端、真实 TTS/H3/Lip Sync Runtime 与用户人工验收结束前：
+
+```text
+TTS = PLANNED
+TIMING = PLANNED
+STORYBOARD = PLANNED
+VIDEO_GENERATION = PLANNED
+QC_SELECTION = PLANNED
+LIP_SYNC = PLANNED
+POST_PRODUCTION = PLANNED
+P14-P17 PASS = NO
+```
 
 ## 需要用户决策
-故事/节奏偏离、核心关系改变、P13 视觉身份候选、P14 voice binding、P14 音频听审以及 Timing overflow 的解决方式都属于显式用户决策边界。
+故事/节奏偏离、核心关系改变、P13 视觉身份候选、P14 voice binding、P14 音频听审、Timing overflow 解决方式、P15 分镜确认、P16 正式选片以及 P17 最终成片确认都属于显式用户决策边界。
 
 ## 完成标准
-Source / Target / Production lineage 清晰；P11~P13 正式结果保持既有验收状态；P14 每条目标对白有真实音频、可验证 SHA、服务端实际时长和 voice provenance；Timing 完整覆盖且正式版本无 unresolved overflow；未来 Storyboard、Generation、Post 仍需独立准入。
+Source / Target / Production lineage 清晰；P11~P13 正式结果保持既有验收状态；P14 每条目标对白有真实音频、可验证 SHA、服务端实际时长和 voice provenance；Timing 完整覆盖且正式版本无 unresolved overflow；P15 正式分镜和生成分段可追溯；P16 正式 Selection 只引用 Technical QC PASS 的本地视频；P17 成片严格使用正式视频选择、Target Audio、Target Script 与 Timing。工程完成仍不等于 P14-P17 真实人工 PASS。

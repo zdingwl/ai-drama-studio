@@ -274,7 +274,7 @@ def test_p13_professional_skill_and_root_contract_keep_target_bible_as_only_hard
     assert skill.output_contracts == (ArtifactType.TARGET_ASSETS,)
 
     root = get_root_skill(ProjectType.REPLICA)
-    assert root.version == "1.3.0"
+    assert root.version == "1.5.0"
     step = next(item for item in root.steps if item.id == "target_assets")
     assert step.requires == (ArtifactType.TARGET_BIBLE,)
     assert step.produces == (ArtifactType.TARGET_ASSETS,)

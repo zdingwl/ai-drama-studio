@@ -42,6 +42,21 @@ P12 已完成真实 Provider、真实项目端到端与用户人工质量验收�
 
 禁止隐藏 split / merge。
 
+## P14 Timing 回退的定向 Revision
+
+P12 PASS 之后，如果 P14 已经用正式 TARGET_AUDIO + ffprobe 证明某条目标对白严重超出 Source slot，并且服务器计算 `source_slot_duration / actual_speech_duration < 0.80`，本 Skill 允许进入 `TIMING_REWRITE` revision mode。
+
+该模式不是重做整部目标剧本：
+
+- 只把用户显式选择且服务器确认属于 `SCRIPT_REWRITE` 的 utterance 发给 Provider；
+- `utterance_id / Source text / Source timing / target_character_id / translation_text` 全部冻结；
+- selected 行只允许修改 `localization_text / final_target_dialogue / localization_notes`；
+- 未 selected 的 dialogue 必须由服务端逐值复制旧 CURRENT TARGET_SCRIPT，不能再次调用模型；
+- Provider 只能把 `required_duration_factor` 当压缩强度参考，不能承诺改写后一定 FIT；
+- 新 revision 发布后旧 TARGET_AUDIO / TIMING_PLAN 必须通过 Artifact Graph 递归 STALE，再重新 TTS + ffprobe + Timing。
+
+完整合同见 `docs/48_P14Timing回退P12定向对白修订闭环.md`。
+
 ## 角色绑定
 
 若 Source Snapshot 的 Speaker attribution 能唯一落到 Source Character，且 P11 Target Bible 有该 Source Character 的唯一 Target Character 映射，服务端可以确定性写入 `target_character_id`。

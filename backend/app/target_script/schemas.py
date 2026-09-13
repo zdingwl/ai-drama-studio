@@ -8,12 +8,19 @@ P12_PROMPT_VERSION = "p12-target-script-localization-v1"
 P12_TARGET_CONTRACT = "replica-target-script-localization-v1"
 P12_SOURCE_DIALOGUE_CONTRACT = "p6-canonical-dialogue-frozen-in-p10-v1"
 P12_SKILL_ID = "target-script-localization"
+P12_TIMING_REWRITE_PROMPT_VERSION = "p12-target-script-timing-rewrite-v1"
+P12_TIMING_REWRITE_CONTRACT = "replica-target-script-timing-rewrite-v1"
 
 
 class TargetScriptResultStatus(StrEnum):
     NOT_BUILT = "NOT_BUILT"
     CURRENT = "CURRENT"
     STALE = "STALE"
+
+
+class TargetScriptRevisionMode(StrEnum):
+    FULL_GENERATION = "FULL_GENERATION"
+    TIMING_REWRITE = "TIMING_REWRITE"
 
 
 class _StrictProviderModel(BaseModel):
@@ -30,6 +37,17 @@ class ProviderLocalizedDialogue(_StrictProviderModel):
 
 class TargetScriptSemantic(_StrictProviderModel):
     dialogue: list[ProviderLocalizedDialogue] = Field(default_factory=list, max_length=20000)
+
+
+class ProviderTimingRewriteDialogue(_StrictProviderModel):
+    utterance_id: str = Field(min_length=1, max_length=160)
+    localization_text: str = Field(min_length=1, max_length=4000)
+    final_target_dialogue: str = Field(min_length=1, max_length=4000)
+    localization_notes: list[str] = Field(default_factory=list, max_length=40)
+
+
+class TargetScriptTimingRewriteSemantic(_StrictProviderModel):
+    dialogue: list[ProviderTimingRewriteDialogue] = Field(min_length=1, max_length=20000)
 
 
 class TargetScriptDialogueLine(BaseModel):
@@ -102,6 +120,11 @@ class TargetScriptProvenance(BaseModel):
     source_dialogue_contract: str = P12_SOURCE_DIALOGUE_CONTRACT
     generated_by_task_id: str
     supersedes_artifact_id: str | None = None
+    revision_mode: TargetScriptRevisionMode = TargetScriptRevisionMode.FULL_GENERATION
+    base_target_script_artifact_id: str | None = None
+    rewritten_utterance_ids: list[str] = Field(default_factory=list)
+    timing_candidate_id: str | None = None
+    timing_generation_sequence: int | None = Field(default=None, ge=1)
 
 
 class ReplicaTargetScriptRead(BaseModel):
@@ -123,3 +146,17 @@ class ReplicaTargetScriptRevisionSummary(BaseModel):
     adaptation_plan_artifact_id: str
     target_bible_artifact_id: str
     created_at: str
+
+
+class TargetScriptTimingRewriteCommand(BaseModel):
+    expected_target_script_artifact_id: str = Field(min_length=1, max_length=160)
+    expected_target_script_revision: int = Field(ge=1)
+    timing_candidate_id: str = Field(min_length=1, max_length=160)
+    expected_timing_generation_sequence: int = Field(ge=1)
+    utterance_ids: list[str] = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_unique_utterances(self) -> "TargetScriptTimingRewriteCommand":
+        if len(self.utterance_ids) != len(set(self.utterance_ids)):
+            raise ValueError("timing rewrite utterance_ids cannot contain duplicates")
+        return self

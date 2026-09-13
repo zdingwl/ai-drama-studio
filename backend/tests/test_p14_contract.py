@@ -79,7 +79,7 @@ def _audio(duration_us: int) -> ReplicaTargetAudioContent:
 
 def test_p14_root_and_professional_skill_contracts_are_split_and_capabilities_stay_planned() -> None:
     root = get_root_skill(ProjectType.REPLICA)
-    assert root.version == "1.4.0"
+    assert root.version == "1.5.0"
     audio = next(step for step in root.steps if step.id == "target_audio")
     timing = next(step for step in root.steps if step.id == "dialogue_timing")
     assert audio.phase == timing.phase == "配音与时序"

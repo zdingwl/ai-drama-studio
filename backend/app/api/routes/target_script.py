@@ -4,7 +4,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, status
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
-from app.target_script.schemas import ReplicaTargetScriptRead, ReplicaTargetScriptRevisionSummary
+from app.target_script.schemas import (
+    ReplicaTargetScriptRead,
+    ReplicaTargetScriptRevisionSummary,
+    TargetScriptTimingRewriteCommand,
+)
+from app.target_script.timing_rewrite import create_timing_rewrite_task, run_timing_rewrite_task
 from app.target_script.service import (
     create_target_script_task,
     get_target_script,
@@ -42,6 +47,33 @@ def start_target_script_route(
     if task.status == TaskStatus.QUEUED:
         background_tasks.add_task(
             run_target_script_task,
+            _request_session_factory(db),
+            task.id,
+        )
+    return task_to_read(task)
+
+
+@router.post(
+    "/projects/{project_id}/commands/target-script/rewrite-for-timing",
+    response_model=TaskRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def start_target_script_timing_rewrite_route(
+    project_id: str,
+    command: TargetScriptTimingRewriteCommand,
+    background_tasks: BackgroundTasks,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    db: Session = Depends(get_db),
+) -> TaskRead:
+    task = create_timing_rewrite_task(
+        db,
+        project_id=project_id,
+        idempotency_key=idempotency_key,
+        command=command,
+    )
+    if task.status == TaskStatus.QUEUED:
+        background_tasks.add_task(
+            run_timing_rewrite_task,
             _request_session_factory(db),
             task.id,
         )

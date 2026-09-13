@@ -1,0 +1,24 @@
+{
+  "id": "video-generation-qc",
+  "name": "MiniMax H3 Video Generation / QC / Selection",
+  "version": "1.0.0",
+  "category": "generation",
+  "description": "Generate each CURRENT GenerationSegment through MiniMax H3, persist every GenerationAttempt, run deterministic media QC, and require explicit human semantic selection before publishing GENERATED_VIDEO and GENERATION_SELECTION.",
+  "when_to_use": ["REPLICA has CURRENT TARGET_STORYBOARD, GENERATION_SEGMENTS and TARGET_ASSETS"],
+  "when_not_to_use": ["Any production input is missing or STALE", "MiniMax H3 is not configured", "The user is asking for final post-production rather than generation"],
+  "required_inputs": ["TARGET_STORYBOARD", "GENERATION_SEGMENTS", "TARGET_ASSETS"],
+  "optional_inputs": [],
+  "readable_artifacts": ["TARGET_STORYBOARD", "GENERATION_SEGMENTS", "TARGET_ASSETS"],
+  "required_capabilities": ["VIDEO_GENERATION", "QC_SELECTION"],
+  "manual_path": "video-generation-qc/SKILL.md",
+  "steps": [
+    {"id":"generate_attempts","phase":"生成","title":"生成视频候选","description":"Persist ProviderJob before each MiniMax H3 request and download every successful response to local artifact storage.","capabilities":["VIDEO_GENERATION"],"requires":["TARGET_STORYBOARD","GENERATION_SEGMENTS","TARGET_ASSETS"],"produces":[]},
+    {"id":"technical_qc","phase":"生成","title":"技术质检","description":"Re-probe local video, validate SHA/duration/video stream/size/codec, and keep attempts separate from formal artifacts.","capabilities":["QC_SELECTION"],"requires":["GENERATION_SEGMENTS"],"produces":[]},
+    {"id":"human_selection","phase":"生成","title":"人工视觉选片","description":"Expose only technical PASS attempts for explicit semantic review and selection; do not infer human visual acceptance from ffprobe.","capabilities":["QC_SELECTION"],"requires":["GENERATION_SEGMENTS"],"produces":["GENERATED_VIDEO","GENERATION_SELECTION"]}
+  ],
+  "fact_levels": ["FORMAL_GENERATION_PLAN", "GENERATION_ATTEMPT", "TECHNICAL_QC", "HUMAN_SELECTION"],
+  "provider_rules": ["ProviderJob must exist before every MiniMax H3 remote call", "Use the current official H3 V2 asynchronous task contract", "GenerationAttempt is never a formal Artifact and cannot enter Post directly", "Download provider media locally before the remote URL expires and persist SHA256", "Technical QC may validate media mechanics only; character/action/scene quality requires explicit user review", "Only technical PASS attempts can be included in a Selection candidate", "Retries are bounded to avoid uncontrolled paid generation"],
+  "output_contracts": ["GENERATED_VIDEO", "GENERATION_SELECTION"],
+  "completion_criteria": ["Every GenerationSegment has a technical PASS attempt", "Every remote call has ProviderJob provenance", "Every selected media file is local and SHA/ffprobe verified", "User explicitly accepts the semantic selection", "GENERATED_VIDEO and GENERATION_SELECTION are published together with current input lineage"],
+  "failure_policy": ["Provider missing or remote failure fails closed", "Media download/probe/hash failure fails closed", "Technical QC exhaustion fails the generation task", "No formal selection before explicit user acceptance"]
+}

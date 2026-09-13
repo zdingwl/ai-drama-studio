@@ -8,9 +8,11 @@ def test_unified_launcher_is_single_user_entrypoint() -> None:
     start_cmd = (REPO_ROOT / "start.cmd").read_text(encoding="utf-8")
     start_sh = (REPO_ROOT / "start.sh").read_text(encoding="utf-8")
     launcher = (REPO_ROOT / "scripts" / "start_studio.py").read_text(encoding="utf-8")
+    guard = (REPO_ROOT / "scripts" / "start_studio_guard.py").read_text(encoding="utf-8")
 
-    assert "scripts\\start_studio.py" in start_cmd
-    assert "scripts/start_studio.py" in start_sh
+    assert "scripts\\start_studio_guard.py" in start_cmd
+    assert "scripts/start_studio_guard.py" in start_sh
+    assert "start_studio.py" in guard
     assert "start_indextts25_native_windows.ps1" in launcher
     assert "start_indextts25.sh" in launcher
     assert "alembic" in launcher

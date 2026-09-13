@@ -45,6 +45,14 @@ export interface ReplicaTargetScriptRead {
   provenance?: unknown
 }
 
+export interface TargetScriptTimingRewriteCommand {
+  expected_target_script_artifact_id: string
+  expected_target_script_revision: number
+  timing_candidate_id: string
+  expected_timing_generation_sequence: number
+  utterance_ids: string[]
+}
+
 export function getReplicaTargetScript(projectId: string): Promise<ReplicaTargetScriptRead> {
   return apiRequest<ReplicaTargetScriptRead>(`/projects/${projectId}/target-script`, { cache: 'no-store' })
 }
@@ -53,5 +61,17 @@ export function startReplicaTargetScript(projectId: string, idempotencyKey: stri
   return apiRequest<TaskRead>(`/projects/${projectId}/commands/target-script`, {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },
+  })
+}
+
+export function startReplicaTargetScriptTimingRewrite(
+  projectId: string,
+  command: TargetScriptTimingRewriteCommand,
+  idempotencyKey: string,
+): Promise<TaskRead> {
+  return apiRequest<TaskRead>(`/projects/${projectId}/commands/target-script/rewrite-for-timing`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(command),
   })
 }

@@ -16,6 +16,18 @@ from app.p14.models import (
     ReplicaTimingPlanCandidate,
     ReplicaTimingPlanRevision,
 )
+from app.p15.models import (
+    ReplicaGenerationSegmentsRevision,
+    ReplicaStoryboardCandidate,
+    ReplicaTargetStoryboardRevision,
+)
+from app.p16.models import (
+    ReplicaGeneratedVideoRevision,
+    ReplicaGenerationAttempt,
+    ReplicaGenerationSelectionCandidate,
+    ReplicaGenerationSelectionRevision,
+)
+from app.p17.models import ReplicaFinalOutputRevision, ReplicaPostCandidate
 from app.preprocessing.models import ShotAnchor, ShotBoundarySet
 from app.projects.models import Project
 from app.shot_breakdown.models import SourceShotFactsRevision
@@ -41,12 +53,21 @@ __all__ = [
     "ProjectExecutionPlanRecord",
     "ProjectExecutionPlanStepRecord",
     "ProviderJob",
+    "ReplicaFinalOutputRevision",
+    "ReplicaGeneratedVideoRevision",
+    "ReplicaGenerationAttempt",
+    "ReplicaGenerationSelectionCandidate",
+    "ReplicaGenerationSelectionRevision",
+    "ReplicaGenerationSegmentsRevision",
+    "ReplicaPostCandidate",
+    "ReplicaStoryboardCandidate",
     "ReplicaTargetAssetsCandidate",
     "ReplicaTargetAssetsRevision",
     "ReplicaTargetAudioCandidate",
     "ReplicaTargetAudioRevision",
     "ReplicaTargetRevision",
     "ReplicaTargetScriptRevision",
+    "ReplicaTargetStoryboardRevision",
     "ReplicaTimingPlanCandidate",
     "ReplicaTimingPlanRevision",
     "ShotAnchor",
