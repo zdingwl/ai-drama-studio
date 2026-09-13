@@ -1,7 +1,7 @@
 # AI Drama Studio V3 — 开发规则
 
 > 当前状态日期：2026-09-13。
-> 当前最高优先级：`docs/53_Replica三步式产品工作台与异常驱动编排.md`。
+> 当前最高优先级：`docs/52_P14-P17Replica生产链工程收口与统一真实验收准入.md`。
 > 原则：仓库当前 `main` + 编号更高、日期更新的状态/验收文档是唯一事实源；历史文档只能解释演进，不能覆盖最新口径。
 
 ## 1. 开发前读取顺序
@@ -62,8 +62,7 @@
 52. `docs/50_P16VideoGenerationQCSelection数据契约.md`
 53. `docs/51_P17PostProductionFinalOutput数据契约.md`
 54. `docs/52_P14-P17Replica生产链工程收口与统一真实验收准入.md`
-55. `docs/53_Replica三步式产品工作台与异常驱动编排.md`
-56. 当前相关代码与测试
+55. 当前相关代码与测试
 
 冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。**
 
@@ -84,7 +83,6 @@
 - `docs/50`：P16 MiniMax H3 Video Generation / Technical QC / Human Selection 正式工程合同；
 - `docs/51`：P17 Lip Sync / Post Production / Final Output 正式工程合同；
 - `docs/52`：P14–P17 工程链已完成到统一真实验收入口；P14~P17 当前都 `PASS = NO`，对应 capability 继续 `PLANNED`，下一步必须统一跑真实 Replica 项目端到端验收。
-- `docs/53`：普通用户 Replica 产品层已收口为“原片 → 改编设定 → 生成成片”三步式工作台；P11~P17 细粒度工程面板只在 `?debug=1` 保留，真实验收也必须从普通用户三步工作台完整走通。
 
 历史分支只能参考，不能覆盖当前 V3 规划。
 
@@ -132,15 +130,13 @@ TARGET_SCRIPT
 TARGET_ASSETS
 ```
 
-当前下一工程 / 验收切片不是新增 P18，而是从普通用户三步产品工作台执行统一真实验收：
+当前下一工程 / 验收切片不是新增 P18，而是统一真实验收：
 
 ```text
-原片
-→ 改编设定
-   （内部 P11 → P12 → P13 → P14）
-→ 生成成片
-   （内部 P15 → P16 → P17）
-→ 最终播放确认
+P14 TARGET_AUDIO / TIMING
+→ P15 TARGET_STORYBOARD / GENERATION_SEGMENTS
+→ P16 MiniMax H3 Generation / QC / Selection
+→ P17 Lip Sync / Post / FINAL_OUTPUT
 ```
 
 P14–P17 合同、typed schema、service/provider、API、migration、UI 和自动测试已经工程收口；但尚未完成同一真实 Replica 项目的完整 Provider / Runtime / 人工看听验收。因此当前必须保持：
@@ -197,8 +193,6 @@ REPLICA Target Assets
 ```
 
 P14–P17 当前工程实现也只正式面向 `REPLICA`，不得借工程收口顺手铺开 REDRAW / TRANSLATION / 其他项目类型的 Production 链。对应 capability 在统一真实验收前继续 `PLANNED`。
-
-普通用户 `REPLICA` 主流程固定为三步：`原片 → 改编设定 → 生成成片`。产品层通过只读 `replica-workflow` 聚合工程状态，只突出一个 `next_action`；P11~P17 的 Artifact / Candidate / ProviderJob / Timing / GenerationAttempt 等工程概念不得在普通模式堆成独立阶段。细粒度工作区仅通过 `?debug=1` 进入。
 
 ---
 
@@ -677,8 +671,7 @@ P15：
 - 硬输入为 CURRENT `SOURCE_VIDEO_SNAPSHOT + TARGET_BIBLE + TARGET_SCRIPT + TARGET_ASSETS + TARGET_AUDIO + TIMING_PLAN`；
 - Source Shot / TargetStoryboardShot / GenerationSegment 必须分离；
 - compile 为 deterministic Replica director，不重新编故事；
-- debug / 独立工程入口仍可人工 review candidate；普通三步产品流中，用户显式点击“生成视频”可授权本次 deterministic P15 candidate publication，但该授权不得扩展到 P16 真实画面语义质量判断；
-- publication 仍必须原子发布 `TARGET_STORYBOARD + GENERATION_SEGMENTS` 并保留明确 provenance。
+- candidate 人工 ACCEPT 后才原子发布 `TARGET_STORYBOARD + GENERATION_SEGMENTS`。
 
 P16：
 
@@ -705,8 +698,6 @@ P17：
 
 - 页面 GET 必须只读，不能写 DB、建 Task、运行 Agent、启动模型或自动重算；
 - 重任务必须由明确 POST / Command 启动；
-- 一个普通用户显式 Product Command 可以连续编排多个确定性 / 低风险内部子步骤，但不能替用户自动通过主观内容质量门；
-- Product Orchestration 只能复用正式 Professional Skill / Task / Artifact publication，不得建立第二套 Source / Target / Production Truth；
 - 外部计费 Provider 请求前必须先持久化 `ProviderJob`；
 - API Key 禁止写入 DB、日志、Artifact、ProviderJob、provenance 或 Git；
 - API Key UI 默认遮罩，用户显式选择显示后才可回显；本机配置只能进入被 Git 忽略的本地环境文件；
@@ -737,7 +728,7 @@ P17：
 
 不能用其中一层替代另一层。
 
-P11、P12、P13 都已经由用户明确真实人工 PASS，因此 `LOCALIZATION / TARGET_BIBLE / TARGET_SCRIPT / TARGET_ASSETS = AVAILABLE`。P14–P17 已完成正式契约、工程实现、migration、UI 与自动回归；`docs/53` 又完成了普通用户三步式 Product Orchestration，但这些都不等于真实验收。按 `docs/52~53`，尚未完成同一真实 Replica 项目从普通三步工作台发起的统一 Provider / Runtime / 人工看听验收，因此 `TTS / TIMING / STORYBOARD / VIDEO_GENERATION / QC_SELECTION / LIP_SYNC / POST_PRODUCTION` 继续 `PLANNED`，P14~P17 当前均 `PASS = NO`。任何后续状态升级都必须以真实端到端事实和用户明确结论为准。
+P11、P12、P13 都已经由用户明确真实人工 PASS，因此 `LOCALIZATION / TARGET_BIBLE / TARGET_SCRIPT / TARGET_ASSETS = AVAILABLE`。P14–P17 已完成正式契约、工程实现、migration、UI 与自动回归，但按 `docs/52` 尚未完成同一真实 Replica 项目的统一 Provider / Runtime / 人工看听验收，因此 `TTS / TIMING / STORYBOARD / VIDEO_GENERATION / QC_SELECTION / LIP_SYNC / POST_PRODUCTION` 继续 `PLANNED`，P14~P17 当前均 `PASS = NO`。任何后续状态升级都必须以真实端到端事实和用户明确结论为准。
 
 ---
 
