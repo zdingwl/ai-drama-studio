@@ -42,6 +42,8 @@ GENERATED_VIDEO / GENERATION_SELECTION
 
 硬输入只有 CURRENT `SOURCE_VIDEO_SNAPSHOT` 与项目目标地区配置。服务端从 Snapshot 中读取正式 Shot Facts、稳定人物/场景/道具和 canonical dialogue。
 
+当前 Step 2 Runtime 固定直接使用火山引擎 Ark / Doubao，不继承 Step 1 的 `source_understanding_provider`。因此即使原片理解选择本地 Qwen，本土化分镜仍通过火山引擎执行。当前默认模型为 `doubao-seed-2-1-pro-260628`，沿用已配置的 Ark endpoint 与凭据。
+
 每个 Shot 必须保留：
 
 - source shot anchor / shot number；
