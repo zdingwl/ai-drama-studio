@@ -23,13 +23,25 @@ const route = useRoute()
 const isProjectWorkspace = computed(() => route.name === 'project-workspace')
 const debugMode = computed(() => route.query.debug === '1')
 const activeWorkspace = computed(() => String(route.params.workspace ?? 'source'))
+const showRoutedView = computed(() => (
+  !isProjectWorkspace.value
+  || debugMode.value
+  || activeWorkspace.value === 'source'
+))
 </script>
 
 <template>
   <AppShell>
     <div :class="[{ 'product-mode': isProjectWorkspace && !debugMode }, `workspace-${activeWorkspace}`]">
       <ProductJourneyNav v-if="isProjectWorkspace && !debugMode" />
-      <RouterView />
+
+      <!--
+        ProjectWorkspaceView is the source ingest/preflight host only. Mounting it on localize/assets/
+        prompts/generation would execute the historical plan/task UI and visually mix old P11-P17
+        concepts into the Replica v2 five-step path. Non-project routes and explicit debug mode still
+        use the router view normally.
+      -->
+      <RouterView v-if="showRoutedView" />
 
       <!-- Replica v2 ordinary product path: docs/55 is the highest-priority contract. -->
       <section v-if="isProjectWorkspace && !debugMode && activeWorkspace === 'source'" class="product-page">
@@ -96,11 +108,6 @@ const activeWorkspace = computed(() => String(route.params.workspace ?? 'source'
 
 .product-mode .understanding-section {
   margin-bottom: 0;
-}
-
-/* ProjectWorkspaceView owns source upload/preflight only. Other five-step pages get a clean work surface. */
-.product-mode:not(.workspace-source) #source-input {
-  display: none !important;
 }
 
 .product-mode .product-page {
