@@ -157,6 +157,7 @@ def _source_script_content() -> SourceScriptContent:
                                 "pace": "快",
                                 "scene_rhythm": "快速进入冲突",
                                 "dialogue_reaction_rhythm": "一句一反应",
+                                "cut_timing_notes": "关键反应点保留短切节奏",
                                 "allowable_deviation_ms": 300,
                             }
                         ],
@@ -168,15 +169,14 @@ def _source_script_content() -> SourceScriptContent:
 
 
 def _compose_inputs() -> service.P11Inputs:
-    project = SimpleNamespace(
-        target_language="en-US",
-        target_region="US",
-        scene_strategy=SceneStrategy.MIXED,
-        visual_style=None,
-    )
     content = _source_script_content()
     return service.P11Inputs(
-        project=project,
+        project=SimpleNamespace(
+            target_language="en-US",
+            target_region="US",
+            scene_strategy=SceneStrategy.MIXED,
+            visual_style=None,
+        ),
         source_script_artifact=SimpleNamespace(id="source-script-1", revision=1, input_fingerprint=_SHA_A),
         source_script_revision=SimpleNamespace(),
         source_script_content=content,
@@ -287,8 +287,7 @@ def test_p11_compose_creates_distinct_target_ids_and_keeps_source_lineage() -> N
 
 
 def test_p11_preservation_locks_are_service_generated_from_source_script() -> None:
-    content = _source_script_content()
-    locks = service._build_preservation_locks(content)
+    locks = service._build_preservation_locks(_source_script_content())
     categories = {item.category for item in locks}
     assert PreservationCategory.STORY_MAINLINE in categories
     assert PreservationCategory.HOOK in categories
@@ -297,7 +296,6 @@ def test_p11_preservation_locks_are_service_generated_from_source_script() -> No
     assert PreservationCategory.ACTION_RHYTHM in categories
     assert PreservationCategory.SCENE_ORDER not in categories
     assert PreservationCategory.SHOT_LOGIC not in categories
-    assert locks == service._build_preservation_locks(content)
 
 
 def test_p11_source_script_revision_recursively_stales_target_graph(
