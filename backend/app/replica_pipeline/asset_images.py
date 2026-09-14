@@ -201,12 +201,45 @@ def _load_storyboard(db: Session, project_id: str) -> tuple[ArtifactNode, Replic
 
 
 def _entity_specs(content: ReplicaLocalizedStoryboardContent, visual_style: str) -> list[dict]:
+    referenced_characters = {
+        entity_id
+        for shot in content.shots
+        for entity_id in [
+            *shot.target_character_ids,
+            *(line.target_character_id for line in shot.dialogue if line.target_character_id),
+        ]
+    }
+    referenced_scenes = {entity_id for shot in content.shots for entity_id in shot.target_scene_ids}
+    referenced_props = {entity_id for shot in content.shots for entity_id in shot.target_prop_ids}
+
+    characters = {item.target_character_id: item for item in content.characters}
+    scenes = {item.target_scene_id: item for item in content.scenes}
+    props = {item.target_prop_id: item for item in content.props}
+    missing = {
+        "characters": sorted(referenced_characters - set(characters)),
+        "scenes": sorted(referenced_scenes - set(scenes)),
+        "props": sorted(referenced_props - set(props)),
+    }
+    if any(missing.values()):
+        raise AppError(
+            "ASSET_IMAGES_STORYBOARD_ENTITY_MISSING",
+            "本土化分镜引用了没有正式实体定义的人物、场景或道具，禁止生成不完整资产集",
+            status_code=409,
+            details=missing,
+        )
+
     specs: list[dict] = []
     for item in content.characters:
+        if item.target_character_id not in referenced_characters:
+            continue
         specs.append({"asset_type": TargetAssetType.CHARACTER, "entity_id": item.target_character_id, "display_name": item.display_name, "review_zh": f"{item.identity_description_zh}；{item.appearance_description_zh}", "prompt": f"单一人物全身角色参考图，干净中性背景，禁止文字和水印。角色：{item.display_name}。{item.identity_description_zh}。{item.appearance_description_zh}。视觉风格：{visual_style}。清晰展示脸型、发型、体态和基础服装，写实电影级细节，同一人物身份稳定。"})
     for item in content.scenes:
+        if item.target_scene_id not in referenced_scenes:
+            continue
         specs.append({"asset_type": TargetAssetType.SCENE, "entity_id": item.target_scene_id, "display_name": item.display_name, "review_zh": f"{item.setting_description_zh}；{item.visual_description_zh}", "prompt": f"纯场景环境参考图，不出现人物，不要文字和水印。场景：{item.display_name}。{item.setting_description_zh}。{item.visual_description_zh}。视觉风格：{visual_style}。清晰展示空间布局、固定地标、材质、光线和色彩，电影级写实环境概念图。"})
     for item in content.props:
+        if item.target_prop_id not in referenced_props:
+            continue
         specs.append({"asset_type": TargetAssetType.PROP, "entity_id": item.target_prop_id, "display_name": item.display_name, "review_zh": f"{item.function_description_zh}；{item.visual_description_zh}", "prompt": f"单一道具产品式参考图，干净中性背景，不出现人物，不要文字和水印。道具：{item.display_name}。{item.function_description_zh}。{item.visual_description_zh}。视觉风格：{visual_style}。清晰展示形态、尺度、材质、颜色和标志性细节。"})
     return specs
 

@@ -5,22 +5,32 @@ import { useRoute, useRouter } from 'vue-router'
 import { getProject } from '@/features/projects/api'
 import type { ProjectType } from '@/features/projects/types'
 
-type WorkspaceId = 'source' | 'script' | 'assets' | 'storyboard' | 'generation' | 'final'
+type WorkspaceId = 'source' | 'localize' | 'assets' | 'prompts' | 'generation' | 'script' | 'storyboard' | 'final'
 
 const route = useRoute()
 const router = useRouter()
 const projectType = ref<ProjectType | null>(null)
-const allSteps: { id: WorkspaceId; label: string; hint: string }[] = [
+const replicaSteps: { id: WorkspaceId; label: string; hint: string }[] = [
+  { id: 'source', label: '分镜分析', hint: '视频 → 原片分镜表' },
+  { id: 'localize', label: '本土化分镜', hint: '中文描述 · 本土对白' },
+  { id: 'assets', label: '资产图', hint: '人物 · 场景 · 道具' },
+  { id: 'prompts', label: 'H3 提示词', hint: '模型 Skill · 多参考' },
+  { id: 'generation', label: '视频生成', hint: 'MiniMax H3 音画同步' },
+]
+const legacySteps: { id: WorkspaceId; label: string; hint: string }[] = [
   { id: 'source', label: '原作', hint: '上传与解析' },
   { id: 'script', label: '剧本', hint: '故事、剧集、对白' },
   { id: 'assets', label: '资产', hint: '人物、场景、道具' },
   { id: 'storyboard', label: '分镜', hint: '镜头生成计划' },
-  { id: 'generation', label: '生成', hint: '音画联合生成' },
+  { id: 'generation', label: '生成', hint: '生成结果' },
   { id: 'final', label: '成片', hint: '检查与导出' },
 ]
 
 const activeId = computed<WorkspaceId>(() => (route.params.workspace as WorkspaceId | undefined) ?? 'source')
-const visibleSteps = computed(() => projectType.value === 'SCRIPT_LOCALIZATION' ? allSteps.slice(0, 2) : allSteps)
+const visibleSteps = computed(() => {
+  if (projectType.value === 'REPLICA') return replicaSteps
+  return projectType.value === 'SCRIPT_LOCALIZATION' ? legacySteps.slice(0, 2) : legacySteps
+})
 
 function openWorkspace(id: WorkspaceId) {
   void router.push(`/projects/${String(route.params.id)}/${id}`)
@@ -29,7 +39,11 @@ function openWorkspace(id: WorkspaceId) {
 onMounted(async () => {
   try {
     projectType.value = (await getProject(String(route.params.id))).project_type
-    if (projectType.value === 'SCRIPT_LOCALIZATION' && !['source', 'script'].includes(activeId.value)) {
+    if (projectType.value === 'REPLICA') {
+      const legacyRedirect: Partial<Record<WorkspaceId, WorkspaceId>> = { script: 'localize', storyboard: 'prompts', final: 'generation' }
+      const target = legacyRedirect[activeId.value]
+      if (target) await router.replace(`/projects/${String(route.params.id)}/${target}`)
+    } else if (projectType.value === 'SCRIPT_LOCALIZATION' && !['source', 'script'].includes(activeId.value)) {
       await router.replace(`/projects/${String(route.params.id)}/script`)
     }
   }
@@ -38,7 +52,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <nav class="journey-nav" aria-label="项目制作流程">
+  <nav class="journey-nav" :class="{ replica: projectType === 'REPLICA' }" aria-label="项目制作流程">
     <button v-for="(step, index) in visibleSteps" :key="step.id" type="button" :class="{ active: activeId === step.id }" :aria-current="activeId === step.id ? 'page' : undefined" @click="openWorkspace(step.id)">
       <span class="journey-number">{{ index + 1 }}</span>
       <span><strong>{{ step.label }}</strong><small>{{ step.hint }}</small></span>
@@ -48,6 +62,7 @@ onMounted(async () => {
 
 <style scoped>
 .journey-nav{position:sticky;top:76px;z-index:45;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));max-width:1360px;margin:0 auto 18px;padding:7px;border:1px solid #e3e1dc;border-radius:16px;background:rgba(255,255,255,.95);box-shadow:0 10px 32px rgba(35,31,26,.08);backdrop-filter:blur(14px)}
+.journey-nav.replica{grid-template-columns:repeat(5,minmax(0,1fr))}
 .journey-nav button{position:relative;display:flex;align-items:center;gap:9px;min-width:0;padding:10px 12px;border:0;border-radius:11px;background:transparent;color:#77736d;text-align:left;cursor:pointer;transition:.18s ease}
 .journey-nav button:not(:last-child)::after{content:'';position:absolute;right:-4px;width:8px;height:1px;background:#d9d6d0}.journey-nav button:hover{background:#f7f5ff;color:#5b4ee8}.journey-nav button.active{background:#f0edff;color:#5143df;box-shadow:inset 0 0 0 1px #ddd7ff}
 .journey-number{display:grid;place-items:center;flex:0 0 28px;width:28px;height:28px;border-radius:9px;background:#efeee9;color:#68645f;font-size:12px;font-weight:850}.active .journey-number{background:#6152e8;color:#fff}.journey-nav button>span:last-child{display:grid;min-width:0;gap:2px}.journey-nav strong,.journey-nav small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.journey-nav strong{font-size:13px}.journey-nav small{font-size:10px;font-weight:500;opacity:.72}

@@ -274,6 +274,17 @@ class AssetImagesRead(BaseModel):
     provenance: dict | None = None
 
 
+class H3PromptAuthoredSegment(_StrictProvider):
+    generation_segment_id: str
+    execution_prompt: str = Field(min_length=1, max_length=12000)
+    negative_prompt: str = Field(default="", max_length=6000)
+    review_prompt_zh: str = Field(min_length=1, max_length=12000)
+
+
+class H3PromptAuthoringResult(_StrictProvider):
+    segments: list[H3PromptAuthoredSegment] = Field(min_length=1, max_length=24)
+
+
 class H3PromptProvenance(BaseModel):
     target_storyboard_artifact_id: str
     target_storyboard_revision: int
@@ -284,6 +295,10 @@ class H3PromptProvenance(BaseModel):
     professional_skill_id: str = "minimax-h3-prompting"
     professional_skill_version: str
     model_id: str = "MiniMaxAI/MiniMax-H3"
+    prompt_contract: str
+    prompt_provider: str
+    prompt_model: str
+    provider_jobs: list[PipelineProviderJobProvenance] = Field(min_length=1)
     generated_by_task_id: str
 
 

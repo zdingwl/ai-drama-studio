@@ -15,6 +15,9 @@ from app.p16.runtime import (
     run_generation_task,
 )
 from app.p17.runtime import P17_TASK_TYPE, run_post_task
+from app.replica_pipeline.asset_images import TASK_TYPE as ASSET_IMAGES_TASK_TYPE, run_asset_images_task
+from app.replica_pipeline.h3_prompting import TASK_TYPE as H3_PROMPT_TASK_TYPE, run_h3_prompt_task
+from app.replica_pipeline.localized_storyboard import TASK_TYPE as LOCALIZED_STORYBOARD_TASK_TYPE, run_localized_storyboard_task
 from app.preprocessing.service import is_p5_shot_boundary_task, run_p5_shot_boundary_task
 from app.shot_breakdown.service_v2 import P8_TASK_TYPE, run_p8_shot_breakdown_task
 from app.source_analysis.service import SOURCE_ANALYSIS_TASK_TYPE, run_source_analysis_task
@@ -78,6 +81,12 @@ def _schedule_task_if_needed(
         background_tasks.add_task(run_generation_task, session_factory, task.id)
     elif task.task_type == P17_TASK_TYPE:
         background_tasks.add_task(run_post_task, session_factory, task.id)
+    elif task.task_type == LOCALIZED_STORYBOARD_TASK_TYPE:
+        background_tasks.add_task(run_localized_storyboard_task, session_factory, task.id)
+    elif task.task_type == ASSET_IMAGES_TASK_TYPE:
+        background_tasks.add_task(run_asset_images_task, session_factory, task.id)
+    elif task.task_type == H3_PROMPT_TASK_TYPE:
+        background_tasks.add_task(run_h3_prompt_task, session_factory, task.id)
     elif task.task_type == SOURCE_ANALYSIS_TASK_TYPE:
         background_tasks.add_task(run_source_analysis_task, session_factory, task.id)
 
