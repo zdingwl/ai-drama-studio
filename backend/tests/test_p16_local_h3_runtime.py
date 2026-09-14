@@ -74,7 +74,8 @@ def _comfy_object_info() -> dict:
         for name in LocalComfyUIH3Provider._required_nodes
     }
     required_nodes["UNETLoader"]["input"]["required"]["unet_name"] = _combo([
-        "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
     ])
     required_nodes["CLIPLoader"]["input"]["required"]["clip_name"] = _combo([
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
@@ -96,8 +97,9 @@ def test_default_h3_runtime_is_windows_comfyui_and_does_not_require_cloud_key(mo
     assert isinstance(provider, LocalComfyUIH3Provider)
     assert provider.profile()["runtime_mode"] == H3RuntimeMode.LOCAL_COMFYUI.value
     assert provider.profile()["base_url"] == "http://127.0.0.1:8188"
-    assert provider.profile()["task"] == "t2va"
-    assert provider.profile()["model_variant"] == "fl2va"
+    assert provider.profile()["task"] == "multi-reference-native-av"
+    assert provider.profile()["model_variant"] == "ref2va-primary/fl2va-legacy"
+    assert provider.profile()["ref2va_unet_name"] == "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
 
 
 def test_explicit_sglang_runtime_remains_available(monkeypatch) -> None:
@@ -180,6 +182,7 @@ def test_comfyui_readiness_fails_closed_when_h3_weights_are_missing() -> None:
     assert readiness.ready is False
     assert readiness.state.value == "MODEL_MISMATCH"
     assert "minimax_h3_fl2va_pruned_int8_convrot.safetensors" in readiness.message
+    assert "minimax_h3_ref2va_pruned_int8_convrot.safetensors" in readiness.message
 
 
 def test_comfyui_workflow_uses_native_audio_video_h3_pipeline() -> None:
