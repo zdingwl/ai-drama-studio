@@ -53,6 +53,7 @@ from app.workflow.worker import TaskExecutionContext
 TASK_TYPE = "replica.localized-storyboard"
 SKILL_ID = "storyboard-localization"
 MAX_OUTPUT_TOKENS = 65536
+LOCALIZATION_BATCH_SHOTS = 8
 
 
 def _sha(value: object) -> str:
@@ -82,9 +83,9 @@ def _json_object(text: str) -> str:
     raise AppError("LOCALIZED_STORYBOARD_PROVIDER_INVALID", "本土化分镜 Provider 未返回 JSON object", status_code=502)
 
 
-def _assert_chinese(label: str, value: str) -> None:
+def _assert_chinese(label: str, value: str, *, minimum_cjk: int = 4) -> None:
     cjk = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", value))
-    if cjk < 4:
+    if cjk < minimum_cjk:
         raise AppError(
             "LOCALIZED_STORYBOARD_REVIEW_LANGUAGE_INVALID",
             f"{label} 必须提供可供中国用户理解的简体中文描述",
@@ -180,7 +181,7 @@ def _validate_semantic(payload: LocalizationProviderInput, semantic: LocalizedSt
         _assert_chinese("道具功能说明", item.function_description_zh)
         _assert_chinese("道具视觉说明", item.visual_description_zh)
     for item in semantic.dialogue:
-        _assert_chinese("目标对白中文翻译", item.target_dialogue_zh)
+        _assert_chinese("目标对白中文翻译", item.target_dialogue_zh, minimum_cjk=1)
     for item in semantic.shots:
         _assert_chinese("本土化镜头描述", item.localized_visual_description_zh)
         _assert_chinese("镜头语言中文说明", item.camera_description_zh)
@@ -357,6 +358,65 @@ def _payload(project, snapshot: SourceVideoSnapshotContent) -> LocalizationProvi
     )
 
 
+def _batched_payloads(payload: LocalizationProviderInput) -> list[LocalizationProviderInput]:
+    """Bound each remote request while preserving exact source-id coverage."""
+    shots = list(payload.source_view["shots"])
+    if not shots:
+        return [payload]
+    dialogue_by_id = {item["utterance_id"]: item for item in payload.source_view["dialogue"]}
+    character_by_id = {item["source_character_id"]: item for item in payload.source_view["characters"]}
+    scene_by_id = {item["source_scene_id"]: item for item in payload.source_view["scenes"]}
+    prop_by_id = {item["source_prop_id"]: item for item in payload.source_view["props"]}
+    batches: list[LocalizationProviderInput] = []
+    for offset in range(0, len(shots), LOCALIZATION_BATCH_SHOTS):
+        batch_shots = shots[offset : offset + LOCALIZATION_BATCH_SHOTS]
+        dialogue_ids = tuple(dict.fromkeys(ref["utterance_id"] for shot in batch_shots for ref in shot["dialogue"]))
+        character_ids = tuple(dict.fromkeys(item for shot in batch_shots for item in shot["character_ids"]))
+        scene_ids = tuple(dict.fromkeys(item for shot in batch_shots for item in shot["scene_ids"]))
+        prop_ids = tuple(dict.fromkeys(item for shot in batch_shots for item in shot["prop_ids"]))
+        for dialogue_id in dialogue_ids:
+            speaker_id = dialogue_by_id[dialogue_id].get("speaker_character_id")
+            if speaker_id and speaker_id not in character_ids:
+                character_ids += (speaker_id,)
+        batch_view = {
+            "characters": [character_by_id[item] for item in character_ids],
+            "scenes": [scene_by_id[item] for item in scene_ids],
+            "props": [prop_by_id[item] for item in prop_ids],
+            "dialogue": [dialogue_by_id[item] for item in dialogue_ids],
+            "shots": batch_shots,
+        }
+        batches.append(LocalizationProviderInput(
+            target_language=payload.target_language,
+            target_region=payload.target_region,
+            scene_strategy=payload.scene_strategy,
+            visual_style=payload.visual_style,
+            source_view=batch_view,
+            expected_character_ids=character_ids,
+            expected_scene_ids=scene_ids,
+            expected_prop_ids=prop_ids,
+            expected_dialogue_ids=dialogue_ids,
+            expected_shot_ids=tuple(item["shot_anchor_id"] for item in batch_shots),
+        ))
+    return batches
+
+
+def _merge_semantics(payload: LocalizationProviderInput, parts: list[LocalizedStoryboardSemantic]) -> LocalizedStoryboardSemantic:
+    fields_and_ids = (("characters", "source_character_id"), ("scenes", "source_scene_id"), ("props", "source_prop_id"), ("dialogue", "utterance_id"), ("shots", "shot_anchor_id"))
+    merged: dict[str, list[dict[str, Any]]] = {}
+    for field, id_field in fields_and_ids:
+        by_id: dict[str, dict[str, Any]] = {}
+        for part in parts:
+            for item in getattr(part, field):
+                value = item.model_dump(mode="json")
+                item_id = str(value[id_field])
+                # Entity definitions can appear in more than one shot batch. Keep the
+                # first validated definition so later wording drift cannot rename the
+                # same stable id halfway through the storyboard.
+                by_id.setdefault(item_id, value)
+        merged[field] = list(by_id.values())
+    return _validate_semantic(payload, LocalizedStoryboardSemantic.model_validate(merged))
+
+
 def create_localized_storyboard_task(db: Session, *, project_id: str, idempotency_key: str) -> Task:
     project = get_project(db, project_id)
     if project.project_type != ProjectType.REPLICA:
@@ -364,7 +424,19 @@ def create_localized_storyboard_task(db: Session, *, project_id: str, idempotenc
     snapshot_artifact, snapshot = _load_snapshot(db, project_id)
     provider = _provider(get_settings(), project.source_understanding_provider)
     payload = _payload(project, snapshot)
-    fingerprint = _sha({"snapshot": snapshot_artifact.input_fingerprint, "target_language": project.target_language, "target_region": project.target_region, "scene_strategy": str(project.scene_strategy), "visual_style": project.visual_style, "provider": provider.profile(), "skill": get_professional_skill(SKILL_ID).version})
+    latest_task = db.scalar(select(Task).where(
+        Task.project_id == project_id,
+        Task.task_type == TASK_TYPE,
+    ).order_by(Task.created_at.desc()).limit(1))
+    restart_after_terminal = None
+    if latest_task is not None and latest_task.status in {
+        TaskStatus.CANCELLED,
+        TaskStatus.FAILED,
+        TaskStatus.INTERRUPTED,
+        TaskStatus.SUCCEEDED,
+    }:
+        restart_after_terminal = latest_task.id
+    fingerprint = _sha({"snapshot": snapshot_artifact.input_fingerprint, "target_language": project.target_language, "target_region": project.target_region, "scene_strategy": str(project.scene_strategy), "visual_style": project.visual_style, "provider": provider.profile(), "skill": get_professional_skill(SKILL_ID).version, "restart_after_terminal": restart_after_terminal})
     return create_task_from_command(db, project_id=project_id, idempotency_key=idempotency_key, payload=TaskCommandCreate(task_type=TASK_TYPE, task_name="生成本土化分镜表", input_fingerprint=fingerprint, input_artifact_ids=[snapshot_artifact.id], max_attempts=3))
 
 
@@ -381,17 +453,25 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
         payload = _payload(project, snapshot)
         sequence = _generation_sequence(db, task.project_id, snapshot_artifact.id)
         profile = provider.profile()
+        batches = _batched_payloads(payload)
         job_payload = {"source_snapshot_artifact_id": snapshot_artifact.id, "source_snapshot_fingerprint": snapshot_artifact.input_fingerprint, "target_language": project.target_language, "target_region": project.target_region, "provider_profile": profile, "generation_sequence": sequence}
         context.checkpoint({"provider": provider.provider_name, "model": provider.model_name, "generation_sequence": sequence}, progress_percent=10)
-        def _remote_call(_):
-            provider_result = provider.localize(payload)
-            return ProviderDispatchResult(value=provider_result, remote_job_id=provider_result.remote_job_id)
+        jobs: list[ProviderJob] = []
+        semantic_parts: list[LocalizedStoryboardSemantic] = []
+        for batch_index, batch in enumerate(batches, 1):
+            def _remote_call(_, current_batch=batch):
+                provider_result = provider.localize(current_batch)
+                return ProviderDispatchResult(value=provider_result, remote_job_id=provider_result.remote_job_id)
 
-        job, dispatched = dispatch_provider_call(db, task_id=task.id, provider=provider.provider_name, model=provider.model_name, capability=Capability.STORYBOARD_LOCALIZATION, payload=job_payload, artifact_id=snapshot_artifact.id, remote_call=_remote_call)
-        result: LocalizationProviderResult = dispatched.value
-        context.checkpoint({"provider_job_id": job.id, "generation_sequence": sequence}, progress_percent=70)
+            batch_payload = dict(job_payload)
+            batch_payload.update({"batch_index": batch_index, "batch_count": len(batches), "shot_ids": list(batch.expected_shot_ids)})
+            job, dispatched = dispatch_provider_call(db, task_id=task.id, provider=provider.provider_name, model=provider.model_name, capability=Capability.STORYBOARD_LOCALIZATION, payload=batch_payload, artifact_id=snapshot_artifact.id, remote_call=_remote_call)
+            jobs.append(job)
+            semantic_parts.append(dispatched.value.semantic)
+            progress = 10 + int(60 * batch_index / len(batches))
+            context.checkpoint({"provider_job_ids": [item.id for item in jobs], "generation_sequence": sequence, "completed_batches": batch_index, "batch_count": len(batches)}, progress_percent=progress)
 
-    semantic = result.semantic
+    semantic = _merge_semantics(payload, semantic_parts)
     char_sem = {item.source_character_id: item for item in semantic.characters}
     scene_sem = {item.source_scene_id: item for item in semantic.scenes}
     prop_sem = {item.source_prop_id: item for item in semantic.props}
@@ -437,8 +517,9 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
 
     content = ReplicaLocalizedStoryboardContent(source_snapshot_artifact_id=snapshot_artifact.id, target_language=project.target_language, target_region=project.target_region, characters=characters, scenes=scenes, props=props, dialogue=dialogue_lines, shots=shots)
     skill = get_professional_skill(SKILL_ID)
-    provenance = LocalizedStoryboardProvenance(source_snapshot_artifact_id=snapshot_artifact.id, source_snapshot_revision=snapshot_artifact.revision, source_snapshot_fingerprint=snapshot_artifact.input_fingerprint, target_language=project.target_language, target_region=project.target_region, generation_sequence=sequence, professional_skill_version=skill.version, provider_job=PipelineProviderJobProvenance(provider_job_id=job.id, provider=job.provider, model=job.model, payload_fingerprint=job.payload_fingerprint), generated_by_task_id=task.id)
-    context.checkpoint({"provider_job_id": job.id, "generation_sequence": sequence, "shot_count": len(shots)}, progress_percent=95)
+    provider_jobs = [PipelineProviderJobProvenance(provider_job_id=item.id, provider=item.provider, model=item.model, payload_fingerprint=item.payload_fingerprint) for item in jobs]
+    provenance = LocalizedStoryboardProvenance(source_snapshot_artifact_id=snapshot_artifact.id, source_snapshot_revision=snapshot_artifact.revision, source_snapshot_fingerprint=snapshot_artifact.input_fingerprint, target_language=project.target_language, target_region=project.target_region, generation_sequence=sequence, professional_skill_version=skill.version, provider_job=provider_jobs[0], provider_jobs=provider_jobs, generated_by_task_id=task.id)
+    context.checkpoint({"provider_job_ids": [item.provider_job_id for item in provider_jobs], "generation_sequence": sequence, "shot_count": len(shots)}, progress_percent=95)
     return content, provenance
 
 

@@ -178,6 +178,7 @@ class LocalizedStoryboardProvenance(BaseModel):
     professional_skill_id: str = "storyboard-localization"
     professional_skill_version: str
     provider_job: PipelineProviderJobProvenance
+    provider_jobs: list[PipelineProviderJobProvenance] = Field(default_factory=list)
     generated_by_task_id: str
 
 
