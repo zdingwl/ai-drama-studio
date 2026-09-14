@@ -88,6 +88,11 @@ def _replace_evidence_refs(value, dialogue_map: dict[str, str], visual_map: dict
             replaced[key] = [dialogue_map.get(str(item), str(item)) for item in nested]
         elif key == "visual_text_evidence_ids" and isinstance(nested, list):
             replaced[key] = [visual_map.get(str(item), str(item)) for item in nested]
+        elif key == "utterance_id" and isinstance(nested, str):
+            # dialogue_attributions[].utterance_id is also transported as the
+            # provider-facing D0001 alias. Resolve it before exact canonical
+            # coverage validation, just like dialogue_evidence_ids.
+            replaced[key] = dialogue_map.get(nested, nested)
         else:
             replaced[key] = _replace_evidence_refs(nested, dialogue_map, visual_map)
     return replaced
