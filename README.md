@@ -4,7 +4,7 @@ AI 短剧生产工作台，当前处于 V3 从零重建阶段。
 
 ## 推荐启动方式
 
-本地开发 / 验收统一使用仓库根目录的一体化启动器，不再分别手工启动 IndexTTS、FastAPI 和 Vite。
+本地开发 / 验收统一使用仓库根目录的一体化启动器。当前 Replica 普通五步主链由 MiniMax H3 直接生成原生音画同步视频，因此默认启动器只负责 Studio backend + frontend，**不再自动启动、安装、下载或等待 IndexTTS 2.5**。
 
 Windows：
 
@@ -12,7 +12,7 @@ Windows：
 start.cmd
 ```
 
-也可以直接双击 `start.cmd`。**Windows 不再要求安装 WSL2**：P14 的 IndexTTS-2.5 会在 `.runtime/indextts25-native-windows/` 中建立独立的官方 `uv` 环境并使用 Windows 原生 CUDA 推理；Studio backend 继续使用仓库根目录的 Python 3.12+ `.venv`。
+也可以直接双击 `start.cmd`。Windows 不要求 WSL2。Studio backend 使用仓库根目录的 Python 3.12+ `.venv`，frontend 使用 Node.js 22+。
 
 Linux：
 
@@ -20,11 +20,11 @@ Linux：
 ./start.sh
 ```
 
-统一启动器会自动检查/准备后端虚拟环境、数据库 migration、前端依赖，以及 P14 的 IndexTTS-2.5 托管运行时；缺少模型时自动从 ModelScope 下载到 `.models/IndexTTS-2.5`。Windows 使用官方 IndexTTS 原生推理 + 本地 8092 adapter，Linux 继续使用 vLLM-Omni；两者对 P14 都是同一个 `IndexTeam/IndexTTS-2.5` 模型合同。
+统一启动器会自动检查/准备后端虚拟环境、数据库 migration 与前端依赖。Replica 五步主链的对白、环境声和音效不先经过独立 TTS；Step 4 由 `minimax-h3-prompting` 编译模型原生音画提示词，Step 5 由 MiniMax H3 使用 `NATIVE_AUDIO_VIDEO` 直接生成带同步音轨的视频。
 
-系统级前置条件包括 Python 3.12+、Node.js 22+、Git，以及用于本地高质量 TTS 的 NVIDIA/CUDA 可用环境。Windows 不需要 WSL；IndexTTS 自己要求的 Python 3.10/3.11 由 `uv` 隔离环境自动管理。启动器不会静默安装或升级 GPU 驱动，也不会触发系统重启。
+仓库中的 IndexTTS 脚本与旧 P14 代码仅作为历史兼容 / 显式高级配音能力保留，不是默认启动依赖，也不是当前 Replica 五步主链前置。当前普通产品合同以 `docs/55_Replica五步主生产链与模型专属PromptSkill.md` 为最高优先级。
 
-P14 Windows 原生运行细节以 `docs/38_Windows原生IndexTTS25无需WSL统一运行时.md` 为准；Linux vLLM-Omni 细节可参考 `docs/37_统一启动器与IndexTTS25托管运行时.md`。
+系统级前置条件包括 Python 3.12+、Node.js 22+、Git，以及本地 MiniMax H3 / ComfyUI 运行时所需的 NVIDIA/CUDA 环境。启动器不会静默安装或升级 GPU 驱动，也不会触发系统重启。
 
 正式规划：
 
