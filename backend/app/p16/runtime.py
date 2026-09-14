@@ -1,26 +1,30 @@
 import hashlib
-import os
 from uuid import uuid4
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.time import utc_now
 from app.p15.schemas import GenerationSegment
 from app.p16.common import attempt_to_read, input_artifact_ids, load_inputs, sha, storage_dir
 from app.p16.media import duration_tolerance_us, probe_video, sha256_file
 from app.p16.models import ReplicaGenerationAttempt, ReplicaGenerationSelectionCandidate
-from app.p16.provider import MiniMaxH3Config, MiniMaxH3Provider
+from app.p16.provider import H3GenerationProvider, build_h3_generation_provider
 from app.p16.schemas import (
+    H3RuntimeReadinessRead,
+    H3RuntimeReadinessState,
     P16CandidateProvenance,
     P16SelectionCandidateContent,
     P16SelectionCandidateRead,
+    P16_CONTRACT,
     P16_SCHEMA_VERSION,
     SelectedGenerationClip,
     SelectionReviewStatus,
     TechnicalQcStatus,
 )
+from app.projects.enums import ProjectType
 from app.projects.service import get_project
 from app.skills.models import Capability
 from app.skills.professional import get_professional_skill
@@ -33,14 +37,8 @@ from app.workflow.task_service import create_task_from_command, mark_task_failed
 P16_TASK_TYPE = "P16_MINIMAX_H3_GENERATION"
 
 
-def _max_attempts_per_segment() -> int:
-    try:
-        value = int(os.getenv("AI_DRAMA_P16_MAX_ATTEMPTS_PER_SEGMENT") or "2")
-    except ValueError as exc:
-        raise AppError("P16_CONFIG_INVALID", "P16 max attempts 配置无效", status_code=500) from exc
-    if not 1 <= value <= 4:
-        raise AppError("P16_CONFIG_INVALID", "P16 max attempts per segment 必须在 1~4", status_code=500)
-    return value
+def _max_attempts_per_segment(settings: Settings | None = None) -> int:
+    return (settings or Settings()).p16_max_attempts_per_segment
 
 
 def _generation_sequence(db: Session, project_id: str) -> int:
@@ -52,7 +50,7 @@ def _generation_sequence(db: Session, project_id: str) -> int:
     return int(latest or 0) + 1
 
 
-def _fingerprint(inputs, sequence: int, provider: MiniMaxH3Provider) -> str:
+def _fingerprint(inputs, sequence: int, provider: H3GenerationProvider) -> str:
     skill = get_professional_skill("video-generation-qc")
     return sha(
         {
@@ -71,10 +69,34 @@ def _fingerprint(inputs, sequence: int, provider: MiniMaxH3Provider) -> str:
     )
 
 
+def get_runtime_readiness(db: Session, project_id: str) -> H3RuntimeReadinessRead:
+    project = get_project(db, project_id)
+    if project.project_type != ProjectType.REPLICA:
+        raise AppError("P16_REPLICA_ONLY", "视频生成 Runtime 当前只允许 REPLICA 项目", status_code=422)
+    settings = Settings()
+    try:
+        provider = build_h3_generation_provider(settings)
+    except AppError as exc:
+        if exc.code != "P16_PROVIDER_NOT_CONFIGURED":
+            raise
+        return H3RuntimeReadinessRead(
+            runtime_mode=settings.p16_h3_runtime,
+            state=H3RuntimeReadinessState.NOT_CONFIGURED,
+            ready=False,
+            provider="minimax-cloud",
+            model=settings.p16_minimax_model,
+            base_url=settings.p16_minimax_base_url,
+            message=exc.message,
+        )
+    return provider.readiness()
+
+
 def create_generation_task(db: Session, *, project_id: str, idempotency_key: str) -> Task:
     project = get_project(db, project_id)
     inputs = load_inputs(db, project)
-    provider = MiniMaxH3Provider(MiniMaxH3Config.from_env())
+    settings = Settings()
+    provider = build_h3_generation_provider(settings)
+    provider.assert_ready()
     sequence = _generation_sequence(db, project_id)
     task = create_task_from_command(
         db,
@@ -94,6 +116,50 @@ def create_generation_task(db: Session, *, project_id: str, idempotency_key: str
         db.commit()
         db.refresh(task)
     return task
+
+
+def replace_generation_task_for_retry_if_needed(db: Session, *, project_id: str, task: Task) -> Task | None:
+    """Create a fresh P16 task when an explicit retry can no longer reuse the failed task.
+
+    A failed task fingerprints the selected H3 runtime profile. Re-queuing that exact task after
+    switching from SGLang to ComfyUI would fail immediately as stale. The same applies when P15 has
+    published newer CURRENT storyboard/segment Artifacts since the failed attempt. An explicit retry
+    therefore creates a replacement from the current formal P16 inputs whenever either the input
+    lineage or the runtime/profile fingerprint changed. Missing/non-CURRENT inputs still fail closed
+    through load_inputs(), and the failed task's retry limit remains authoritative.
+    """
+    if (
+        task.task_type != P16_TASK_TYPE
+        or task.status != TaskStatus.FAILED
+        or task.attempt >= task.max_attempts
+    ):
+        return None
+    project = get_project(db, project_id)
+    inputs = load_inputs(db, project)
+    current_ids = input_artifact_ids(inputs)
+    inputs_changed = sorted(set(task.input_artifact_ids_json or [])) != sorted(set(current_ids))
+    provider = build_h3_generation_provider()
+    provider.assert_ready()
+    sequence = int((task.checkpoint_json or {}).get("p16_generation_sequence") or 0)
+    if sequence <= 0:
+        return None
+    current_fingerprint = _fingerprint(inputs, sequence, provider)
+    if not inputs_changed and current_fingerprint == task.input_fingerprint:
+        return None
+    replacement = create_generation_task(
+        db,
+        project_id=project_id,
+        idempotency_key=f"p16-runtime-retry-{task.id}-{current_fingerprint[:16]}",
+    )
+    if (replacement.checkpoint_json or {}).get("p16_replaces_failed_task_id") != task.id:
+        replacement.checkpoint_json = {
+            **(replacement.checkpoint_json or {}),
+            "p16_replaces_failed_task_id": task.id,
+        }
+        db.add(replacement)
+        db.commit()
+        db.refresh(replacement)
+    return replacement
 
 
 def _claim(db: Session, task_id: str, worker_id: str) -> Task | None:
@@ -143,13 +209,14 @@ def _generate_attempt(
     *,
     task: TaskWorkerRead,
     inputs,
-    provider: MiniMaxH3Provider,
+    provider: H3GenerationProvider,
     segment: GenerationSegment,
 ) -> ReplicaGenerationAttempt:
     attempt_number = _next_attempt_number(db, inputs.segments_artifact.id, segment.generation_segment_id)
     safe_segment = hashlib.sha256(segment.generation_segment_id.encode("utf-8")).hexdigest()[:16]
     provider_payload = {
-        "contract": "minimax-h3-v2-2026-09",
+        "contract": P16_CONTRACT,
+        "runtime_mode": provider.profile().get("runtime_mode"),
         "generation_segment_id": segment.generation_segment_id,
         "attempt_number": attempt_number,
         "prompt_fingerprint": sha({"prompt": segment.generation_prompt, "negative": segment.negative_prompt}),
@@ -250,7 +317,7 @@ def _selected_clip(segment: GenerationSegment, attempt: ReplicaGenerationAttempt
     )
 
 
-def _persist_candidate(factory: sessionmaker[Session], task: TaskWorkerRead, selected: list[SelectedGenerationClip], provider: MiniMaxH3Provider) -> None:
+def _persist_candidate(factory: sessionmaker[Session], task: TaskWorkerRead, selected: list[SelectedGenerationClip], provider: H3GenerationProvider) -> None:
     with factory() as db:
         project = get_project(db, task.project_id)
         inputs = load_inputs(db, project)
@@ -341,7 +408,7 @@ def run_generation_task(factory: sessionmaker[Session], task_id: str) -> None:
             return
         snapshot = TaskWorkerRead.model_validate(claimed)
     try:
-        provider = MiniMaxH3Provider(MiniMaxH3Config.from_env())
+        provider = build_h3_generation_provider()
         with factory() as db:
             project = get_project(db, snapshot.project_id)
             inputs = load_inputs(db, project)

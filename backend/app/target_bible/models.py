@@ -21,8 +21,11 @@ class ReplicaTargetRevision(Base):
         ForeignKey("artifact_nodes.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
     artifact_kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    source_snapshot_artifact_id: Mapped[str] = mapped_column(
-        ForeignKey("artifact_nodes.id", ondelete="RESTRICT"), nullable=False, index=True
+    source_snapshot_artifact_id: Mapped[str | None] = mapped_column(
+        ForeignKey("artifact_nodes.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    source_script_artifact_id: Mapped[str | None] = mapped_column(
+        ForeignKey("artifact_nodes.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     generated_by_task_id: Mapped[str | None] = mapped_column(
         ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True

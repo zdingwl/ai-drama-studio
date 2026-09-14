@@ -25,6 +25,7 @@ class TaskRead(BaseModel):
     id: str
     project_id: str
     task_name: str
+    task_type: str
     progress_percent: int
     status: TaskStatus
     last_error: str | None

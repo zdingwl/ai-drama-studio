@@ -6,13 +6,32 @@ from pydantic import BaseModel, Field, field_validator
 
 P16_SCHEMA_VERSION = "1.0"
 P16_SKILL_ID = "video-generation-qc"
-P16_CONTRACT = "minimax-h3-generation-qc-selection-v1"
+P16_CONTRACT = "h3-generation-runtime-qc-selection-v2"
 
 
 class P16ResultStatus(StrEnum):
     NOT_BUILT = "NOT_BUILT"
     CURRENT = "CURRENT"
     STALE = "STALE"
+
+
+class H3RuntimeReadinessState(StrEnum):
+    READY = "READY"
+    UNAVAILABLE = "UNAVAILABLE"
+    WARMING_UP = "WARMING_UP"
+    INCOMPATIBLE = "INCOMPATIBLE"
+    MODEL_MISMATCH = "MODEL_MISMATCH"
+    NOT_CONFIGURED = "NOT_CONFIGURED"
+
+
+class H3RuntimeReadinessRead(BaseModel):
+    runtime_mode: str
+    state: H3RuntimeReadinessState
+    ready: bool
+    provider: str
+    model: str
+    base_url: str
+    message: str
 
 
 class TechnicalQcStatus(StrEnum):

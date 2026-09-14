@@ -167,12 +167,14 @@ onMounted(refreshProjects)
               <button v-for="option in PROJECT_TYPE_OPTIONS" :key="option.value" type="button" :class="{ selected: form.project_type === option.value }" @click="form.project_type = option.value"><span>{{ option.icon }}</span><strong>{{ option.label }}</strong></button>
             </div></fieldset>
             <div class="dialog-fields">
-              <label v-if="isVideoProject"><span>原始语言</span><select v-model="form.source_language"><option v-for="option in LANGUAGE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
               <label><span>目标语言</span><select v-model="form.target_language"><option v-for="option in LANGUAGE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
               <label><span>目标地区</span><select v-model="form.target_region"><option v-for="option in REGION_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
-              <label v-if="isVideoProject"><span>场景策略</span><select v-model="form.scene_strategy"><option v-for="option in sceneStrategyOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
-              <label v-if="isVideoProject"><span>音频策略</span><select v-model="form.audio_policy"><option v-for="option in audioPolicyOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
             </div>
+            <details class="advanced-settings"><summary>高级设置</summary><div class="dialog-fields">
+              <label v-if="isVideoProject"><span>原始语言</span><select v-model="form.source_language"><option v-for="option in LANGUAGE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+              <label v-if="isVideoProject"><span>场景策略</span><select v-model="form.scene_strategy"><option v-for="option in sceneStrategyOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+              <label v-if="isVideoProject"><span>声音策略</span><select v-model="form.audio_policy"><option v-for="option in audioPolicyOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+            </div></details>
             <p v-if="errorMessage" class="dialog-error" role="alert">{{ errorMessage }}</p>
             <footer><button class="cancel-action" type="button" @click="createOpen = false">取消</button><button class="primary-action" type="submit" :disabled="creating">{{ creating ? '创建中…' : '创建项目' }}</button></footer>
           </form>

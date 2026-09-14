@@ -17,6 +17,8 @@ from app.source_analysis.schemas import (
 )
 from app.source_analysis.service import get_source_analysis_status
 from app.source_resolution.service_v2 import get_source_resolution
+from app.source_script.schemas import SourceScriptContent
+from app.source_script.service import get_source_script_artifact
 
 
 def _status_value(value: object) -> str:
@@ -110,6 +112,39 @@ def _shot_ranges(shots: list[SourceAssetShotRef], *, multi_episode: bool) -> lis
     return ranges
 
 
+def _early_source_script_view(project_id: str, artifact_id: str | None, content: SourceScriptContent) -> SourceScriptRead:
+    scenes: list[SourceScriptScene] = []
+    characters: dict[str, SourceScriptEntity] = {}
+    props: dict[str, SourceScriptEntity] = {}
+    scene_number = 0
+    for episode in sorted(content.episodes, key=lambda item: item.episode_order):
+        dialogue_by_id = {item.utterance_id: item for item in episode.dialogue}
+        for item in episode.characters:
+            characters[item.source_character_id] = SourceScriptEntity(id=item.source_character_id, name=item.name)
+        for item in episode.props:
+            props[item.source_prop_id] = SourceScriptEntity(id=item.source_prop_id, name=item.name)
+        for segment in episode.story_segments:
+            scene_number += 1
+            matching_scene = None
+            best_overlap = 0
+            for candidate in episode.scenes:
+                overlap = max((max(0, min(segment.time_range.end_us, r.end_us) - max(segment.time_range.start_us, r.start_us)) for r in candidate.time_ranges), default=0)
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    matching_scene = candidate
+            segment_dialogue = [dialogue_by_id[value] for value in segment.dialogue_utterance_ids if value in dialogue_by_id]
+            dialogues = [SourceScriptDialogue(utterance_id=line.utterance_id, utterance_number=line.utterance_number, start_us=line.start_us, end_us=line.end_us, speaker_id=line.source_character_id, speaker_name=line.speaker_name, text=line.text, delivery="DIALOGUE") for line in segment_dialogue]
+            scenes.append(SourceScriptScene(
+                scene_number=scene_number, episode_id=episode.episode_id,
+                scene_id=matching_scene.source_scene_id if matching_scene is not None else None,
+                scene_name=matching_scene.name if matching_scene is not None else f"剧情段 {segment.segment_number}",
+                start_us=segment.time_range.start_us, end_us=segment.time_range.end_us,
+                character_names=list(dict.fromkeys(line.speaker_name for line in segment_dialogue if line.speaker_name)),
+                shots=[SourceScriptShot(episode_id=episode.episode_id, shot_anchor_id=f"script-segment:{episode.episode_id}:{segment.segment_number}", shot_number=segment.segment_number, start_us=segment.time_range.start_us, end_us=segment.time_range.end_us, duration_us=segment.time_range.end_us-segment.time_range.start_us, action_summary=segment.visual_description, visual_description=segment.visual_description, shot_size="", composition="", angle_or_type="", movement="", focal_length_dof="", thumbnail_url="", reference_clip_url="", dialogues=dialogues)],
+            ))
+    return SourceScriptRead(project_id=project_id, state=SourceAnalysisState.READY, title=content.title, source_script_artifact_id=artifact_id, visual_enrichment_ready=False, scenes=scenes, characters=list(characters.values()), props=list(props.values()))
+
+
 def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
     """Compose a deterministic, user-readable script from accepted Source Facts.
 
@@ -118,12 +153,26 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
     can never be silently merged into one screenplay scene.
     """
 
+    formal_script = get_source_script_artifact(db, project_id)
     status = get_source_analysis_status(db, project_id)
-    if status.state != SourceAnalysisState.READY:
+    if formal_script.status.value == "CURRENT" and formal_script.content is not None:
+        breakdown = get_shot_breakdown(db, project_id)
+        resolution = get_source_resolution(db, project_id)
+        enrichment_ready = (
+            _status_value(breakdown.status) == "CURRENT"
+            and breakdown.content is not None
+            and resolution.characters.content is not None
+            and resolution.speakers.content is not None
+            and resolution.scenes.content is not None
+            and resolution.props.content is not None
+        )
+        if not enrichment_ready:
+            return _early_source_script_view(project_id, formal_script.artifact_id, formal_script.content)
+    elif status.state != SourceAnalysisState.READY:
         return SourceScriptRead(project_id=project_id, state=status.state, title="原片剧本")
-
-    breakdown = get_shot_breakdown(db, project_id)
-    resolution = get_source_resolution(db, project_id)
+    else:
+        breakdown = get_shot_breakdown(db, project_id)
+        resolution = get_source_resolution(db, project_id)
     if (
         _status_value(breakdown.status) != "CURRENT"
         or breakdown.content is None
@@ -320,6 +369,8 @@ def get_source_script(db: Session, project_id: str) -> SourceScriptRead:
         project_id=project_id,
         state=SourceAnalysisState.READY,
         title=breakdown.content.title or "原片剧本",
+        source_script_artifact_id=formal_script.artifact_id if formal_script.status.value == "CURRENT" else None,
+        visual_enrichment_ready=True,
         scenes=scenes,
         characters=[
             SourceScriptEntity(id=item.character_id, name=item.display_name)

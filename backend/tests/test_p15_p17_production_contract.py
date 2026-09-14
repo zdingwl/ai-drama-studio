@@ -40,7 +40,7 @@ def _project(client: TestClient, project_type: str = "REPLICA") -> dict:
 
 def test_root_p15_p17_contract_exists_but_capabilities_remain_planned() -> None:
     root = get_root_skill(ProjectType.REPLICA)
-    assert root.version == "1.5.0"
+    assert root.version == "1.6.0"
     steps = {step.id: step for step in root.steps}
     assert steps["replica_storyboard"].requires == (
         ArtifactType.SOURCE_VIDEO_SNAPSHOT,

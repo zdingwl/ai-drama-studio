@@ -335,6 +335,9 @@ def run_p7_source_bible_task(session_factory: sessionmaker[Session], task_id: st
     try:
         with session_factory() as db:
             core._publish(db, task_id=snapshot.id, content=content, provenance=provenance)
+            from app.source_script.service import publish_source_script
+
+            publish_source_script(db, snapshot.project_id, generated_by_task_id=snapshot.id)
     except Exception as exc:
         with session_factory() as db:
             task = db.get(Task, snapshot.id)

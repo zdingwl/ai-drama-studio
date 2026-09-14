@@ -457,7 +457,7 @@ onBeforeUnmount(stopTaskPolling)
 </script>
 
 <template>
-  <section class="workspace">
+  <section id="source-input" class="workspace">
     <div class="workspace-nav">
       <RouterLink to="/" class="back-link">← 返回项目</RouterLink>
     </div>
@@ -490,15 +490,15 @@ onBeforeUnmount(stopTaskPolling)
       <section v-if="isVideoProject" class="understanding-section">
         <div class="workbench-header understanding-header">
           <div class="workbench-title">
-            <p class="eyebrow">Source Understanding</p>
+            <p class="eyebrow">原片准备</p>
             <div class="workbench-title-row">
-              <h2>原片理解</h2>
+              <h2>{{ episodes.length ? '原片与剧集' : '上传原片' }}</h2>
               <span v-if="sourceUnderstandingStage" class="status" :class="sourceUnderstandingStage.status.toLowerCase()">
                 {{ statusText[sourceUnderstandingStage.status] }}
               </span>
             </div>
             <p class="section-note">
-              系统直接读取完整 Episode 做原片理解。镜头技术锚点、连续对白与画面文字证据会作为内部证据协同使用，不会先把视频切碎再拼剧情。
+              上传一集或多集完整视频，系统会自动整理顺序并生成可编辑的剧本、分镜、人物、场景和道具。
             </p>
           </div>
           <div class="source-actions">

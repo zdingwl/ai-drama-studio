@@ -152,6 +152,46 @@ backend/artifacts/  Artifact 根目录
 
 可以复制 `backend/.env.example` 为 `backend/.env` 修改配置。相对数据库 / Artifact 路径统一以 `backend/` 为基准；所有业务时间戳统一使用 UTC 存储，用户时区只在展示层转换。
 
+## MiniMax H3 本地 Generation Runtime
+
+P16 默认不再要求 MiniMax Cloud API Key。Windows 开发机默认直接使用本机 ComfyUI 原生 MiniMax-H3 Runtime：
+
+```text
+AI_DRAMA_P16_H3_RUNTIME=LOCAL_COMFYUI
+AI_DRAMA_P16_H3_COMFYUI_BASE_URL=http://127.0.0.1:8188
+```
+
+Studio 会先读取 ComfyUI `/system_stats` 与 `/object_info`，确认 ComfyUI 在线、原生 H3 节点存在，而且配置的 FL2VA / Qwen3VL / video VAE / audio VAE 都可见。只有 readiness 为 `READY` 才允许创建 P16 Task；不会用一次真实生成失败来探测 Runtime。
+
+默认 ComfyUI H3 文件名：
+
+```text
+minimax_h3_fl2va_pruned_int8_convrot.safetensors
+qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+minimax_h3_video_vae_fp16.safetensors
+minimax_h3_audio_vae_fp32.safetensors
+```
+
+第一版 adapter 使用 ComfyUI 官方原生 FL2VA/T2VA 节点图的 non-Turbo baseline（20 steps、24fps、H3 `17k+5` frame grid），通过 `/prompt → /history/{prompt_id} → /view` 获取 MP4，再复制进 Studio artifact storage 做 SHA256 + ffprobe。P13 形成真实 reference media 后再启用已安装的 Ref2VA 路径。
+
+如果部署到 Linux / 私有 GPU 服务器，仍可显式改用 SGLang：
+
+```text
+AI_DRAMA_P16_H3_RUNTIME=LOCAL_SGLANG
+AI_DRAMA_P16_H3_LOCAL_BASE_URL=http://127.0.0.1:30010
+```
+
+SGLang 模式继续使用 `/health + /v1/models + /v1/videos` 合同。两种本地 Runtime 都强制直连，不继承系统 HTTP(S) proxy。项目页通过只读 `GET /api/v3/projects/{project_id}/video-generation/runtime-readiness` 展示当前选中 Runtime 的真实状态。
+
+如果明确要使用付费云端 fallback，才设置：
+
+```text
+AI_DRAMA_P16_H3_RUNTIME=MINIMAX_CLOUD
+AI_DRAMA_P16_MINIMAX_API_KEY=...
+```
+
+本地 Runtime 失败不会自动切换到 Cloud。
+
 ## 前端启动
 
 要求 Node.js 22+。

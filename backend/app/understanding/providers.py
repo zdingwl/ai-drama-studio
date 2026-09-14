@@ -20,8 +20,8 @@ from app.understanding.schemas import (
 
 
 P7_PROFESSIONAL_SKILL_ID = "source-video-understanding"
-P7_GROUNDING_CONTRACT = "grounded-source-truth-v2"
-P7_PROMPT_VERSION = "p7-source-bible-v2"
+P7_GROUNDING_CONTRACT = "grounded-source-truth-v3"
+P7_PROMPT_VERSION = "p7-source-bible-v3"
 
 
 @dataclass(frozen=True)
@@ -210,6 +210,28 @@ def validate_episode_understanding_grounding(
             visual_ids=visual_ids,
         )
 
+    character_ids = {item.character_id for item in semantic.characters}
+    attribution_ids = [item.utterance_id for item in semantic.dialogue_attributions]
+    if len(attribution_ids) != len(set(attribution_ids)) or set(attribution_ids) != dialogue_ids:
+        raise ValueError("dialogue_attributions must exactly cover CURRENT canonical dialogue evidence ids")
+    for attribution in semantic.dialogue_attributions:
+        label = f"dialogue_attribution[{attribution.utterance_id}]"
+        if attribution.source_character_id is None:
+            _require_support_level(label, attribution.grounding, {ClaimSupportLevel.UNKNOWN})
+        else:
+            if attribution.source_character_id not in character_ids:
+                raise ValueError(f"{label} referenced unknown source_character_id")
+            _require_support_level(label, attribution.grounding, {ClaimSupportLevel.FACT})
+            _validate_grounding(
+                label,
+                attribution.grounding,
+                payload=payload,
+                dialogue_ids=dialogue_ids,
+                visual_ids=visual_ids,
+            )
+            if attribution.utterance_id not in attribution.grounding.dialogue_evidence_ids:
+                raise ValueError(f"{label} FACT grounding must include its canonical utterance_id")
+
     for relation in semantic.relationships:
         label = f"relationship[{relation.source_character_id}->{relation.target_character_id}]"
         _require_support_level(label, relation.grounding, {ClaimSupportLevel.FACT})
@@ -301,8 +323,9 @@ Grounding 输出约定（{P7_GROUNDING_CONTRACT}）：
 8. 每个 relationship.grounding 必须是 FACT。夫妻/亲属/邻居/同事/婚姻年限/赘婿等关系如果没有直接依据，就不要创建这条关系。
 9. scene.grounding 与 story_event.grounding 必须是 FACT，可使用完整 Episode 视频时间窗口作为直接视觉依据。
 10. 道具 appearance_state 是可见事实，appearance_grounding 必须是 FACT；story_function 若明确可确认则 FACT，若只能合理解释则 INFERENCE 并明确保持推断语气；若无法确认则 story_function=null 且 story_function_grounding=UNKNOWN。禁止用垃圾袋、服装等普通物件硬补事件因果。
-11. timed_script 是语义剧情窗口，不是 Shot Boundary；Story / Rhythm 只总结原片真实存在的叙事和节奏。
-12. P7 不输出逐镜景别、构图、运镜、焦距、逐镜主体绑定或逐镜音效；这些属于 P8。
+11. dialogue_attributions 必须与 CURRENT canonical dialogue 一一对应。能可靠确认说话人物时绑定到 characters 中的 source_character_id，并以该 utterance_id 为 FACT grounding；无法可靠确认时 source_character_id=null、speaker_label 使用可读占位、grounding=UNKNOWN，禁止猜人。
+12. timed_script 是语义剧情窗口，不是 Shot Boundary；Story / Rhythm 只总结原片真实存在的叙事和节奏。
+13. P7 不输出逐镜景别、构图、运镜、焦距、逐镜主体绑定或逐镜音效；这些属于 P8。
 
 Episode:
 - episode_id: {payload.episode_id}

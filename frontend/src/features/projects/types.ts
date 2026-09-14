@@ -34,7 +34,7 @@ export interface ProjectTypeOption {
 export const PROJECT_TYPE_OPTIONS: readonly ProjectTypeOption[] = [
   { value: 'REPLICA', label: '复刻短剧', description: '保留故事与节奏，换人物、地区、文化和语言重新拍。', icon: '🎬' },
   { value: 'REDRAW', label: '重绘短剧', description: '保持内容和表演结构，重点重新生成视觉。', icon: '🎨' },
-  { value: 'TRANSLATION', label: '翻译短剧', description: '原画面为主，重做目标语言配音、口型和字幕。', icon: '🌍' },
+  { value: 'TRANSLATION', label: '翻译短剧', description: '保持故事、表演与镜头，重新生成目标语言音画。', icon: '🌍' },
   { value: 'NOVEL_TO_DRAMA', label: '小说生成短剧', description: '把小说先改编成短剧，再完成分镜和视频生成。', icon: '📖' },
   { value: 'SCRIPT_TO_DRAMA', label: '剧本生成短剧', description: '把已有剧本整理成导演分镜并生成成片。', icon: '📝' },
   { value: 'SCRIPT_LOCALIZATION', label: '剧本本土化', description: '把剧本改成目标地区真正成立的版本。', icon: '🌐' },
@@ -129,6 +129,7 @@ export interface ProjectExecutionPlan {
 export interface TaskRead {
   id: string
   project_id: string
+  task_type?: string
   task_name: string
   progress_percent: number
   status: TaskStatus

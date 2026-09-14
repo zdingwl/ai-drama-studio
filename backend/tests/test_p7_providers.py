@@ -45,6 +45,15 @@ def _fact_video() -> ClaimGrounding:
     )
 
 
+def _unknown_attribution():
+    return SimpleNamespace(
+        utterance_id="dialogue-1",
+        source_character_id=None,
+        speaker_label="说话人待确认",
+        grounding=ClaimGrounding(support_level=ClaimSupportLevel.UNKNOWN),
+    )
+
+
 def _semantic_with_world_rule(grounding: ClaimGrounding):
     return SimpleNamespace(
         overall_analysis=SimpleNamespace(
@@ -53,6 +62,7 @@ def _semantic_with_world_rule(grounding: ClaimGrounding):
             world_rule_groundings=[grounding],
         ),
         characters=[],
+        dialogue_attributions=[_unknown_attribution()],
         relationships=[],
         scenes=[],
         key_props=[],
@@ -68,6 +78,7 @@ def _base_semantic():
             world_rule_groundings=[],
         ),
         characters=[],
+        dialogue_attributions=[_unknown_attribution()],
         relationships=[],
         scenes=[],
         key_props=[],
@@ -88,9 +99,9 @@ def test_p7_doubao_provider_profile_is_cloud_full_episode() -> None:
     assert provider.profile["mode"] == "CLOUD_API"
     assert provider.profile["video_input"] == "ARK_FILES_API_FULL_EPISODE"
     assert provider.profile["professional_skill_id"] == "source-video-understanding"
-    assert provider.profile["professional_skill_version"] == "1.1.0"
-    assert provider.profile["grounding_contract"] == "grounded-source-truth-v2"
-    assert provider.profile["prompt_version"] == "p7-source-bible-v2"
+    assert provider.profile["professional_skill_version"] == "1.2.0"
+    assert provider.profile["grounding_contract"] == "grounded-source-truth-v3"
+    assert provider.profile["prompt_version"] == "p7-source-bible-v3"
 
 
 def test_p7_local_qwen38_is_high_quality_choice() -> None:
@@ -105,8 +116,8 @@ def test_p7_local_qwen38_is_high_quality_choice() -> None:
     assert provider.profile["selection"] == "QWEN3_8_27B_LOCAL"
     assert provider.profile["mode"] == "LOCAL_OPENAI_COMPATIBLE"
     assert provider.profile["video_input"] == "VLLM_FILE_URL_FULL_EPISODE"
-    assert provider.profile["professional_skill_version"] == "1.1.0"
-    assert provider.profile["grounding_contract"] == "grounded-source-truth-v2"
+    assert provider.profile["professional_skill_version"] == "1.2.0"
+    assert provider.profile["grounding_contract"] == "grounded-source-truth-v3"
 
 
 def test_p7_local_qwen3_vl_8b_is_low_footprint_choice() -> None:
@@ -126,12 +137,12 @@ def test_p7_local_qwen3_vl_8b_is_low_footprint_choice() -> None:
 def test_p7_prompt_is_driven_by_professional_skill_source_truth_rules() -> None:
     prompt = _prompt(_input())
 
-    assert "source-video-understanding@1.1.0" in prompt
+    assert "source-video-understanding@1.2.0" in prompt
     assert "社会学泛化" in prompt
     assert "world_rules 不是社会常识列表" in prompt
     assert "UNKNOWN 不是已填写事实字段的通行证" in prompt
     assert "story_function=null" in prompt
-    assert "grounded-source-truth-v2" in prompt
+    assert "grounded-source-truth-v3" in prompt
     assert "不是 P8 分镜表" in prompt
     assert "CURRENT P6" in prompt
 

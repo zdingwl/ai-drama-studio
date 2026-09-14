@@ -22,6 +22,7 @@ from app.source_analysis.schemas import SourceAnalysisState, SourceAnalysisStatu
 from app.source_resolution.service import create_source_resolution_task
 from app.source_resolution.service_v2 import get_source_resolution, run_p9_source_resolution_task
 from app.source_snapshot.service import finalize_source_video_snapshot, get_source_video_snapshot
+from app.source_script.service import get_source_script_artifact, publish_source_script
 from app.sources.models import Episode
 from app.understanding.evidence_reference_runtime import run_p7_source_bible_task
 from app.understanding.service import create_source_bible_task, get_source_bible
@@ -83,6 +84,8 @@ def _latest_pipeline_task(db: Session, project_id: str) -> Task | None:
 def _pipeline_input_fingerprint(db: Session, project_id: str, source: ArtifactNode) -> str:
     project = get_project(db, project_id)
     latest = _latest_pipeline_task(db, project_id)
+    source_script = get_source_script_artifact(db, project_id)
+    script_ready = _status_value(source_script.status) == "CURRENT"
     restart_after_terminal = None
     if latest is not None and (
         latest.status in {TaskStatus.SUCCEEDED, TaskStatus.CANCELLED}
@@ -139,6 +142,8 @@ def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisSt
             task_id=latest.id,
             can_retry=False,
             message=_pipeline_message(latest, state),
+            script_ready=script_ready,
+            visual_enrichment_ready=False,
         )
 
     snapshot = get_source_video_snapshot(db, project_id)
@@ -151,6 +156,8 @@ def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisSt
             task_id=latest.id if latest is not None else None,
             can_retry=False,
             message=_pipeline_message(latest, SourceAnalysisState.READY),
+            script_ready=True,
+            visual_enrichment_ready=True,
         )
     if latest is not None and latest.status in {TaskStatus.FAILED, TaskStatus.INTERRUPTED}:
         fallback_stage = "解析已中断" if latest.status == TaskStatus.INTERRUPTED else "解析失败"
@@ -162,6 +169,8 @@ def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisSt
             task_id=latest.id,
             can_retry=latest.attempt < latest.max_attempts,
             message=_pipeline_message(latest, SourceAnalysisState.FAILED),
+            script_ready=script_ready,
+            visual_enrichment_ready=False,
         )
     if _status_value(snapshot.status) == "STALE":
         return SourceAnalysisStatusRead(
@@ -172,6 +181,8 @@ def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisSt
             task_id=latest.id if latest is not None else None,
             can_retry=False,
             message=_pipeline_message(latest, SourceAnalysisState.NEEDS_REFRESH),
+            script_ready=script_ready,
+            visual_enrichment_ready=False,
         )
     return SourceAnalysisStatusRead(
         project_id=project_id,
@@ -181,6 +192,8 @@ def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisSt
         task_id=latest.id if latest is not None else None,
         can_retry=False,
         message=_pipeline_message(latest, SourceAnalysisState.NOT_READY),
+        script_ready=script_ready,
+        visual_enrichment_ready=False,
     )
 
 
@@ -437,35 +450,14 @@ def _execute_pipeline(context: TaskExecutionContext, task: TaskWorkerRead) -> No
     total_episodes = len(episode_ids)
     for index, episode_id in enumerate(episode_ids, 1):
         context.checkpoint(
-            {"stage": "shot_boundary", "stage_label": f"正在建立镜头结构（{index}/{total_episodes}）"},
-            progress_percent=2 + int((index - 1) / total_episodes * 18),
-        )
-        with context.session_factory() as db:
-            current = get_episode_shot_boundary(db, task.project_id, episode_id)
-            if _status_value(current.status) != "CURRENT":
-                child = create_shot_boundary_task(
-                    db,
-                    project_id=task.project_id,
-                    episode_id=episode_id,
-                    idempotency_key=_child_idempotency_key(task.id, task.attempt, "p5", episode_id),
-                )
-            else:
-                child = None
-        if child is not None:
-            _ensure_child_succeeded(context, child=child, runner=run_p5_shot_boundary_task)
-
-    for index, episode_id in enumerate(episode_ids, 1):
-        context.checkpoint(
             {"stage": "source_evidence", "stage_label": f"正在识别对白和画面文字（{index}/{total_episodes}）"},
-            progress_percent=22 + int((index - 1) / total_episodes * 23),
+            progress_percent=4 + int((index - 1) / total_episodes * 24),
         )
         with context.session_factory() as db:
             current = get_episode_source_evidence(db, task.project_id, episode_id)
             if _status_value(current.status) != "CURRENT":
                 child = create_source_evidence_task(
-                    db,
-                    project_id=task.project_id,
-                    episode_id=episode_id,
+                    db, project_id=task.project_id, episode_id=episode_id,
                     idempotency_key=_child_idempotency_key(task.id, task.attempt, "p6", episode_id),
                 )
             else:
@@ -474,15 +466,14 @@ def _execute_pipeline(context: TaskExecutionContext, task: TaskWorkerRead) -> No
             _ensure_child_succeeded(context, child=child, runner=run_p6_source_evidence_task)
 
     context.checkpoint(
-        {"stage": "episode_understanding", "stage_label": "正在理解整集剧情和人物关系"},
-        progress_percent=48,
+        {"stage": "episode_understanding", "stage_label": "正在直接分析整集并生成原片剧本"},
+        progress_percent=32,
     )
     with context.session_factory() as db:
         current_bible = get_source_bible(db, task.project_id)
         if _status_value(current_bible.status) != "CURRENT":
             child = create_source_bible_task(
-                db,
-                project_id=task.project_id,
+                db, project_id=task.project_id,
                 idempotency_key=_child_idempotency_key(task.id, task.attempt, "p7"),
             )
         else:
@@ -491,8 +482,34 @@ def _execute_pipeline(context: TaskExecutionContext, task: TaskWorkerRead) -> No
         _ensure_child_succeeded(context, child=child, runner=run_p7_source_bible_task)
 
     context.checkpoint(
-        {"stage": "shot_breakdown", "stage_label": "正在整理逐镜动作和镜头语言"},
-        progress_percent=68,
+        {"stage": "source_script", "stage_label": "原片剧本已生成，正在继续补充分镜和视觉细节"},
+        progress_percent=52,
+    )
+    with context.session_factory() as db:
+        script = publish_source_script(db, task.project_id, generated_by_task_id=task.id)
+        if _status_value(script.status) != "CURRENT":
+            raise AppError("SOURCE_SCRIPT_PUBLICATION_FAILED", "原片剧本未能形成 CURRENT 正式版本", status_code=409)
+
+    for index, episode_id in enumerate(episode_ids, 1):
+        context.checkpoint(
+            {"stage": "shot_boundary", "stage_label": f"剧本已可用，正在补充镜头结构（{index}/{total_episodes}）"},
+            progress_percent=56 + int((index - 1) / total_episodes * 12),
+        )
+        with context.session_factory() as db:
+            current = get_episode_shot_boundary(db, task.project_id, episode_id)
+            if _status_value(current.status) != "CURRENT":
+                child = create_shot_boundary_task(
+                    db, project_id=task.project_id, episode_id=episode_id,
+                    idempotency_key=_child_idempotency_key(task.id, task.attempt, "p5", episode_id),
+                )
+            else:
+                child = None
+        if child is not None:
+            _ensure_child_succeeded(context, child=child, runner=run_p5_shot_boundary_task)
+
+    context.checkpoint(
+        {"stage": "shot_breakdown", "stage_label": "剧本已可用，正在补充逐镜动作和镜头语言"},
+        progress_percent=70,
     )
     with context.session_factory() as db:
         current_breakdown = get_shot_breakdown(db, task.project_id)

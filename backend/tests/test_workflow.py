@@ -80,6 +80,7 @@ def test_task_command_is_idempotent_and_business_input_is_deduplicated(
 
     assert first["id"] == same_key["id"] == same_business["id"]
     assert first["status"] == "queued"
+    assert first["task_type"] == "P4_TEST"
     assert "idempotency_key" not in first
     assert "business_key" not in first
     assert "checkpoint_json" not in first

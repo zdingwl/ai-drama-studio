@@ -18,8 +18,8 @@ from app.projects.service import get_project
 from app.skills.capabilities import CAPABILITY_BY_ID
 from app.skills.models import ArtifactType, Capability, CapabilityAvailability
 from app.skills.professional import get_professional_skill
-from app.source_snapshot.models import SourceVideoSnapshotRevision
-from app.source_snapshot.schemas import SourceVideoSnapshotContent
+from app.source_script.models import SourceScriptRevision
+from app.source_script.schemas import SourceScriptContent
 from app.target_bible.models import ReplicaTargetRevision
 from app.target_bible.schemas import (
     ReplicaAdaptationPlanContent,
@@ -72,9 +72,9 @@ P12_FORMALLY_ADMITTED = True
 @dataclass(frozen=True)
 class P12Inputs:
     project: Any
-    snapshot_artifact: ArtifactNode
-    snapshot_revision: SourceVideoSnapshotRevision
-    snapshot_content: SourceVideoSnapshotContent
+    source_script_artifact: ArtifactNode
+    source_script_revision: SourceScriptRevision
+    source_script_content: SourceScriptContent
     adaptation_plan_artifact: ArtifactNode
     adaptation_plan_revision: ReplicaTargetRevision
     adaptation_plan: ReplicaAdaptationPlanContent
@@ -202,109 +202,60 @@ def _required_current_artifact(
 def _load_inputs(db: Session, project_id: str) -> P12Inputs:
     project = get_project(db, project_id)
     _assert_replica(project)
-    snapshot = _required_current_artifact(
-        db,
-        project_id,
-        ArtifactType.SOURCE_VIDEO_SNAPSHOT,
-        missing_code="P12_SOURCE_SNAPSHOT_REQUIRED",
-        stale_code="P12_SOURCE_SNAPSHOT_STALE",
-        label="SOURCE_VIDEO_SNAPSHOT",
+    source_script = _required_current_artifact(
+        db, project_id, ArtifactType.SOURCE_SCRIPT,
+        missing_code="P12_SOURCE_SCRIPT_REQUIRED", stale_code="P12_SOURCE_SCRIPT_STALE", label="SOURCE_SCRIPT",
     )
     plan_artifact = _required_current_artifact(
-        db,
-        project_id,
-        ArtifactType.ADAPTATION_PLAN,
-        missing_code="P12_ADAPTATION_PLAN_REQUIRED",
-        stale_code="P12_ADAPTATION_PLAN_STALE",
-        label="ADAPTATION_PLAN",
+        db, project_id, ArtifactType.ADAPTATION_PLAN,
+        missing_code="P12_ADAPTATION_PLAN_REQUIRED", stale_code="P12_ADAPTATION_PLAN_STALE", label="ADAPTATION_PLAN",
     )
     bible_artifact = _required_current_artifact(
-        db,
-        project_id,
-        ArtifactType.TARGET_BIBLE,
-        missing_code="P12_TARGET_BIBLE_REQUIRED",
-        stale_code="P12_TARGET_BIBLE_STALE",
-        label="TARGET_BIBLE",
+        db, project_id, ArtifactType.TARGET_BIBLE,
+        missing_code="P12_TARGET_BIBLE_REQUIRED", stale_code="P12_TARGET_BIBLE_STALE", label="TARGET_BIBLE",
     )
-
-    snapshot_row = db.scalar(
-        select(SourceVideoSnapshotRevision).where(SourceVideoSnapshotRevision.artifact_id == snapshot.id)
-    )
-    if snapshot_row is None:
-        raise AppError("P12_SOURCE_SNAPSHOT_CONTENT_MISSING", "CURRENT Source Snapshot 缺少 typed revision", status_code=500)
+    source_script_row = db.scalar(select(SourceScriptRevision).where(SourceScriptRevision.artifact_id == source_script.id))
+    if source_script_row is None:
+        raise AppError("P12_SOURCE_SCRIPT_CONTENT_MISSING", "CURRENT SOURCE_SCRIPT 缺少 typed revision", status_code=500)
     plan_row = db.scalar(select(ReplicaTargetRevision).where(ReplicaTargetRevision.artifact_id == plan_artifact.id))
     bible_row = db.scalar(select(ReplicaTargetRevision).where(ReplicaTargetRevision.artifact_id == bible_artifact.id))
     if plan_row is None or plan_row.artifact_kind != TargetBibleArtifactKind.ADAPTATION_PLAN.value:
         raise AppError("P12_ADAPTATION_PLAN_CONTENT_MISSING", "CURRENT Adaptation Plan 缺少 P11 typed revision", status_code=500)
     if bible_row is None or bible_row.artifact_kind != TargetBibleArtifactKind.TARGET_BIBLE.value:
         raise AppError("P12_TARGET_BIBLE_CONTENT_MISSING", "CURRENT Target Bible 缺少 P11 typed revision", status_code=500)
-
-    snapshot_content = SourceVideoSnapshotContent.model_validate(snapshot_row.content_json)
+    source_script_content = SourceScriptContent.model_validate(source_script_row.content_json)
     plan = ReplicaAdaptationPlanContent.model_validate(plan_row.content_json)
     bible = ReplicaTargetBibleContent.model_validate(bible_row.content_json)
     lineage_ids = {
-        plan.source_snapshot_artifact_id,
-        bible.source_snapshot_artifact_id,
-        plan_row.source_snapshot_artifact_id,
-        bible_row.source_snapshot_artifact_id,
+        plan.source_script_artifact_id, bible.source_script_artifact_id,
+        plan_row.source_script_artifact_id, bible_row.source_script_artifact_id,
     }
-    if lineage_ids != {snapshot.id}:
-        raise AppError(
-            "P12_TARGET_LINEAGE_MISMATCH",
-            "CURRENT ADAPTATION_PLAN / TARGET_BIBLE 与 CURRENT SOURCE_VIDEO_SNAPSHOT lineage 不一致",
-            status_code=409,
-        )
-    if (
-        plan.target_language != project.target_language
-        or bible.target_language != project.target_language
-        or plan.target_region != project.target_region
-        or bible.target_region != project.target_region
-    ):
-        raise AppError(
-            "P12_TARGET_CONFIG_MISMATCH",
-            "CURRENT P11 Target Artifact 与项目目标语言或地区不一致",
-            status_code=409,
-        )
+    if lineage_ids != {source_script.id}:
+        raise AppError("P12_TARGET_LINEAGE_MISMATCH", "CURRENT ADAPTATION_PLAN / TARGET_BIBLE 与 CURRENT SOURCE_SCRIPT lineage 不一致", status_code=409)
+    if (plan.target_language != project.target_language or bible.target_language != project.target_language or plan.target_region != project.target_region or bible.target_region != project.target_region):
+        raise AppError("P12_TARGET_CONFIG_MISMATCH", "CURRENT P11 Target Artifact 与项目目标语言或地区不一致", status_code=409)
     return P12Inputs(
-        project=project,
-        snapshot_artifact=snapshot,
-        snapshot_revision=snapshot_row,
-        snapshot_content=snapshot_content,
-        adaptation_plan_artifact=plan_artifact,
-        adaptation_plan_revision=plan_row,
-        adaptation_plan=plan,
-        target_bible_artifact=bible_artifact,
-        target_bible_revision=bible_row,
-        target_bible=bible,
+        project=project, source_script_artifact=source_script, source_script_revision=source_script_row, source_script_content=source_script_content,
+        adaptation_plan_artifact=plan_artifact, adaptation_plan_revision=plan_row, adaptation_plan=plan,
+        target_bible_artifact=bible_artifact, target_bible_revision=bible_row, target_bible=bible,
     )
-
 
 def _canonical_dialogue_manifest(inputs: P12Inputs) -> list[dict]:
     manifest: list[dict] = []
     seen: set[str] = set()
-    for episode in sorted(inputs.snapshot_content.episodes, key=lambda item: item.episode_order):
-        for utterance in sorted(episode.canonical_dialogue, key=lambda item: item.utterance_number):
+    for episode in sorted(inputs.source_script_content.episodes, key=lambda item: item.episode_order):
+        for utterance in sorted(episode.dialogue, key=lambda item: item.utterance_number):
             if utterance.utterance_id in seen:
-                raise AppError(
-                    "P12_CANONICAL_DIALOGUE_ID_DUPLICATE",
-                    "Source Snapshot canonical dialogue utterance_id 必须全局唯一",
-                    status_code=409,
-                )
+                raise AppError("P12_CANONICAL_DIALOGUE_ID_DUPLICATE", "SOURCE_SCRIPT canonical dialogue utterance_id 必须全局唯一", status_code=409)
             seen.add(utterance.utterance_id)
-            manifest.append(
-                {
-                    "episode_id": episode.episode_id,
-                    "episode_order": episode.episode_order,
-                    "utterance_id": utterance.utterance_id,
-                    "utterance_number": utterance.utterance_number,
-                    "source_start_us": utterance.start_us,
-                    "source_end_us": utterance.end_us,
-                    "source_text": utterance.text,
-                    "source_language": utterance.language,
-                }
-            )
+            manifest.append({
+                "episode_id": episode.episode_id, "episode_order": episode.episode_order,
+                "utterance_id": utterance.utterance_id, "utterance_number": utterance.utterance_number,
+                "source_start_us": utterance.start_us, "source_end_us": utterance.end_us,
+                "source_text": utterance.text, "source_language": utterance.language,
+                "source_character_id": utterance.source_character_id, "speaker_name": utterance.speaker_name,
+            })
     return manifest
-
 
 def _provider_for_project(project: Any) -> TargetScriptProvider:
     return build_target_script_provider(get_settings(), project.source_understanding_provider)
@@ -315,10 +266,10 @@ def _fingerprint_inputs(inputs: P12Inputs, provider: TargetScriptProvider) -> st
     return _sha(
         {
             "task": P12_TASK_TYPE,
-            "source_snapshot": [
-                inputs.snapshot_artifact.id,
-                inputs.snapshot_artifact.revision,
-                inputs.snapshot_artifact.input_fingerprint,
+            "source_script": [
+                inputs.source_script_artifact.id,
+                inputs.source_script_artifact.revision,
+                inputs.source_script_artifact.input_fingerprint,
             ],
             "adaptation_plan": [
                 inputs.adaptation_plan_artifact.id,
@@ -360,7 +311,7 @@ def create_target_script_task(db: Session, *, project_id: str, idempotency_key: 
             task_name="生成目标剧本与对白",
             input_fingerprint=fingerprint,
             input_artifact_ids=[
-                inputs.snapshot_artifact.id,
+                inputs.source_script_artifact.id,
                 inputs.adaptation_plan_artifact.id,
                 inputs.target_bible_artifact.id,
             ],
@@ -377,12 +328,12 @@ def create_target_script_task(db: Session, *, project_id: str, idempotency_key: 
 
 def _assert_task_inputs(task: TaskWorkerRead | Task, inputs: P12Inputs, provider: TargetScriptProvider) -> None:
     expected_ids = [
-        inputs.snapshot_artifact.id,
+        inputs.source_script_artifact.id,
         inputs.adaptation_plan_artifact.id,
         inputs.target_bible_artifact.id,
     ]
     if list(task.input_artifact_ids_json) != expected_ids:
-        raise AppError("STALE_ARTIFACT_INPUT", "P12 三个硬输入已变化，请重新创建任务", status_code=409)
+        raise AppError("STALE_ARTIFACT_INPUT", "P12 SOURCE_SCRIPT / Adaptation Plan / Target Bible 已变化，请重新创建任务", status_code=409)
     if task.input_fingerprint != _fingerprint_inputs(inputs, provider):
         raise AppError("STALE_ARTIFACT_INPUT", "P12 Target 输入、配置或 Provider profile 已变化", status_code=409)
 
@@ -393,36 +344,18 @@ def _validate_semantic(inputs: P12Inputs, semantic: TargetScriptSemantic) -> Non
     if actual != expected or len(actual) != len(set(actual)):
         raise AppError(
             "P12_DIALOGUE_COVERAGE_INVALID",
-            "P12 Provider dialogue 必须按 Source Snapshot canonical utterance 顺序一一完整覆盖",
+            "P12 Provider dialogue 必须按 SOURCE_SCRIPT canonical utterance 顺序一一完整覆盖",
             status_code=422,
         )
 
 
 def _target_character_by_utterance(inputs: P12Inputs) -> dict[str, str | None]:
-    speaker_entities = {item.speaker_id: item for item in inputs.snapshot_content.source_speakers.entities}
     target_by_source = {item.source_character_id: item.target_character_id for item in inputs.target_bible.characters}
-    attributions: dict[str, Any] = {}
-    for item in inputs.snapshot_content.source_speakers.attributions:
-        if item.utterance_id in attributions:
-            raise AppError(
-                "P12_SPEAKER_ATTRIBUTION_DUPLICATE",
-                "Source Snapshot 同一 utterance 存在重复 Speaker attribution",
-                status_code=409,
-            )
-        attributions[item.utterance_id] = item
-
     result: dict[str, str | None] = {}
-    for manifest_item in _canonical_dialogue_manifest(inputs):
-        utterance_id = manifest_item["utterance_id"]
-        attribution = attributions.get(utterance_id)
-        target_character_id: str | None = None
-        if attribution is not None and attribution.speaker_id:
-            speaker = speaker_entities.get(attribution.speaker_id)
-            if speaker is not None and speaker.character_id:
-                target_character_id = target_by_source.get(speaker.character_id)
-        result[utterance_id] = target_character_id
+    for item in _canonical_dialogue_manifest(inputs):
+        source_character_id = item.get("source_character_id")
+        result[item["utterance_id"]] = target_by_source.get(source_character_id) if source_character_id else None
     return result
-
 
 def _compose(inputs: P12Inputs, semantic: TargetScriptSemantic) -> ReplicaTargetScriptContent:
     _validate_semantic(inputs, semantic)
@@ -457,7 +390,7 @@ def _compose(inputs: P12Inputs, semantic: TargetScriptSemantic) -> ReplicaTarget
     return ReplicaTargetScriptContent(
         target_language=inputs.project.target_language,
         target_region=inputs.project.target_region,
-        source_snapshot_artifact_id=inputs.snapshot_artifact.id,
+        source_script_artifact_id=inputs.source_script_artifact.id,
         adaptation_plan_artifact_id=inputs.adaptation_plan_artifact.id,
         target_bible_artifact_id=inputs.target_bible_artifact.id,
         episodes=sorted(episodes.values(), key=lambda item: item.episode_order),
@@ -497,7 +430,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P12Executio
         "source_dialogue_contract": P12_SOURCE_DIALOGUE_CONTRACT,
         "professional_skill_id": P12_SKILL_ID,
         "professional_skill_version": get_professional_skill(P12_SKILL_ID).version,
-        "source_snapshot_artifact_id": inputs.snapshot_artifact.id,
+        "source_script_artifact_id": inputs.source_script_artifact.id,
         "adaptation_plan_artifact_id": inputs.adaptation_plan_artifact.id,
         "target_bible_artifact_id": inputs.target_bible_artifact.id,
         "target_language": inputs.project.target_language,
@@ -567,9 +500,9 @@ def _provenance(
 ) -> TargetScriptProvenance:
     skill = get_professional_skill(P12_SKILL_ID)
     return TargetScriptProvenance(
-        source_snapshot_artifact_id=inputs.snapshot_artifact.id,
-        source_snapshot_revision=inputs.snapshot_artifact.revision,
-        source_snapshot_fingerprint=inputs.snapshot_artifact.input_fingerprint,
+        source_script_artifact_id=inputs.source_script_artifact.id,
+        source_script_revision=inputs.source_script_artifact.revision,
+        source_script_fingerprint=inputs.source_script_artifact.input_fingerprint,
         adaptation_plan_artifact_id=inputs.adaptation_plan_artifact.id,
         adaptation_plan_revision=inputs.adaptation_plan_artifact.revision,
         adaptation_plan_fingerprint=inputs.adaptation_plan_artifact.input_fingerprint,
@@ -618,7 +551,7 @@ def _publish(db: Session, *, task_id: str, result: P12ExecutionResult) -> Artifa
         is_current=True,
         metadata_json={
             "schema_version": P12_SCHEMA_VERSION,
-            "source_snapshot_artifact_id": inputs.snapshot_artifact.id,
+            "source_script_artifact_id": inputs.source_script_artifact.id,
             "adaptation_plan_artifact_id": inputs.adaptation_plan_artifact.id,
             "target_bible_artifact_id": inputs.target_bible_artifact.id,
             "target_language": inputs.project.target_language,
@@ -635,7 +568,7 @@ def _publish(db: Session, *, task_id: str, result: P12ExecutionResult) -> Artifa
             ReplicaTargetScriptRevision(
                 project_id=task.project_id,
                 artifact_id=artifact.id,
-                source_snapshot_artifact_id=inputs.snapshot_artifact.id,
+                source_script_artifact_id=inputs.source_script_artifact.id,
                 adaptation_plan_artifact_id=inputs.adaptation_plan_artifact.id,
                 target_bible_artifact_id=inputs.target_bible_artifact.id,
                 generated_by_task_id=task.id,
@@ -648,7 +581,7 @@ def _publish(db: Session, *, task_id: str, result: P12ExecutionResult) -> Artifa
             [
                 ArtifactEdge(
                     project_id=task.project_id,
-                    source_node_id=inputs.snapshot_artifact.id,
+                    source_node_id=inputs.source_script_artifact.id,
                     target_node_id=artifact.id,
                     relation_type=ArtifactRelationType.DERIVED_FROM,
                 ),
@@ -845,6 +778,7 @@ def list_target_script_revisions(db: Session, project_id: str) -> list[ReplicaTa
                 revision=artifact.revision,
                 validity=artifact.validity.value,
                 input_fingerprint=artifact.input_fingerprint,
+                source_script_artifact_id=row.source_script_artifact_id,
                 source_snapshot_artifact_id=row.source_snapshot_artifact_id,
                 adaptation_plan_artifact_id=row.adaptation_plan_artifact_id,
                 target_bible_artifact_id=row.target_bible_artifact_id,

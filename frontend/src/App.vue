@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 import AppShell from '@/components/AppShell.vue'
+import ProductJourneyNav from '@/components/ProductJourneyNav.vue'
 import P14AcceptanceReadinessPanel from '@/components/P14AcceptanceReadinessPanel.vue'
 import P14TimingOverflowTriage from '@/components/P14TimingOverflowTriage.vue'
 import ReplicaProductionWorkspace from '@/components/ReplicaProductionWorkspace.vue'
@@ -21,21 +22,22 @@ import TargetScriptWorkspace from '@/components/TargetScriptWorkspace.vue'
 const route = useRoute()
 const isProjectWorkspace = computed(() => route.name === 'project-workspace')
 const debugMode = computed(() => route.query.debug === '1')
+const activeWorkspace = computed(() => String(route.params.workspace ?? 'source'))
 </script>
 
 <template>
   <AppShell>
-    <div :class="{ 'product-mode': isProjectWorkspace && !debugMode }">
+    <div :class="[{ 'product-mode': isProjectWorkspace && !debugMode }, `workspace-${activeWorkspace}`]">
+      <ProductJourneyNav v-if="isProjectWorkspace && !debugMode" />
       <RouterView />
-      <SourceScriptStoryboardWorkspace v-if="isProjectWorkspace" />
-      <TargetBibleWorkspace v-if="isProjectWorkspace" />
-      <TargetScriptWorkspace v-if="isProjectWorkspace" />
-      <TargetAssetsWorkspace v-if="isProjectWorkspace" />
-      <TargetAudioTimingWorkspace v-if="isProjectWorkspace" />
-      <P14TimingOverflowTriage v-if="isProjectWorkspace" />
-      <TargetAudioRetakeWorkspace v-if="isProjectWorkspace" />
-      <P14AcceptanceReadinessPanel v-if="isProjectWorkspace" />
-      <ReplicaProductionWorkspace v-if="isProjectWorkspace" />
+      <section v-if="isProjectWorkspace && activeWorkspace === 'script'" class="product-page"><SourceScriptStoryboardWorkspace /><TargetBibleWorkspace /><TargetScriptWorkspace /></section>
+      <section v-if="isProjectWorkspace && activeWorkspace === 'assets'" class="product-page"><TargetAssetsWorkspace /></section>
+      <section v-if="isProjectWorkspace && activeWorkspace === 'storyboard'" class="product-page"><ReplicaProductionWorkspace workspace="storyboard" /></section>
+      <section v-if="isProjectWorkspace && activeWorkspace === 'generation'" class="product-page">
+        <ReplicaProductionWorkspace workspace="generation" />
+        <details class="advanced-audio"><summary>高级声音设置</summary><p>默认使用 H3 音画联合生成。只有指定声线、独立配音或兼容旧项目时才需要这里。</p><TargetAudioTimingWorkspace /><P14TimingOverflowTriage /><TargetAudioRetakeWorkspace /><P14AcceptanceReadinessPanel /></details>
+      </section>
+      <section v-if="isProjectWorkspace && activeWorkspace === 'final'" class="product-page"><ReplicaProductionWorkspace workspace="final" /></section>
 
       <template v-if="isProjectWorkspace && debugMode">
         <P6AcceptancePanel />
@@ -74,4 +76,5 @@ const debugMode = computed(() => route.query.debug === '1')
 .product-mode .understanding-section {
   margin-bottom: 0;
 }
+.product-mode:not(.workspace-source) #source-input>.understanding-section{display:none}.product-mode .product-page{display:grid;gap:18px;max-width:1360px;margin:0 auto}.product-mode .product-page>*{width:100%;margin-top:0;margin-bottom:0}.advanced-audio{padding:16px 18px;border:1px solid #deded8;border-radius:14px;background:#fff}.advanced-audio>summary{cursor:pointer;font-weight:800}.advanced-audio>p{color:#74706a;font-size:13px}.advanced-audio>*:not(summary):not(p){margin-top:18px!important}
 </style>

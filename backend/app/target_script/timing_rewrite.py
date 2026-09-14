@@ -88,7 +88,7 @@ def _load_context(db: Session, project_id: str, command: TargetScriptTimingRewri
         raise AppError("P12_TARGET_SCRIPT_CONTENT_MISSING", "TARGET_SCRIPT 缺少 typed revision", status_code=500)
     script = ReplicaTargetScriptContent.model_validate(script_row.content_json)
     if (
-        script.source_snapshot_artifact_id != inputs.snapshot_artifact.id
+        script.source_script_artifact_id != inputs.source_script_artifact.id
         or script.adaptation_plan_artifact_id != inputs.adaptation_plan_artifact.id
         or script.target_bible_artifact_id != inputs.target_bible_artifact.id
     ):
@@ -185,7 +185,7 @@ def _fingerprint(context: TimingRewriteContext, command: TargetScriptTimingRewri
     return _sha(
         {
             "task": P12_TIMING_REWRITE_TASK_TYPE,
-            "source_snapshot": [context.inputs.snapshot_artifact.id, context.inputs.snapshot_artifact.revision, context.inputs.snapshot_artifact.input_fingerprint],
+            "source_script": [context.inputs.source_script_artifact.id, context.inputs.source_script_artifact.revision, context.inputs.source_script_artifact.input_fingerprint],
             "adaptation_plan": [context.inputs.adaptation_plan_artifact.id, context.inputs.adaptation_plan_artifact.revision, context.inputs.adaptation_plan_artifact.input_fingerprint],
             "target_bible": [context.inputs.target_bible_artifact.id, context.inputs.target_bible_artifact.revision, context.inputs.target_bible_artifact.input_fingerprint],
             "base_target_script": [context.script_artifact.id, context.script_artifact.revision, context.script_artifact.input_fingerprint],
@@ -226,7 +226,7 @@ def create_timing_rewrite_task(
             task_name="缩短超时目标对白",
             input_fingerprint=fingerprint,
             input_artifact_ids=[
-                context.inputs.snapshot_artifact.id,
+                context.inputs.source_script_artifact.id,
                 context.inputs.adaptation_plan_artifact.id,
                 context.inputs.target_bible_artifact.id,
                 context.script_artifact.id,
@@ -327,7 +327,7 @@ def _execute(
         context = _load_context(db, task.project_id, command)
         provider = _provider_for_project(context.inputs.project)
         expected_ids = [
-            context.inputs.snapshot_artifact.id,
+            context.inputs.source_script_artifact.id,
             context.inputs.adaptation_plan_artifact.id,
             context.inputs.target_bible_artifact.id,
             context.script_artifact.id,
@@ -409,7 +409,7 @@ def _publish(
     context = _load_context(db, task.project_id, command)
     provider = _provider_for_project(context.inputs.project)
     expected_ids = [
-        context.inputs.snapshot_artifact.id,
+        context.inputs.source_script_artifact.id,
         context.inputs.adaptation_plan_artifact.id,
         context.inputs.target_bible_artifact.id,
         context.script_artifact.id,
@@ -442,7 +442,7 @@ def _publish(
         is_current=True,
         metadata_json={
             "schema_version": P12_SCHEMA_VERSION,
-            "source_snapshot_artifact_id": context.inputs.snapshot_artifact.id,
+            "source_script_artifact_id": context.inputs.source_script_artifact.id,
             "adaptation_plan_artifact_id": context.inputs.adaptation_plan_artifact.id,
             "target_bible_artifact_id": context.inputs.target_bible_artifact.id,
             "revision_mode": TargetScriptRevisionMode.TIMING_REWRITE.value,
@@ -450,9 +450,9 @@ def _publish(
         },
     )
     provenance = TargetScriptProvenance(
-        source_snapshot_artifact_id=context.inputs.snapshot_artifact.id,
-        source_snapshot_revision=context.inputs.snapshot_artifact.revision,
-        source_snapshot_fingerprint=context.inputs.snapshot_artifact.input_fingerprint,
+        source_script_artifact_id=context.inputs.source_script_artifact.id,
+        source_script_revision=context.inputs.source_script_artifact.revision,
+        source_script_fingerprint=context.inputs.source_script_artifact.input_fingerprint,
         adaptation_plan_artifact_id=context.inputs.adaptation_plan_artifact.id,
         adaptation_plan_revision=context.inputs.adaptation_plan_artifact.revision,
         adaptation_plan_fingerprint=context.inputs.adaptation_plan_artifact.input_fingerprint,
@@ -486,7 +486,8 @@ def _publish(
             ReplicaTargetScriptRevision(
                 project_id=task.project_id,
                 artifact_id=artifact.id,
-                source_snapshot_artifact_id=context.inputs.snapshot_artifact.id,
+                source_snapshot_artifact_id=None,
+                source_script_artifact_id=context.inputs.source_script_artifact.id,
                 adaptation_plan_artifact_id=context.inputs.adaptation_plan_artifact.id,
                 target_bible_artifact_id=context.inputs.target_bible_artifact.id,
                 generated_by_task_id=task.id,
@@ -497,7 +498,7 @@ def _publish(
         )
         db.add_all(
             [
-                ArtifactEdge(project_id=task.project_id, source_node_id=context.inputs.snapshot_artifact.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.DERIVED_FROM),
+                ArtifactEdge(project_id=task.project_id, source_node_id=context.inputs.source_script_artifact.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.DERIVED_FROM),
                 ArtifactEdge(project_id=task.project_id, source_node_id=context.inputs.adaptation_plan_artifact.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.USES),
                 ArtifactEdge(project_id=task.project_id, source_node_id=context.inputs.target_bible_artifact.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.USES),
                 ArtifactEdge(project_id=task.project_id, source_node_id=artifact.id, target_node_id=old_script.id, relation_type=ArtifactRelationType.SUPERSEDES),

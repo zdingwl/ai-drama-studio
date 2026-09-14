@@ -10,15 +10,15 @@ P12 已完成真实 Provider、真实项目端到端与用户人工质量验收�
 
 必须同时使用：
 
-- CURRENT `SOURCE_VIDEO_SNAPSHOT`
+- CURRENT `SOURCE_SCRIPT`
 - CURRENT `ADAPTATION_PLAN`
 - CURRENT `TARGET_BIBLE`
 
-三者必须属于同一条 Source Snapshot / P11 lineage。不能只拿 Target Bible，也不能绕过 Snapshot 去重新拼 P5~P9 Source Facts。
+三者必须属于同一条 SOURCE_SCRIPT / P11 lineage。不能只拿 Target Bible，也不能绕过 Snapshot 去重新拼 P5~P9 Source Facts。
 
 ## Source Dialogue 规则
 
-原始对白只能来自 Source Snapshot 中冻结的 `canonical_dialogue`。每条 `utterance_id / utterance_number / start_us / end_us / text / language` 都是只读 Source Truth。
+原始对白只能来自 SOURCE_SCRIPT 中冻结的 `canonical_dialogue`。每条 `utterance_id / utterance_number / start_us / end_us / text / language` 都是只读 Source Truth。
 
 模型不得重新 ASR、OCR、听写、看口型猜词、根据剧情补台词或静默修正 Source `text`。如果原对白需要纠错，必须回到 P6 canonical adjudication / human edit 链路并重新形成下游 Snapshot。
 
@@ -59,7 +59,7 @@ P12 PASS 之后，如果 P14 已经用正式 TARGET_AUDIO + ffprobe 证明某条
 
 ## 角色绑定
 
-若 Source Snapshot 的 Speaker attribution 能唯一落到 Source Character，且 P11 Target Bible 有该 Source Character 的唯一 Target Character 映射，服务端可以确定性写入 `target_character_id`。
+若 SOURCE_SCRIPT 的 dialogue attribution 能唯一落到 Source Character，且 P11 Target Bible 有该 Source Character 的唯一 Target Character 映射，服务端可以确定性写入 `target_character_id`。
 
 否则留空。Provider 不得猜 Target Character，更不得生成 voice / TTS casting。
 
@@ -77,7 +77,7 @@ P12 PASS 之后，如果 P14 已经用正式 TARGET_AUDIO + ffprobe 证明某条
 
 正式执行后，`TARGET_SCRIPT` 必须建立以下输入 lineage：
 
-- `SOURCE_VIDEO_SNAPSHOT -> TARGET_SCRIPT : DERIVED_FROM`
+- `SOURCE_SCRIPT -> TARGET_SCRIPT : DERIVED_FROM`
 - `ADAPTATION_PLAN -> TARGET_SCRIPT : USES`
 - `TARGET_BIBLE -> TARGET_SCRIPT : USES`
 

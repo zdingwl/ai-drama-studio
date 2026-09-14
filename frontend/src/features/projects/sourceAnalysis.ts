@@ -11,6 +11,8 @@ export interface SourceAnalysisStatusRead {
   task_id: string | null
   can_retry: boolean
   message: string
+  script_ready: boolean
+  visual_enrichment_ready: boolean
 }
 
 export interface SourceScriptDialogue {
@@ -98,6 +100,8 @@ export interface SourceScriptRead {
   project_id: string
   state: SourceAnalysisState
   title: string
+  source_script_artifact_id: string | null
+  visual_enrichment_ready: boolean
   scenes: SourceScriptScene[]
   characters: SourceScriptEntity[]
   props: SourceScriptEntity[]

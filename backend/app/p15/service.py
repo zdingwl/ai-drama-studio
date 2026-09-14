@@ -70,7 +70,7 @@ def _fingerprint(inputs, generation_sequence: int) -> str:
                     inputs.target_assets_artifact,
                     inputs.target_audio_artifact,
                     inputs.timing_plan_artifact,
-                )
+                ) if node is not None
             ],
             "generation_sequence": generation_sequence,
             "max_segment_duration_us": max_segment_duration_us(),
@@ -162,8 +162,8 @@ def _persist_candidate(factory: sessionmaker[Session], task: TaskWorkerRead) -> 
                 target_bible_artifact_id=inputs.target_bible_artifact.id,
                 target_script_artifact_id=inputs.target_script_artifact.id,
                 target_assets_artifact_id=inputs.target_assets_artifact.id,
-                target_audio_artifact_id=inputs.target_audio_artifact.id,
-                timing_plan_artifact_id=inputs.timing_plan_artifact.id,
+                target_audio_artifact_id=inputs.target_audio_artifact.id if inputs.target_audio_artifact else None,
+                timing_plan_artifact_id=inputs.timing_plan_artifact.id if inputs.timing_plan_artifact else None,
                 generated_by_task_id=task.id,
                 generation_sequence=generation_sequence,
                 input_fingerprint=task.input_fingerprint,
@@ -320,24 +320,24 @@ def _review_candidate(db: Session, project_id: str, candidate_id: str, command: 
         raise AppError("P15_CANDIDATE_NOT_FOUND", "P15 分镜候选不存在", status_code=404)
     if candidate.review_status != P15CandidateReviewStatus.NEEDS_REVIEW.value:
         raise AppError("P15_CANDIDATE_NOT_REVIEWABLE", "P15 分镜候选已经审核或失效", status_code=409)
-    expected = [
+    expected = [value for value in [
         command.expected_source_snapshot_artifact_id,
         command.expected_target_bible_artifact_id,
         command.expected_target_script_artifact_id,
         command.expected_target_assets_artifact_id,
         command.expected_target_audio_artifact_id,
         command.expected_timing_plan_artifact_id,
-    ]
+    ] if value is not None]
     if expected != input_artifact_ids(inputs) or candidate.generation_sequence != command.expected_generation_sequence:
         raise AppError("P15_REVIEW_INPUT_CHANGED", "P15 正式输入或 candidate sequence 已变化", status_code=409)
-    candidate_ids = [
+    candidate_ids = [value for value in [
         candidate.source_snapshot_artifact_id,
         candidate.target_bible_artifact_id,
         candidate.target_script_artifact_id,
         candidate.target_assets_artifact_id,
         candidate.target_audio_artifact_id,
         candidate.timing_plan_artifact_id,
-    ]
+    ] if value is not None]
     if candidate_ids != expected:
         raise AppError("P15_CANDIDATE_STALE", "P15 candidate 不属于当前正式输入", status_code=409)
     return candidate, project, inputs
@@ -454,6 +454,8 @@ def accept_storyboard_candidate(db: Session, *, project_id: str, candidate_id: s
             inputs.target_audio_artifact,
             inputs.timing_plan_artifact,
         ):
+            if source is None:
+                continue
             db.add(
                 ArtifactEdge(
                     project_id=project_id,

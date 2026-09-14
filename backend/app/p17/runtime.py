@@ -33,6 +33,7 @@ from app.p17.schemas import (
     PostReviewStatus,
     ReplicaFinalOutputContent,
 )
+from app.p15.schemas import GenerationAudioMode
 from app.projects.service import get_project
 from app.skills.models import Capability
 from app.skills.professional import get_professional_skill
@@ -68,7 +69,7 @@ def _fingerprint(inputs: P17Inputs, sequence: int, provider: LocalHttpLipSyncPro
                 inputs.target_audio_artifact,
                 inputs.target_script_artifact,
                 inputs.timing_artifact,
-            )],
+            ) if node is not None],
             "generated_video": [
                 inputs.generated_video_artifact.id,
                 inputs.generated_video_artifact.revision,
@@ -195,6 +196,7 @@ def _validated_attempt(db: Session, inputs: P17Inputs, clip) -> tuple[ReplicaGen
 
 
 def _build_episode_audio(inputs: P17Inputs, *, episode_id: str, episode_duration_us: int, workdir: Path) -> tuple[Path, list]:
+    assert inputs.target_audio is not None and inputs.timing is not None and inputs.target_audio_task_id is not None
     audio_by_id = {clip.utterance_id: clip for clip in inputs.target_audio.clips}
     script_by_id = {line.utterance_id: line for episode in inputs.target_script.episodes for line in episode.dialogue}
     timings = sorted(
@@ -307,7 +309,16 @@ def _build_episode(
     workdir = root / f"work-{episode_order:04d}-{episode_key(episode_id)}"
     workdir.mkdir(parents=True, exist_ok=True)
     episode_duration_us = clips[-1].planned_end_us
-    formal_audio, subtitle_rows = _build_episode_audio(inputs, episode_id=episode_id, episode_duration_us=episode_duration_us, workdir=workdir)
+    native_audio = inputs.audio_generation_mode == GenerationAudioMode.NATIVE_AUDIO_VIDEO
+    if native_audio:
+        subtitle_rows = [
+            (line.utterance_number, line.source_start_us, line.source_end_us, line.final_target_dialogue)
+            for episode in inputs.target_script.episodes if episode.episode_id == episode_id
+            for line in episode.dialogue if line.source_start_us < episode_duration_us
+        ]
+        formal_audio = None
+    else:
+        formal_audio, subtitle_rows = _build_episode_audio(inputs, episode_id=episode_id, episode_duration_us=episode_duration_us, workdir=workdir)
     subtitle_filename = f"episode-{episode_order:04d}-{episode_key(episode_id)}.srt"
     subtitle_path = root / subtitle_filename
     write_srt(subtitle_path, subtitle_rows)
@@ -324,12 +335,13 @@ def _build_episode(
                 raise AppError("STALE_ARTIFACT_INPUT", "P17 输入在后期过程中发生变化", status_code=409)
             _attempt, selected_path = _validated_attempt(db, fresh_inputs, clip)
         base_path = workdir / f"segment-{clip.segment_number:04d}-base.mp4"
-        normalize_video(selected_path, base_path, duration_us=clip.planned_duration_us, width=width, height=height)
+        normalize_video(selected_path, base_path, duration_us=clip.planned_duration_us, width=width, height=height, preserve_audio=native_audio)
         final_segment = workdir / f"segment-{clip.segment_number:04d}-final.mp4"
         if clip.requires_lip_sync:
             if provider is None:
                 raise AppError("P17_LIP_SYNC_NOT_CONFIGURED", "存在需要口型同步的正式 segment，但 Lip Sync Runtime 未配置", status_code=409)
             segment_audio = workdir / f"segment-{clip.segment_number:04d}.wav"
+            assert formal_audio is not None
             extract_audio_window(formal_audio, segment_audio, clip.planned_start_us, clip.planned_duration_us)
             with factory() as db:
                 provider_job_ids.append(
@@ -354,10 +366,14 @@ def _build_episode(
         normalized_paths.append(final_segment)
 
     video_only = workdir / "episode-video-only.mp4"
-    concatenate_videos(normalized_paths, video_only)
+    concatenate_videos(normalized_paths, video_only, preserve_audio=native_audio)
     video_filename = f"episode-{episode_order:04d}-{episode_key(episode_id)}.mp4"
     video_path = root / video_filename
-    mux_formal_audio(video_only, formal_audio, video_path, episode_duration_us)
+    if native_audio:
+        video_only.replace(video_path)
+    else:
+        assert formal_audio is not None
+        mux_formal_audio(video_only, formal_audio, video_path, episode_duration_us)
     final_probe = probe_video(video_path)
     tolerance = final_duration_tolerance_us()
     if abs(final_probe.duration_us - episode_duration_us) > tolerance:
@@ -400,15 +416,16 @@ def _provenance(inputs: P17Inputs, *, sequence: int, task_id: str, provider_job_
         generation_selection_artifact_id=inputs.selection_artifact.id,
         generation_selection_revision=inputs.selection_artifact.revision,
         generation_selection_fingerprint=inputs.selection_artifact.input_fingerprint,
-        target_audio_artifact_id=inputs.target_audio_artifact.id,
-        target_audio_revision=inputs.target_audio_artifact.revision,
-        target_audio_fingerprint=inputs.target_audio_artifact.input_fingerprint,
+        audio_generation_mode=inputs.audio_generation_mode,
+        target_audio_artifact_id=inputs.target_audio_artifact.id if inputs.target_audio_artifact else None,
+        target_audio_revision=inputs.target_audio_artifact.revision if inputs.target_audio_artifact else None,
+        target_audio_fingerprint=inputs.target_audio_artifact.input_fingerprint if inputs.target_audio_artifact else None,
         target_script_artifact_id=inputs.target_script_artifact.id,
         target_script_revision=inputs.target_script_artifact.revision,
         target_script_fingerprint=inputs.target_script_artifact.input_fingerprint,
-        timing_plan_artifact_id=inputs.timing_artifact.id,
-        timing_plan_revision=inputs.timing_artifact.revision,
-        timing_plan_fingerprint=inputs.timing_artifact.input_fingerprint,
+        timing_plan_artifact_id=inputs.timing_artifact.id if inputs.timing_artifact else None,
+        timing_plan_revision=inputs.timing_artifact.revision if inputs.timing_artifact else None,
+        timing_plan_fingerprint=inputs.timing_artifact.input_fingerprint if inputs.timing_artifact else None,
         generation_sequence=sequence,
         professional_skill_version=skill.version,
         lip_sync_provider_job_ids=list(dict.fromkeys(provider_job_ids)),
@@ -438,9 +455,9 @@ def _persist_candidate(factory: sessionmaker[Session], task: TaskWorkerRead, con
             ReplicaPostCandidate(
                 project_id=task.project_id,
                 generation_selection_artifact_id=inputs.selection_artifact.id,
-                target_audio_artifact_id=inputs.target_audio_artifact.id,
+                target_audio_artifact_id=inputs.target_audio_artifact.id if inputs.target_audio_artifact else None,
                 target_script_artifact_id=inputs.target_script_artifact.id,
-                timing_plan_artifact_id=inputs.timing_artifact.id,
+                timing_plan_artifact_id=inputs.timing_artifact.id if inputs.timing_artifact else None,
                 generated_by_task_id=task.id,
                 generation_sequence=sequence,
                 input_fingerprint=task.input_fingerprint,
@@ -512,9 +529,10 @@ def run_post_task(factory: sessionmaker[Session], task_id: str) -> None:
             final_inputs = load_inputs(db, get_project(db, snapshot.project_id))
         content = ReplicaFinalOutputContent(
             generation_selection_artifact_id=final_inputs.selection_artifact.id,
-            target_audio_artifact_id=final_inputs.target_audio_artifact.id,
+            audio_generation_mode=final_inputs.audio_generation_mode,
+            target_audio_artifact_id=final_inputs.target_audio_artifact.id if final_inputs.target_audio_artifact else None,
             target_script_artifact_id=final_inputs.target_script_artifact.id,
-            timing_plan_artifact_id=final_inputs.timing_artifact.id,
+            timing_plan_artifact_id=final_inputs.timing_artifact.id if final_inputs.timing_artifact else None,
             episodes=episodes,
         )
         with factory() as db:

@@ -39,7 +39,8 @@ const previewShot = ref<SourceScriptShot | null>(null)
 let pollTimer: number | null = null
 
 const visible = computed(() => project.value?.project_type === 'REPLICA' || project.value?.project_type === 'REDRAW')
-const isReady = computed(() => status.value?.state === 'READY' && script.value?.state === 'READY')
+const isReady = computed(() => script.value?.state === 'READY')
+const visualReady = computed(() => Boolean(script.value?.visual_enrichment_ready))
 const draftByShot = computed(() => new Map(
   draft.value?.status === 'CURRENT'
     ? draft.value.overrides.map((item) => [item.shot_anchor_id, item] as const)
@@ -119,6 +120,7 @@ function startPolling(): void {
   pollTimer = window.setInterval(async () => {
     try {
       await refreshStatus()
+      if (status.value?.script_ready) await loadResults()
       if (status.value?.state !== 'RUNNING') {
         stopPolling()
         if (status.value?.state === 'READY') await loadResults()
@@ -138,7 +140,7 @@ async function load(): Promise<void> {
     project.value = await getProject(projectId.value)
     if (!visible.value) return
     await refreshStatus()
-    if (status.value?.state === 'READY') await loadResults()
+    if (status.value?.script_ready || status.value?.state === 'READY') await loadResults()
     if (status.value?.state === 'RUNNING') startPolling()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '原片结果读取失败'
@@ -154,8 +156,8 @@ async function analyzeSource(): Promise<void> {
   successMessage.value = ''
   try {
     status.value = await startSourceAnalysis(projectId.value, commandKey())
-    if (status.value.state === 'READY') await loadResults()
-    else startPolling()
+    if (status.value.script_ready || status.value.state === 'READY') await loadResults()
+    if (status.value.state !== 'READY') startPolling()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '原片解析启动失败'
   } finally {
@@ -249,8 +251,8 @@ onBeforeUnmount(stopPolling)
     <header class="workspace-heading">
       <div>
         <p class="eyebrow">原片解析结果</p>
-        <h2>剧本与分镜</h2>
-        <p>上传原片后只解析一次。镜头、对白、剧情、人物和场景都在后台处理，完成后直接得到可工作的剧本和分镜。</p>
+        <h2>{{ visualReady ? '原片剧本与视觉结果' : '原片剧本' }}</h2>
+        <p>原片剧本生成后就能立即开始改编；精确分镜、人物视觉、场景和道具会继续在后台补充，只在制作视频前需要完成。</p>
       </div>
       <button
         v-if="status?.state !== 'READY'"
@@ -268,10 +270,10 @@ onBeforeUnmount(stopPolling)
     <p v-if="successMessage" class="message success">{{ successMessage }}</p>
 
     <div v-if="loading" class="state-box">正在读取原片结果…</div>
-    <div v-else-if="status?.state === 'RUNNING'" class="state-box">
+    <div v-else-if="status?.state === 'RUNNING' && !isReady" class="state-box">
       <div class="progress-copy"><strong>{{ status.message }}</strong><span>{{ status.progress_percent }}%</span></div>
       <div class="progress-track"><i :style="{ width: `${status.progress_percent}%` }"></i></div>
-      <small>不需要逐步操作，完成后这里会直接出现剧本和分镜。</small>
+      <small>先完成对白和整集理解，剧本一生成就会立即显示；镜头与视觉细节随后继续处理。</small>
     </div>
     <div v-else-if="status?.state === 'FAILED'" class="state-box warning">
       <strong>这次解析没有完成</strong><p>{{ status.message }}</p>
@@ -283,22 +285,26 @@ onBeforeUnmount(stopPolling)
       <strong>还没有可用的原片剧本</strong><p>上传完整视频后，点击“解析原片”。</p>
     </div>
 
-    <template v-else-if="isReady && script">
+    <template v-if="!loading && isReady && script">
+      <div v-if="!visualReady" class="state-box enrichment-ready">
+        <strong>原片剧本已经可以使用</strong>
+        <p>{{ status?.state === 'RUNNING' ? status.message : '分镜和视觉实体仍在补充，剧本语义内容已经可以进入后续改编。' }}</p>
+      </div>
       <div class="summary">
         <span><b>{{ sceneCount }}</b> 场</span>
-        <span><b>{{ shotCount }}</b> 镜</span>
+        <span><b>{{ shotCount }}</b> {{ visualReady ? '镜' : '剧情段' }}</span>
         <span><b>{{ script.characters.length }}</b> 人物</span>
         <span><b>{{ script.props.length }}</b> 关键道具</span>
       </div>
 
       <nav class="tabs">
         <button :class="{ active: activeTab === 'script' }" type="button" @click="activeTab = 'script'">原片剧本</button>
-        <button :class="{ active: activeTab === 'storyboard' }" type="button" @click="activeTab = 'storyboard'">分镜</button>
-        <button :class="{ active: activeTab === 'assets' }" type="button" @click="activeTab = 'assets'">人物 / 场景 / 道具</button>
+        <button :class="{ active: activeTab === 'storyboard' }" type="button" :disabled="!visualReady" @click="activeTab = 'storyboard'">{{ visualReady ? '分镜' : '分镜（处理中）' }}</button>
+        <button :class="{ active: activeTab === 'assets' }" type="button" :disabled="!visualReady" @click="activeTab = 'assets'">{{ visualReady ? '人物 / 场景 / 道具' : '视觉资产（处理中）' }}</button>
       </nav>
 
       <nav v-if="activeTab !== 'assets' && episodeOptions.length > 1" class="episode-tabs" data-testid="source-episode-tabs" aria-label="原片剧集">
-        <button type="button" :class="{ active: activeEpisodeId === 'all' }" @click="activeEpisodeId = 'all'">全部 <span>{{ shotCount }} 镜</span></button>
+        <button type="button" :class="{ active: activeEpisodeId === 'all' }" @click="activeEpisodeId = 'all'">全部 <span>{{ shotCount }} {{ visualReady ? '镜' : '段' }}</span></button>
         <button
           v-for="episode in episodeOptions"
           :key="episode.id"
@@ -306,7 +312,7 @@ onBeforeUnmount(stopPolling)
           :class="{ active: activeEpisodeId === episode.id }"
           @click="activeEpisodeId = episode.id"
         >
-          {{ episode.label }} <span>{{ episode.shotCount }} 镜</span>
+          {{ episode.label }} <span>{{ episode.shotCount }} {{ visualReady ? '镜' : '段' }}</span>
         </button>
       </nav>
 
@@ -330,7 +336,7 @@ onBeforeUnmount(stopPolling)
         </article>
       </div>
 
-      <div v-else-if="activeTab === 'storyboard'" class="result-body" data-testid="source-storyboard-view">
+      <div v-else-if="activeTab === 'storyboard' && visualReady" class="result-body" data-testid="source-storyboard-view">
         <div class="draft-note">
           <strong>{{ draft?.status === 'STALE' ? '旧分镜草稿已归档' : draft?.overrides.length ? `分镜编辑草稿 r${draft.revision}` : '原片分镜' }}</strong>
           <span>{{ draft?.status === 'STALE' ? '原片结果已更新，旧草稿不会自动套用；新的修改会从当前原片分镜开始。' : '直接修改保存为工作草稿，不覆盖原片事实。' }}</span>
@@ -447,6 +453,7 @@ onBeforeUnmount(stopPolling)
 button:disabled { opacity:.5; cursor:not-allowed; }
 .message { margin:0; padding:10px 18px; font-size:12px; }.message.error{background:#fff2f2;color:#a62626}.message.success{background:#eef9f1;color:#267a48}
 .state-box { padding:32px 26px; border:1px solid #e1e6ed; border-top:0; background:#fff; color:#697386; }.state-box.warning{background:#fffaf0}.state-box p{margin:6px 0 0}.state-box strong{color:#273244}
+.state-box.enrichment-ready{padding:14px 22px;background:#f4f8ff;color:#52647c}.state-box.enrichment-ready strong{color:#1f3858}
 .progress-copy { display:flex; justify-content:space-between; color:#273244; }.progress-track{height:8px;margin:14px 0 10px;border-radius:999px;background:#edf0f4;overflow:hidden}.progress-track i{display:block;height:100%;background:#273244}
 .summary { display:grid; grid-template-columns:repeat(4,1fr); border:1px solid #e1e6ed; border-top:0; background:#fff; }.summary span{padding:16px 24px;border-right:1px solid #edf0f4;color:#7b8492;font-size:12px}.summary span:last-child{border-right:0}.summary b{color:#172033;font-size:22px}
 .tabs { display:flex; gap:6px; padding:14px 18px; border:1px solid #e1e6ed; border-top:0; background:#fafbfc; }.tabs button{border:0;border-radius:8px;padding:9px 14px;background:transparent;color:#667085;font-weight:800;cursor:pointer}.tabs button.active{background:#172033;color:#fff}

@@ -17,8 +17,8 @@ from app.projects.enums import ProjectType
 from app.projects.service import get_project
 from app.skills.models import ArtifactType, Capability
 from app.skills.professional import get_professional_skill
-from app.source_snapshot.models import SourceVideoSnapshotRevision
-from app.source_snapshot.schemas import SourceVideoSnapshotContent
+from app.source_script.models import SourceScriptRevision
+from app.source_script.schemas import SourceScriptContent
 from app.target_bible.models import ReplicaTargetRevision
 from app.target_bible.providers import (
     ReplicaTargetBibleProvider,
@@ -88,9 +88,9 @@ _BEAT_CATEGORY = {
 @dataclass(frozen=True)
 class P11Inputs:
     project: Any
-    snapshot_artifact: ArtifactNode
-    snapshot_revision: SourceVideoSnapshotRevision
-    snapshot_content: SourceVideoSnapshotContent
+    source_script_artifact: ArtifactNode
+    source_script_revision: SourceScriptRevision
+    source_script_content: SourceScriptContent
     preservation_locks: tuple[PreservationLock, ...]
 
 
@@ -167,21 +167,17 @@ def _latest_artifact(db: Session, project_id: str, artifact_type: ArtifactType) 
     )
 
 
-def _source_snapshot(db: Session, project_id: str) -> tuple[ArtifactNode, SourceVideoSnapshotRevision, SourceVideoSnapshotContent]:
-    snapshot = _current_artifact(db, project_id, ArtifactType.SOURCE_VIDEO_SNAPSHOT)
-    if snapshot is None:
-        latest = _latest_artifact(db, project_id, ArtifactType.SOURCE_VIDEO_SNAPSHOT)
+def _source_script(db: Session, project_id: str) -> tuple[ArtifactNode, SourceScriptRevision, SourceScriptContent]:
+    artifact = _current_artifact(db, project_id, ArtifactType.SOURCE_SCRIPT)
+    if artifact is None:
+        latest = _latest_artifact(db, project_id, ArtifactType.SOURCE_SCRIPT)
         if latest is None:
-            raise AppError("SOURCE_SNAPSHOT_REQUIRED", "P11 需要 CURRENT 原片分析定稿", status_code=409)
-        raise AppError("SOURCE_SNAPSHOT_STALE", "原片分析定稿已有更新，请先重新解析原片", status_code=409)
-    row = db.scalar(
-        select(SourceVideoSnapshotRevision).where(SourceVideoSnapshotRevision.artifact_id == snapshot.id)
-    )
+            raise AppError("SOURCE_SCRIPT_REQUIRED", "P11 需要 CURRENT 原片剧本", status_code=409)
+        raise AppError("SOURCE_SCRIPT_STALE", "原片剧本已有更新，请先重新解析原片", status_code=409)
+    row = db.scalar(select(SourceScriptRevision).where(SourceScriptRevision.artifact_id == artifact.id))
     if row is None:
-        raise AppError("SOURCE_SNAPSHOT_CONTENT_MISSING", "CURRENT Source Snapshot 缺少正式 typed revision", status_code=500)
-    content = SourceVideoSnapshotContent.model_validate(row.content_json)
-    return snapshot, row, content
-
+        raise AppError("SOURCE_SCRIPT_CONTENT_MISSING", "CURRENT SOURCE_SCRIPT 缺少正式 typed revision", status_code=500)
+    return artifact, row, SourceScriptContent.model_validate(row.content_json)
 
 def _time_ref(episode_id: str, start_us: int, end_us: int) -> str:
     return f"{episode_id}@{start_us}-{end_us}"
@@ -202,98 +198,34 @@ def _lock(
     )
 
 
-def _build_preservation_locks(content: SourceVideoSnapshotContent) -> tuple[PreservationLock, ...]:
+def _build_preservation_locks(content: SourceScriptContent) -> tuple[PreservationLock, ...]:
     locks: list[PreservationLock] = []
-    for episode in content.source_bible.episodes:
-        episode_id = episode.material_baseline.episode_id
+    for episode in sorted(content.episodes, key=lambda item: item.episode_order):
+        episode_id = episode.episode_id
         story = episode.story_skeleton
-        locks.append(
-            _lock(
-                PreservationCategory.STORY_MAINLINE,
-                f"{story.premise}｜核心冲突：{story.central_conflict}",
-                [episode_id],
-                "保持本集故事主线、人物故事功能和核心冲突，不得因本土化改写因果链。",
-            )
-        )
+        locks.append(_lock(PreservationCategory.STORY_MAINLINE, f"{story.premise}｜核心冲突：{story.central_conflict}", [episode_id], "保持本集故事主线、人物故事功能和核心冲突，不得因本土化改写因果链。"))
         for beat_index, beat in enumerate(story.beats, 1):
             ref = _time_ref(episode_id, beat.time_range.start_us, beat.time_range.end_us)
             category = _BEAT_CATEGORY.get(beat.beat_type.value)
             if category is not None:
-                locks.append(
-                    _lock(
-                        category,
-                        beat.summary,
-                        [ref],
-                        f"保持 {beat.beat_type.value} 的叙事功能、相对顺序和信息量，不得删除或重排。",
-                    )
-                )
-            locks.append(
-                _lock(
-                    PreservationCategory.STORY_BEAT_TIMING,
-                    f"Beat #{beat_index} {beat.beat_type.value}: {beat.summary}",
-                    [ref],
-                    "保持 Story Beat 的时间位置基线；后续只能在正式 Timing 阶段做最小必要适配。",
-                )
-            )
+                locks.append(_lock(category, beat.summary, [ref], f"保持 {beat.beat_type.value} 的叙事功能、相对顺序和信息量，不得删除或重排。"))
+            locks.append(_lock(PreservationCategory.STORY_BEAT_TIMING, f"Beat #{beat_index} {beat.beat_type.value}: {beat.summary}", [ref], "保持 Story Beat 的时间位置基线；后续只能在正式 Timing 阶段做最小必要适配。"))
         rhythm = episode.rhythm_skeleton
-        locks.append(
-            _lock(
-                PreservationCategory.SHOT_RHYTHM,
-                rhythm.overall_pace,
-                [episode_id],
-                "保持原片整体节奏与镜头反应基线，不在 Target Bible 阶段重做节奏。",
-            )
-        )
+        locks.append(_lock(PreservationCategory.SHOT_RHYTHM, rhythm.overall_pace, [episode_id], "保持原片整体叙事节奏基线；精确 Shot 节奏由后续视觉增强链与 P15 Snapshot 校验。"))
         for phase_index, phase in enumerate(rhythm.phases, 1):
             ref = _time_ref(episode_id, phase.time_range.start_us, phase.time_range.end_us)
-            locks.append(
-                _lock(
-                    PreservationCategory.ACTION_RHYTHM,
-                    f"Phase #{phase_index} {phase.pace}: {phase.dialogue_reaction_rhythm}",
-                    [ref],
-                    f"保持动作/对白反应节奏与 cut timing；允许偏差基线 {phase.allowable_deviation_ms}ms。",
-                )
-            )
-
-    assignments = sorted(
-        content.source_scenes.assignments,
-        key=lambda item: (item.episode_id, item.shot_number, item.start_us),
-    )
-    scene_sequence = [f"{item.episode_id}#S{item.shot_number}:{item.scene_id or item.resolution_status.value}" for item in assignments]
-    if scene_sequence:
-        locks.append(
-            _lock(
-                PreservationCategory.SCENE_ORDER,
-                " → ".join(scene_sequence),
-                [item.shot_anchor_id for item in assignments],
-                "保持 Source Scene Assignment 的连续顺序，不因目标地区替换而重排场次。",
-            )
-        )
-
-    shot_ids: list[str] = []
-    for episode in content.source_shot_facts.episodes:
-        shot_ids.extend(item.shot_anchor_id for item in episode.shots)
-    if shot_ids:
-        locks.append(
-            _lock(
-                PreservationCategory.SHOT_LOGIC,
-                f"保持 {len(shot_ids)} 个 Source Shot 的顺序、镜头功能与反应链。",
-                shot_ids,
-                "Target Bible 不创建、删除、合并或重排 Source Shot；正式 Target Storyboard 属于后续阶段。",
-            )
-        )
+            locks.append(_lock(PreservationCategory.ACTION_RHYTHM, f"Phase #{phase_index} {phase.pace}: {phase.dialogue_reaction_rhythm}", [ref], f"保持动作/对白反应节奏语义；精确 cut timing 后续以 Source Snapshot 为准，允许偏差基线 {phase.allowable_deviation_ms}ms。"))
     return tuple(locks)
-
 
 def _load_inputs(db: Session, project_id: str) -> P11Inputs:
     project = get_project(db, project_id)
     _assert_replica(project)
-    snapshot, row, content = _source_snapshot(db, project_id)
+    source_script, row, content = _source_script(db, project_id)
     return P11Inputs(
         project=project,
-        snapshot_artifact=snapshot,
-        snapshot_revision=row,
-        snapshot_content=content,
+        source_script_artifact=source_script,
+        source_script_revision=row,
+        source_script_content=content,
         preservation_locks=_build_preservation_locks(content),
     )
 
@@ -307,10 +239,10 @@ def _fingerprint_inputs(inputs: P11Inputs, provider: ReplicaTargetBibleProvider)
     return _sha(
         {
             "task": P11_TASK_TYPE,
-            "source_snapshot": [
-                inputs.snapshot_artifact.id,
-                inputs.snapshot_artifact.revision,
-                inputs.snapshot_artifact.input_fingerprint,
+            "source_script": [
+                inputs.source_script_artifact.id,
+                inputs.source_script_artifact.revision,
+                inputs.source_script_artifact.input_fingerprint,
             ],
             "target_language": inputs.project.target_language,
             "target_region": inputs.project.target_region,
@@ -340,7 +272,7 @@ def create_replica_target_bible_task(db: Session, *, project_id: str, idempotenc
             task_type=P11_TASK_TYPE,
             task_name="生成复刻目标设定",
             input_fingerprint=fingerprint,
-            input_artifact_ids=[inputs.snapshot_artifact.id],
+            input_artifact_ids=[inputs.source_script_artifact.id],
             max_attempts=3,
         ),
     )
@@ -352,25 +284,34 @@ def create_replica_target_bible_task(db: Session, *, project_id: str, idempotenc
     return task
 
 
-def _assert_task_snapshot(db: Session, task: TaskWorkerRead | Task, inputs: P11Inputs, provider: ReplicaTargetBibleProvider) -> None:
-    if list(task.input_artifact_ids_json) != [inputs.snapshot_artifact.id]:
-        raise AppError("STALE_ARTIFACT_INPUT", "P11 Source Snapshot 输入已变化，请重新创建任务", status_code=409)
+def _assert_task_source_script(db: Session, task: TaskWorkerRead | Task, inputs: P11Inputs, provider: ReplicaTargetBibleProvider) -> None:
+    if list(task.input_artifact_ids_json) != [inputs.source_script_artifact.id]:
+        raise AppError("STALE_ARTIFACT_INPUT", "P11 SOURCE_SCRIPT 输入已变化，请重新创建任务", status_code=409)
     if task.input_fingerprint != _fingerprint_inputs(inputs, provider):
-        raise AppError("STALE_ARTIFACT_INPUT", "P11 目标配置、Provider profile 或 Source Snapshot 已变化", status_code=409)
+        raise AppError("STALE_ARTIFACT_INPUT", "P11 目标配置、Provider profile 或 SOURCE_SCRIPT 已变化", status_code=409)
 
 
-def _source_identity_maps(content: SourceVideoSnapshotContent) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    characters = {item.character_id: item for item in content.source_characters.entities}
-    scenes = {item.scene_id: item for item in content.source_scenes.entities}
-    props = {item.prop_id: item for item in content.source_props.entities}
-    if len(characters) != len(content.source_characters.entities):
-        raise AppError("P11_SOURCE_CHARACTER_SET_INVALID", "Snapshot Source Character id 重复", status_code=409)
-    if len(scenes) != len(content.source_scenes.entities):
-        raise AppError("P11_SOURCE_SCENE_SET_INVALID", "Snapshot Source Scene id 重复", status_code=409)
-    if len(props) != len(content.source_props.entities):
-        raise AppError("P11_SOURCE_PROP_SET_INVALID", "Snapshot Source Prop id 重复", status_code=409)
+def _source_identity_maps(content: SourceScriptContent) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    characters: dict[str, Any] = {}
+    scenes: dict[str, Any] = {}
+    props: dict[str, Any] = {}
+    for episode in content.episodes:
+        for item in episode.characters:
+            previous = characters.get(item.source_character_id)
+            if previous is not None and previous.name != item.name:
+                raise AppError("P11_SOURCE_CHARACTER_SET_INVALID", "SOURCE_SCRIPT 人物 candidate id 冲突", status_code=409)
+            characters[item.source_character_id] = item
+        for item in episode.scenes:
+            previous = scenes.get(item.source_scene_id)
+            if previous is not None and previous.name != item.name:
+                raise AppError("P11_SOURCE_SCENE_SET_INVALID", "SOURCE_SCRIPT 场景 candidate id 冲突", status_code=409)
+            scenes[item.source_scene_id] = item
+        for item in episode.props:
+            previous = props.get(item.source_prop_id)
+            if previous is not None and previous.name != item.name:
+                raise AppError("P11_SOURCE_PROP_SET_INVALID", "SOURCE_SCRIPT 道具 candidate id 冲突", status_code=409)
+            props[item.source_prop_id] = item
     return characters, scenes, props
-
 
 def _assert_exact_ids(actual: list[str], expected: set[str], code: str, message: str) -> None:
     if len(actual) != len(set(actual)) or set(actual) != expected:
@@ -378,24 +319,24 @@ def _assert_exact_ids(actual: list[str], expected: set[str], code: str, message:
 
 
 def _validate_semantic(inputs: P11Inputs, semantic: ReplicaTargetBibleSemantic) -> None:
-    characters, scenes, props = _source_identity_maps(inputs.snapshot_content)
+    characters, scenes, props = _source_identity_maps(inputs.source_script_content)
     _assert_exact_ids(
         [item.source_character_id for item in semantic.characters],
         set(characters),
         "P11_CHARACTER_COVERAGE_INVALID",
-        "Target Character 必须与 Snapshot Source Character 一一完整对应",
+        "Target Character 必须与 SOURCE_SCRIPT Character candidate 一一完整对应",
     )
     _assert_exact_ids(
         [item.source_scene_id for item in semantic.scenes],
         set(scenes),
         "P11_SCENE_COVERAGE_INVALID",
-        "Target Scene 必须与 Snapshot Source Scene 一一完整对应",
+        "Target Scene 必须与 SOURCE_SCRIPT Scene candidate 一一完整对应",
     )
     _assert_exact_ids(
         [item.source_prop_id for item in semantic.props],
         set(props),
         "P11_PROP_COVERAGE_INVALID",
-        "Target Prop 必须与 Snapshot Source Prop 一一完整对应",
+        "Target Prop 必须与 SOURCE_SCRIPT Prop candidate 一一完整对应",
     )
     known_refs = set(characters) | set(scenes) | set(props)
     invalid_refs = sorted(
@@ -408,7 +349,7 @@ def _validate_semantic(inputs: P11Inputs, semantic: ReplicaTargetBibleSemantic) 
     if invalid_refs:
         raise AppError(
             "P11_LOCALIZATION_SOURCE_REF_INVALID",
-            "P11 localization decision 引用了 Snapshot 中不存在的 Source identity",
+            "P11 localization decision 引用了 SOURCE_SCRIPT 中不存在的 Source identity",
             status_code=422,
             details={"source_refs": invalid_refs},
         )
@@ -419,8 +360,8 @@ def _target_id(prefix: str, inputs: P11Inputs, source_id: str) -> str:
         prefix,
         {
             "source_id": source_id,
-            "source_snapshot_artifact_id": inputs.snapshot_artifact.id,
-            "source_snapshot_fingerprint": inputs.snapshot_artifact.input_fingerprint,
+            "source_script_artifact_id": inputs.source_script_artifact.id,
+            "source_script_fingerprint": inputs.source_script_artifact.input_fingerprint,
             "target_language": inputs.project.target_language,
             "target_region": inputs.project.target_region,
         },
@@ -440,7 +381,7 @@ def _decision(
         decision_id=_stable_id(
             "loc",
             [
-                inputs.snapshot_artifact.id,
+                inputs.source_script_artifact.id,
                 category.value,
                 source_ref,
                 source_value,
@@ -457,13 +398,13 @@ def _decision(
 
 def _compose(inputs: P11Inputs, semantic: ReplicaTargetBibleSemantic) -> tuple[ReplicaAdaptationPlanContent, ReplicaTargetBibleContent]:
     _validate_semantic(inputs, semantic)
-    source_characters, source_scenes, source_props = _source_identity_maps(inputs.snapshot_content)
+    source_characters, source_scenes, source_props = _source_identity_maps(inputs.source_script_content)
 
     target_characters = [
         ReplicaTargetCharacter(
             target_character_id=_target_id("tchr", inputs, item.source_character_id),
             source_character_id=item.source_character_id,
-            source_display_name=source_characters[item.source_character_id].display_name,
+            source_display_name=source_characters[item.source_character_id].name,
             display_name=item.display_name,
             localized_identity=item.localized_identity,
             appearance_direction=item.appearance_direction,
@@ -476,7 +417,7 @@ def _compose(inputs: P11Inputs, semantic: ReplicaTargetBibleSemantic) -> tuple[R
         ReplicaTargetScene(
             target_scene_id=_target_id("tscn", inputs, item.source_scene_id),
             source_scene_id=item.source_scene_id,
-            source_display_name=source_scenes[item.source_scene_id].display_name,
+            source_display_name=source_scenes[item.source_scene_id].name,
             display_name=item.display_name,
             localized_setting=item.localized_setting,
             visual_direction=item.visual_direction,
@@ -488,7 +429,7 @@ def _compose(inputs: P11Inputs, semantic: ReplicaTargetBibleSemantic) -> tuple[R
         ReplicaTargetProp(
             target_prop_id=_target_id("tprop", inputs, item.source_prop_id),
             source_prop_id=item.source_prop_id,
-            source_display_name=source_props[item.source_prop_id].display_name,
+            source_display_name=source_props[item.source_prop_id].name,
             display_name=item.display_name,
             localized_form=item.localized_form,
             continuity_rules=item.continuity_rules,
@@ -503,7 +444,7 @@ def _compose(inputs: P11Inputs, semantic: ReplicaTargetBibleSemantic) -> tuple[R
                 inputs,
                 category=LocalizationCategory.CHARACTER,
                 source_ref=item.source_character_id,
-                source_value=source_characters[item.source_character_id].display_name,
+                source_value=source_characters[item.source_character_id].name,
                 target_value=f"{item.display_name}｜{item.localized_identity}｜{item.appearance_direction}",
                 reason=item.reason,
             )
@@ -514,7 +455,7 @@ def _compose(inputs: P11Inputs, semantic: ReplicaTargetBibleSemantic) -> tuple[R
                 inputs,
                 category=LocalizationCategory.SCENE,
                 source_ref=item.source_scene_id,
-                source_value=source_scenes[item.source_scene_id].display_name,
+                source_value=source_scenes[item.source_scene_id].name,
                 target_value=f"{item.display_name}｜{item.localized_setting}",
                 reason=item.reason,
             )
@@ -525,7 +466,7 @@ def _compose(inputs: P11Inputs, semantic: ReplicaTargetBibleSemantic) -> tuple[R
                 inputs,
                 category=LocalizationCategory.PROP,
                 source_ref=item.source_prop_id,
-                source_value=source_props[item.source_prop_id].display_name,
+                source_value=source_props[item.source_prop_id].name,
                 target_value=f"{item.display_name}｜{item.localized_form}",
                 reason=item.reason,
             )
@@ -546,7 +487,7 @@ def _compose(inputs: P11Inputs, semantic: ReplicaTargetBibleSemantic) -> tuple[R
     plan = ReplicaAdaptationPlanContent(
         target_language=inputs.project.target_language,
         target_region=inputs.project.target_region,
-        source_snapshot_artifact_id=inputs.snapshot_artifact.id,
+        source_script_artifact_id=inputs.source_script_artifact.id,
         preservation_locks=list(inputs.preservation_locks),
         localization_decisions=decisions,
         dialogue_localization_strategy=list(semantic.dialogue_style_rules),
@@ -556,7 +497,7 @@ def _compose(inputs: P11Inputs, semantic: ReplicaTargetBibleSemantic) -> tuple[R
     bible = ReplicaTargetBibleContent(
         target_language=inputs.project.target_language,
         target_region=inputs.project.target_region,
-        source_snapshot_artifact_id=inputs.snapshot_artifact.id,
+        source_script_artifact_id=inputs.source_script_artifact.id,
         target_world=ReplicaTargetWorld(
             setting_summary=semantic.target_world.setting_summary,
             cultural_context=semantic.target_world.cultural_context,
@@ -576,7 +517,7 @@ def _compose(inputs: P11Inputs, semantic: ReplicaTargetBibleSemantic) -> tuple[R
 
 def _provider_input(inputs: P11Inputs) -> ReplicaTargetBibleProviderInput:
     return ReplicaTargetBibleProviderInput(
-        source_snapshot=inputs.snapshot_content.model_dump(mode="json"),
+        source_script=inputs.source_script_content.model_dump(mode="json"),
         target_language=inputs.project.target_language,
         target_region=inputs.project.target_region,
         scene_strategy=inputs.project.scene_strategy.value,
@@ -594,7 +535,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P11Executio
     with context.session_factory() as db:
         inputs = _load_inputs(db, task.project_id)
         provider = _provider_for_project(inputs.project)
-        _assert_task_snapshot(db, task, inputs, provider)
+        _assert_task_source_script(db, task, inputs, provider)
         profile = provider.profile()
 
     context.checkpoint({"stage": "replica_preservation_locks"}, progress_percent=12)
@@ -607,8 +548,8 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P11Executio
         "preservation_contract": P11_PRESERVATION_CONTRACT,
         "professional_skill_id": P11_SKILL_ID,
         "professional_skill_version": get_professional_skill(P11_SKILL_ID).version,
-        "source_snapshot_artifact_id": inputs.snapshot_artifact.id,
-        "source_snapshot_fingerprint": inputs.snapshot_artifact.input_fingerprint,
+        "source_script_artifact_id": inputs.source_script_artifact.id,
+        "source_script_fingerprint": inputs.source_script_artifact.input_fingerprint,
         "target_language": inputs.project.target_language,
         "target_region": inputs.project.target_region,
         "scene_strategy": inputs.project.scene_strategy.value,
@@ -623,7 +564,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P11Executio
             model=provider.model_name,
             capability=Capability.TARGET_BIBLE,
             payload=job_payload,
-            artifact_id=inputs.snapshot_artifact.id,
+            artifact_id=inputs.source_script_artifact.id,
             remote_call=lambda _job: _dispatch(provider, payload),
         )
     context.checkpoint({"stage": "validate_target_lineage"}, progress_percent=78)
@@ -680,9 +621,9 @@ def _provenance(
     skill = get_professional_skill(P11_SKILL_ID)
     return ReplicaTargetProvenance(
         artifact_kind=kind,
-        source_snapshot_artifact_id=inputs.snapshot_artifact.id,
-        source_snapshot_revision=inputs.snapshot_artifact.revision,
-        source_snapshot_fingerprint=inputs.snapshot_artifact.input_fingerprint,
+        source_script_artifact_id=inputs.source_script_artifact.id,
+        source_script_revision=inputs.source_script_artifact.revision,
+        source_script_fingerprint=inputs.source_script_artifact.input_fingerprint,
         target_language=inputs.project.target_language,
         target_region=inputs.project.target_region,
         scene_strategy=inputs.project.scene_strategy.value,
@@ -705,7 +646,7 @@ def _publish(db: Session, *, task_id: str, result: P11ExecutionResult) -> tuple[
         raise AppError("TASK_NOT_SUCCEEDED", "只有执行成功的 P11 Task 才能发布目标设定", status_code=409)
     inputs = _load_inputs(db, task.project_id)
     provider = _provider_for_project(inputs.project)
-    _assert_task_snapshot(db, task, inputs, provider)
+    _assert_task_source_script(db, task, inputs, provider)
 
     previous_plan = _current_artifact(db, task.project_id, ArtifactType.ADAPTATION_PLAN)
     previous_bible = _current_artifact(db, task.project_id, ArtifactType.TARGET_BIBLE)
@@ -730,7 +671,7 @@ def _publish(db: Session, *, task_id: str, result: P11ExecutionResult) -> tuple[
         is_current=True,
         metadata_json={
             "schema_version": P11_SCHEMA_VERSION,
-            "source_snapshot_artifact_id": inputs.snapshot_artifact.id,
+            "source_script_artifact_id": inputs.source_script_artifact.id,
             "target_language": inputs.project.target_language,
             "target_region": inputs.project.target_region,
             "preservation_lock_count": len(result.adaptation_plan.preservation_locks),
@@ -751,7 +692,7 @@ def _publish(db: Session, *, task_id: str, result: P11ExecutionResult) -> tuple[
         is_current=True,
         metadata_json={
             "schema_version": P11_SCHEMA_VERSION,
-            "source_snapshot_artifact_id": inputs.snapshot_artifact.id,
+            "source_script_artifact_id": inputs.source_script_artifact.id,
             "target_language": inputs.project.target_language,
             "target_region": inputs.project.target_region,
             "character_count": len(result.target_bible.characters),
@@ -783,7 +724,8 @@ def _publish(db: Session, *, task_id: str, result: P11ExecutionResult) -> tuple[
                     project_id=task.project_id,
                     artifact_id=plan.id,
                     artifact_kind=TargetBibleArtifactKind.ADAPTATION_PLAN.value,
-                    source_snapshot_artifact_id=inputs.snapshot_artifact.id,
+                    source_snapshot_artifact_id=None,
+                    source_script_artifact_id=inputs.source_script_artifact.id,
                     generated_by_task_id=task.id,
                     schema_version=P11_SCHEMA_VERSION,
                     content_json=result.adaptation_plan.model_dump(mode="json"),
@@ -793,7 +735,8 @@ def _publish(db: Session, *, task_id: str, result: P11ExecutionResult) -> tuple[
                     project_id=task.project_id,
                     artifact_id=bible.id,
                     artifact_kind=TargetBibleArtifactKind.TARGET_BIBLE.value,
-                    source_snapshot_artifact_id=inputs.snapshot_artifact.id,
+                    source_snapshot_artifact_id=None,
+                    source_script_artifact_id=inputs.source_script_artifact.id,
                     generated_by_task_id=task.id,
                     schema_version=P11_SCHEMA_VERSION,
                     content_json=result.target_bible.model_dump(mode="json"),
@@ -801,13 +744,13 @@ def _publish(db: Session, *, task_id: str, result: P11ExecutionResult) -> tuple[
                 ),
                 ArtifactEdge(
                     project_id=task.project_id,
-                    source_node_id=inputs.snapshot_artifact.id,
+                    source_node_id=inputs.source_script_artifact.id,
                     target_node_id=plan.id,
                     relation_type=ArtifactRelationType.DERIVED_FROM,
                 ),
                 ArtifactEdge(
                     project_id=task.project_id,
-                    source_node_id=inputs.snapshot_artifact.id,
+                    source_node_id=inputs.source_script_artifact.id,
                     target_node_id=bible.id,
                     relation_type=ArtifactRelationType.DERIVED_FROM,
                 ),
@@ -996,15 +939,21 @@ def get_replica_target_bible(db: Session, project_id: str) -> ReplicaTargetBible
         status = TargetBibleResultStatus.NOT_BUILT
     else:
         status = TargetBibleResultStatus.STALE
+    script_id = None
+    script_revision = None
     snapshot_id = None
     snapshot_revision = None
     provenance = bible.provenance or plan.provenance
     if provenance is not None:
+        script_id = provenance.source_script_artifact_id
+        script_revision = provenance.source_script_revision
         snapshot_id = provenance.source_snapshot_artifact_id
         snapshot_revision = provenance.source_snapshot_revision
     return ReplicaTargetBibleRead(
         project_id=project_id,
         status=status,
+        source_script_artifact_id=script_id,
+        source_script_revision=script_revision,
         source_snapshot_artifact_id=snapshot_id,
         source_snapshot_revision=snapshot_revision,
         adaptation_plan=plan,
@@ -1047,6 +996,7 @@ def list_replica_target_bible_revisions(
                 revision=artifact.revision,
                 validity=artifact.validity.value,
                 input_fingerprint=artifact.input_fingerprint,
+                source_script_artifact_id=row.source_script_artifact_id,
                 source_snapshot_artifact_id=row.source_snapshot_artifact_id,
                 created_at=artifact.created_at.isoformat(),
             )

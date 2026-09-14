@@ -129,11 +129,12 @@ P15 candidate 未人工接受前不得产生正式 CURRENT Storyboard/Segments�
 
 已落地：
 
-- `video-generation-qc@1.0.0`；
-- MiniMax H3 V2 adapter 与服务端 Secret boundary；
-- ProviderJob-before-remote；
+- `video-generation-qc@1.1.0`；
+- H3 Generation Runtime boundary：Windows 默认本地 ComfyUI MiniMax-H3；SGLang 保留为 Linux / 私有 GPU 显式本地模式；MiniMax Cloud V2 仅显式 fallback；
+- 本地失败禁止自动切付费云端；Cloud Secret 仍只在显式 Cloud 模式读取；
+- ProviderJob-before-invocation（本地 / 云端一致）；
 - GenerationAttempt storage；
-- 远程媒体落本地、SHA256、ffprobe；
+- Runtime 媒体落 Studio 受管 storage、SHA256、ffprobe；
 - H3 requested duration 与 planned segment duration 分层；
 - 有限 retry 与 Technical QC；
 - Technical QC PASS attempt 才可进入 Selection candidate；
@@ -227,8 +228,8 @@ frontend production build = PASS
    -> explicit ACCEPT
 
 3. P16
-   real MiniMax H3 generation
-   -> local media + Technical QC
+   real MiniMax H3 generation through selected Runtime (LOCAL_COMFYUI default / explicit LOCAL_SGLANG or Cloud alternative)
+   -> Studio-managed media + Technical QC
    -> human visual semantic QC / selection
    -> explicit ACCEPT
 

@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
+from app.p15.schemas import GenerationAudioMode
 
 
 P17_SCHEMA_VERSION = "1.0"
@@ -43,9 +44,10 @@ class ReplicaFinalOutputContent(BaseModel):
     schema_version: str = P17_SCHEMA_VERSION
     title: str = "复刻最终成片"
     generation_selection_artifact_id: str
-    target_audio_artifact_id: str
+    audio_generation_mode: GenerationAudioMode = GenerationAudioMode.NATIVE_AUDIO_VIDEO
+    target_audio_artifact_id: str | None = None
     target_script_artifact_id: str
-    timing_plan_artifact_id: str
+    timing_plan_artifact_id: str | None = None
     episodes: list[FinalEpisodeOutput] = Field(min_length=1)
 
 
@@ -53,15 +55,16 @@ class P17CandidateProvenance(BaseModel):
     generation_selection_artifact_id: str
     generation_selection_revision: int
     generation_selection_fingerprint: str
-    target_audio_artifact_id: str
-    target_audio_revision: int
-    target_audio_fingerprint: str
+    audio_generation_mode: GenerationAudioMode = GenerationAudioMode.NATIVE_AUDIO_VIDEO
+    target_audio_artifact_id: str | None = None
+    target_audio_revision: int | None = None
+    target_audio_fingerprint: str | None = None
     target_script_artifact_id: str
     target_script_revision: int
     target_script_fingerprint: str
-    timing_plan_artifact_id: str
-    timing_plan_revision: int
-    timing_plan_fingerprint: str
+    timing_plan_artifact_id: str | None = None
+    timing_plan_revision: int | None = None
+    timing_plan_fingerprint: str | None = None
     generation_sequence: int = Field(ge=1)
     professional_skill_id: str = P17_SKILL_ID
     professional_skill_version: str
@@ -105,9 +108,9 @@ class ReplicaFinalOutputRead(BaseModel):
 
 class P17ReviewCommand(BaseModel):
     expected_generation_selection_artifact_id: str
-    expected_target_audio_artifact_id: str
+    expected_target_audio_artifact_id: str | None = None
     expected_target_script_artifact_id: str
-    expected_timing_plan_artifact_id: str
+    expected_timing_plan_artifact_id: str | None = None
     expected_generation_sequence: int = Field(ge=1)
     reason: str = Field(min_length=1, max_length=800)
 

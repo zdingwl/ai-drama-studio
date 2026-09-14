@@ -19,6 +19,8 @@ class SourceAnalysisStatusRead(BaseModel):
     task_id: str | None = None
     can_retry: bool = False
     message: str
+    script_ready: bool = False
+    visual_enrichment_ready: bool = False
 
 
 class SourceScriptDialogue(BaseModel):
@@ -106,6 +108,8 @@ class SourceScriptRead(BaseModel):
     project_id: str
     state: SourceAnalysisState
     title: str
+    source_script_artifact_id: str | None = None
+    visual_enrichment_ready: bool = False
     scenes: list[SourceScriptScene] = Field(default_factory=list)
     characters: list[SourceScriptEntity] = Field(default_factory=list)
     props: list[SourceScriptEntity] = Field(default_factory=list)

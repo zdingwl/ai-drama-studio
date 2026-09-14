@@ -26,7 +26,7 @@ P11_MAX_OUTPUT_TOKENS = 32768
 
 @dataclass(frozen=True)
 class ReplicaTargetBibleProviderInput:
-    source_snapshot: dict
+    source_script: dict
     target_language: str
     target_region: str
     scene_strategy: str
@@ -80,29 +80,20 @@ def _parse(text: str) -> ReplicaTargetBibleSemantic:
 
 
 def _source_identity_manifest(payload: ReplicaTargetBibleProviderInput) -> dict[str, list[dict[str, str]]]:
-    snapshot = payload.source_snapshot
+    characters: dict[str, str] = {}
+    scenes: dict[str, str] = {}
+    props: dict[str, str] = {}
+    for episode in payload.source_script.get("episodes", []):
+        for item in episode.get("characters", []):
+            characters[str(item.get("source_character_id") or "")] = str(item.get("name") or "")
+        for item in episode.get("scenes", []):
+            scenes[str(item.get("source_scene_id") or "")] = str(item.get("name") or "")
+        for item in episode.get("props", []):
+            props[str(item.get("source_prop_id") or "")] = str(item.get("name") or "")
     return {
-        "characters": [
-            {
-                "source_character_id": str(item.get("character_id") or item.get("entity_id") or ""),
-                "display_name": str(item.get("display_name") or ""),
-            }
-            for item in snapshot.get("source_characters", {}).get("entities", [])
-        ],
-        "scenes": [
-            {
-                "source_scene_id": str(item.get("scene_id") or item.get("entity_id") or ""),
-                "display_name": str(item.get("display_name") or ""),
-            }
-            for item in snapshot.get("source_scenes", {}).get("entities", [])
-        ],
-        "props": [
-            {
-                "source_prop_id": str(item.get("prop_id") or item.get("entity_id") or ""),
-                "display_name": str(item.get("display_name") or ""),
-            }
-            for item in snapshot.get("source_props", {}).get("entities", [])
-        ],
+        "characters": [{"source_character_id": key, "display_name": value} for key, value in sorted(characters.items()) if key],
+        "scenes": [{"source_scene_id": key, "display_name": value} for key, value in sorted(scenes.items()) if key],
+        "props": [{"source_prop_id": key, "display_name": value} for key, value in sorted(props.items()) if key],
     }
 
 
@@ -114,7 +105,7 @@ def _prompt(payload: ReplicaTargetBibleProviderInput) -> str:
     locks = [item.model_dump(mode="json") for item in payload.preservation_locks]
     return f"""你正在执行 AI Drama Studio P11 Professional Skill：{skill.name}（{skill.id}@{skill.version}）。
 
-这是 Replica Target Bible 阶段。CURRENT SOURCE_VIDEO_SNAPSHOT 是唯一 Source 世界版本锚点。
+这是 Replica Target Bible 阶段。CURRENT SOURCE_SCRIPT 是本阶段的 Source 语义工作真相；完整 SOURCE_VIDEO 仍是最终 Source Truth。
 
 目标配置：
 - target_language: {payload.target_language}
@@ -125,7 +116,7 @@ def _prompt(payload: ReplicaTargetBibleProviderInput) -> str:
 最高规则：
 1. 故事不乱改，节奏不重做，文化和表达才本土化。
 2. 下方 preservation_locks 由服务端确定性生成，你只能遵守，不能删除、合并、重排或重写锁定事实。
-3. Source Snapshot 只读；禁止修正 Source 人物、场景、道具、对白、Shot 或故事事实。
+3. Source Script 只读；禁止修正 Source 人物、场景、道具、对白或故事事实。Shot 级视觉事实尚未要求在本阶段完成。
 4. characters / scenes / props 必须与 source_identity_manifest 一一完整覆盖；source_*_id 必须逐字复制，不能遗漏、重复、截断或创造新 Source id。
 5. 你只输出 Target 设计语义；不得输出数据库 ID、Artifact ID、revision、fingerprint。
 6. 不生成完整 Target Script、逐句 Target Dialogue、Target Storyboard、TTS、Timing 或 Generation 参数。
@@ -141,8 +132,8 @@ Preservation locks:
 Source identity manifest（必须完整一对一覆盖）：
 {json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))}
 
-CURRENT SOURCE_VIDEO_SNAPSHOT typed content：
-{json.dumps(payload.source_snapshot, ensure_ascii=False, separators=(",", ":"))}
+CURRENT SOURCE_SCRIPT typed content：
+{json.dumps(payload.source_script, ensure_ascii=False, separators=(",", ":"))}
 
 输出 JSON Schema：
 {json.dumps(schema, ensure_ascii=False, separators=(",", ":"))}

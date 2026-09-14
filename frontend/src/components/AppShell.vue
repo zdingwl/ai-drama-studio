@@ -9,9 +9,10 @@
         </div>
       </div>
       <div class="header-actions">
+        <span class="save-state"><i/> 自动保存</span>
         <span class="header-icon" aria-hidden="true">?</span>
         <span class="header-icon" aria-hidden="true">⚙</span>
-        <span>简体中文⌄</span>
+        <span class="account-chip">创作者</span>
       </div>
     </header>
     <main class="app-main">

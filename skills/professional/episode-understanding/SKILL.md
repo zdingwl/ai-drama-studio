@@ -1,7 +1,7 @@
 # 整集原片理解 Professional Skill
 
 > Skill ID：`source-video-understanding`  
-> 当前版本：`1.1.0`  
+> 当前版本：`1.2.0`  
 > 适用能力：`EPISODE_UNDERSTANDING`、`STORY_RHYTHM`
 
 ## 1. 目标
@@ -58,9 +58,10 @@ CURRENT Shot Anchors
 1. 模型必须直接读取完整 Episode；
 2. 不允许把 Episode 拆成若干 Reference Clip 后分别理解再拼剧情；
 3. 对白正文只能来自 CURRENT P6 Evidence；
-4. OCR 正文只能来自 CURRENT P6 Evidence；
-5. 视频画面可以提供直接视觉事实；
-6. Shot Anchors 只能辅助定位，不得被当成剧情段落或重新定义剧情结构。
+4. 每条 canonical dialogue 必须形成 speaker attribution：能可靠确认时绑定到本次 P7 Character candidate，不能确认时明确 UNKNOWN，不得猜人；
+5. OCR 正文只能来自 CURRENT P6 Evidence；
+6. 视频画面可以提供直接视觉事实；
+7. Shot Anchors 只能辅助定位，不得被当成剧情段落或重新定义剧情结构。
 
 ---
 

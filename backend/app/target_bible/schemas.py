@@ -3,10 +3,10 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-P11_SCHEMA_VERSION = "1.0"
-P11_PROMPT_VERSION = "p11-replica-target-bible-v1"
-P11_TARGET_CONTRACT = "replica-target-bible-v1"
-P11_PRESERVATION_CONTRACT = "replica-story-rhythm-locks-v1"
+P11_SCHEMA_VERSION = "1.1"
+P11_PROMPT_VERSION = "p11-replica-target-bible-script-first-v2"
+P11_TARGET_CONTRACT = "replica-target-bible-script-first-v2"
+P11_PRESERVATION_CONTRACT = "replica-script-story-rhythm-locks-v2"
 P11_SKILL_ID = "replica-target-bible"
 
 
@@ -127,7 +127,8 @@ class ReplicaAdaptationPlanContent(BaseModel):
     title: str = "复刻本土化方案"
     target_language: str
     target_region: str
-    source_snapshot_artifact_id: str
+    source_script_artifact_id: str | None = None
+    source_snapshot_artifact_id: str | None = None
     preservation_locks: list[PreservationLock] = Field(default_factory=list)
     localization_decisions: list[LocalizationDecision] = Field(default_factory=list)
     dialogue_localization_strategy: list[str] = Field(default_factory=list)
@@ -195,7 +196,8 @@ class ReplicaTargetBibleContent(BaseModel):
     title: str = "复刻目标设定"
     target_language: str
     target_region: str
-    source_snapshot_artifact_id: str
+    source_script_artifact_id: str | None = None
+    source_snapshot_artifact_id: str | None = None
     target_world: ReplicaTargetWorld
     characters: list[ReplicaTargetCharacter] = Field(default_factory=list)
     scenes: list[ReplicaTargetScene] = Field(default_factory=list)
@@ -218,9 +220,12 @@ class TargetBibleProviderJobProvenance(BaseModel):
 
 class ReplicaTargetProvenance(BaseModel):
     artifact_kind: TargetBibleArtifactKind
-    source_snapshot_artifact_id: str
-    source_snapshot_revision: int
-    source_snapshot_fingerprint: str
+    source_script_artifact_id: str | None = None
+    source_script_revision: int | None = None
+    source_script_fingerprint: str | None = None
+    source_snapshot_artifact_id: str | None = None
+    source_snapshot_revision: int | None = None
+    source_snapshot_fingerprint: str | None = None
     target_language: str
     target_region: str
     scene_strategy: str
@@ -250,6 +255,8 @@ class ReplicaTargetArtifactRead(BaseModel):
 class ReplicaTargetBibleRead(BaseModel):
     project_id: str
     status: TargetBibleResultStatus
+    source_script_artifact_id: str | None = None
+    source_script_revision: int | None = None
     source_snapshot_artifact_id: str | None = None
     source_snapshot_revision: int | None = None
     adaptation_plan: ReplicaTargetArtifactRead
@@ -262,5 +269,6 @@ class ReplicaTargetBibleRevisionSummary(BaseModel):
     revision: int
     validity: str
     input_fingerprint: str
-    source_snapshot_artifact_id: str
+    source_script_artifact_id: str | None = None
+    source_snapshot_artifact_id: str | None = None
     created_at: str

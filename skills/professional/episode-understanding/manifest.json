@@ -1,7 +1,7 @@
 {
   "id": "source-video-understanding",
   "name": "整集原片理解",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "category": "source-understanding",
   "description": "基于完整 Episode、CURRENT Source Evidence 与可选 Shot Anchors，建立可追溯的 SOURCE_BIBLE、Story Skeleton 与 Rhythm Skeleton；严格区分 Source Truth、分析推断与未知项，并禁止 UNKNOWN 承载确定性事实。",
   "when_to_use": [
@@ -57,7 +57,7 @@
     }
   ],
   "fact_levels": ["FACT", "INFERENCE", "UNKNOWN"],
-  "grounding_contract": "grounded-source-truth-v2",
+  "grounding_contract": "grounded-source-truth-v3",
   "provider_rules": [
     "完整 Episode 是 Source Truth，必须直接理解完整时间轴，不得拆成 Reference Clip 后分别猜剧情再拼接。",
     "CURRENT P6 dialogue / OCR 是 canonical 文字事实源，不得重新转写、润色或覆盖。",
@@ -66,6 +66,7 @@
     "story_background 只写本 Episode 可以确认的背景事实，grounding 必须为 FACT；无法确认的人物历史直接不要写。",
     "world_rules 只描述本作品内部已经成立并约束剧情的源作事实；每条都必须与同索引 FACT grounding 一一对应；禁止社会学泛化、刻板印象、道德训诫和法律结论；没有明确规则时输出空数组。",
     "每个 CharacterProfile 的 identity_grounding 必须为 FACT；真实姓名无法确认时可使用稳定未命名候选标签，但不能把猜测姓名当事实。",
+    "dialogue_attributions 必须精确覆盖 CURRENT canonical dialogue；可靠确认时绑定 P7 source_character_id 并引用该 utterance_id 作为 FACT grounding，不能确认时明确 UNKNOWN，不得猜人。",
     "relationships 只发布有直接依据的 FACT 关系；夫妻/亲属/邻居/同事/婚姻年限/赘婿等如果没有直接依据则不创建该关系。",
     "scene.grounding 与 story_event.grounding 必须为 FACT，并可使用完整 Episode 的明确视频时间范围作为直接视觉依据。",
     "道具 appearance_state 必须有 appearance_grounding=FACT；story_function 可为 FACT 或有支持的 INFERENCE；无法确认时 story_function=null 且 story_function_grounding=UNKNOWN，禁止用普通生活道具硬补事件因果。",
@@ -74,11 +75,12 @@
     "P7 不输出逐镜景别、构图、运镜、焦距、逐镜主体绑定或逐镜音效；这些属于 P8。",
     "只输出符合 SOURCE_BIBLE Schema 的 JSON，不输出 Markdown、解释、推理过程或额外文本。"
   ],
-  "output_contracts": ["SOURCE_BIBLE", "STORY_SKELETON", "RHYTHM_SKELETON"],
+  "output_contracts": ["SOURCE_BIBLE", "SOURCE_SCRIPT", "STORY_SKELETON", "RHYTHM_SKELETON"],
   "completion_criteria": [
     "完整 Episode 被直接消费",
     "canonical Source Evidence 未被改写",
     "SOURCE_BIBLE 的时间、Evidence 与人物引用合法",
+    "canonical dialogue 均有可追溯的 speaker attribution 或明确 UNKNOWN",
     "关键 source facts 有可追溯依据",
     "UNKNOWN 没有承载确定性事实",
     "Story / Rhythm 与完整 Episode 一致",

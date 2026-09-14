@@ -20,7 +20,7 @@ def test_skill_registry_exposes_six_versioned_root_skills(client: TestClient) ->
         "SCRIPT_TO_DRAMA",
         "SCRIPT_LOCALIZATION",
     }
-    assert by_type["REPLICA"]["version"] == "1.5.0"
+    assert by_type["REPLICA"]["version"] == "1.6.0"
     assert {skill["version"] for project_type, skill in by_type.items() if project_type != "REPLICA"} == {"1.0.0"}
     assert all(skill["required_capabilities"] for skill in skills)
     assert all(skill["completion_criteria"] for skill in skills)
@@ -34,12 +34,12 @@ def test_skill_detail_contains_real_manual_and_replica_constraints(client: TestC
     assert "故事骨架" in detail["manual"]
     assert "节奏骨架" in detail["manual"]
     assert detail["manual_path"] == "replica/SKILL.md"
-    assert detail["version"] == "1.5.0"
+    assert detail["version"] == "1.6.0"
     steps = {step["id"]: step for step in detail["steps"]}
-    assert steps["target_bible"]["requires"] == ["SOURCE_VIDEO_SNAPSHOT"]
+    assert steps["target_bible"]["requires"] == ["SOURCE_SCRIPT"]
     assert steps["target_bible"]["produces"] == ["ADAPTATION_PLAN", "TARGET_BIBLE"]
     assert steps["target_script"]["requires"] == [
-        "SOURCE_VIDEO_SNAPSHOT",
+        "SOURCE_SCRIPT",
         "ADAPTATION_PLAN",
         "TARGET_BIBLE",
     ]
@@ -59,7 +59,7 @@ def test_professional_skill_api_exposes_episode_understanding_p11_p12_and_p13_ma
     response = client.get("/api/v3/skills/professional/source-video-understanding")
     assert response.status_code == 200
     detail = response.json()
-    assert detail["version"] == "1.1.0"
+    assert detail["version"] == "1.2.0"
     assert detail["required_inputs"] == ["SOURCE_VIDEO", "SOURCE_DIALOGUE"]
     assert "EPISODE_UNDERSTANDING" in detail["required_capabilities"]
     rules = "\n".join(detail["provider_rules"])
@@ -71,16 +71,16 @@ def test_professional_skill_api_exposes_episode_understanding_p11_p12_and_p13_ma
     p11 = client.get("/api/v3/skills/professional/replica-target-bible")
     assert p11.status_code == 200
     p11_detail = p11.json()
-    assert p11_detail["version"] == "1.0.0"
-    assert p11_detail["required_inputs"] == ["SOURCE_VIDEO_SNAPSHOT"]
+    assert p11_detail["version"] == "1.1.0"
+    assert p11_detail["required_inputs"] == ["SOURCE_SCRIPT"]
     assert p11_detail["output_contracts"] == ["ADAPTATION_PLAN", "TARGET_BIBLE"]
     assert "TARGET_SCRIPT" not in p11_detail["output_contracts"]
 
     p12 = client.get("/api/v3/skills/professional/target-script-localization")
     assert p12.status_code == 200
     p12_detail = p12.json()
-    assert p12_detail["version"] == "1.1.0"
-    assert p12_detail["required_inputs"] == ["SOURCE_VIDEO_SNAPSHOT", "ADAPTATION_PLAN", "TARGET_BIBLE"]
+    assert p12_detail["version"] == "1.2.0"
+    assert p12_detail["required_inputs"] == ["SOURCE_SCRIPT", "ADAPTATION_PLAN", "TARGET_BIBLE"]
     assert p12_detail["output_contracts"] == ["TARGET_SCRIPT"]
 
     p13 = client.get("/api/v3/skills/professional/replica-target-assets")

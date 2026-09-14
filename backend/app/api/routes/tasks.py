@@ -8,6 +8,13 @@ from app.evidence.service_v4 import is_p6_source_evidence_task, run_p6_source_ev
 from app.p14.audio_contract import P14_AUDIO_TASK_TYPE
 from app.p14.audio_runtime import run_target_audio_task
 from app.p14.timing_service import P14_TIMING_TASK_TYPE, run_timing_plan_task
+from app.p15.service import P15_TASK_TYPE, run_storyboard_task
+from app.p16.runtime import (
+    P16_TASK_TYPE,
+    replace_generation_task_for_retry_if_needed,
+    run_generation_task,
+)
+from app.p17.runtime import P17_TASK_TYPE, run_post_task
 from app.preprocessing.service import is_p5_shot_boundary_task, run_p5_shot_boundary_task
 from app.shot_breakdown.service_v2 import P8_TASK_TYPE, run_p8_shot_breakdown_task
 from app.source_analysis.service import SOURCE_ANALYSIS_TASK_TYPE, run_source_analysis_task
@@ -65,6 +72,12 @@ def _schedule_task_if_needed(
         background_tasks.add_task(run_target_audio_task, session_factory, task.id)
     elif task.task_type == P14_TIMING_TASK_TYPE:
         background_tasks.add_task(run_timing_plan_task, session_factory, task.id)
+    elif task.task_type == P15_TASK_TYPE:
+        background_tasks.add_task(run_storyboard_task, session_factory, task.id)
+    elif task.task_type == P16_TASK_TYPE:
+        background_tasks.add_task(run_generation_task, session_factory, task.id)
+    elif task.task_type == P17_TASK_TYPE:
+        background_tasks.add_task(run_post_task, session_factory, task.id)
     elif task.task_type == SOURCE_ANALYSIS_TASK_TYPE:
         background_tasks.add_task(run_source_analysis_task, session_factory, task.id)
 
@@ -138,6 +151,12 @@ def retry_task_route(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> TaskRead:
+    existing = get_task(db, project_id, task_id)
+    if existing.task_type == P16_TASK_TYPE:
+        replacement = replace_generation_task_for_retry_if_needed(db, project_id=project_id, task=existing)
+        if replacement is not None:
+            _schedule_task_if_needed(background_tasks, db, replacement)
+            return task_to_read(replacement)
     task = retry_task(db, project_id, task_id)
     _schedule_task_if_needed(background_tasks, db, task)
     return task_to_read(task)

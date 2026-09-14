@@ -13,6 +13,11 @@ P15_CONTRACT = "replica-storyboard-generation-segments-v1"
 P15_COMPILE_MODE = "DETERMINISTIC_REPLICA_COMPILE"
 
 
+class GenerationAudioMode(StrEnum):
+    NATIVE_AUDIO_VIDEO = "NATIVE_AUDIO_VIDEO"
+    INDEPENDENT_AUDIO = "INDEPENDENT_AUDIO"
+
+
 class P15ResultStatus(StrEnum):
     NOT_BUILT = "NOT_BUILT"
     CURRENT = "CURRENT"
@@ -32,8 +37,8 @@ class StoryboardDialogueRef(BaseModel):
     delivery: DialogueDelivery
     target_character_id: str | None = None
     final_target_dialogue: str
-    target_audio_clip_id: str
-    media_url: str
+    target_audio_clip_id: str | None = None
+    media_url: str | None = None
     planned_speech_start_us: int = Field(ge=0)
     planned_speech_end_us: int = Field(gt=0)
 
@@ -74,8 +79,9 @@ class ReplicaTargetStoryboardContent(BaseModel):
     target_bible_artifact_id: str
     target_script_artifact_id: str
     target_assets_artifact_id: str
-    target_audio_artifact_id: str
-    timing_plan_artifact_id: str
+    audio_generation_mode: GenerationAudioMode = GenerationAudioMode.NATIVE_AUDIO_VIDEO
+    target_audio_artifact_id: str | None = None
+    timing_plan_artifact_id: str | None = None
     target_language: str
     target_region: str
     shots: list[TargetStoryboardShot] = Field(min_length=1)
@@ -96,6 +102,10 @@ class GenerationSegment(BaseModel):
     generation_prompt: str = Field(min_length=1, max_length=12000)
     negative_prompt: str = Field(default="", max_length=6000)
     target_asset_refs: list[TargetAssetRef] = Field(default_factory=list)
+    audio_generation_mode: GenerationAudioMode = GenerationAudioMode.NATIVE_AUDIO_VIDEO
+    dialogue_refs: list[StoryboardDialogueRef] = Field(default_factory=list)
+    sound_effects: list[str] = Field(default_factory=list)
+    ambience: list[str] = Field(default_factory=list)
     requires_lip_sync: bool = False
 
     @model_validator(mode="after")
@@ -134,12 +144,13 @@ class P15CandidateProvenance(BaseModel):
     target_assets_artifact_id: str
     target_assets_revision: int
     target_assets_fingerprint: str
-    target_audio_artifact_id: str
-    target_audio_revision: int
-    target_audio_fingerprint: str
-    timing_plan_artifact_id: str
-    timing_plan_revision: int
-    timing_plan_fingerprint: str
+    audio_generation_mode: GenerationAudioMode = GenerationAudioMode.NATIVE_AUDIO_VIDEO
+    target_audio_artifact_id: str | None = None
+    target_audio_revision: int | None = None
+    target_audio_fingerprint: str | None = None
+    timing_plan_artifact_id: str | None = None
+    timing_plan_revision: int | None = None
+    timing_plan_fingerprint: str | None = None
     generation_sequence: int = Field(ge=1)
     professional_skill_id: str = P15_SKILL_ID
     professional_skill_version: str
@@ -196,8 +207,8 @@ class P15ReviewCommand(BaseModel):
     expected_target_bible_artifact_id: str
     expected_target_script_artifact_id: str
     expected_target_assets_artifact_id: str
-    expected_target_audio_artifact_id: str
-    expected_timing_plan_artifact_id: str
+    expected_target_audio_artifact_id: str | None = None
+    expected_timing_plan_artifact_id: str | None = None
     expected_generation_sequence: int = Field(ge=1)
     reason: str = Field(min_length=1, max_length=800)
 

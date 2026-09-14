@@ -136,7 +136,7 @@ def extract_audio_window(source_path: Path, output_path: Path, start_us: int, du
     )
 
 
-def normalize_video(source_path: Path, output_path: Path, *, duration_us: int, width: int, height: int) -> None:
+def normalize_video(source_path: Path, output_path: Path, *, duration_us: int, width: int, height: int, preserve_audio: bool = False) -> None:
     width = max(2, width - (width % 2))
     height = max(2, height - (height % 2))
     duration = max(duration_us, 1) / 1_000_000
@@ -145,25 +145,29 @@ def normalize_video(source_path: Path, output_path: Path, *, duration_us: int, w
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
         f"tpad=stop_mode=clone:stop_duration=20,trim=duration={duration:.6f},setpts=PTS-STARTPTS"
     )
-    _run_ffmpeg(
-        [
+    args = [
             "-i", str(source_path),
             "-vf", vf,
-            "-an",
             "-r", "30",
             "-c:v", "libx264",
             "-preset", "medium",
             "-crf", "18",
             "-pix_fmt", "yuv420p",
             "-movflags", "+faststart",
-            str(output_path),
-        ],
+    ]
+    if preserve_audio:
+        args.extend(["-af", f"apad,atrim=duration={duration:.6f}", "-c:a", "aac", "-b:a", "192k"])
+    else:
+        args.append("-an")
+    args.append(str(output_path))
+    _run_ffmpeg(
+        args,
         code="P17_VIDEO_NORMALIZE_FAILED",
         message="P17 segment trim/pad/normalize 失败",
     )
 
 
-def concatenate_videos(paths: list[Path], output_path: Path) -> None:
+def concatenate_videos(paths: list[Path], output_path: Path, *, preserve_audio: bool = False) -> None:
     if not paths:
         raise AppError("P17_VIDEO_SEGMENTS_EMPTY", "P17 Episode 没有可拼接视频段", status_code=409)
     list_path = output_path.with_suffix(".concat.txt")
@@ -173,15 +177,19 @@ def concatenate_videos(paths: list[Path], output_path: Path) -> None:
         rows.append(f"file '{normalized}'")
     list_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
     try:
-        _run_ffmpeg(
-            [
+        args = [
                 "-f", "concat",
                 "-safe", "0",
                 "-i", str(list_path),
                 "-c:v", "copy",
-                "-an",
-                str(output_path),
-            ],
+        ]
+        if preserve_audio:
+            args.extend(["-c:a", "aac", "-b:a", "192k"])
+        else:
+            args.append("-an")
+        args.append(str(output_path))
+        _run_ffmpeg(
+            args,
             code="P17_VIDEO_CONCAT_FAILED",
             message="P17 Episode 视频确定性拼接失败",
         )

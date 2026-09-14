@@ -417,6 +417,12 @@ def _validate_episode_output(episode: SourceBibleEpisode, context: EpisodeContex
     character_ids = {item.character_id for item in episode.characters}
     if len(character_ids) != len(episode.characters):
         raise AppError("SOURCE_BIBLE_CHARACTER_ID_DUPLICATED", "人物 candidate ID 重复", status_code=422)
+    attribution_ids = [item.utterance_id for item in episode.dialogue_attributions]
+    if len(attribution_ids) != len(set(attribution_ids)) or set(attribution_ids) != dialogue_ids:
+        raise AppError("SOURCE_BIBLE_DIALOGUE_ATTRIBUTION_INVALID", "P7 dialogue attribution must exactly cover canonical dialogue", status_code=422)
+    for attribution in episode.dialogue_attributions:
+        if attribution.source_character_id is not None and attribution.source_character_id not in character_ids:
+            raise AppError("SOURCE_BIBLE_DIALOGUE_CHARACTER_INVALID", "P7 dialogue attribution referenced an unknown character candidate", status_code=422)
     for relation in episode.relationships:
         if relation.source_character_id not in character_ids or relation.target_character_id not in character_ids:
             raise AppError("SOURCE_BIBLE_RELATION_REF_INVALID", "人物关系引用了不存在的人物 candidate", status_code=422)
@@ -447,6 +453,7 @@ def _compose_episode(context: EpisodeContext, semantic) -> SourceBibleEpisode:
         overall_analysis=semantic.overall_analysis,
         timed_script=semantic.timed_script,
         characters=semantic.characters,
+        dialogue_attributions=semantic.dialogue_attributions,
         relationships=semantic.relationships,
         scenes=semantic.scenes,
         key_props=semantic.key_props,
@@ -868,6 +875,9 @@ def run_p7_source_bible_task(session_factory: sessionmaker[Session], task_id: st
     try:
         with session_factory() as db:
             _publish(db, task_id=snapshot.id, content=content, provenance=provenance)
+            from app.source_script.service import publish_source_script
+
+            publish_source_script(db, snapshot.project_id, generated_by_task_id=snapshot.id)
     except Exception as exc:
         with session_factory() as db:
             task = db.get(Task, snapshot.id)

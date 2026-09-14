@@ -57,6 +57,7 @@ def task_to_read(task: Task) -> TaskRead:
         id=task.id,
         project_id=task.project_id,
         task_name=task.task_name,
+        task_type=task.task_type,
         progress_percent=task.progress_percent,
         status=task.status,
         last_error=task.last_error,

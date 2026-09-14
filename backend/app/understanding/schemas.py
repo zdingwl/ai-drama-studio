@@ -101,6 +101,13 @@ class CharacterProfile(BaseModel):
     states: list[CharacterState] = Field(default_factory=list, max_length=40)
 
 
+class DialogueSpeakerAttribution(BaseModel):
+    utterance_id: str = Field(min_length=1, max_length=160)
+    source_character_id: str | None = Field(default=None, max_length=80)
+    speaker_label: str = Field(min_length=1, max_length=160)
+    grounding: ClaimGrounding = Field(default_factory=ClaimGrounding)
+
+
 class CharacterRelationship(BaseModel):
     source_character_id: str = Field(min_length=1, max_length=80)
     target_character_id: str = Field(min_length=1, max_length=80)
@@ -190,6 +197,7 @@ class EpisodeUnderstandingSemantic(BaseModel):
     overall_analysis: OverallAnalysis
     timed_script: list[TimedStorySegment] = Field(min_length=1, max_length=500)
     characters: list[CharacterProfile] = Field(default_factory=list, max_length=80)
+    dialogue_attributions: list[DialogueSpeakerAttribution] = Field(default_factory=list, max_length=20000)
     relationships: list[CharacterRelationship] = Field(default_factory=list, max_length=160)
     scenes: list[SceneProfile] = Field(default_factory=list, max_length=120)
     key_props: list[PropProfile] = Field(default_factory=list, max_length=120)
@@ -204,6 +212,7 @@ class SourceBibleEpisode(BaseModel):
     overall_analysis: OverallAnalysis
     timed_script: list[TimedStorySegment]
     characters: list[CharacterProfile]
+    dialogue_attributions: list[DialogueSpeakerAttribution] = Field(default_factory=list)
     relationships: list[CharacterRelationship]
     scenes: list[SceneProfile]
     key_props: list[PropProfile]
@@ -214,7 +223,7 @@ class SourceBibleEpisode(BaseModel):
 
 
 class SourceBibleContent(BaseModel):
-    schema_version: str = "1.1"
+    schema_version: str = "1.2"
     title: str = "源作概览分析"
     episodes: list[SourceBibleEpisode] = Field(min_length=1)
 

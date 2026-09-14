@@ -60,11 +60,11 @@ class FakeUnderstandingProvider:
             "provider": self.provider_name,
             "model": self.model_name,
             "video_input": "FULL_EPISODE_FILE",
-            "structured_output": "JSON_SCHEMA_GROUNDED_V2",
-            "prompt_version": "p7-source-bible-v2",
+            "structured_output": "JSON_SCHEMA_GROUNDED_V3",
+            "prompt_version": "p7-source-bible-v3",
             "professional_skill_id": "source-video-understanding",
-            "professional_skill_version": "1.1.0",
-            "grounding_contract": "grounded-source-truth-v2",
+            "professional_skill_version": "1.2.0",
+            "grounding_contract": "grounded-source-truth-v3",
         }
 
     def analyze(self, payload: EpisodeUnderstandingInput) -> EpisodeUnderstandingProviderResult:
@@ -143,6 +143,18 @@ class FakeUnderstandingProvider:
                         "appearance_baseline": "都市装束。",
                         "states": [],
                     },
+                ],
+                "dialogue_attributions": [
+                    {
+                        "utterance_id": utterance_id,
+                        "source_character_id": "char-female-lead",
+                        "speaker_label": "未命名女性A",
+                        "grounding": {
+                            "support_level": "FACT",
+                            "dialogue_evidence_ids": [utterance_id],
+                        },
+                    }
+                    for utterance_id in dialogue_ids
                 ],
                 "relationships": [
                     {
@@ -354,25 +366,25 @@ def test_p7_uses_full_episode_provider_job_first_and_publishes_typed_artifacts(
     assert result.status_code == 200, result.text
     bible = result.json()
     assert bible["status"] == "CURRENT" and bible["revision"] == 1
-    assert bible["content"]["schema_version"] == "1.1"
+    assert bible["content"]["schema_version"] == "1.2"
     assert bible["content"]["episodes"][0]["material_baseline"]["episode_id"] == episode["id"]
     assert bible["content"]["episodes"][0]["timed_script"][0]["dialogue_evidence_ids"] == [evidence["dialogue"][0]["id"]]
     assert bible["provenance"]["source_dialogue_artifact_id"]
     assert bible["provenance"]["episode_evidence_sets"][0]["source_evidence_set_id"]
     assert len(bible["provenance"]["provider_jobs"]) == 1
-    assert bible["provenance"]["prompt_version"] == "p7-source-bible-v2"
+    assert bible["provenance"]["prompt_version"] == "p7-source-bible-v3"
     assert bible["provenance"]["professional_skill_id"] == "source-video-understanding"
-    assert bible["provenance"]["professional_skill_version"] == "1.1.0"
-    assert bible["provenance"]["grounding_contract"] == "grounded-source-truth-v2"
+    assert bible["provenance"]["professional_skill_version"] == "1.2.0"
+    assert bible["provenance"]["grounding_contract"] == "grounded-source-truth-v3"
     assert bible["story_skeleton_artifact_id"]
     assert bible["rhythm_skeleton_artifact_id"]
 
     graph = client.get(f"/api/v3/projects/{project['id']}/artifact-graph").json()
     current_types = set(graph["available_artifact_types"])
-    assert {"SOURCE_BIBLE", "STORY_SKELETON", "RHYTHM_SKELETON"}.issubset(current_types)
+    assert {"SOURCE_BIBLE", "SOURCE_SCRIPT", "STORY_SKELETON", "RHYTHM_SKELETON"}.issubset(current_types)
     bible_node = next(node for node in graph["nodes"] if node["id"] == bible["artifact_id"])
     assert "content" not in bible_node["metadata_json"]
-    assert bible_node["metadata_json"]["grounding_contract"] == "grounded-source-truth-v2"
+    assert bible_node["metadata_json"]["grounding_contract"] == "grounded-source-truth-v3"
 
 
 def test_p7_explicit_rerun_creates_a_new_task_and_revision_for_unchanged_inputs(

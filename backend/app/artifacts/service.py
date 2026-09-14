@@ -19,6 +19,7 @@ _SOURCE_ARTIFACT_TYPES = {
     ArtifactType.SHOT_ANCHORS,
     ArtifactType.SOURCE_DIALOGUE,
     ArtifactType.SOURCE_BIBLE,
+    ArtifactType.SOURCE_SCRIPT,
     ArtifactType.STORY_SKELETON,
     ArtifactType.RHYTHM_SKELETON,
     ArtifactType.SOURCE_SHOT_FACTS,

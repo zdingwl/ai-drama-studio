@@ -55,9 +55,9 @@ function factorLabel(row: TimingTriageRow): string {
 }
 
 function routeLabel(row: TimingTriageRow): string {
-  if (row.route === 'RETAKE_TRY') return '可尝试 Retake'
-  if (row.route === 'SCRIPT_REWRITE') return '优先回 P12 缩短对白'
-  return 'FIT'
+  if (row.route === 'RETAKE_TRY') return '调整语速并重录'
+  if (row.route === 'SCRIPT_REWRITE') return '缩短这句对白'
+  return '时长合适'
 }
 
 async function refresh() {
@@ -168,16 +168,14 @@ onBeforeUnmount(stopTaskPoll)
   <section v-if="latestTimingCandidate" class="timing-triage">
     <header>
       <div>
-        <p class="eyebrow">P14 · Timing 分诊</p>
-        <h2>超时对白先分流，再决定 Retake 还是回 P12</h2>
+        <p class="eyebrow">对白时长处理</p>
+        <h2>处理放不下的对白</h2>
       </div>
       <button type="button" @click="refresh">刷新</button>
     </header>
 
     <p class="guidance">
-      这里不修改 Timing、不自动加速，也不自动改写对白。它只用当前真实 ffprobe 时长和 source slot 做数学分诊：
-      理论所需 duration factor = source slot / 当前真实时长。>= 0.80 的 overflow 可进入受控 Retake 尝试；低于 0.80 的句子即使使用产品允许的最快值也理论上放不下，应优先回 P12 缩短 Final Target Dialogue。
-      IndexTTS 实际时长不会保证严格线性，因此任何 Retake 结果仍必须重新 ffprobe、重新计算 Timing。
+      系统已经按每句可用时长自动分类。轻微超时可以调整语速后重录；严重超时建议只缩短当前对白。每次修改都会重新生成并测量，不会影响其他对白或原片内容。
     </p>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="message" class="success">{{ message }}</p>
@@ -185,50 +183,50 @@ onBeforeUnmount(stopTaskPoll)
 
     <div class="metrics">
       <article><strong>{{ summary.total }}</strong><span>总对白</span></article>
-      <article><strong>{{ summary.fit }}</strong><span>FIT</span></article>
-      <article class="warn"><strong>{{ summary.overflow }}</strong><span>OVERFLOW</span></article>
-      <article class="retake"><strong>{{ summary.retake_try }}</strong><span>可尝试 Retake</span></article>
-      <article class="rewrite"><strong>{{ summary.script_rewrite }}</strong><span>优先回 P12</span></article>
+      <article><strong>{{ summary.fit }}</strong><span>时长合适</span></article>
+      <article class="warn"><strong>{{ summary.overflow }}</strong><span>需要处理</span></article>
+      <article class="retake"><strong>{{ summary.retake_try }}</strong><span>建议重录</span></article>
+      <article class="rewrite"><strong>{{ summary.script_rewrite }}</strong><span>建议缩短对白</span></article>
     </div>
 
     <div class="episode-grid">
       <article v-for="episode in episodeSummaries" :key="`${episode.episode_order}:${episode.episode_id}`" class="episode-card">
         <strong>{{ episodeLabel(episode.episode_order) }}</strong>
-        <span>{{ episode.total }} 句 · FIT {{ episode.fit }} · OVERFLOW {{ episode.overflow }}</span>
-        <span>Retake 候选 {{ episode.retake_try }} · 回 P12 {{ episode.script_rewrite }}</span>
+        <span>{{ episode.total }} 句 · 合适 {{ episode.fit }} · 需处理 {{ episode.overflow }}</span>
+        <span>建议重录 {{ episode.retake_try }} · 建议缩短 {{ episode.script_rewrite }}</span>
       </article>
     </div>
 
     <div v-if="summary.script_rewrite" class="decision rewrite-decision">
-      <strong>不要直接把 {{ summary.script_rewrite }} 句全部拉到 0.8。</strong>
-      <span>这些句子按当前真实时长计算，理论所需 factor 已低于产品下限；继续只调语速大概率仍失败，应先检查本土化对白是否过长、是否能在不改变语义与人物口吻的前提下缩短。</span>
+      <strong>{{ summary.script_rewrite }} 句对白明显超出可用时长。</strong>
+      <span>继续加快语速会影响自然度。建议在不改变意思和人物口吻的前提下，只缩短这些句子的最终对白。</span>
       <div class="rewrite-actions">
         <button type="button" @click="selectAllRewrite">选择全部 {{ summary.script_rewrite }} 句</button>
         <button v-if="selectedRewriteCount" type="button" @click="clearRewriteSelection">清空选择</button>
         <button class="primary" type="button" :disabled="rewriting || selectedRewriteCount === 0" @click="rewriteSelected">
-          {{ rewriting ? '正在修订…' : `回目标剧本缩短选中 ${selectedRewriteCount} 句` }}
+          {{ rewriting ? '正在生成…' : `缩短选中的 ${selectedRewriteCount} 句` }}
         </button>
       </div>
-      <small>提交后只会调用选中的严重 OVERFLOW 句；Source、直译和其他目标对白保持不变。新 Target Script 发布后旧配音与 Timing 会自动失效。</small>
+      <small>只会修改选中的最终对白；原文、直译和其他对白保持不变。完成后需要重新配音并试听确认。</small>
     </div>
     <div v-else-if="summary.retake_try" class="decision retake-decision">
-      <strong>当前 overflow 都位于 Retake 可尝试区间。</strong>
-      <span>可以在逐句 Retake 面板人工调整 duration factor；不要一次性盲重录，优先从理论 factor 最接近 1.0、超时最小的句子开始验证。</span>
+      <strong>这些对白只需小幅调整。</strong>
+      <span>建议先从超时最少的句子开始，调整语速并重录，确认表达自然后再继续。</span>
     </div>
 
     <div v-if="worstRows.length" class="table-wrap">
-      <h3>最严重的超时对白（最多 24 条）</h3>
+      <h3>优先处理的对白</h3>
       <table>
         <thead>
           <tr>
             <th>选择</th>
             <th>集 / #</th>
-            <th>Final Target Dialogue</th>
-            <th>Source slot</th>
-            <th>真实时长</th>
-            <th>超时</th>
-            <th>理论 factor</th>
-            <th>分诊</th>
+            <th>最终对白</th>
+            <th>可用时长</th>
+            <th>语音时长</th>
+            <th>超出</th>
+            <th>建议语速</th>
+            <th>建议处理</th>
           </tr>
         </thead>
         <tbody>

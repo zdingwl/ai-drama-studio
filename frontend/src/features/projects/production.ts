@@ -43,8 +43,9 @@ export interface StoryboardCandidate {
       target_bible_artifact_id: string
       target_script_artifact_id: string
       target_assets_artifact_id: string
-      target_audio_artifact_id: string
-      timing_plan_artifact_id: string
+      audio_generation_mode: 'NATIVE_AUDIO_VIDEO' | 'INDEPENDENT_AUDIO'
+      target_audio_artifact_id: string | null
+      timing_plan_artifact_id: string | null
       shots: StoryboardShot[]
     }
     generation_segments: { segments: GenerationSegment[] }
@@ -110,6 +111,18 @@ export interface GenerationSelectionRead {
   content: { selections: Array<{ generation_segment_id: string; selected_attempt_id: string }> } | null
 }
 
+export type H3RuntimeReadinessState = 'READY' | 'UNAVAILABLE' | 'WARMING_UP' | 'INCOMPATIBLE' | 'MODEL_MISMATCH' | 'NOT_CONFIGURED'
+
+export interface H3RuntimeReadinessRead {
+  runtime_mode: 'LOCAL_COMFYUI' | 'LOCAL_SGLANG' | 'MINIMAX_CLOUD' | string
+  state: H3RuntimeReadinessState
+  ready: boolean
+  provider: string
+  model: string
+  base_url: string
+  message: string
+}
+
 export interface FinalEpisodeOutput {
   episode_id: string
   episode_order: number
@@ -128,9 +141,10 @@ export interface PostCandidate {
   review_status: ReviewStatus
   content: {
     generation_selection_artifact_id: string
-    target_audio_artifact_id: string
+    audio_generation_mode: 'NATIVE_AUDIO_VIDEO' | 'INDEPENDENT_AUDIO'
+    target_audio_artifact_id: string | null
     target_script_artifact_id: string
-    timing_plan_artifact_id: string
+    timing_plan_artifact_id: string | null
     episodes: FinalEpisodeOutput[]
   }
 }
@@ -159,6 +173,7 @@ export const reviewStoryboard = (projectId: string, candidate: StoryboardCandida
   }),
 })
 
+export const getVideoGenerationRuntimeReadiness = (projectId: string) => apiRequest<H3RuntimeReadinessRead>(`/projects/${projectId}/video-generation/runtime-readiness`, { cache: 'no-store' })
 export const listGenerationAttempts = (projectId: string) => apiRequest<GenerationAttempt[]>(`/projects/${projectId}/video-generation/attempts`, { cache: 'no-store' })
 export const listGenerationCandidates = (projectId: string) => apiRequest<GenerationCandidate[]>(`/projects/${projectId}/video-generation/candidates`, { cache: 'no-store' })
 export const getGenerationSelection = (projectId: string) => apiRequest<GenerationSelectionRead>(`/projects/${projectId}/generation-selection`, { cache: 'no-store' })

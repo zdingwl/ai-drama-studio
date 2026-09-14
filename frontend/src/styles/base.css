@@ -1,7 +1,10 @@
 :root {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #171717;
-  background: #f7f9fc;
+  background: #f6f5f2;
+  --brand: #6152e8;
+  --brand-dark: #4f42d5;
+  --brand-soft: #f0edff;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -32,13 +35,17 @@ button {
 }
 
 .app-header {
+  position: sticky;
+  top: 0;
+  z-index: 60;
   height: 62px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 36px;
-  border-bottom: 1px solid #e6e9f0;
-  background: #ffffff;
+  border-bottom: 1px solid #e4e1dc;
+  background: rgba(255, 255, 255, .94);
+  backdrop-filter: blur(14px);
 }
 
 .brand-lockup {
@@ -83,6 +90,8 @@ button {
   font-size: 11px;
 }
 
+.save-state,.account-chip{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border-radius:999px;background:#f4f3ef;color:#69655f;font-size:11px;font-weight:700}.save-state i{width:6px;height:6px;border-radius:50%;background:#29a36a}.account-chip{background:#efedff;color:#5749d8}
+
 .header-icon {
   display: grid;
   place-items: center;
@@ -106,6 +115,8 @@ button {
   margin: 0 auto;
   padding: 32px 0 64px;
 }
+
+html{scroll-behavior:smooth}body{background:radial-gradient(circle at 88% -10%,rgba(111,91,232,.075),transparent 32%),#f6f5f2}button{transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s ease,box-shadow .16s ease}button:not(:disabled):active{transform:translateY(1px)}:focus-visible{outline:3px solid rgba(97,82,232,.24);outline-offset:2px}
 
 .workspace {
   display: grid;

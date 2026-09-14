@@ -35,12 +35,16 @@ const readyStatus: SourceAnalysisStatusRead = {
   task_id: 'task-1',
   can_retry: false,
   message: '原片解析完成，可以直接查看剧本和分镜。',
+  script_ready: true,
+  visual_enrichment_ready: true,
 }
 
 const script: SourceScriptRead = {
   project_id: 'project-1',
   state: 'READY',
   title: '原片剧本',
+  source_script_artifact_id: 'artifact-source-script-1',
+  visual_enrichment_ready: true,
   scenes: [{
     scene_number: 1,
     episode_id: 'episode-1',
@@ -141,7 +145,7 @@ describe('SourceScriptStoryboardWorkspace', () => {
   it('shows direct script results without exposing P5-P10 engineering vocabulary', async () => {
     const wrapper = await mountWorkspace()
 
-    expect(wrapper.text()).toContain('剧本与分镜')
+    expect(wrapper.text()).toContain('原片剧本与视觉结果')
     expect(wrapper.text()).toContain('原片剧本')
     expect(wrapper.text()).toContain('徐然家客厅')
     expect(wrapper.text()).toContain('你把东西放门口吧。')

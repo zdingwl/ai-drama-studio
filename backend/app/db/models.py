@@ -34,6 +34,7 @@ from app.shot_breakdown.models import SourceShotFactsRevision
 from app.skills.plan_models import ProjectExecutionPlanRecord, ProjectExecutionPlanStepRecord
 from app.source_analysis.models import SourceStoryboardDraftRevision
 from app.source_resolution.models import SourceResolutionRevision
+from app.source_script.models import SourceScriptRevision
 from app.source_snapshot.models import SourceVideoSnapshotRevision
 from app.sources.models import Episode, SourceAsset, SourceDocument
 from app.target_assets.models import ReplicaTargetAssetsCandidate, ReplicaTargetAssetsRevision
@@ -79,6 +80,7 @@ __all__ = [
     "SourceDocument",
     "SourceEvidenceSet",
     "SourceResolutionRevision",
+    "SourceScriptRevision",
     "SourceShotFactsRevision",
     "SourceStoryboardDraftRevision",
     "SourceVideoSnapshotRevision",

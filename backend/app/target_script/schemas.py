@@ -3,10 +3,10 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-P12_SCHEMA_VERSION = "1.0"
-P12_PROMPT_VERSION = "p12-target-script-localization-v1"
-P12_TARGET_CONTRACT = "replica-target-script-localization-v1"
-P12_SOURCE_DIALOGUE_CONTRACT = "p6-canonical-dialogue-frozen-in-p10-v1"
+P12_SCHEMA_VERSION = "1.1"
+P12_PROMPT_VERSION = "p12-target-script-script-first-v2"
+P12_TARGET_CONTRACT = "replica-target-script-script-first-v2"
+P12_SOURCE_DIALOGUE_CONTRACT = "source-script-canonical-dialogue-v1"
 P12_SKILL_ID = "target-script-localization"
 P12_TIMING_REWRITE_PROMPT_VERSION = "p12-target-script-timing-rewrite-v1"
 P12_TIMING_REWRITE_CONTRACT = "replica-target-script-timing-rewrite-v1"
@@ -66,7 +66,7 @@ class TargetScriptDialogueLine(BaseModel):
     @model_validator(mode="after")
     def validate_source_time(self) -> "TargetScriptDialogueLine":
         if self.source_end_us <= self.source_start_us:
-            raise ValueError("Target Script source dialogue time must preserve Source Snapshot timing")
+            raise ValueError("Target Script source dialogue time must preserve SOURCE_SCRIPT timing")
         return self
 
 
@@ -81,7 +81,8 @@ class ReplicaTargetScriptContent(BaseModel):
     title: str = "目标剧本与对白"
     target_language: str
     target_region: str
-    source_snapshot_artifact_id: str
+    source_script_artifact_id: str | None = None
+    source_snapshot_artifact_id: str | None = None
     adaptation_plan_artifact_id: str
     target_bible_artifact_id: str
     episodes: list[TargetScriptEpisode] = Field(default_factory=list)
@@ -98,9 +99,12 @@ class TargetScriptProviderJobProvenance(BaseModel):
 
 
 class TargetScriptProvenance(BaseModel):
-    source_snapshot_artifact_id: str
-    source_snapshot_revision: int
-    source_snapshot_fingerprint: str
+    source_script_artifact_id: str | None = None
+    source_script_revision: int | None = None
+    source_script_fingerprint: str | None = None
+    source_snapshot_artifact_id: str | None = None
+    source_snapshot_revision: int | None = None
+    source_snapshot_fingerprint: str | None = None
     adaptation_plan_artifact_id: str
     adaptation_plan_revision: int
     adaptation_plan_fingerprint: str
@@ -142,7 +146,8 @@ class ReplicaTargetScriptRevisionSummary(BaseModel):
     revision: int
     validity: str
     input_fingerprint: str
-    source_snapshot_artifact_id: str
+    source_script_artifact_id: str | None = None
+    source_snapshot_artifact_id: str | None = None
     adaptation_plan_artifact_id: str
     target_bible_artifact_id: str
     created_at: str

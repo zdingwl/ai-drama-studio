@@ -10,6 +10,7 @@ from app.p16.common import attempt_media_path
 from app.p16.models import ReplicaGenerationAttempt
 from app.p16.schemas import (
     GenerationAttemptRead,
+    H3RuntimeReadinessRead,
     P16ReviewCommand,
     P16SelectionCandidateRead,
     ReplicaGeneratedVideoRead,
@@ -20,6 +21,7 @@ from app.p16.service import (
     create_generation_task,
     get_generated_video,
     get_generation_selection,
+    get_runtime_readiness,
     list_generation_attempts,
     list_selection_candidates,
     reject_selection_candidate,
@@ -34,6 +36,17 @@ router = APIRouter(tags=["p16-video-generation"])
 
 def _request_session_factory(db: Session) -> sessionmaker[Session]:
     return sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False, class_=Session)
+
+
+@router.get(
+    "/projects/{project_id}/video-generation/runtime-readiness",
+    response_model=H3RuntimeReadinessRead,
+)
+def get_video_generation_runtime_readiness_route(
+    project_id: str,
+    db: Session = Depends(get_db),
+) -> H3RuntimeReadinessRead:
+    return get_runtime_readiness(db, project_id)
 
 
 @router.post(

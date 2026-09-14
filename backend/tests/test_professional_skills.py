@@ -5,7 +5,7 @@ from app.skills.professional import get_professional_skill, get_professional_ski
 def test_episode_understanding_professional_skill_is_machine_loadable() -> None:
     skill = get_professional_skill("source-video-understanding")
 
-    assert skill.version == "1.1.0"
+    assert skill.version == "1.2.0"
     assert skill.required_inputs == (ArtifactType.SOURCE_VIDEO, ArtifactType.SOURCE_DIALOGUE)
     assert skill.optional_inputs == (ArtifactType.SHOT_ANCHORS,)
     assert Capability.EPISODE_UNDERSTANDING in skill.required_capabilities

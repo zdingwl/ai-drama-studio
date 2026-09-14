@@ -139,6 +139,36 @@ class Settings(BaseSettings):
     p14_indextts_default_emo_alpha: float = 0.6
     p14_indextts_voice_catalog_json: str = DEFAULT_P14_INDEXTTS_VOICE_CATALOG_JSON
 
+    # P16 defaults to Windows-native ComfyUI MiniMax-H3; SGLang remains available for Linux GPU hosts.
+    # Keep all runtime settings in the canonical Settings object so backend/.env,
+    # process environment variables, tests, and runtime diagnostics resolve the same values.
+    p16_h3_runtime: str = "LOCAL_COMFYUI"
+    p16_h3_local_base_url: str = "http://127.0.0.1:30010"
+    p16_h3_local_model: str = "MiniMaxAI/MiniMax-H3"
+    p16_h3_local_short_edge: int = 768
+    p16_h3_local_inference_steps: int = 50
+    p16_h3_local_flow_shift: float = 12.0
+    p16_h3_local_audio_flow_shift: float = 3.0
+    p16_h3_local_timeout_seconds: float = 1800.0
+    p16_h3_local_poll_interval_seconds: float = 1.0
+    p16_h3_comfyui_base_url: str = "http://127.0.0.1:8188"
+    p16_h3_comfyui_unet_name: str = "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+    p16_h3_comfyui_clip_name: str = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+    p16_h3_comfyui_video_vae_name: str = "minimax_h3_video_vae_fp16.safetensors"
+    p16_h3_comfyui_audio_vae_name: str = "minimax_h3_audio_vae_fp32.safetensors"
+    p16_h3_comfyui_inference_steps: int = 20
+    p16_h3_comfyui_timeout_seconds: float = 3600.0
+    p16_h3_comfyui_poll_interval_seconds: float = 1.0
+    p16_h3_comfyui_output_prefix: str = "ai_drama_studio/h3"
+    p16_h3_readiness_timeout_seconds: float = 3.0
+    p16_max_attempts_per_segment: int = 2
+    p16_minimax_api_key: SecretStr | None = None
+    p16_minimax_base_url: str = "https://api.minimax.io"
+    p16_minimax_model: str = "MiniMax-H3"
+    p16_minimax_resolution: str = "768P"
+    p16_minimax_timeout_seconds: float = 1800.0
+    p16_minimax_poll_interval_seconds: float = 3.0
+
     @model_validator(mode="after")
     def anchor_runtime_paths(self) -> "Settings":
         sqlite_prefix = "sqlite:///"
@@ -182,6 +212,59 @@ class Settings(BaseSettings):
             raise ValueError("p14_indextts_default_speed must be between 0.5 and 2.0")
         if not 0.0 <= self.p14_indextts_default_emo_alpha <= 1.0:
             raise ValueError("p14_indextts_default_emo_alpha must be between 0 and 1")
+        self.p16_h3_runtime = self.p16_h3_runtime.strip().upper()
+        if self.p16_h3_runtime not in {"LOCAL_COMFYUI", "LOCAL_SGLANG", "MINIMAX_CLOUD"}:
+            raise ValueError("p16_h3_runtime must be LOCAL_COMFYUI, LOCAL_SGLANG or MINIMAX_CLOUD")
+        for name, value in (
+            ("p16_h3_local_base_url", self.p16_h3_local_base_url),
+            ("p16_h3_comfyui_base_url", self.p16_h3_comfyui_base_url),
+            ("p16_minimax_base_url", self.p16_minimax_base_url),
+        ):
+            if not value.startswith(("http://", "https://")):
+                raise ValueError(f"{name} must be http(s)")
+        if not self.p16_h3_local_model.strip():
+            raise ValueError("p16_h3_local_model must not be empty")
+        for name, value in (
+            ("p16_h3_comfyui_unet_name", self.p16_h3_comfyui_unet_name),
+            ("p16_h3_comfyui_clip_name", self.p16_h3_comfyui_clip_name),
+            ("p16_h3_comfyui_video_vae_name", self.p16_h3_comfyui_video_vae_name),
+            ("p16_h3_comfyui_audio_vae_name", self.p16_h3_comfyui_audio_vae_name),
+            ("p16_h3_comfyui_output_prefix", self.p16_h3_comfyui_output_prefix),
+        ):
+            if not value.strip():
+                raise ValueError(f"{name} must not be empty")
+        if not 256 <= self.p16_h3_local_short_edge <= 2160:
+            raise ValueError("p16_h3_local_short_edge must be between 256 and 2160")
+        if not 2 <= self.p16_h3_local_inference_steps <= 200:
+            raise ValueError("p16_h3_local_inference_steps must be between 2 and 200")
+        if not 2 <= self.p16_h3_comfyui_inference_steps <= 200:
+            raise ValueError("p16_h3_comfyui_inference_steps must be between 2 and 200")
+        for name, value in (
+            ("p16_h3_local_flow_shift", self.p16_h3_local_flow_shift),
+            ("p16_h3_local_audio_flow_shift", self.p16_h3_local_audio_flow_shift),
+            ("p16_h3_local_timeout_seconds", self.p16_h3_local_timeout_seconds),
+            ("p16_h3_local_poll_interval_seconds", self.p16_h3_local_poll_interval_seconds),
+            ("p16_h3_comfyui_timeout_seconds", self.p16_h3_comfyui_timeout_seconds),
+            ("p16_h3_comfyui_poll_interval_seconds", self.p16_h3_comfyui_poll_interval_seconds),
+            ("p16_h3_readiness_timeout_seconds", self.p16_h3_readiness_timeout_seconds),
+            ("p16_minimax_timeout_seconds", self.p16_minimax_timeout_seconds),
+            ("p16_minimax_poll_interval_seconds", self.p16_minimax_poll_interval_seconds),
+        ):
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if not 1 <= self.p16_max_attempts_per_segment <= 4:
+            raise ValueError("p16_max_attempts_per_segment must be between 1 and 4")
+        self.p16_minimax_model = self.p16_minimax_model.strip()
+        self.p16_minimax_resolution = self.p16_minimax_resolution.strip().upper()
+        if self.p16_minimax_model not in {"MiniMax-H3", "MiniMax-H3-Max"}:
+            raise ValueError("p16_minimax_model is invalid")
+        if self.p16_minimax_resolution not in {"480P", "768P", "2K"}:
+            raise ValueError("p16_minimax_resolution is invalid")
+        if self.p16_minimax_model == "MiniMax-H3" and self.p16_minimax_resolution == "480P":
+            raise ValueError("MiniMax-H3 does not support 480P")
+        if self.p16_minimax_model == "MiniMax-H3-Max" and self.p16_minimax_resolution == "2K":
+            raise ValueError("MiniMax-H3-Max does not support 2K")
+
         return self
 
     def ensure_runtime_directories(self) -> None:

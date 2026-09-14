@@ -71,20 +71,20 @@ def _review_context(db: Session, project_id: str, candidate_id: str, command: P1
         raise AppError("P17_CANDIDATE_NOT_FOUND", "Post candidate 不存在", status_code=404)
     if candidate.review_status != PostReviewStatus.NEEDS_REVIEW.value:
         raise AppError("P17_CANDIDATE_NOT_REVIEWABLE", "Post candidate 已审核或失效", status_code=409)
-    expected = [
+    expected = [value for value in [
         command.expected_generation_selection_artifact_id,
         command.expected_target_audio_artifact_id,
         command.expected_target_script_artifact_id,
         command.expected_timing_plan_artifact_id,
-    ]
+    ] if value is not None]
     if expected != input_artifact_ids(inputs) or candidate.generation_sequence != command.expected_generation_sequence:
         raise AppError("P17_REVIEW_INPUT_CHANGED", "P17 当前正式输入或 candidate sequence 已变化", status_code=409)
-    candidate_ids = [
+    candidate_ids = [value for value in [
         candidate.generation_selection_artifact_id,
         candidate.target_audio_artifact_id,
         candidate.target_script_artifact_id,
         candidate.timing_plan_artifact_id,
-    ]
+    ] if value is not None]
     if candidate_ids != expected:
         raise AppError("P17_CANDIDATE_STALE", "Post candidate 不属于当前正式输入", status_code=409)
     return project, inputs, candidate
@@ -124,12 +124,12 @@ def _next_revision(db: Session, project_id: str) -> int:
 def accept_post_candidate(db: Session, *, project_id: str, candidate_id: str, command: P17ReviewCommand) -> ReplicaFinalOutputRead:
     project, inputs, candidate = _review_context(db, project_id, candidate_id, command)
     content = ReplicaFinalOutputContent.model_validate(candidate.content_json)
-    if [
+    if [value for value in [
         content.generation_selection_artifact_id,
         content.target_audio_artifact_id,
         content.target_script_artifact_id,
         content.timing_plan_artifact_id,
-    ] != input_artifact_ids(inputs):
+    ] if value is not None] != input_artifact_ids(inputs):
         raise AppError("P17_CANDIDATE_CONTENT_STALE", "Post candidate content lineage 与当前正式输入不一致", status_code=409)
     _validate_candidate_media(candidate, content)
 
@@ -167,9 +167,9 @@ def accept_post_candidate(db: Session, *, project_id: str, candidate_id: str, co
                 project_id=project_id,
                 artifact_id=artifact.id,
                 generation_selection_artifact_id=inputs.selection_artifact.id,
-                target_audio_artifact_id=inputs.target_audio_artifact.id,
+                target_audio_artifact_id=inputs.target_audio_artifact.id if inputs.target_audio_artifact else None,
                 target_script_artifact_id=inputs.target_script_artifact.id,
-                timing_plan_artifact_id=inputs.timing_artifact.id,
+                timing_plan_artifact_id=inputs.timing_artifact.id if inputs.timing_artifact else None,
                 candidate_id=candidate.id,
                 generated_by_task_id=candidate.generated_by_task_id,
                 schema_version=P17_SCHEMA_VERSION,
@@ -178,9 +178,10 @@ def accept_post_candidate(db: Session, *, project_id: str, candidate_id: str, co
             )
         )
         db.add(ArtifactEdge(project_id=project_id, source_node_id=inputs.selection_artifact.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.DERIVED_FROM))
-        db.add(ArtifactEdge(project_id=project_id, source_node_id=inputs.target_audio_artifact.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.USES))
         db.add(ArtifactEdge(project_id=project_id, source_node_id=inputs.target_script_artifact.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.USES))
-        db.add(ArtifactEdge(project_id=project_id, source_node_id=inputs.timing_artifact.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.USES))
+        for optional_input in (inputs.target_audio_artifact, inputs.timing_artifact):
+            if optional_input is not None:
+                db.add(ArtifactEdge(project_id=project_id, source_node_id=optional_input.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.USES))
         if previous_latest is not None:
             db.add(ArtifactEdge(project_id=project_id, source_node_id=artifact.id, target_node_id=previous_latest.id, relation_type=ArtifactRelationType.SUPERSEDES))
         candidate.review_status = PostReviewStatus.ACCEPTED.value

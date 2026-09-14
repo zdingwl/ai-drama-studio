@@ -14,6 +14,8 @@ from app.p14.models import ReplicaTargetAudioRevision, ReplicaTimingPlanRevision
 from app.p14.schemas import ReplicaTargetAudioContent, ReplicaTimingPlanContent
 from app.p16.models import ReplicaGeneratedVideoRevision, ReplicaGenerationSelectionRevision
 from app.p16.schemas import ReplicaGeneratedVideoContent, ReplicaGenerationSelectionContent
+from app.p15.models import ReplicaTargetStoryboardRevision
+from app.p15.schemas import GenerationAudioMode, ReplicaTargetStoryboardContent
 from app.projects.enums import ProjectType
 from app.skills.models import ArtifactType
 from app.target_script.models import ReplicaTargetScriptRevision
@@ -27,13 +29,14 @@ class P17Inputs:
     selection: ReplicaGenerationSelectionContent
     generated_video_artifact: ArtifactNode
     generated_video: ReplicaGeneratedVideoContent
-    target_audio_artifact: ArtifactNode
-    target_audio: ReplicaTargetAudioContent
-    target_audio_task_id: str
+    audio_generation_mode: GenerationAudioMode
+    target_audio_artifact: ArtifactNode | None
+    target_audio: ReplicaTargetAudioContent | None
+    target_audio_task_id: str | None
     target_script_artifact: ArtifactNode
     target_script: ReplicaTargetScriptContent
-    timing_artifact: ArtifactNode
-    timing: ReplicaTimingPlanContent
+    timing_artifact: ArtifactNode | None
+    timing: ReplicaTimingPlanContent | None
 
 
 def sha(payload: object) -> str:
@@ -64,33 +67,21 @@ def load_inputs(db: Session, project) -> P17Inputs:
         raise AppError("P17_REPLICA_ONLY", "P17 成片后期当前只允许 REPLICA 项目", status_code=422)
 
     selection_artifact = _current(db, project.id, ArtifactType.GENERATION_SELECTION)
-    target_audio_artifact = _current(db, project.id, ArtifactType.TARGET_AUDIO)
     target_script_artifact = _current(db, project.id, ArtifactType.TARGET_SCRIPT)
-    timing_artifact = _current(db, project.id, ArtifactType.TIMING_PLAN)
 
     selection_row = db.scalar(
         select(ReplicaGenerationSelectionRevision).where(
             ReplicaGenerationSelectionRevision.artifact_id == selection_artifact.id
         )
     )
-    audio_row = db.scalar(
-        select(ReplicaTargetAudioRevision).where(ReplicaTargetAudioRevision.artifact_id == target_audio_artifact.id)
-    )
     script_row = db.scalar(
         select(ReplicaTargetScriptRevision).where(ReplicaTargetScriptRevision.artifact_id == target_script_artifact.id)
     )
-    timing_row = db.scalar(
-        select(ReplicaTimingPlanRevision).where(ReplicaTimingPlanRevision.artifact_id == timing_artifact.id)
-    )
-    if selection_row is None or audio_row is None or script_row is None or timing_row is None:
+    if selection_row is None or script_row is None:
         raise AppError("P17_TYPED_INPUT_MISSING", "P17 CURRENT 输入缺少 typed revision", status_code=500)
-    if not audio_row.generated_by_task_id:
-        raise AppError("P17_AUDIO_MEDIA_LINEAGE_MISSING", "CURRENT TARGET_AUDIO 缺少生成 Task lineage", status_code=409)
 
     selection = ReplicaGenerationSelectionContent.model_validate(selection_row.content_json)
-    audio = ReplicaTargetAudioContent.model_validate(audio_row.content_json)
     script = ReplicaTargetScriptContent.model_validate(script_row.content_json)
-    timing = ReplicaTimingPlanContent.model_validate(timing_row.content_json)
 
     generated_video_id = selection.generated_video_artifact_id
     if not generated_video_id:
@@ -110,6 +101,17 @@ def load_inputs(db: Session, project) -> P17Inputs:
     if generated_row is None:
         raise AppError("P17_GENERATED_VIDEO_CONTENT_MISSING", "GENERATED_VIDEO 缺少 typed revision", status_code=500)
     generated = ReplicaGeneratedVideoContent.model_validate(generated_row.content_json)
+    storyboard_row = db.scalar(select(ReplicaTargetStoryboardRevision).where(ReplicaTargetStoryboardRevision.artifact_id == generated.target_storyboard_artifact_id))
+    if storyboard_row is None:
+        raise AppError("P17_STORYBOARD_CONTENT_MISSING", "GENERATED_VIDEO 对应分镜缺少 typed revision", status_code=500)
+    storyboard = ReplicaTargetStoryboardContent.model_validate(storyboard_row.content_json)
+    audio_mode = storyboard.audio_generation_mode
+    target_audio_artifact = _current(db, project.id, ArtifactType.TARGET_AUDIO) if audio_mode == GenerationAudioMode.INDEPENDENT_AUDIO else None
+    timing_artifact = _current(db, project.id, ArtifactType.TIMING_PLAN) if audio_mode == GenerationAudioMode.INDEPENDENT_AUDIO else None
+    audio_row = db.scalar(select(ReplicaTargetAudioRevision).where(ReplicaTargetAudioRevision.artifact_id == target_audio_artifact.id)) if target_audio_artifact else None
+    timing_row = db.scalar(select(ReplicaTimingPlanRevision).where(ReplicaTimingPlanRevision.artifact_id == timing_artifact.id)) if timing_artifact else None
+    audio = ReplicaTargetAudioContent.model_validate(audio_row.content_json) if audio_row else None
+    timing = ReplicaTimingPlanContent.model_validate(timing_row.content_json) if timing_row else None
 
     if generated.generation_segments_artifact_id != selection.generation_segments_artifact_id:
         raise AppError("P17_SELECTION_LINEAGE_MISMATCH", "GENERATION_SELECTION 与 GENERATED_VIDEO 的 segment lineage 不一致", status_code=409)
@@ -123,16 +125,18 @@ def load_inputs(db: Session, project) -> P17Inputs:
     if selected != generated_selected:
         raise AppError("P17_SELECTION_COVERAGE_MISMATCH", "GENERATION_SELECTION 与 GENERATED_VIDEO 的正式选片不一致", status_code=409)
 
-    if audio.target_script_artifact_id != target_script_artifact.id:
+    if audio_mode == GenerationAudioMode.INDEPENDENT_AUDIO and (audio_row is None or timing_row is None or not audio_row.generated_by_task_id):
+        raise AppError("P17_AUDIO_MEDIA_LINEAGE_MISSING", "独立配音模式缺少正式音频或时序 lineage", status_code=409)
+    if audio is not None and audio.target_script_artifact_id != target_script_artifact.id:
         raise AppError("P17_AUDIO_SCRIPT_LINEAGE_MISMATCH", "TARGET_AUDIO 不属于 CURRENT TARGET_SCRIPT", status_code=409)
-    if timing.target_script_artifact_id != target_script_artifact.id or timing.target_audio_artifact_id != target_audio_artifact.id:
+    if timing is not None and (timing.target_script_artifact_id != target_script_artifact.id or timing.target_audio_artifact_id != target_audio_artifact.id):
         raise AppError("P17_TIMING_LINEAGE_MISMATCH", "TIMING_PLAN 不属于 CURRENT TARGET_SCRIPT + TARGET_AUDIO", status_code=409)
-    if timing.has_overflow or timing.total_overflow_us:
+    if timing is not None and (timing.has_overflow or timing.total_overflow_us):
         raise AppError("P17_TIMING_OVERFLOW", "TIMING_PLAN 仍存在 overflow，禁止进入成片", status_code=409)
 
     script_ids = {line.utterance_id for episode in script.episodes for line in episode.dialogue}
-    audio_ids = {clip.utterance_id for clip in audio.clips}
-    timing_ids = {item.utterance_id for item in timing.items}
+    audio_ids = {clip.utterance_id for clip in audio.clips} if audio else script_ids
+    timing_ids = {item.utterance_id for item in timing.items} if timing else script_ids
     if script_ids != audio_ids or script_ids != timing_ids:
         raise AppError("P17_DIALOGUE_COVERAGE_INVALID", "TARGET_SCRIPT / TARGET_AUDIO / TIMING_PLAN utterance 覆盖不一致", status_code=409)
 
@@ -142,9 +146,10 @@ def load_inputs(db: Session, project) -> P17Inputs:
         selection=selection,
         generated_video_artifact=generated_video_artifact,
         generated_video=generated,
+        audio_generation_mode=audio_mode,
         target_audio_artifact=target_audio_artifact,
         target_audio=audio,
-        target_audio_task_id=audio_row.generated_by_task_id,
+        target_audio_task_id=audio_row.generated_by_task_id if audio_row else None,
         target_script_artifact=target_script_artifact,
         target_script=script,
         timing_artifact=timing_artifact,
@@ -153,12 +158,12 @@ def load_inputs(db: Session, project) -> P17Inputs:
 
 
 def input_artifact_ids(inputs: P17Inputs) -> list[str]:
-    return [
+    values = [
         inputs.selection_artifact.id,
-        inputs.target_audio_artifact.id,
         inputs.target_script_artifact.id,
-        inputs.timing_artifact.id,
     ]
+    values.extend(node.id for node in (inputs.target_audio_artifact, inputs.timing_artifact) if node is not None)
+    return values
 
 
 def storage_dir(project_id: str, task_id: str) -> Path:

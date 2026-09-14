@@ -1,13 +1,13 @@
 # Replica Target Bible Skill
 
-`replica-target-bible@1.0.0`
+`replica-target-bible@1.1.0`
 
 ## 目标
 
-把已经通过 P10 冻结的 `CURRENT SOURCE_VIDEO_SNAPSHOT` 转换成复刻项目的正式目标世界：
+把已经通过 P10 冻结的 `CURRENT SOURCE_SCRIPT` 转换成复刻项目的正式目标世界：
 
 ```text
-SOURCE_VIDEO_SNAPSHOT
+SOURCE_SCRIPT
 → Replica preservation locks
 → localization decisions
 → ADAPTATION_PLAN + TARGET_BIBLE
@@ -17,11 +17,11 @@ SOURCE_VIDEO_SNAPSHOT
 
 ## 唯一 Source 边界
 
-`CURRENT SOURCE_VIDEO_SNAPSHOT` 是唯一 Source 世界版本锚点。
+`CURRENT SOURCE_SCRIPT` 是唯一 Source 世界版本锚点。
 
-需要人物、场景、道具、Story/Rhythm、逐镜或对白细节时，只能读取 Snapshot 中冻结的 typed content / lineage。不得绕开 Snapshot，从散落 P5~P9 CURRENT Artifact 重新拼一套“当前事实”。
+需要人物、场景、道具、Story/Rhythm、逐镜或对白细节时，只能读取 Script 中冻结的 typed content / lineage。不得绕开 Script，从散落 P5~P9 CURRENT Artifact 重新拼一套“当前事实”。
 
-Snapshot 缺失或 STALE 时必须阻断。
+Script 缺失或 STALE 时必须阻断。
 
 ## Preservation Locks
 
@@ -36,9 +36,10 @@ Snapshot 缺失或 STALE 时必须阻断。
 - Payoff；
 - Cliffhanger；
 - Story Beat timing；
-- Shot rhythm baseline；
-- Scene order baseline；
-- Shot logic / action rhythm baseline。
+- 语义节奏 baseline；
+- Story Beat timing。
+
+精确 Shot rhythm / Scene order / Shot logic 不在 P11 提前冻结，由后续视觉增强链完成 `SOURCE_VIDEO_SNAPSHOT` 后在 P15 强制对齐。
 
 原则：故事不乱改，节奏不重做，文化和表达才本土化。
 
@@ -73,7 +74,7 @@ P11 v1 强制一对一完整覆盖全部 Source Character / Scene / Prop；任�
 
 Provider 必须：
 
-1. 只消费 Snapshot typed content 与目标配置；
+1. 只消费 Script typed content 与目标配置；
 2. 遵守 preservation locks；
 3. 完整覆盖 Source Character / Scene / Prop；
 4. 只输出 Target 设计语义；
@@ -97,8 +98,8 @@ Artifact Graph edges
 Graph：
 
 ```text
-SOURCE_VIDEO_SNAPSHOT --DERIVED_FROM--> ADAPTATION_PLAN
-SOURCE_VIDEO_SNAPSHOT --DERIVED_FROM--> TARGET_BIBLE
+SOURCE_SCRIPT --DERIVED_FROM--> ADAPTATION_PLAN
+SOURCE_SCRIPT --DERIVED_FROM--> TARGET_BIBLE
 ADAPTATION_PLAN        --USES---------> TARGET_BIBLE
 new artifact           --SUPERSEDES---> old same-type artifact
 ```
@@ -107,15 +108,15 @@ new artifact           --SUPERSEDES---> old same-type artifact
 
 - GET 只读；
 - 只有显式 `POST /commands/target-bible` 启动；
-- Task 输入只绑定 CURRENT Snapshot artifact；
+- Task 输入只绑定 CURRENT Script artifact；
 - 外部请求前先持久化 ProviderJob；
-- ProviderJob 绑定 Snapshot artifact；
+- ProviderJob 绑定 Script artifact；
 - 支持有限 retry / cancel / resume；
 - 同输入幂等，不制造无意义 revision。
 
 ## 完成条件
 
-- Snapshot CURRENT；
+- Script CURRENT；
 - preservation locks 完整；
 - Target entities 一对一覆盖 Source entities；
 - Target identity 独立；

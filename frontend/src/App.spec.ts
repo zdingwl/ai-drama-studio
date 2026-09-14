@@ -16,7 +16,7 @@ async function mountApp(path: string) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{
-      path: '/projects/:id',
+      path: '/projects/:id/:workspace?',
       name: 'project-workspace',
       component: { template: '<main data-testid="project-route" />' },
     }],
@@ -48,18 +48,16 @@ async function mountApp(path: string) {
   return wrapper
 }
 
-describe('App source workspace product mode', () => {
-  it('shows the product workspaces without engineering panels on an ordinary project page', async () => {
-    const wrapper = await mountApp('/projects/project-1')
+describe('App unified product workspaces', () => {
+  it('shows only the script editing surfaces on the script page', async () => {
+    const wrapper = await mountApp('/projects/project-1/script')
 
     expect(wrapper.get('[data-testid="source-workspace"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="target-bible-workspace"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="target-script-workspace"]')).toBeTruthy()
-    expect(wrapper.get('[data-testid="target-assets-workspace"]')).toBeTruthy()
-    expect(wrapper.get('[data-testid="target-audio-timing-workspace"]')).toBeTruthy()
-    expect(wrapper.get('[data-testid="target-audio-retake-workspace"]')).toBeTruthy()
-    expect(wrapper.get('[data-testid="p14-acceptance-readiness"]')).toBeTruthy()
-    expect(wrapper.get('[data-testid="replica-production-workspace"]')).toBeTruthy()
+    expect(wrapper.find('[data-testid="target-assets-workspace"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="target-audio-timing-workspace"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="replica-production-workspace"]').exists()).toBe(false)
     expect(wrapper.find('.product-mode').exists()).toBe(true)
     for (const panel of technicalPanels) {
       expect(wrapper.find(`[data-testid="${panel}"]`).exists()).toBe(false)
@@ -67,20 +65,17 @@ describe('App source workspace product mode', () => {
     wrapper.unmount()
   })
 
-  it('keeps the engineering diagnostic panels available behind debug=1', async () => {
-    const wrapper = await mountApp('/projects/project-1?debug=1')
+  it('keeps independent audio tools inside advanced generation settings', async () => {
+    const wrapper = await mountApp('/projects/project-1/generation')
 
-    expect(wrapper.get('[data-testid="source-workspace"]')).toBeTruthy()
-    expect(wrapper.get('[data-testid="target-bible-workspace"]')).toBeTruthy()
-    expect(wrapper.get('[data-testid="target-script-workspace"]')).toBeTruthy()
-    expect(wrapper.get('[data-testid="target-assets-workspace"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="target-audio-timing-workspace"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="target-audio-retake-workspace"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="p14-acceptance-readiness"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="replica-production-workspace"]')).toBeTruthy()
-    expect(wrapper.find('.product-mode').exists()).toBe(false)
+    expect(wrapper.text()).toContain('高级声音设置')
+    expect(wrapper.find('.product-mode').exists()).toBe(true)
     for (const panel of technicalPanels) {
-      expect(wrapper.get(`[data-testid="${panel}"]`)).toBeTruthy()
+      expect(wrapper.find(`[data-testid="${panel}"]`).exists()).toBe(false)
     }
     wrapper.unmount()
   })
