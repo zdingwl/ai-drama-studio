@@ -46,28 +46,26 @@ def _compose_inputs() -> service.P12Inputs:
         end_us=2_000_000,
         text="你别替我做决定。",
         language="zh-CN",
+        source_character_id="chr-src-1",
+        speaker_name="徐然",
     )
-    snapshot_content = SimpleNamespace(
+    source_script_content = SimpleNamespace(
         episodes=[
             SimpleNamespace(
                 episode_id="ep-1",
                 episode_order=1,
-                canonical_dialogue=[source_utterance],
+                dialogue=[source_utterance],
             )
-        ],
-        source_speakers=SimpleNamespace(
-            entities=[SimpleNamespace(speaker_id="spk-1", character_id="chr-src-1")],
-            attributions=[SimpleNamespace(utterance_id="utt-1", speaker_id="spk-1")],
-        ),
+        ]
     )
     target_bible = SimpleNamespace(
         characters=[SimpleNamespace(source_character_id="chr-src-1", target_character_id="tchr-1")]
     )
     return service.P12Inputs(
         project=SimpleNamespace(target_language="en-US", target_region="US"),
-        snapshot_artifact=SimpleNamespace(id="snapshot-1", revision=3, input_fingerprint=_SHA_A),
-        snapshot_revision=SimpleNamespace(),
-        snapshot_content=snapshot_content,
+        source_script_artifact=SimpleNamespace(id="source-script-1", revision=3, input_fingerprint=_SHA_A),
+        source_script_revision=SimpleNamespace(),
+        source_script_content=source_script_content,
         adaptation_plan_artifact=SimpleNamespace(id="plan-1", revision=2, input_fingerprint=_SHA_B),
         adaptation_plan_revision=SimpleNamespace(),
         adaptation_plan=SimpleNamespace(),
@@ -91,11 +89,11 @@ def _semantic(utterance_id: str = "utt-1") -> TargetScriptSemantic:
     )
 
 
-def test_p12_professional_skill_root_contract_and_p11_acceptance_admit_execution() -> None:
+def test_p12_professional_skill_is_script_first_but_not_replica_main_chain() -> None:
     skill = get_professional_skill("target-script-localization")
-    assert skill.version == "1.1.0"
+    assert skill.version == "1.2.0"
     assert skill.required_inputs == (
-        ArtifactType.SOURCE_VIDEO_SNAPSHOT,
+        ArtifactType.SOURCE_SCRIPT,
         ArtifactType.ADAPTATION_PLAN,
         ArtifactType.TARGET_BIBLE,
     )
@@ -103,15 +101,13 @@ def test_p12_professional_skill_root_contract_and_p11_acceptance_admit_execution
     assert skill.output_contracts == (ArtifactType.TARGET_SCRIPT,)
 
     root = get_root_skill(ProjectType.REPLICA)
-    assert root.version == "1.5.0"
-    target_script = next(step for step in root.steps if step.id == "target_script")
-    assert target_script.requires == (
-        ArtifactType.SOURCE_VIDEO_SNAPSHOT,
-        ArtifactType.ADAPTATION_PLAN,
-        ArtifactType.TARGET_BIBLE,
-    )
-    assert target_script.produces == (ArtifactType.TARGET_SCRIPT,)
-    assert target_script.capabilities == (Capability.TARGET_SCRIPT,)
+    assert root.version == "1.7.0"
+    assert "target-script-localization" not in root.subskills
+    assert all(ArtifactType.TARGET_SCRIPT not in step.requires for step in root.steps)
+    assert all(ArtifactType.TARGET_SCRIPT not in step.produces for step in root.steps)
+    localized = next(step for step in root.steps if step.id == "localized_storyboard")
+    assert localized.requires == (ArtifactType.SOURCE_VIDEO_SNAPSHOT,)
+    assert localized.produces == (ArtifactType.TARGET_STORYBOARD,)
 
     assert service.P12_FORMALLY_ADMITTED is True
     service._assert_p12_admitted()
@@ -121,7 +117,7 @@ def test_p12_professional_skill_root_contract_and_p11_acceptance_admit_execution
     assert expected_namespace(ArtifactType.TARGET_SCRIPT) == ArtifactNamespace.TARGET
 
 
-def test_p12_get_is_read_only_and_post_requires_current_hard_inputs_after_p11_pass(
+def test_p12_get_is_read_only_and_post_requires_current_script_first_inputs(
     client: TestClient,
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -149,7 +145,7 @@ def test_p12_get_is_read_only_and_post_requires_current_hard_inputs_after_p11_pa
         headers={"Idempotency-Key": "p12-missing-hard-inputs"},
     )
     assert start.status_code == 409, start.text
-    assert start.json()["error"]["code"] == "P12_SOURCE_SNAPSHOT_REQUIRED"
+    assert start.json()["error"]["code"] == "P12_SOURCE_SCRIPT_REQUIRED"
     assert counts() == before
 
 
@@ -195,33 +191,34 @@ def test_p12_compose_copies_canonical_source_truth_and_keeps_three_target_text_l
     assert line.translation_text == "Don't make decisions for me."
     assert line.localization_text == "Don't decide that for me."
     assert line.final_target_dialogue == "Don't decide for me."
-    assert result.source_snapshot_artifact_id == "snapshot-1"
+    assert result.source_script_artifact_id == "source-script-1"
+    assert result.source_snapshot_artifact_id is None
     assert result.adaptation_plan_artifact_id == "plan-1"
     assert result.target_bible_artifact_id == "bible-1"
 
 
-def test_p12_unknown_speaker_lineage_does_not_let_provider_guess_target_character() -> None:
+def test_p12_unknown_source_character_does_not_let_provider_guess_target_character() -> None:
     inputs = _compose_inputs()
-    inputs.snapshot_content.source_speakers.attributions[0].speaker_id = None
+    inputs.source_script_content.episodes[0].dialogue[0].source_character_id = None
     result = service._compose(inputs, _semantic())
     assert result.episodes[0].dialogue[0].target_character_id is None
 
 
-def test_p12_target_bible_revision_recursively_stales_target_script_graph(
+def test_p12_target_bible_revision_recursively_stales_compatibility_target_script_graph(
     client: TestClient,
     session_factory: sessionmaker[Session],
 ) -> None:
     project = _project(client)
     with session_factory() as db:
-        snapshot = create_artifact(
+        source_script = create_artifact(
             db,
             project_id=project["id"],
-            artifact_type=ArtifactType.SOURCE_VIDEO_SNAPSHOT,
+            artifact_type=ArtifactType.SOURCE_SCRIPT,
             namespace=ArtifactNamespace.SOURCE,
-            label="Snapshot",
+            label="Source Script",
             input_fingerprint=_SHA_A,
-            skill_id="source-video-snapshot",
-            skill_version="1.0.0",
+            skill_id="source-video-understanding",
+            skill_version="1.2.0",
         )
         plan = create_artifact(
             db,
@@ -231,7 +228,7 @@ def test_p12_target_bible_revision_recursively_stales_target_script_graph(
             label="Plan",
             input_fingerprint=_SHA_A,
             skill_id="replica-target-bible",
-            skill_version="1.0.0",
+            skill_version="1.1.0",
         )
         bible_v1 = create_artifact(
             db,
@@ -241,7 +238,7 @@ def test_p12_target_bible_revision_recursively_stales_target_script_graph(
             label="Bible v1",
             input_fingerprint=_SHA_B,
             skill_id="replica-target-bible",
-            skill_version="1.0.0",
+            skill_version="1.1.0",
         )
         script = create_artifact(
             db,
@@ -251,19 +248,22 @@ def test_p12_target_bible_revision_recursively_stales_target_script_graph(
             label="Script",
             input_fingerprint="c" * 64,
             skill_id="target-script-localization",
-            skill_version="1.0.0",
+            skill_version="1.2.0",
         )
-        for source in (snapshot, plan, bible_v1):
+        create_artifact_relation(
+            db,
+            project_id=project["id"],
+            source_node_id=source_script.id,
+            target_node_id=script.id,
+            relation_type=ArtifactRelationType.DERIVED_FROM,
+        )
+        for source in (plan, bible_v1):
             create_artifact_relation(
                 db,
                 project_id=project["id"],
                 source_node_id=source.id,
                 target_node_id=script.id,
-                relation_type=(
-                    ArtifactRelationType.DERIVED_FROM
-                    if source.id == snapshot.id
-                    else ArtifactRelationType.USES
-                ),
+                relation_type=ArtifactRelationType.USES,
             )
 
         create_artifact(
@@ -274,7 +274,7 @@ def test_p12_target_bible_revision_recursively_stales_target_script_graph(
             label="Bible v2",
             input_fingerprint="d" * 64,
             skill_id="replica-target-bible",
-            skill_version="1.0.0",
+            skill_version="1.1.0",
         )
         db.refresh(bible_v1)
         db.refresh(script)
