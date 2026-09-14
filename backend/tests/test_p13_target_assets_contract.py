@@ -265,7 +265,7 @@ def _seed_candidate(db: Session, project_id: str, bible: ArtifactNode) -> Replic
     return candidate
 
 
-def test_p13_professional_skill_and_root_contract_keep_target_bible_as_only_hard_input() -> None:
+def test_p13_legacy_professional_skill_is_not_replica_five_step_asset_stage() -> None:
     skill = get_professional_skill("replica-target-assets")
     assert skill.version == "1.1.0"
     assert skill.required_inputs == (ArtifactType.TARGET_BIBLE,)
@@ -274,14 +274,16 @@ def test_p13_professional_skill_and_root_contract_keep_target_bible_as_only_hard
     assert skill.output_contracts == (ArtifactType.TARGET_ASSETS,)
 
     root = get_root_skill(ProjectType.REPLICA)
-    assert root.version == "1.5.0"
-    step = next(item for item in root.steps if item.id == "target_assets")
-    assert step.requires == (ArtifactType.TARGET_BIBLE,)
+    assert root.version == "1.7.0"
+    assert "replica-target-assets" not in root.subskills
+    assert "asset-image-generation" in root.subskills
+    step = next(item for item in root.steps if item.id == "asset_images")
+    assert step.requires == (ArtifactType.TARGET_STORYBOARD,)
     assert step.produces == (ArtifactType.TARGET_ASSETS,)
-    assert step.capabilities == (Capability.TARGET_ASSETS,)
-    assert "replica-target-assets" in root.subskills
+    assert step.capabilities == (Capability.ASSET_IMAGE_GENERATION,)
 
     assert CAPABILITY_BY_ID[Capability.TARGET_ASSETS].availability == CapabilityAvailability.AVAILABLE
+    assert CAPABILITY_BY_ID[Capability.ASSET_IMAGE_GENERATION].availability == CapabilityAvailability.PLANNED
     assert expected_namespace(ArtifactType.TARGET_ASSETS) == ArtifactNamespace.TARGET
 
 
@@ -372,8 +374,6 @@ def test_p13_compose_keeps_continuity_asset_local_with_stable_ids_and_revisions(
     assert prop.functional_identity == "A wrapped blue rose bouquet with the same story function"
     assert character.display_name == "Alice"
 
-    # Target Bible remains the semantic truth/lineage, but its global/entity rules are not
-    # copied into P13 review-facing asset continuity after the real-project acceptance finding.
     assert character.continuity_constraints == ["Do not change facial proportions between shots"]
     assert scene.continuity_constraints == ["Keep elevator, doors and fire alarm in fixed relative positions"]
     assert prop.continuity_constraints == [
