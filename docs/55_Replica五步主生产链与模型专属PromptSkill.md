@@ -60,15 +60,44 @@ Provider 不拥有 Artifact ID、target entity ID、时间轴或 source identity
 
 ## 4. 资产图合同
 
-第 3 步只消费 CURRENT `TARGET_STORYBOARD v2`，从实际分镜使用实体中提取 Character / Scene / Prop。
+第 3 步只消费 CURRENT `TARGET_STORYBOARD v2`，从实际分镜使用实体中提取 Character / Scene / Prop。第 3 步内部允许包含“资产视觉设计 → 当前图片模型专属 Prompt Compiler → Image Runtime”三个子步骤，但它们仍属于同一个资产图产品阶段，不恢复旧 P13 独立大阶段，也不得反向要求 Target Bible / Target Script 作为硬输入。
+
+审核文本与生成执行提示词必须严格分层：
+
+- `review_description_zh` 是给中国用户审核的中文资产视觉设计；
+- `image_prompt` 是当前图片模型真正执行的模型专属 Prompt，可以使用英文或其他更适合当前模型的执行语言；
+- 禁止把抽象中文审核说明直接当成最终图片模型 Prompt；
+- Prompt Compiler 可以把本土化分镜里过于抽象的身份/设定具体化为稳定可见的视觉方案，但不能改变核心身份、目标地区、时代、职业/功能、显式外观事实、故事事件、对白或 Shot 顺序。
+
+当前默认资产图链固定为：
+
+```text
+CURRENT TARGET_STORYBOARD v2
+→ 提取实际使用 Character / Scene / Prop
+→ Volcengine Ark / Doubao 生成资产级中文视觉设计 + Flux 英文视觉事实
+→ asset-image-generation@1.1.0 / flux-schnell-asset-reference-v2
+→ 本机 ComfyUI / Flux.1 Schnell
+→ 真实 reference_media
+→ 人工确认
+→ CURRENT TARGET_ASSETS v2
+```
+
+Flux 资产参考图构图合同：
+
+- Character：只能有一个人物；人物从头到鞋完整可见；中性站姿、正面三分之四视角、平视；干净中性棚拍背景；重点锁定脸、发型、体态、基础服装与标志性可见特征；不得生成逐镜换装、剧情动作、多人合照或场景海报。
+- Scene：必须是空场景环境参考；不得有人物；重点锁定空间布局、建筑/室内风格、固定地标、材质、颜色和稳定光照基线；不得把剧情时间推进或人物行为塞进场景图。
+- Prop：只能有一个孤立道具；完整可见；中性产品参考视角；不得出现手、人物或额外故事物件；重点锁定形态、比例、材质、颜色、尺度和标志性细节。
+- 当前 Flux Schnell 工作流采用 CFG 1.0，因此关键 avoid 约束必须折叠进真正的正向执行 Prompt；不得仅保存一个 `negative_prompt` 字段却让 Runtime 实际忽略关键排除条件。
 
 正式 `TARGET_ASSETS v2` 必须：
 
 - 每个被分镜引用的 Target entity 都有稳定 target_asset_id；
 - 有中文可审核视觉定义；
+- 有当前图片模型专属的真实执行 Prompt；
 - 至少有一张真实、已持久化、带 SHA256 和尺寸的 `reference_media`；
 - 图片由真实 Image Runtime 生成，不允许 `reference_media=[]` 冒充完成；
 - 当前 Windows 默认使用本机 ComfyUI，优先复用已经安装的 Flux 模型；
+- Prompt Provider / Image Runtime 的 ProviderJob 都必须真实记录；
 - 候选必须人工确认后才能成为 CURRENT TARGET_ASSETS。
 
 历史 `TARGET_ASSETS v1` 的 text-only 资产仍可回看，但不能作为新 H3 Ref2VA 主链的资产图输入。
