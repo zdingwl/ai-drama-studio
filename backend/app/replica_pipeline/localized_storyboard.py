@@ -262,14 +262,11 @@ class _LocalQwenProvider:
         return LocalizationProviderResult(semantic=_validate_semantic(payload, semantic), remote_job_id=str(body.get("id") or "") or None)
 
 
-def _provider(settings: Settings, selection: SourceUnderstandingProvider) -> LocalizationProvider:
-    if selection == SourceUnderstandingProvider.DOUBAO_SEED_2_1_PRO_API:
-        return _DoubaoProvider(settings)
-    if selection == SourceUnderstandingProvider.QWEN3_8_27B_LOCAL:
-        return _LocalQwenProvider(settings, model_name=settings.p7_qwen38_local_model, base_url=settings.p7_qwen38_local_base_url, api_key=settings.p7_qwen38_local_api_key)
-    if selection in {SourceUnderstandingProvider.QWEN3_VL_8B_THINKING_LOCAL, SourceUnderstandingProvider.QWEN3_VL_LOCAL}:
-        return _LocalQwenProvider(settings, model_name=settings.p7_qwen3_vl_8b_local_model, base_url=settings.p7_qwen3_vl_8b_local_base_url, api_key=settings.p7_qwen3_vl_8b_local_api_key)
-    raise AppError("LOCALIZED_STORYBOARD_PROVIDER_UNSUPPORTED", "当前本土化分镜 Provider 未实现", status_code=422)
+def _provider(settings: Settings, _selection: SourceUnderstandingProvider) -> LocalizationProvider:
+    # Step 2 has its own provider policy. It must not inherit the Step 1 source-understanding
+    # provider, otherwise a project configured for local Qwen can make localization wait on
+    # a local vLLM runtime. The current product contract uses Volcengine Ark / Doubao directly.
+    return _DoubaoProvider(settings)
 
 
 def _current_artifact(db: Session, project_id: str, artifact_type: ArtifactType) -> ArtifactNode | None:
@@ -385,6 +382,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
         sequence = _generation_sequence(db, task.project_id, snapshot_artifact.id)
         profile = provider.profile()
         job_payload = {"source_snapshot_artifact_id": snapshot_artifact.id, "source_snapshot_fingerprint": snapshot_artifact.input_fingerprint, "target_language": project.target_language, "target_region": project.target_region, "provider_profile": profile, "generation_sequence": sequence}
+        context.checkpoint({"provider": provider.provider_name, "model": provider.model_name, "generation_sequence": sequence}, progress_percent=10)
         def _remote_call(_):
             provider_result = provider.localize(payload)
             return ProviderDispatchResult(value=provider_result, remote_job_id=provider_result.remote_job_id)
@@ -449,7 +447,7 @@ def _claim(db: Session, task_id: str, worker_id: str) -> Task | None:
     if task is None or task.task_type != TASK_TYPE or task.status != TaskStatus.QUEUED or task.attempt >= task.max_attempts:
         return None
     now = utc_now()
-    result = db.execute(update(Task).where(Task.id == task_id, Task.task_type == TASK_TYPE, Task.status == TaskStatus.QUEUED, Task.attempt < Task.max_attempts).values(status=TaskStatus.RUNNING, attempt=task.attempt + 1, worker_id=worker_id, heartbeat_at=now, started_at=func.coalesce(Task.started_at, now), finished_at=None, updated_at=now))
+    result = db.execute(update(Task).where(Task.id == task_id, Task.task_type == TASK_TYPE, Task.status == TaskStatus.QUEUED, Task.attempt < task.max_attempts).values(status=TaskStatus.RUNNING, attempt=task.attempt + 1, worker_id=worker_id, heartbeat_at=now, started_at=func.coalesce(Task.started_at, now), finished_at=None, updated_at=now))
     if result.rowcount != 1:
         db.rollback(); return None
     db.commit(); return db.get(Task, task_id)
