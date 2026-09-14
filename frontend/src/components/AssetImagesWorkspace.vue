@@ -47,13 +47,13 @@ const taskStageText = computed(() => {
   const task = assetTask.value
   if (!task) return ''
   if (task.status === 'queued') return '任务已进入队列，等待资产图 Worker 开始执行。'
-  if (task.status === 'failed') return task.last_error || '资产图生成失败，请检查 ComfyUI、Flux 模型和任务日志后重试。'
+  if (task.status === 'failed') return task.last_error || '资产图生成失败，请检查火山引擎 Prompt Compiler、ComfyUI、Flux 模型和任务日志后重试。'
   if (task.status === 'cancelled') return '资产图生成任务已取消。'
   if (task.status === 'interrupted') return task.last_error || '资产图生成任务已中断，可以重新发起。'
   if (task.status === 'succeeded') return '资产图已经生成完成，正在加载待审核候选。'
   if (task.progress_percent >= 95) return '人物、场景和道具参考图已生成，正在保存候选并完成一致性检查。'
-  if (task.progress_percent > 0) return '正在通过本机 ComfyUI / Flux 逐项生成人物、场景和道具参考图。'
-  return '正在准备资产清单并生成首张参考图；首张完成后会按实际资产数量推进进度。'
+  if (task.progress_percent >= 10) return 'Flux 专属资产提示词已编译完成，正在通过本机 ComfyUI / Flux 逐项生成参考图。'
+  return '正在通过火山引擎 Doubao 整理资产视觉设计，并编译 Flux.1 Schnell 专属执行提示词。'
 })
 
 const generateButtonText = computed(() => {
@@ -129,7 +129,7 @@ async function generate() {
   message.value = ''
   try {
     assetTask.value = await startAssetImages(projectId.value)
-    message.value = '资产提取与图片生成任务已启动，可在下方查看实时进度；如果失败会直接显示失败原因。'
+    message.value = '资产任务已启动：先由火山引擎编译 Flux 专属资产提示词，再由本机 ComfyUI / Flux 逐项生成；失败原因会直接显示。'
     if (taskRunning.value) startTaskPolling()
     await refresh(true)
   } catch (exc) {
@@ -167,10 +167,10 @@ onBeforeUnmount(() => {
       <p v-if="taskFailed" class="task-error">{{ assetTask.last_error || '任务没有返回更详细的错误信息，请查看后端日志后重试。' }}</p>
     </div>
     <label v-if="pending" class="review"><span>审核备注</span><input v-model="reason" maxlength="800" /></label>
-    <div v-if="!content" class="empty">先确认步骤 2 的本土化分镜，再提取人物、场景和道具。</div>
+    <div v-if="!content" class="empty">{{ taskRunning ? '正在生成资产图；完成后会在这里显示待审核的人物、场景和道具参考图。' : '先确认步骤 2 的本土化分镜，再提取人物、场景和道具。' }}</div>
     <template v-else>
       <div class="metrics"><span>{{ content.assets.length }} 个正式资产</span><span>{{ content.visual_style }}</span><span>{{ pending?'待人工确认':current?.status==='CURRENT'?'正式 CURRENT':'历史结果' }}</span></div>
-      <div class="grid"><article v-for="asset in content.assets" :key="asset.target_asset_id"><div class="image"><img v-if="asset.reference_media[0]" :src="asset.reference_media[0].uri" :alt="asset.display_name" loading="lazy" /></div><div class="copy"><small>{{ label(asset.asset_type) }}</small><h3>{{ asset.display_name }}</h3><p>{{ asset.review_description_zh }}</p><details><summary>查看资产图生成提示词</summary><p>{{ asset.image_prompt }}</p></details></div></article></div>
+      <div class="grid"><article v-for="asset in content.assets" :key="asset.target_asset_id"><div class="image"><img v-if="asset.reference_media[0]" :src="asset.reference_media[0].uri" :alt="asset.display_name" loading="lazy" /></div><div class="copy"><small>{{ label(asset.asset_type) }}</small><h3>{{ asset.display_name }}</h3><p>{{ asset.review_description_zh }}</p><details><summary>查看 Flux 执行提示词</summary><p>{{ asset.image_prompt }}</p></details></div></article></div>
       <div v-if="pending" class="actions"><button type="button" :disabled="Boolean(action)||!reason.trim()" @click="review(pending,true)">确认资产图</button><button type="button" class="secondary" :disabled="Boolean(action)||!reason.trim()" @click="review(pending,false)">拒绝重做</button></div>
     </template>
   </section>
