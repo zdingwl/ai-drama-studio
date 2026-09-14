@@ -93,7 +93,7 @@ Prompt contract：{FLUX_ASSET_PROMPT_CONTRACT}
 硬规则：
 1. items 必须与输入 target_entity_id 一一对应，不能漏项、重复、改 ID、合并或新增实体。
 2. visual_design_zh 是给中国用户审核的资产级视觉设计，必须使用简体中文，具体、可视、可复用；不要复述故事情节、对白、镜头节奏或人物关系。
-3. visual_facts_en 是给 Flux.1 Schnell 的英文视觉事实，必须用自然、具体、直接的英文，只描述画面中可见的外观、材质、颜色、稳定身份特征；不要写抽象剧情、心理活动、对白、运镜或视频动作。
+3. visual_facts_en 是给 Flux.1 Schnell 的英文视觉事实，必须用自然、具体、直接的英文，只描述画面中可见的外观、材质、颜色、稳定身份特征；并把项目视觉风格翻译/具体化为英文图像风格要求。不要写抽象剧情、心理活动、对白、运镜或视频动作。
 4. 可以把输入里过于抽象的“身份/设定”具体化为稳定视觉方案，但不能改变已经给出的核心身份、地区、时代、职业/功能或显式外观事实。缺少的非剧情视觉细节可以选择一个合理且稳定的方案，之后所有镜头必须复用这一方案。
 5. CHARACTER：必须形成单一稳定人物身份，重点具体化年龄感、脸型五官、肤色/妆容（仅在事实允许时）、发型发色、体态、基础服装轮廓/材质/颜色、标志性可见特征。不要设计逐镜换装。
 6. SCENE：必须形成空场景视觉基线，重点具体化空间布局、建筑/室内风格、固定地标、材质、色彩、稳定光照；不要加入人物，不要根据剧情擅自发明时间推进。
@@ -129,7 +129,7 @@ def _compose_execution_prompt(*, asset_type: str, display_name: str, visual_fact
         )
     return (
         f"{framing} Asset name: {display_name}. Target region context: {target_region}. "
-        f"Visual identity facts: {visual_facts_en.strip()} Project visual style note: {visual_style}. "
+        f"Visual identity and style facts: {visual_facts_en.strip()} "
         f"Avoid: {avoid_en.strip()} No text, captions, labels, watermark, logo overlay, collage, split screen or contact sheet."
     )
 
