@@ -77,16 +77,18 @@ def _audio(duration_us: int) -> ReplicaTargetAudioContent:
     )
 
 
-def test_p14_root_and_professional_skill_contracts_are_split_and_capabilities_stay_planned() -> None:
+def test_p14_professional_skills_remain_compatibility_only_outside_replica_main_chain() -> None:
     root = get_root_skill(ProjectType.REPLICA)
-    assert root.version == "1.5.0"
-    audio = next(step for step in root.steps if step.id == "target_audio")
-    timing = next(step for step in root.steps if step.id == "dialogue_timing")
-    assert audio.phase == timing.phase == "配音与时序"
-    assert audio.requires == (ArtifactType.TARGET_SCRIPT, ArtifactType.TARGET_BIBLE)
-    assert audio.produces == (ArtifactType.TARGET_AUDIO,)
-    assert timing.requires == (ArtifactType.TARGET_SCRIPT, ArtifactType.TARGET_AUDIO)
-    assert timing.produces == (ArtifactType.TIMING_PLAN,)
+    assert root.version == "1.7.0"
+    assert all(step.id not in {"target_audio", "dialogue_timing"} for step in root.steps)
+    assert all(ArtifactType.TARGET_AUDIO not in step.requires for step in root.steps)
+    assert all(ArtifactType.TARGET_AUDIO not in step.produces for step in root.steps)
+    assert all(ArtifactType.TIMING_PLAN not in step.requires for step in root.steps)
+    assert all(ArtifactType.TIMING_PLAN not in step.produces for step in root.steps)
+    model_prompting = next(step for step in root.steps if step.id == "model_prompting")
+    assert model_prompting.requires == (ArtifactType.TARGET_STORYBOARD, ArtifactType.TARGET_ASSETS)
+    assert model_prompting.produces == (ArtifactType.GENERATION_SEGMENTS,)
+
     assert get_professional_skill("replica-target-audio").required_capabilities == (Capability.TTS,)
     assert get_professional_skill("replica-dialogue-timing").required_capabilities == (Capability.TIMING,)
     assert CAPABILITY_BY_ID[Capability.TTS].availability == CapabilityAvailability.PLANNED
