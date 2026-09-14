@@ -122,9 +122,15 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     assets = client.get("/api/v3/skills/professional/asset-image-generation")
     assert assets.status_code == 200
     assets_detail = assets.json()
-    assert assets_detail["version"] == "1.0.0"
+    assert assets_detail["version"] == "1.1.0"
     assert assets_detail["required_inputs"] == ["TARGET_STORYBOARD"]
     assert assets_detail["output_contracts"] == ["TARGET_ASSETS"]
+    asset_rules = "\n".join(assets_detail["provider_rules"])
+    assert "Chinese review prose" in asset_rules
+    assert "Flux.1 Schnell" in asset_rules
+    assert "negative-conditioning" in asset_rules
+    assert "Review text is not the model prompt" in assets_detail["manual"]
+    assert "Flux.1 Schnell" in assets_detail["manual"]
 
     h3 = client.get("/api/v3/skills/professional/minimax-h3-prompting")
     assert h3.status_code == 200
