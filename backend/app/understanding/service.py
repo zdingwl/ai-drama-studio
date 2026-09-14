@@ -54,7 +54,7 @@ from app.workflow.worker import TaskExecutionContext
 
 P7_TASK_TYPE = "P7_SOURCE_BIBLE"
 P7_PROFILE_VERSION = P7_PROMPT_VERSION
-P7_SCHEMA_VERSION = "1.1"
+P7_SCHEMA_VERSION = "1.2"
 
 
 @dataclass(frozen=True)
@@ -820,7 +820,7 @@ def _claim(db: Session, task_id: str, worker_id: str) -> Task | None:
     now = utc_now()
     result = db.execute(
         update(Task)
-        .where(Task.id == task_id, Task.task_type == P7_TASK_TYPE, Task.status == TaskStatus.QUEUED, Task.attempt < Task.max_attempts)
+        .where(Task.id == task_id, Task.task_type == P7_TASK_TYPE, Task.status == TaskStatus.QUEUED, Task.attempt < task.max_attempts)
         .values(
             status=TaskStatus.RUNNING,
             attempt=task.attempt + 1,
@@ -1038,6 +1038,7 @@ def edit_source_bible(
             "generated_by_task_id": None,
             "edit_parent_artifact_id": current.id,
             "prompt_version": "p7-source-bible-edit-v1",
+            "schema_version": P7_SCHEMA_VERSION,
         }
     )
     try:
