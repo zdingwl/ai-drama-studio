@@ -122,8 +122,11 @@ def test_p10_professional_skill_and_root_contract_require_independent_speakers()
     assert "source-video-snapshot" in replica.subskills
     source_storyboard = next(step for step in replica.steps if step.id == "source_storyboard")
     assert Capability.SOURCE_SNAPSHOT in source_storyboard.capabilities
-    assert ArtifactType.SOURCE_SPEAKERS in source_storyboard.produces
-    assert ArtifactType.SOURCE_VIDEO_SNAPSHOT in source_storyboard.produces
+    assert ArtifactType.SOURCE_SPEAKERS in replica.readable_artifacts
+    assert source_storyboard.produces == (
+        ArtifactType.SOURCE_SHOT_FACTS,
+        ArtifactType.SOURCE_VIDEO_SNAPSHOT,
+    )
 
     redraw = get_root_skill(ProjectType.REDRAW)
     assert "source-video-snapshot" in redraw.subskills
