@@ -1,7 +1,7 @@
 # AI Drama Studio V3 — 开发规则
 
-> 当前状态日期：2026-09-13。
-> 当前最高优先级：`docs/52_P14-P17Replica生产链工程收口与统一真实验收准入.md`。
+> 当前状态日期：2026-09-14。
+> 当前最高优先级：`docs/55_Replica五步主生产链与模型专属PromptSkill.md`。
 > 原则：仓库当前 `main` + 编号更高、日期更新的状态/验收文档是唯一事实源；历史文档只能解释演进，不能覆盖最新口径。
 
 ## 1. 开发前读取顺序
@@ -62,7 +62,10 @@
 52. `docs/50_P16VideoGenerationQCSelection数据契约.md`
 53. `docs/51_P17PostProductionFinalOutput数据契约.md`
 54. `docs/52_P14-P17Replica生产链工程收口与统一真实验收准入.md`
-55. 当前相关代码与测试
+55. `docs/53_ScriptFirst原片剧本优先架构.md`
+56. `docs/54_统一七页产品信息架构与H3音画生成主流程.md`
+57. `docs/55_Replica五步主生产链与模型专属PromptSkill.md`
+58. 当前相关代码与测试
 
 冲突处理：**编号更高、日期更新、且明确声明替代旧口径的文档优先。**
 
@@ -83,6 +86,7 @@
 - `docs/50`：P16 MiniMax H3 Video Generation / Technical QC / Human Selection 正式工程合同；
 - `docs/51`：P17 Lip Sync / Post Production / Final Output 正式工程合同；
 - `docs/52`：P14–P17 工程链已完成到统一真实验收入口；P14~P17 当前都 `PASS = NO`，对应 capability 继续 `PLANNED`，下一步必须统一跑真实 Replica 项目端到端验收。
+- `docs/55`：用户于 2026-09-14 明确纠正 Replica 主业务链；普通产品主链改为“原片分镜 → 本土化分镜 → 资产图 → 模型专属 Prompt Skill → 视频生成”。`docs/53/54` 与旧 P14/P15/P16 顺序只保留为历史/兼容实现，不再定义普通用户主流程。
 
 历史分支只能参考，不能覆盖当前 V3 规划。
 

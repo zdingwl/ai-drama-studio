@@ -30,6 +30,13 @@ from app.p16.models import (
 from app.p17.models import ReplicaFinalOutputRevision, ReplicaPostCandidate
 from app.preprocessing.models import ShotAnchor, ShotBoundarySet
 from app.projects.models import Project
+from app.replica_pipeline.models import (
+    ReplicaAssetImageCandidate,
+    ReplicaAssetImageRevision,
+    ReplicaH3PromptRevision,
+    ReplicaLocalizedStoryboardCandidate,
+    ReplicaLocalizedStoryboardRevision,
+)
 from app.shot_breakdown.models import SourceShotFactsRevision
 from app.skills.plan_models import ProjectExecutionPlanRecord, ProjectExecutionPlanStepRecord
 from app.source_analysis.models import SourceStoryboardDraftRevision
@@ -55,12 +62,17 @@ __all__ = [
     "ProjectExecutionPlanStepRecord",
     "ProviderJob",
     "ReplicaFinalOutputRevision",
+    "ReplicaAssetImageCandidate",
+    "ReplicaAssetImageRevision",
     "ReplicaGeneratedVideoRevision",
     "ReplicaGenerationAttempt",
     "ReplicaGenerationSelectionCandidate",
     "ReplicaGenerationSelectionRevision",
     "ReplicaGenerationSegmentsRevision",
     "ReplicaPostCandidate",
+    "ReplicaH3PromptRevision",
+    "ReplicaLocalizedStoryboardCandidate",
+    "ReplicaLocalizedStoryboardRevision",
     "ReplicaStoryboardCandidate",
     "ReplicaTargetAssetsCandidate",
     "ReplicaTargetAssetsRevision",

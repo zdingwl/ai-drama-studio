@@ -15,6 +15,8 @@ from app.p15.schemas import ReplicaGenerationSegmentsContent, ReplicaTargetStory
 from app.p16.models import ReplicaGenerationAttempt
 from app.p16.schemas import GenerationAttemptRead, TechnicalQcStatus
 from app.projects.enums import ProjectType
+from app.replica_pipeline.models import ReplicaAssetImageRevision, ReplicaH3PromptRevision, ReplicaLocalizedStoryboardRevision
+from app.replica_pipeline.schemas import ReplicaAssetImagesContent, ReplicaLocalizedStoryboardContent
 from app.target_assets.models import ReplicaTargetAssetsRevision
 from app.target_assets.schemas import ReplicaTargetAssetsContent
 from app.skills.models import ArtifactType
@@ -25,11 +27,11 @@ from app.workflow.models import ProviderJob
 class P16Inputs:
     project: object
     storyboard_artifact: ArtifactNode
-    storyboard: ReplicaTargetStoryboardContent
+    storyboard: ReplicaTargetStoryboardContent | ReplicaLocalizedStoryboardContent
     segments_artifact: ArtifactNode
     segments: ReplicaGenerationSegmentsContent
     assets_artifact: ArtifactNode
-    assets: ReplicaTargetAssetsContent
+    assets: ReplicaTargetAssetsContent | ReplicaAssetImagesContent
 
 
 def sha(payload: object) -> str:
@@ -61,24 +63,44 @@ def load_inputs(db: Session, project) -> P16Inputs:
     storyboard_artifact = _current(db, project.id, ArtifactType.TARGET_STORYBOARD)
     segments_artifact = _current(db, project.id, ArtifactType.GENERATION_SEGMENTS)
     assets_artifact = _current(db, project.id, ArtifactType.TARGET_ASSETS)
-    storyboard_row = db.scalar(
-        select(ReplicaTargetStoryboardRevision).where(ReplicaTargetStoryboardRevision.artifact_id == storyboard_artifact.id)
+    h3_prompt_row = db.scalar(
+        select(ReplicaH3PromptRevision).where(ReplicaH3PromptRevision.artifact_id == segments_artifact.id)
     )
-    segments_row = db.scalar(
-        select(ReplicaGenerationSegmentsRevision).where(ReplicaGenerationSegmentsRevision.artifact_id == segments_artifact.id)
-    )
-    assets_row = db.scalar(
-        select(ReplicaTargetAssetsRevision).where(ReplicaTargetAssetsRevision.artifact_id == assets_artifact.id)
-    )
-    if storyboard_row is None or segments_row is None or assets_row is None:
-        raise AppError("P16_TYPED_INPUT_MISSING", "P16 CURRENT 输入缺少 typed revision", status_code=500)
-    storyboard = ReplicaTargetStoryboardContent.model_validate(storyboard_row.content_json)
-    segments = ReplicaGenerationSegmentsContent.model_validate(segments_row.content_json)
-    assets = ReplicaTargetAssetsContent.model_validate(assets_row.content_json)
-    if segments.target_storyboard_artifact_id != storyboard_artifact.id:
-        raise AppError("P16_LINEAGE_MISMATCH", "GENERATION_SEGMENTS 不属于 CURRENT TARGET_STORYBOARD", status_code=409)
-    if storyboard.target_assets_artifact_id != assets_artifact.id or segments.target_assets_artifact_id != assets_artifact.id:
-        raise AppError("P16_LINEAGE_MISMATCH", "Storyboard / Segments 与 CURRENT TARGET_ASSETS lineage 不一致", status_code=409)
+    if h3_prompt_row is not None:
+        storyboard_row = db.scalar(
+            select(ReplicaLocalizedStoryboardRevision).where(ReplicaLocalizedStoryboardRevision.artifact_id == storyboard_artifact.id)
+        )
+        assets_row = db.scalar(
+            select(ReplicaAssetImageRevision).where(ReplicaAssetImageRevision.artifact_id == assets_artifact.id)
+        )
+        if storyboard_row is None or assets_row is None:
+            raise AppError("P16_TYPED_INPUT_MISSING", "五步主链 P16 输入缺少 v2 typed revision", status_code=500)
+        storyboard = ReplicaLocalizedStoryboardContent.model_validate(storyboard_row.content_json)
+        segments = ReplicaGenerationSegmentsContent.model_validate(h3_prompt_row.content_json)
+        assets = ReplicaAssetImagesContent.model_validate(assets_row.content_json)
+        if segments.target_storyboard_artifact_id != storyboard_artifact.id or assets.target_storyboard_artifact_id != storyboard_artifact.id:
+            raise AppError("P16_LINEAGE_MISMATCH", "H3 Prompt / 资产图不属于 CURRENT 本土化分镜", status_code=409)
+        if segments.target_assets_artifact_id != assets_artifact.id:
+            raise AppError("P16_LINEAGE_MISMATCH", "H3 Prompt 不属于 CURRENT 资产图", status_code=409)
+    else:
+        storyboard_row = db.scalar(
+            select(ReplicaTargetStoryboardRevision).where(ReplicaTargetStoryboardRevision.artifact_id == storyboard_artifact.id)
+        )
+        segments_row = db.scalar(
+            select(ReplicaGenerationSegmentsRevision).where(ReplicaGenerationSegmentsRevision.artifact_id == segments_artifact.id)
+        )
+        assets_row = db.scalar(
+            select(ReplicaTargetAssetsRevision).where(ReplicaTargetAssetsRevision.artifact_id == assets_artifact.id)
+        )
+        if storyboard_row is None or segments_row is None or assets_row is None:
+            raise AppError("P16_TYPED_INPUT_MISSING", "P16 CURRENT 输入缺少 typed revision", status_code=500)
+        storyboard = ReplicaTargetStoryboardContent.model_validate(storyboard_row.content_json)
+        segments = ReplicaGenerationSegmentsContent.model_validate(segments_row.content_json)
+        assets = ReplicaTargetAssetsContent.model_validate(assets_row.content_json)
+        if segments.target_storyboard_artifact_id != storyboard_artifact.id:
+            raise AppError("P16_LINEAGE_MISMATCH", "GENERATION_SEGMENTS 不属于 CURRENT TARGET_STORYBOARD", status_code=409)
+        if storyboard.target_assets_artifact_id != assets_artifact.id or segments.target_assets_artifact_id != assets_artifact.id:
+            raise AppError("P16_LINEAGE_MISMATCH", "Storyboard / Segments 与 CURRENT TARGET_ASSETS lineage 不一致", status_code=409)
     return P16Inputs(
         project=project,
         storyboard_artifact=storyboard_artifact,

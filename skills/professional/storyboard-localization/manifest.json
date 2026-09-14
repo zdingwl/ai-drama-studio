@@ -1,0 +1,23 @@
+{
+  "id": "storyboard-localization",
+  "name": "Replica Storyboard Localization",
+  "version": "1.0.0",
+  "category": "target",
+  "description": "Localize accepted source shot facts directly into a Chinese-reviewable target storyboard with target-language dialogue and Chinese dialogue translations.",
+  "when_to_use": ["REPLICA has a CURRENT SOURCE_VIDEO_SNAPSHOT and needs the target-localized shot table"],
+  "when_not_to_use": ["Source snapshot is missing or stale", "The request is only script translation without shot structure"],
+  "required_inputs": ["SOURCE_VIDEO_SNAPSHOT"],
+  "optional_inputs": [],
+  "readable_artifacts": ["SOURCE_VIDEO_SNAPSHOT"],
+  "required_capabilities": ["STORYBOARD_LOCALIZATION"],
+  "manual_path": "storyboard-localization/SKILL.md",
+  "steps": [
+    {"id":"read_source_storyboard","phase":"本土化分镜","title":"读取正式原片分镜","description":"Read frozen shot facts, stable identities and canonical dialogue from the current source snapshot.","capabilities":["STORYBOARD_LOCALIZATION"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":[]},
+    {"id":"localize_storyboard","phase":"本土化分镜","title":"逐镜本土化","description":"Produce Chinese visual/camera descriptions, target-language dialogue and Chinese dialogue translations without changing authoritative shot timing.","capabilities":["STORYBOARD_LOCALIZATION"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":["TARGET_STORYBOARD"]}
+  ],
+  "fact_levels": ["FROZEN_SOURCE_SHOT", "TARGET_LOCALIZED_STORYBOARD"],
+  "provider_rules": ["Exact-cover all source shots and canonical dialogue IDs", "Visual and camera review descriptions must be Simplified Chinese", "Spoken dialogue must be in target_language and each line must include a Simplified Chinese review translation", "Do not change shot order, start/end/duration or source camera facts", "Do not generate asset images or video prompts"],
+  "output_contracts": ["TARGET_STORYBOARD"],
+  "completion_criteria": ["Every source shot is represented exactly once", "Every canonical dialogue line is localized exactly once", "Chinese review text is present", "Target entity IDs are server-owned and traceable"],
+  "failure_policy": ["Missing/stale snapshot fails closed", "Missing/duplicate shot or dialogue coverage fails the whole candidate", "Provider cannot publish CURRENT without explicit review"]
+}

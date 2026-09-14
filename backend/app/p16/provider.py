@@ -1,4 +1,5 @@
 import math
+import hashlib
 import secrets
 import time
 from dataclasses import dataclass
@@ -376,11 +377,14 @@ class LocalSGLangH3Provider:
 
 class LocalComfyUIH3Provider:
     provider_name = "local-comfyui"
+    ref2va_unet_name = "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
     _required_nodes = {
         "UNETLoader",
         "CLIPLoader",
         "VAELoader",
         "MiniMaxH3ImageToVideo",
+        "MiniMaxH3ReferenceToVideo",
+        "LoadImage",
         "RandomNoise",
         "BasicGuider",
         "KSamplerSelect",
@@ -403,11 +407,12 @@ class LocalComfyUIH3Provider:
             "model": self.model_name,
             "base_url": self.config.base_url,
             "unet_name": self.config.unet_name,
+            "ref2va_unet_name": self.ref2va_unet_name,
             "clip_name": self.config.clip_name,
             "video_vae_name": self.config.video_vae_name,
             "audio_vae_name": self.config.audio_vae_name,
-            "model_variant": "fl2va",
-            "task": "t2va",
+            "model_variant": "ref2va-primary/fl2va-legacy",
+            "task": "multi-reference-native-av",
             "short_edge": self.config.short_edge,
             "num_inference_steps": self.config.num_inference_steps,
             "sampler": "res_multistep",
@@ -509,6 +514,7 @@ class LocalComfyUIH3Provider:
 
             required_models = (
                 ("UNETLoader", "unet_name", self.config.unet_name),
+                ("UNETLoader", "unet_name", self.ref2va_unet_name),
                 ("CLIPLoader", "clip_name", self.config.clip_name),
                 ("VAELoader", "vae_name", self.config.video_vae_name),
                 ("VAELoader", "vae_name", self.config.audio_vae_name),
@@ -525,7 +531,7 @@ class LocalComfyUIH3Provider:
                 )
             return self._readiness(
                 H3RuntimeReadinessState.READY,
-                f"ComfyUI MiniMax-H3 已就绪（{system.get('comfyui_version')}，FL2VA 本地音画生成）。",
+                f"ComfyUI MiniMax-H3 已就绪（{system.get('comfyui_version')}，Ref2VA 多参考音画生成可用）。",
             )
         finally:
             if owns_client:
@@ -572,24 +578,77 @@ class LocalComfyUIH3Provider:
         frames = max(5, round(duration_seconds * 24))
         return frames + (5 - (frames % 17)) % 17
 
-    def workflow_payload(self, segment: GenerationSegment, *, seed: int | None = None) -> dict:
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _managed_reference_path(self, condition) -> Path:
+        root = self.config_settings_artifact_root.resolve()
+        path = (root / condition.storage_relpath).resolve()
+        if root not in path.parents or not path.is_file():
+            raise AppError("P16_REFERENCE_MEDIA_NOT_FOUND", "H3 正式参考图不存在", status_code=409, details={"reference_id": condition.reference_id})
+        if self._file_sha256(path) != condition.reference_sha256:
+            raise AppError("P16_REFERENCE_MEDIA_HASH_MISMATCH", "H3 正式参考图 hash 与 Prompt Skill 合同不一致", status_code=409, details={"reference_id": condition.reference_id})
+        return path
+
+    @property
+    def config_settings_artifact_root(self) -> Path:
+        from app.core.config import get_settings
+
+        return get_settings().artifact_root
+
+    def _upload_reference_images(self, client: httpx.Client, segment: GenerationSegment) -> list[str]:
+        uploaded: list[str] = []
+        for condition in segment.reference_conditions:
+            path = self._managed_reference_path(condition)
+            subfolder = f"ai_drama_studio/h3_refs/{condition.reference_sha256[:16]}"
+            with path.open("rb") as handle:
+                try:
+                    response = client.post(
+                        f"{self.config.base_url}/upload/image",
+                        data={"type": "input", "overwrite": "true", "subfolder": subfolder},
+                        files={"image": (path.name, handle, "image/png")},
+                        timeout=httpx.Timeout(300.0),
+                    )
+                except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                    raise AppError("P16_REFERENCE_UPLOAD_FAILED", "上传 H3 正式参考图到 ComfyUI 失败", status_code=503) from exc
+            body = self._request_json(response, code="P16_REFERENCE_UPLOAD_FAILED", action="upload reference image")
+            name = str(body.get("name") or "").strip()
+            actual_subfolder = str(body.get("subfolder") or subfolder).strip("/\\")
+            if not name:
+                raise AppError("P16_REFERENCE_UPLOAD_FAILED", "ComfyUI 参考图上传响应缺少 name", status_code=502)
+            uploaded.append(f"{actual_subfolder}/{name}" if actual_subfolder else name)
+        if len(uploaded) != len(segment.reference_conditions):
+            raise AppError("P16_REFERENCE_UPLOAD_FAILED", "H3 reference slot 上传覆盖不完整", status_code=502)
+        return uploaded
+
+    def workflow_payload(self, segment: GenerationSegment, *, seed: int | None = None, uploaded_images: list[str] | None = None) -> dict:
         duration = self.requested_duration(segment)
         width, height = self._dimensions(segment.output_ratio)
         prompt = segment.generation_prompt
-        if segment.negative_prompt.strip():
+        if not segment.prompt_skill_id and segment.negative_prompt.strip():
             prompt = f"{prompt}\nAvoid: {segment.negative_prompt.strip()}"
         noise_seed = seed if seed is not None else secrets.randbelow((1 << 63) - 1)
         filename_prefix = f"{self.config.output_prefix}/{segment.episode_id}-{segment.segment_number}-{uuid4().hex[:10]}"
+        reference_mode = bool(segment.reference_conditions)
+        uploaded = uploaded_images or []
+        if reference_mode and len(uploaded) != len(segment.reference_conditions):
+            raise AppError("P16_REFERENCE_SLOTS_INVALID", "H3 Prompt Skill reference slots 与 Runtime 上传图片数量不一致", status_code=409)
         graph = {
-            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": self.config.unet_name, "weight_dtype": "default"}},
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": self.ref2va_unet_name if reference_mode else self.config.unet_name, "weight_dtype": "default"}},
             "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": self.config.clip_name, "type": "minimax", "device": "default"}},
             "3": {"class_type": "VAELoader", "inputs": {"vae_name": self.config.video_vae_name}},
             "4": {"class_type": "VAELoader", "inputs": {"vae_name": self.config.audio_vae_name}},
             "5": {
-                "class_type": "MiniMaxH3ImageToVideo",
+                "class_type": "MiniMaxH3ReferenceToVideo" if reference_mode else "MiniMaxH3ImageToVideo",
                 "inputs": {
                     "clip": ["2", 0],
                     "vae": ["3", 0],
+                    **({"audio_vae": ["4", 0], "ref_image_size": "match"} if reference_mode else {}),
                     "prompt": prompt,
                     "width": width,
                     "height": height,
@@ -618,6 +677,10 @@ class LocalComfyUIH3Provider:
             "13": {"class_type": "CreateVideo", "inputs": {"images": ["11", 0], "audio": ["12", 0], "fps": 24.0, "bit_depth": 8}},
             "14": {"class_type": "SaveVideo", "inputs": {"video": ["13", 0], "filename_prefix": filename_prefix, "format": "mp4"}},
         }
+        for index, image_name in enumerate(uploaded, 1):
+            node_id = str(14 + index)
+            graph[node_id] = {"class_type": "LoadImage", "inputs": {"image": image_name}}
+            graph["5"]["inputs"][f"ref_image_{index}"] = [node_id, 0]
         return {"prompt": graph, "client_id": f"ai-drama-studio-{uuid4()}"}
 
     def _request_json(self, response: httpx.Response, *, code: str, action: str) -> dict:
@@ -637,7 +700,8 @@ class LocalComfyUIH3Provider:
         return body
 
     def _create(self, client: httpx.Client, segment: GenerationSegment) -> tuple[str, int]:
-        payload = self.workflow_payload(segment)
+        uploaded_images = self._upload_reference_images(client, segment) if segment.reference_conditions else []
+        payload = self.workflow_payload(segment, uploaded_images=uploaded_images)
         try:
             response = client.post(f"{self.config.base_url}/prompt", json=payload)
         except (httpx.ConnectError, httpx.TimeoutException) as exc:

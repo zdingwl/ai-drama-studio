@@ -9,6 +9,7 @@ from app.api.routes.p16 import router as p16_router
 from app.api.routes.p17 import router as p17_router
 from app.api.routes.preprocessing import router as preprocessing_router
 from app.api.routes.projects import router as projects_router
+from app.api.routes.replica_pipeline import router as replica_pipeline_router
 from app.api.routes.shot_breakdown import router as shot_breakdown_router
 from app.api.routes.skills import router as skills_router
 from app.api.routes.source_analysis import router as source_analysis_router
@@ -24,6 +25,7 @@ from app.api.routes.understanding import router as understanding_router
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(projects_router)
+api_router.include_router(replica_pipeline_router)
 api_router.include_router(skills_router)
 api_router.include_router(sources_router)
 api_router.include_router(preprocessing_router)

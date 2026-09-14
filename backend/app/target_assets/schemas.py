@@ -99,6 +99,7 @@ class TargetReferenceMedia(BaseModel):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     provider_job_id: str = Field(min_length=1, max_length=160)
+    storage_relpath: str | None = Field(default=None, min_length=1, max_length=1000)
 
 
 class TargetCharacterAsset(BaseModel):

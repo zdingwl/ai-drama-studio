@@ -1,0 +1,23 @@
+{
+  "id": "asset-image-generation",
+  "name": "Replica Asset Image Generation",
+  "version": "1.0.0",
+  "category": "target-assets",
+  "description": "Extract used target entities from the localized storyboard and render real managed reference images for characters, scenes and props.",
+  "when_to_use": ["CURRENT TARGET_STORYBOARD v2 exists and downstream video generation needs visual references"],
+  "when_not_to_use": ["Localized storyboard is missing or stale"],
+  "required_inputs": ["TARGET_STORYBOARD"],
+  "optional_inputs": [],
+  "readable_artifacts": ["TARGET_STORYBOARD"],
+  "required_capabilities": ["ASSET_IMAGE_GENERATION"],
+  "manual_path": "asset-image-generation/SKILL.md",
+  "steps": [
+    {"id":"extract_entities","phase":"资产图","title":"提取目标资产","description":"Collect only target characters/scenes/props actually referenced by the localized storyboard.","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]},
+    {"id":"render_reference_images","phase":"资产图","title":"生成真实资产图","description":"Render managed image files, persist SHA/dimensions and bind them to stable target assets.","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":["TARGET_ASSETS"]}
+  ],
+  "fact_levels": ["TARGET_LOCALIZED_ENTITY", "REAL_REFERENCE_MEDIA"],
+  "provider_rules": ["No text-only asset may satisfy the image contract", "Every referenced target entity must receive at least one real reference image", "Reference media must be persisted by Studio with SHA256 and dimensions", "Do not generate video prompts"],
+  "output_contracts": ["TARGET_ASSETS"],
+  "completion_criteria": ["Every referenced target entity has real reference media", "All media is managed and technically readable", "Candidate is explicitly accepted"],
+  "failure_policy": ["Any required entity without a generated image blocks publication", "Runtime failure does not replace an existing CURRENT asset revision"]
+}

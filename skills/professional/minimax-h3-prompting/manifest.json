@@ -1,0 +1,23 @@
+{
+  "id": "minimax-h3-prompting",
+  "name": "MiniMax H3 Multi-reference AV Prompting",
+  "version": "1.0.0",
+  "category": "generation-prompting",
+  "description": "Compile localized storyboard shots and approved asset images into MiniMax H3 native multi-reference synchronized audio-video prompts and reference slots.",
+  "when_to_use": ["MiniMax H3 is the selected video model and CURRENT TARGET_STORYBOARD + TARGET_ASSETS v2 are available"],
+  "when_not_to_use": ["A different video model is selected", "Required shot assets have no approved reference media"],
+  "required_inputs": ["TARGET_STORYBOARD", "TARGET_ASSETS"],
+  "optional_inputs": [],
+  "readable_artifacts": ["TARGET_STORYBOARD", "TARGET_ASSETS"],
+  "required_capabilities": ["MODEL_PROMPTING"],
+  "manual_path": "minimax-h3-prompting/SKILL.md",
+  "steps": [
+    {"id":"bind_h3_references","phase":"H3提示词","title":"绑定多参考资产","description":"Select deterministic Picture slots from approved character/scene/prop reference images used by each shot.","capabilities":["MODEL_PROMPTING"],"requires":["TARGET_STORYBOARD","TARGET_ASSETS"],"produces":[]},
+    {"id":"compile_h3_prompt","phase":"H3提示词","title":"编译 H3 音画提示词","description":"Compile model-native execution prompt, target-language speech, camera/action, ambience/SFX, negative constraints, duration and reference conditions.","capabilities":["MODEL_PROMPTING"],"requires":["TARGET_STORYBOARD","TARGET_ASSETS"],"produces":["GENERATION_SEGMENTS"]}
+  ],
+  "fact_levels": ["TARGET_LOCALIZED_STORYBOARD", "APPROVED_REFERENCE_MEDIA", "MODEL_NATIVE_GENERATION_PROMPT"],
+  "provider_rules": ["Use <Picture 1>..<Picture N> exactly in reference connection order", "Use at most 9 reference images per segment", "Prefer current scene, then speaking/visible characters, then important props", "Actors speak only target-language dialogue, verbatim and once", "Chinese dialogue translations are review-only and must not be spoken", "Request native synchronized picture and audio with natural ambience/SFX", "Do not invent assets or references", "Runtime executes this contract and must not rewrite it"],
+  "output_contracts": ["GENERATION_SEGMENTS"],
+  "completion_criteria": ["Every segment has execution prompt and bounded duration/ratio", "Reference slots resolve to real approved media", "Dialogue/reference coverage is deterministic", "Skill id/version is persisted in provenance"],
+  "failure_policy": ["Missing reference media for a referenced target entity fails closed", "More than 9 required image references must be deterministically prioritized; never silently substitute another identity", "Prompt compilation never calls video generation"]
+}

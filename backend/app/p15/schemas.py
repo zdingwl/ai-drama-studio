@@ -37,6 +37,7 @@ class StoryboardDialogueRef(BaseModel):
     delivery: DialogueDelivery
     target_character_id: str | None = None
     final_target_dialogue: str
+    target_dialogue_zh: str | None = None
     target_audio_clip_id: str | None = None
     media_url: str | None = None
     planned_speech_start_us: int = Field(ge=0)
@@ -87,6 +88,18 @@ class ReplicaTargetStoryboardContent(BaseModel):
     shots: list[TargetStoryboardShot] = Field(min_length=1)
 
 
+class H3ReferenceCondition(BaseModel):
+    picture_index: int = Field(ge=1, le=9)
+    target_asset_id: str
+    target_entity_id: str
+    asset_type: str
+    reference_id: str
+    reference_role: str
+    reference_uri: str
+    reference_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    storage_relpath: str = Field(min_length=1, max_length=1000)
+
+
 class GenerationSegment(BaseModel):
     generation_segment_id: str
     episode_id: str
@@ -101,6 +114,12 @@ class GenerationSegment(BaseModel):
     continuation_count: int = Field(ge=1)
     generation_prompt: str = Field(min_length=1, max_length=12000)
     negative_prompt: str = Field(default="", max_length=6000)
+    prompt_skill_id: str | None = None
+    prompt_skill_version: str | None = None
+    prompt_contract: str | None = None
+    model_id: str | None = None
+    review_prompt_zh: str | None = None
+    reference_conditions: list[H3ReferenceCondition] = Field(default_factory=list, max_length=9)
     target_asset_refs: list[TargetAssetRef] = Field(default_factory=list)
     audio_generation_mode: GenerationAudioMode = GenerationAudioMode.NATIVE_AUDIO_VIDEO
     dialogue_refs: list[StoryboardDialogueRef] = Field(default_factory=list)
@@ -114,6 +133,9 @@ class GenerationSegment(BaseModel):
             raise ValueError("generation segment timing is invalid")
         if self.continuation_index > self.continuation_count:
             raise ValueError("continuation_index cannot exceed continuation_count")
+        picture_indices = [item.picture_index for item in self.reference_conditions]
+        if picture_indices and picture_indices != list(range(1, len(picture_indices) + 1)):
+            raise ValueError("H3 reference picture slots must be contiguous and ordered from 1")
         return self
 
 
