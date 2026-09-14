@@ -101,20 +101,28 @@ H3 Skill 每个 Generation Segment 至少输出：
 
 中文对白翻译只用于审核 UI，不得进入“演员说出”的文本。
 
-## 6. H3 Ref2VA 执行合同
+## 6. H3 Ref2VA 音画同步执行合同
 
 当前 Windows 本地 Runtime：ComfyUI `http://127.0.0.1:8188`。
 
-已确认本机存在 MiniMax H3 原生节点和 FL2VA / Ref2VA 权重。新主链只要 Shot 有正式资产图，就优先使用 `MiniMaxH3ReferenceToVideo` + Ref2VA。Runtime 的职责仅为：
+已确认本机存在 MiniMax H3 原生节点和 FL2VA / Ref2VA 权重。新主链只要 Shot 有正式资产图，就优先使用 `MiniMaxH3ReferenceToVideo` + Ref2VA。正式 Generation Segment 必须使用 `NATIVE_AUDIO_VIDEO`，并且 `requires_lip_sync = false`：对白、环境声和音效由 MiniMax H3 在视频生成阶段原生同步生成，不先生成 IndexTTS 音频，也不再通过独立 Lip Sync 把声音贴回视频。
+
+Runtime 的职责仅为：
 
 1. 把 Studio 管理的正式资产图上传到 ComfyUI input；
 2. 按 Prompt Skill 已确定的 Picture slot 连接 `ref_image_1..N`；
-3. 执行模型；
-4. 下载 MP4；
+3. 把目标语言对白、环境声、音效规则与镜头动作作为 H3 原生音画提示词执行；
+4. 执行模型并直接得到带同步音轨的 MP4；
 5. SHA256 / ffprobe / Technical QC；
 6. 进入人工选片。
 
-Runtime 不得自行重写 prompt、猜 reference asset 或改变对白。
+Runtime 不得自行重写 prompt、猜 reference asset、改对白，或把旧 P14 `TARGET_AUDIO / TIMING` 静默插回普通主链。
+
+### 默认启动器边界
+
+`start.cmd` / `start.sh` 的普通 Studio 启动器只启动 Web 产品所需的 backend + frontend，不再自动启动、等待或依赖 IndexTTS 2.5。IndexTTS 的历史脚本与代码可以继续保留，用于旧 P14 数据回看、兼容测试或未来显式高级配音模式，但它不是 Replica 五步主链运行时，也不得因为旧兼容模块存在而占用普通启动时的 GPU / 内存。
+
+如果旧版本启动器遗留了本仓库拥有的 IndexTTS 进程，生命周期清理器可以在升级后的首次启动时清掉该 orphan；清理历史进程不等于新主链启动或使用 IndexTTS。
 
 ## 7. Capability 与验收状态
 
@@ -135,4 +143,5 @@ QC_SELECTION             = PLANNED
 - P11 Target Bible / P12 Target Script / P14 TTS + Timing / 旧 P15 typed revision 保留可读；
 - 旧数据不得迁移成新 v2 数据后声称已经验收；
 - 新普通主链不得静默调用这些旧阶段作为硬输入；
+- IndexTTS 仅保留为显式历史兼容 / 可选高级声音能力，默认统一启动器不得自动拉起；
 - 高级独立配音可以在后续作为可选 overlay 重新接入，但不得改变本五步主链。
