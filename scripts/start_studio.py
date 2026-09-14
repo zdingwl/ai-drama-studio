@@ -4,15 +4,13 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-import shlex
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
 from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 import webbrowser
 
 from studio_windows_lifecycle import WindowsStudioLifetimeGuard, cleanup_repo_services
@@ -21,21 +19,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = REPO_ROOT / "backend"
 FRONTEND_DIR = REPO_ROOT / "frontend"
 IS_WINDOWS = os.name == "nt"
-TTS_MODELS_URL = "http://127.0.0.1:8092/v1/models"
 BACKEND_HEALTH_URL = "http://127.0.0.1:8000/api/v3/health"
 FRONTEND_URL = "http://127.0.0.1:5173"
-MODEL_ID = "IndexTeam/IndexTTS-2.5"
 LAUNCHER_PID_FILE = REPO_ROOT / ".runtime" / "studio-launcher.pid"
-
-
-def _http_json_text(url: str, timeout: float = 1.5) -> str | None:
-    try:
-        with urlopen(Request(url, headers={"Accept": "application/json"}), timeout=timeout) as response:
-            if response.status >= 400:
-                return None
-            return response.read().decode("utf-8", errors="replace")
-    except (OSError, URLError, TimeoutError):
-        return None
 
 
 def _http_ok(url: str, timeout: float = 1.5) -> bool:
@@ -44,19 +30,6 @@ def _http_ok(url: str, timeout: float = 1.5) -> bool:
             return response.status < 400
     except (OSError, URLError, TimeoutError):
         return False
-
-
-def _port_open(port: int) -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-            return True
-    except OSError:
-        return False
-
-
-def _tts_ready() -> bool:
-    text = _http_json_text(TTS_MODELS_URL)
-    return bool(text and MODEL_ID in text)
 
 
 def _sha256(path: Path) -> str:
@@ -117,50 +90,12 @@ def _popen(args: list[str], *, cwd: Path | None = None) -> subprocess.Popen:
     if IS_WINDOWS:
         # The launcher itself is already inside a KILL_ON_JOB_CLOSE Job Object.
         # Descendants inherit that job automatically, so even closing the console
-        # window kills the full backend/frontend/TTS process tree.
+        # window kills the full backend/frontend process tree.
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
     print("+", " ".join(args))
     return subprocess.Popen(args, **kwargs)
-
-
-def _cleanup_stale_tts() -> None:
-    # Windows listeners are verified and cleared centrally before any service
-    # starts. Never run a broad command-line kill after that ownership check.
-    if IS_WINDOWS or _tts_ready() or not _port_open(8092):
-        return
-    print("[Studio] port 8092 has a non-ready process; attempting one managed IndexTTS cleanup...")
-    pattern = "vllm serve .*IndexTTS-2.5.*--port 8092"
-    subprocess.run(["bash", "-lc", f"pkill -f {shlex.quote(pattern)} || true"], check=False)
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline and _port_open(8092):
-        time.sleep(0.25)
-
-
-def _start_tts() -> tuple[subprocess.Popen | None, bool]:
-    if _tts_ready():
-        if IS_WINDOWS:
-            raise RuntimeError(
-                "Port 8092 became active after Windows lifecycle cleanup. "
-                "Studio will not reuse an unowned IndexTTS process because it could survive launcher exit."
-            )
-        print("[Studio] IndexTTS-2.5 already READY; reusing it.")
-        return None, False
-    _cleanup_stale_tts()
-    if _port_open(8092):
-        raise RuntimeError("Port 8092 is occupied by an unknown/non-ready process. Stop that process and run the unified launcher again.")
-
-    if IS_WINDOWS:
-        native = REPO_ROOT / "scripts" / "start_indextts25_native_windows.ps1"
-        print("[Studio] starting managed IndexTTS-2.5 natively on Windows (WSL is not required)...")
-        return _popen(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(native)],
-            cwd=REPO_ROOT,
-        ), True
-
-    print("[Studio] starting managed IndexTTS-2.5 vLLM-Omni sidecar...")
-    return _popen([str(REPO_ROOT / "scripts" / "start_indextts25.sh")], cwd=REPO_ROOT), True
 
 
 def _start_backend(python: Path) -> tuple[subprocess.Popen | None, bool]:
@@ -235,15 +170,15 @@ def main() -> int:
             # Older launcher versions could leave healthy-looking orphan
             # services behind. A new managed session must not reuse them,
             # otherwise closing this launcher could not guarantee cleanup.
-            # Only processes whose executable/command line resolves to this
-            # checkout are removed; unknown port owners fail closed.
+            # This cleanup may also remove a legacy IndexTTS orphan from an old
+            # launcher, but the current five-step product launcher never starts
+            # or depends on IndexTTS. MiniMax H3 generates synchronized audio and
+            # video natively during step 5.
             cleanup_repo_services(REPO_ROOT)
 
         python = _backend_python()
         npm = _ensure_frontend()
 
-        tts, owned_tts = _start_tts()
-        processes.append(("IndexTTS-2.5", tts, owned_tts))
         backend, owned_backend = _start_backend(python)
         processes.append(("backend", backend, owned_backend))
         frontend, owned_frontend = _start_frontend(npm)
@@ -262,12 +197,9 @@ def main() -> int:
             raise RuntimeError("Backend/frontend did not become ready within 90 seconds.")
 
         print("[Studio] UI READY: http://127.0.0.1:5173")
-        if _tts_ready():
-            print("[Studio] IndexTTS-2.5 READY")
-        else:
-            print("[Studio] IndexTTS-2.5 is preparing in the same launcher; first run may install its isolated runtime and download a large model.")
+        print("[Studio] Replica audio/video mode: MiniMax H3 native synchronized audio + video; IndexTTS is not started.")
         if IS_WINDOWS:
-            print("[Studio] Windows lifecycle guard ACTIVE: closing this launcher will stop backend, frontend and IndexTTS.")
+            print("[Studio] Windows lifecycle guard ACTIVE: closing this launcher will stop backend and frontend.")
         if os.getenv("AI_DRAMA_NO_BROWSER", "0") != "1":
             webbrowser.open(FRONTEND_URL)
 
