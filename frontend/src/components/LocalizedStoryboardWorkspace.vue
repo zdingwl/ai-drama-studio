@@ -45,13 +45,13 @@ const taskStatusText: Record<TaskStatus, string> = {
 const taskStageText = computed(() => {
   const task = localizedTask.value
   if (!task) return ''
-  if (task.status === 'queued') return '任务已进入队列，等待本土化模型开始执行。'
+  if (task.status === 'queued') return '任务已进入队列，等待火山引擎 Doubao 开始执行。'
   if (task.status === 'failed') return task.last_error || '本土化分镜生成失败，请检查任务错误后重试。'
   if (task.status === 'cancelled') return '本土化分镜任务已取消。'
   if (task.status === 'interrupted') return task.last_error || '本土化分镜任务已中断。'
   if (task.progress_percent >= 95) return '正在保存候选分镜并完成一致性检查。'
-  if (task.progress_percent >= 70) return '模型结果已返回，正在绑定人物、场景、道具并组装正式候选分镜。'
-  return '正在调用本土化模型，逐镜改写中文画面说明、目标语言对白和中文翻译。'
+  if (task.progress_percent >= 70) return '火山引擎结果已返回，正在绑定人物、场景、道具并组装正式候选分镜。'
+  return '正在调用火山引擎 Doubao，逐镜改写中文画面说明、目标语言对白和中文翻译。'
 })
 
 const generateButtonText = computed(() => {
