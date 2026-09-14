@@ -116,8 +116,8 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     assert localized_detail["required_inputs"] == ["SOURCE_VIDEO_SNAPSHOT"]
     assert localized_detail["output_contracts"] == ["TARGET_STORYBOARD"]
     localized_rules = "\n".join(localized_detail["provider_rules"])
-    assert "简体中文" in localized_rules
-    assert "target_dialogue_zh" in localized_rules
+    assert "Simplified Chinese" in localized_rules
+    assert "review translation" in localized_rules
 
     assets = client.get("/api/v3/skills/professional/asset-image-generation")
     assert assets.status_code == 200
@@ -134,7 +134,7 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     assert h3_detail["output_contracts"] == ["GENERATION_SEGMENTS"]
     h3_rules = "\n".join(h3_detail["provider_rules"])
     assert "<Picture" in h3_rules
-    assert "target_dialogue_zh" in h3_rules
+    assert "Chinese dialogue translations" in h3_rules
 
 
 def test_missing_professional_skill_returns_404(client: TestClient) -> None:
