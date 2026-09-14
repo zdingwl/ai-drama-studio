@@ -24,7 +24,7 @@ EXPECTED_SKILLS = {
     "SCRIPT_LOCALIZATION": "project.script_localization",
 }
 EXPECTED_SKILL_VERSIONS = {
-    "REPLICA": "1.5.0",
+    "REPLICA": "1.7.0",
     "REDRAW": "1.0.0",
     "TRANSLATION": "1.0.0",
     "NOVEL_TO_DRAMA": "1.0.0",
@@ -98,16 +98,31 @@ def test_plan_must_be_explicitly_compiled_then_get_is_read_only(client: TestClie
 
     plan = _compile(client, project["id"])
     assert plan["skill_id"] == "project.replica"
-    assert plan["skill_version"] == "1.5.0"
+    assert plan["skill_version"] == "1.7.0"
     assert plan["revision"] == 1
     assert len(plan["input_fingerprint"]) == 64
-    assert plan["steps"][0]["id"] == "source_input"
-    assert plan["steps"][0]["status"] == "READY"
-    assert plan["steps"][1]["status"] == "BLOCKED_DEPENDENCY"
-    step_ids = {step["id"] for step in plan["steps"]}
-    assert "target_audio" in step_ids
-    assert "dialogue_timing" in step_ids
-    assert "voice_timing" not in step_ids
+    assert [step["id"] for step in plan["steps"]] == [
+        "source_storyboard",
+        "localized_storyboard",
+        "asset_images",
+        "model_prompting",
+        "generate",
+    ]
+
+    steps = {step["id"]: step for step in plan["steps"]}
+    assert steps["source_storyboard"]["status"] == "BLOCKED_DEPENDENCY"
+    assert steps["source_storyboard"]["missing_artifacts"] == ["SOURCE_VIDEO"]
+    assert steps["localized_storyboard"]["requires"] == ["SOURCE_VIDEO_SNAPSHOT"]
+    assert steps["asset_images"]["requires"] == ["TARGET_STORYBOARD"]
+    assert steps["model_prompting"]["requires"] == ["TARGET_STORYBOARD", "TARGET_ASSETS"]
+    assert steps["generate"]["requires"] == ["TARGET_STORYBOARD", "TARGET_ASSETS", "GENERATION_SEGMENTS"]
+    assert all(step["status"] == "BLOCKED_DEPENDENCY" for step in plan["steps"])
+
+    step_ids = set(steps)
+    assert "target_bible" not in step_ids
+    assert "target_script" not in step_ids
+    assert "target_audio" not in step_ids
+    assert "dialogue_timing" not in step_ids
 
     persisted = client.get(f"/api/v3/projects/{project['id']}/plan")
     assert persisted.status_code == 200
