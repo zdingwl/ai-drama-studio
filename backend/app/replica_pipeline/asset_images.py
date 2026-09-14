@@ -21,6 +21,7 @@ from app.core.errors import AppError
 from app.core.time import utc_now
 from app.projects.enums import ProjectType
 from app.projects.service import get_project
+from app.replica_pipeline.asset_prompting import DoubaoFluxAssetPromptCompiler
 from app.replica_pipeline.models import ReplicaAssetImageCandidate, ReplicaAssetImageRevision, ReplicaLocalizedStoryboardRevision
 from app.replica_pipeline.schemas import (
     ASSET_IMAGES_SCHEMA_VERSION,
@@ -247,9 +248,11 @@ def _entity_specs(content: ReplicaLocalizedStoryboardContent, visual_style: str)
 def create_asset_images_task(db: Session, *, project_id: str, idempotency_key: str) -> Task:
     project = get_project(db, project_id)
     if project.project_type != ProjectType.REPLICA: raise AppError("ASSET_IMAGES_PROJECT_UNSUPPORTED", "当前五步主生产链只正式支持 REPLICA", status_code=422)
-    storyboard_artifact, content = _load_storyboard(db, project_id)
+    storyboard_artifact, _content = _load_storyboard(db, project_id)
+    settings = get_settings()
     runtime = ComfyUIFluxRuntime(); runtime.assert_ready()
-    fingerprint = _sha({"storyboard": storyboard_artifact.input_fingerprint, "visual_style": project.visual_style, "runtime": runtime.profile(), "skill": get_professional_skill(SKILL_ID).version})
+    prompt_compiler = DoubaoFluxAssetPromptCompiler(settings)
+    fingerprint = _sha({"storyboard": storyboard_artifact.input_fingerprint, "visual_style": project.visual_style, "runtime": runtime.profile(), "prompt_compiler": prompt_compiler.profile(), "skill": get_professional_skill(SKILL_ID).version})
     return create_task_from_command(db, project_id=project_id, idempotency_key=idempotency_key, payload=TaskCommandCreate(task_type=TASK_TYPE, task_name="提取并生成资产图", input_fingerprint=fingerprint, input_artifact_ids=[storyboard_artifact.id], max_attempts=3))
 
 
@@ -259,19 +262,70 @@ def _generation_sequence(db: Session, project_id: str, storyboard_artifact_id: s
 
 
 def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[ReplicaAssetImagesContent, AssetImageProvenance]:
+    settings = get_settings()
     runtime = ComfyUIFluxRuntime()
+    prompt_compiler = DoubaoFluxAssetPromptCompiler(settings)
     with context.session_factory() as db:
         project = get_project(db, task.project_id)
         storyboard_artifact, storyboard = _load_storyboard(db, task.project_id)
         sequence = _generation_sequence(db, task.project_id, storyboard_artifact.id)
-    specs = _entity_specs(storyboard, project.visual_style or "写实电影感")
-    if not specs: raise AppError("ASSET_IMAGES_EMPTY", "本土化分镜没有可提取的人物、场景或道具", status_code=409)
+    raw_specs = _entity_specs(storyboard, project.visual_style or "写实电影感")
+    if not raw_specs: raise AppError("ASSET_IMAGES_EMPTY", "本土化分镜没有可提取的人物、场景或道具", status_code=409)
+
+    visual_style = project.visual_style or "写实电影感"
+    with context.session_factory() as db:
+        prompt_payload = {
+            "target_storyboard_artifact_id": storyboard_artifact.id,
+            "target_region": storyboard.target_region,
+            "visual_style": visual_style,
+            "entities": [
+                {
+                    "target_entity_id": spec["entity_id"],
+                    "asset_type": spec["asset_type"].value,
+                    "display_name": spec["display_name"],
+                    "review_facts_sha256": _sha(spec["review_zh"]),
+                }
+                for spec in raw_specs
+            ],
+            "prompt_compiler": prompt_compiler.profile(),
+        }
+
+        def _compile_remote(job):
+            compiled = prompt_compiler.compile(
+                specs=raw_specs,
+                target_region=storyboard.target_region,
+                visual_style=visual_style,
+            )
+            return ProviderDispatchResult(value=compiled.specs, remote_job_id=compiled.remote_job_id)
+
+        prompt_job, prompt_dispatched = dispatch_provider_call(
+            db,
+            task_id=task.id,
+            provider=prompt_compiler.provider_name,
+            model=prompt_compiler.model_name,
+            capability=Capability.ASSET_IMAGE_GENERATION,
+            payload=prompt_payload,
+            artifact_id=storyboard_artifact.id,
+            remote_call=_compile_remote,
+        )
+        specs: list[dict] = prompt_dispatched.value
+
+    provider_job_ids: list[str] = [prompt_job.id]
+    context.checkpoint(
+        {
+            "stage": "FLUX_PROMPTS_COMPILED",
+            "generation_sequence": sequence,
+            "generated_assets": 0,
+            "total_assets": len(specs),
+            "provider_job_ids": provider_job_ids,
+        },
+        progress_percent=10,
+    )
     assets: list[AssetImageEntity] = []
-    provider_job_ids: list[str] = []
     for index, spec in enumerate(specs, 1):
         asset_id = _asset_id(task.project_id, spec["entity_id"])
         with context.session_factory() as db:
-            job_payload = {"target_storyboard_artifact_id": storyboard_artifact.id, "asset_id": asset_id, "target_entity_id": spec["entity_id"], "asset_type": spec["asset_type"].value, "prompt_sha256": _sha(spec["prompt"]), "runtime": runtime.profile()}
+            job_payload = {"target_storyboard_artifact_id": storyboard_artifact.id, "asset_id": asset_id, "target_entity_id": spec["entity_id"], "asset_type": spec["asset_type"].value, "prompt_sha256": _sha(spec["prompt"]), "prompt_compiler": prompt_compiler.profile(), "runtime": runtime.profile()}
             def _remote(job):
                 generated = runtime.generate(project_id=task.project_id, task_id=task.id, asset_id=asset_id, prompt=spec["prompt"])
                 return ProviderDispatchResult(value=generated, remote_job_id=generated.remote_job_id)
@@ -282,9 +336,9 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
         uri = f"/api/v3/projects/{task.project_id}/asset-images/media/{reference_id}"
         role = ReferenceMediaRole.FULL_BODY if spec["asset_type"] == TargetAssetType.CHARACTER else ReferenceMediaRole.LAYOUT if spec["asset_type"] == TargetAssetType.SCENE else ReferenceMediaRole.DETAIL
         media = TargetReferenceMedia(reference_id=reference_id, role=role, uri=uri, mime_type=generated.mime_type, sha256=generated.sha256, width=generated.width, height=generated.height, provider_job_id=job.id, storage_relpath=generated.storage_relpath)
-        assets.append(AssetImageEntity(target_asset_id=asset_id, target_asset_revision=1, asset_type=spec["asset_type"], target_entity_id=spec["entity_id"], display_name=spec["display_name"], review_description_zh=spec["review_zh"], image_prompt=spec["prompt"], negative_prompt="文字，水印，标志错误，身份漂移，多余人物，多余肢体，低清晰度", reference_media=[media]))
-        context.checkpoint({"generation_sequence": sequence, "generated_assets": index, "total_assets": len(specs), "provider_job_ids": provider_job_ids}, progress_percent=min(95, 10 + math.floor(index / len(specs) * 85)))
-    content = ReplicaAssetImagesContent(target_storyboard_artifact_id=storyboard_artifact.id, target_language=storyboard.target_language, target_region=storyboard.target_region, visual_style=project.visual_style or "写实电影感", assets=assets)
+        assets.append(AssetImageEntity(target_asset_id=asset_id, target_asset_revision=1, asset_type=spec["asset_type"], target_entity_id=spec["entity_id"], display_name=spec["display_name"], review_description_zh=spec["review_zh"], image_prompt=spec["prompt"], negative_prompt=spec["negative_prompt"], reference_media=[media]))
+        context.checkpoint({"stage": "RENDERING_ASSET_IMAGES", "generation_sequence": sequence, "generated_assets": index, "total_assets": len(specs), "provider_job_ids": provider_job_ids}, progress_percent=min(95, 10 + math.floor(index / len(specs) * 85)))
+    content = ReplicaAssetImagesContent(target_storyboard_artifact_id=storyboard_artifact.id, target_language=storyboard.target_language, target_region=storyboard.target_region, visual_style=visual_style, assets=assets)
     skill = get_professional_skill(SKILL_ID)
     provenance = AssetImageProvenance(target_storyboard_artifact_id=storyboard_artifact.id, target_storyboard_revision=storyboard_artifact.revision, target_storyboard_fingerprint=storyboard_artifact.input_fingerprint, generation_sequence=sequence, professional_skill_version=skill.version, provider_job_ids=provider_job_ids, image_runtime=runtime.provider_name, image_model=runtime.model_name, generated_by_task_id=task.id)
     return content, provenance
