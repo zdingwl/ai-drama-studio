@@ -14,6 +14,7 @@ from app.skills.capabilities import CAPABILITY_BY_ID
 from app.skills.models import ArtifactType, Capability, CapabilityAvailability
 from app.skills.professional import get_professional_skill
 from app.skills.registry import get_root_skill
+from app.source_script.schemas import SourceScriptContent
 from app.target_bible import service
 from app.target_bible.schemas import (
     LocalizationCategory,
@@ -96,53 +97,108 @@ def _semantic(*, include_prop: bool = True) -> ReplicaTargetBibleSemantic:
     )
 
 
-def _compose_inputs() -> service.P11Inputs:
-    source_content = SimpleNamespace(
-        source_characters=SimpleNamespace(
-            entities=[SimpleNamespace(character_id="chr-src-1", display_name="徐然")]
-        ),
-        source_scenes=SimpleNamespace(
-            entities=[SimpleNamespace(scene_id="scn-src-1", display_name="徐然家客厅")],
-            assignments=[],
-        ),
-        source_props=SimpleNamespace(
-            entities=[SimpleNamespace(prop_id="prop-src-1", display_name="货到付款包裹")]
-        ),
+def _source_script_content() -> SourceScriptContent:
+    return SourceScriptContent.model_validate(
+        {
+            "episodes": [
+                {
+                    "episode_id": "ep-1",
+                    "episode_order": 1,
+                    "source_filename": "episode.mp4",
+                    "duration_us": 5_000_000,
+                    "story_summary": "邻里冲突升级。",
+                    "story_background": "现代住宅社区。",
+                    "narrative_structure": "快速建立冲突并推进反击。",
+                    "dialogue": [],
+                    "story_segments": [],
+                    "characters": [
+                        {
+                            "source_character_id": "chr-src-1",
+                            "name": "徐然",
+                            "story_function": "冲突主角",
+                            "appearance_baseline": "年轻都市男性",
+                        }
+                    ],
+                    "scenes": [
+                        {
+                            "source_scene_id": "scn-src-1",
+                            "name": "徐然家客厅",
+                            "time_ranges": [{"start_us": 0, "end_us": 5_000_000}],
+                            "spatial_relationship": "住宅客厅",
+                            "environment_details": "门、沙发与入户动线清晰",
+                        }
+                    ],
+                    "props": [
+                        {
+                            "source_prop_id": "prop-src-1",
+                            "name": "货到付款包裹",
+                            "time_ranges": [{"start_us": 0, "end_us": 5_000_000}],
+                            "appearance_state": "未拆封快递包裹",
+                            "story_function": "冲突触发物",
+                        }
+                    ],
+                    "story_skeleton": {
+                        "premise": "邻里冲突升级",
+                        "central_conflict": "拒绝代付",
+                        "beats": [
+                            {
+                                "beat_type": "HOOK",
+                                "time_range": {"start_us": 0, "end_us": 2_000_000},
+                                "summary": "邻居再次把货到付款包裹推给主角",
+                                "importance": 5,
+                            }
+                        ],
+                    },
+                    "rhythm_skeleton": {
+                        "overall_pace": "快节奏冲突",
+                        "phases": [
+                            {
+                                "time_range": {"start_us": 0, "end_us": 5_000_000},
+                                "pace": "快",
+                                "scene_rhythm": "快速进入冲突",
+                                "dialogue_reaction_rhythm": "一句一反应",
+                                "allowable_deviation_ms": 300,
+                            }
+                        ],
+                    },
+                }
+            ]
+        }
     )
+
+
+def _compose_inputs() -> service.P11Inputs:
     project = SimpleNamespace(
         target_language="en-US",
         target_region="US",
         scene_strategy=SceneStrategy.MIXED,
         visual_style=None,
     )
+    content = _source_script_content()
     return service.P11Inputs(
         project=project,
-        snapshot_artifact=SimpleNamespace(id="snapshot-1", revision=1, input_fingerprint=_SHA_A),
-        snapshot_revision=SimpleNamespace(),
-        snapshot_content=source_content,
-        preservation_locks=(),
+        source_script_artifact=SimpleNamespace(id="source-script-1", revision=1, input_fingerprint=_SHA_A),
+        source_script_revision=SimpleNamespace(),
+        source_script_content=content,
+        preservation_locks=service._build_preservation_locks(content),
     )
 
 
-def test_p11_professional_skill_root_step_and_capability_gate() -> None:
+def test_p11_professional_skill_is_script_first_but_not_replica_main_chain() -> None:
     skill = get_professional_skill("replica-target-bible")
-    assert skill.version == "1.0.0"
-    assert skill.required_inputs == (ArtifactType.SOURCE_VIDEO_SNAPSHOT,)
+    assert skill.version == "1.1.0"
+    assert skill.required_inputs == (ArtifactType.SOURCE_SCRIPT,)
     assert skill.required_capabilities == (Capability.LOCALIZATION, Capability.TARGET_BIBLE)
     assert skill.output_contracts == (ArtifactType.ADAPTATION_PLAN, ArtifactType.TARGET_BIBLE)
 
     root = get_root_skill(ProjectType.REPLICA)
-    target_bible = next(step for step in root.steps if step.id == "target_bible")
-    assert target_bible.requires == (ArtifactType.SOURCE_VIDEO_SNAPSHOT,)
-    assert target_bible.produces == (ArtifactType.ADAPTATION_PLAN, ArtifactType.TARGET_BIBLE)
-    assert Capability.TARGET_SCRIPT not in target_bible.capabilities
-    assert ArtifactType.TARGET_SCRIPT not in target_bible.produces
-    target_script = next(step for step in root.steps if step.id == "target_script")
-    assert target_script.requires == (
-        ArtifactType.SOURCE_VIDEO_SNAPSHOT,
-        ArtifactType.ADAPTATION_PLAN,
-        ArtifactType.TARGET_BIBLE,
-    )
+    assert root.version == "1.7.0"
+    assert "replica-target-bible" not in root.subskills
+    assert all(ArtifactType.ADAPTATION_PLAN not in step.produces for step in root.steps)
+    assert all(ArtifactType.TARGET_BIBLE not in step.produces for step in root.steps)
+    localized = next(step for step in root.steps if step.id == "localized_storyboard")
+    assert localized.requires == (ArtifactType.SOURCE_VIDEO_SNAPSHOT,)
+    assert localized.produces == (ArtifactType.TARGET_STORYBOARD,)
 
     assert CAPABILITY_BY_ID[Capability.SOURCE_SNAPSHOT].availability == CapabilityAvailability.AVAILABLE
     assert CAPABILITY_BY_ID[Capability.LOCALIZATION].availability == CapabilityAvailability.AVAILABLE
@@ -152,7 +208,7 @@ def test_p11_professional_skill_root_step_and_capability_gate() -> None:
     assert expected_namespace(ArtifactType.TARGET_BIBLE) == ArtifactNamespace.TARGET
 
 
-def test_p11_get_is_read_only_and_command_requires_current_snapshot(
+def test_p11_get_is_read_only_and_command_requires_current_source_script(
     client: TestClient,
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -177,10 +233,10 @@ def test_p11_get_is_read_only_and_command_requires_current_snapshot(
 
     start = client.post(
         f"/api/v3/projects/{project['id']}/commands/target-bible",
-        headers={"Idempotency-Key": "p11-no-snapshot"},
+        headers={"Idempotency-Key": "p11-no-source-script"},
     )
     assert start.status_code == 409, start.text
-    assert start.json()["error"]["code"] == "SOURCE_SNAPSHOT_REQUIRED"
+    assert start.json()["error"]["code"] == "SOURCE_SCRIPT_REQUIRED"
     assert counts() == before
 
 
@@ -220,7 +276,8 @@ def test_p11_compose_creates_distinct_target_ids_and_keeps_source_lineage() -> N
     assert bible.scenes[0].target_scene_id != "scn-src-1"
     assert bible.props[0].source_prop_id == "prop-src-1"
     assert bible.props[0].target_prop_id != "prop-src-1"
-    assert plan.source_snapshot_artifact_id == "snapshot-1"
+    assert plan.source_script_artifact_id == "source-script-1"
+    assert plan.source_snapshot_artifact_id is None
     assert {item.category for item in plan.localization_decisions} >= {
         LocalizationCategory.CHARACTER,
         LocalizationCategory.SCENE,
@@ -229,41 +286,8 @@ def test_p11_compose_creates_distinct_target_ids_and_keeps_source_lineage() -> N
     assert bible.dialogue_style_rules == ["使用自然美式口语", "称谓按邻里关系本土化"]
 
 
-def test_p11_preservation_locks_are_service_generated_from_source_structure() -> None:
-    beat = SimpleNamespace(
-        beat_type=SimpleNamespace(value="HOOK"),
-        time_range=SimpleNamespace(start_us=0, end_us=2_000_000),
-        summary="邻居再次把货到付款包裹推给主角",
-    )
-    phase = SimpleNamespace(
-        time_range=SimpleNamespace(start_us=0, end_us=5_000_000),
-        pace="快",
-        dialogue_reaction_rhythm="一句一反应",
-        allowable_deviation_ms=300,
-    )
-    episode = SimpleNamespace(
-        material_baseline=SimpleNamespace(episode_id="ep-1"),
-        story_skeleton=SimpleNamespace(premise="邻里冲突升级", central_conflict="拒绝代付", beats=[beat]),
-        rhythm_skeleton=SimpleNamespace(overall_pace="快节奏冲突", phases=[phase]),
-    )
-    content = SimpleNamespace(
-        source_bible=SimpleNamespace(episodes=[episode]),
-        source_scenes=SimpleNamespace(
-            assignments=[
-                SimpleNamespace(
-                    episode_id="ep-1",
-                    shot_number=1,
-                    start_us=0,
-                    shot_anchor_id="shot-1",
-                    scene_id="scene-1",
-                    resolution_status=SimpleNamespace(value="RESOLVED"),
-                )
-            ]
-        ),
-        source_shot_facts=SimpleNamespace(
-            episodes=[SimpleNamespace(shots=[SimpleNamespace(shot_anchor_id="shot-1")])]
-        ),
-    )
+def test_p11_preservation_locks_are_service_generated_from_source_script() -> None:
+    content = _source_script_content()
     locks = service._build_preservation_locks(content)
     categories = {item.category for item in locks}
     assert PreservationCategory.STORY_MAINLINE in categories
@@ -271,26 +295,26 @@ def test_p11_preservation_locks_are_service_generated_from_source_structure() ->
     assert PreservationCategory.STORY_BEAT_TIMING in categories
     assert PreservationCategory.SHOT_RHYTHM in categories
     assert PreservationCategory.ACTION_RHYTHM in categories
-    assert PreservationCategory.SCENE_ORDER in categories
-    assert PreservationCategory.SHOT_LOGIC in categories
+    assert PreservationCategory.SCENE_ORDER not in categories
+    assert PreservationCategory.SHOT_LOGIC not in categories
     assert locks == service._build_preservation_locks(content)
 
 
-def test_p11_snapshot_revision_recursively_stales_target_graph(
+def test_p11_source_script_revision_recursively_stales_target_graph(
     client: TestClient,
     session_factory: sessionmaker[Session],
 ) -> None:
     project = _project(client)
     with session_factory() as db:
-        snapshot_v1 = create_artifact(
+        script_v1 = create_artifact(
             db,
             project_id=project["id"],
-            artifact_type=ArtifactType.SOURCE_VIDEO_SNAPSHOT,
+            artifact_type=ArtifactType.SOURCE_SCRIPT,
             namespace=ArtifactNamespace.SOURCE,
-            label="Source Snapshot v1",
+            label="Source Script v1",
             input_fingerprint=_SHA_A,
-            skill_id="source-video-snapshot",
-            skill_version="1.0.0",
+            skill_id="source-video-understanding",
+            skill_version="1.2.0",
         )
         plan = create_artifact(
             db,
@@ -300,7 +324,7 @@ def test_p11_snapshot_revision_recursively_stales_target_graph(
             label="Target plan",
             input_fingerprint=_SHA_A,
             skill_id="replica-target-bible",
-            skill_version="1.0.0",
+            skill_version="1.1.0",
         )
         bible = create_artifact(
             db,
@@ -310,12 +334,12 @@ def test_p11_snapshot_revision_recursively_stales_target_graph(
             label="Target Bible",
             input_fingerprint=_SHA_B,
             skill_id="replica-target-bible",
-            skill_version="1.0.0",
+            skill_version="1.1.0",
         )
         create_artifact_relation(
             db,
             project_id=project["id"],
-            source_node_id=snapshot_v1.id,
+            source_node_id=script_v1.id,
             target_node_id=plan.id,
             relation_type=ArtifactRelationType.DERIVED_FROM,
         )
@@ -329,14 +353,14 @@ def test_p11_snapshot_revision_recursively_stales_target_graph(
         create_artifact(
             db,
             project_id=project["id"],
-            artifact_type=ArtifactType.SOURCE_VIDEO_SNAPSHOT,
+            artifact_type=ArtifactType.SOURCE_SCRIPT,
             namespace=ArtifactNamespace.SOURCE,
-            label="Source Snapshot v2",
+            label="Source Script v2",
             input_fingerprint="c" * 64,
-            skill_id="source-video-snapshot",
-            skill_version="1.0.0",
+            skill_id="source-video-understanding",
+            skill_version="1.2.0",
         )
-        for artifact_id in (snapshot_v1.id, plan.id, bible.id):
+        for artifact_id in (script_v1.id, plan.id, bible.id):
             artifact = db.get(ArtifactNode, artifact_id)
             assert artifact is not None
             assert artifact.validity == ArtifactValidity.STALE
@@ -357,7 +381,7 @@ def test_p11_target_config_change_stales_existing_target_world(
             label="Target plan",
             input_fingerprint=_SHA_A,
             skill_id="replica-target-bible",
-            skill_version="1.0.0",
+            skill_version="1.1.0",
         )
         bible = create_artifact(
             db,
@@ -367,7 +391,7 @@ def test_p11_target_config_change_stales_existing_target_world(
             label="Target Bible",
             input_fingerprint=_SHA_B,
             skill_id="replica-target-bible",
-            skill_version="1.0.0",
+            skill_version="1.1.0",
         )
         create_artifact_relation(
             db,
