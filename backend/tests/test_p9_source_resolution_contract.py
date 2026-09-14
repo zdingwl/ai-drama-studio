@@ -62,14 +62,20 @@ def test_p9_professional_skills_are_machine_loadable_and_preserve_boundaries() -
     assert "一一对应" in speaker_rules
 
 
-def test_replica_root_skill_exposes_p9_speaker_artifact_without_entering_p10() -> None:
+def test_replica_root_skill_keeps_p9_inside_source_storyboard_product_step() -> None:
     skill = get_root_skill(ProjectType.REPLICA)
+    assert skill.version == "1.7.0"
     assert "speaker-attribution" in skill.subskills
     assert ArtifactType.SOURCE_SPEAKERS in skill.readable_artifacts
-    source_breakdown = next(step for step in skill.steps if step.id == "source_breakdown")
-    assert ArtifactType.SOURCE_SPEAKERS in source_breakdown.produces
-    source_finalize = next(step for step in skill.steps if step.id == "source_finalize")
-    assert source_finalize.produces == (ArtifactType.SOURCE_VIDEO_SNAPSHOT,)
+    source_storyboard = next(step for step in skill.steps if step.id == "source_storyboard")
+    assert Capability.IDENTITY_RESOLUTION in source_storyboard.capabilities
+    assert Capability.SCENE_RESOLUTION in source_storyboard.capabilities
+    assert Capability.PROP_RESOLUTION in source_storyboard.capabilities
+    assert ArtifactType.SOURCE_CHARACTERS in source_storyboard.produces
+    assert ArtifactType.SOURCE_SPEAKERS in source_storyboard.produces
+    assert ArtifactType.SOURCE_SCENES in source_storyboard.produces
+    assert ArtifactType.SOURCE_PROPS in source_storyboard.produces
+    assert ArtifactType.SOURCE_VIDEO_SNAPSHOT in source_storyboard.produces
 
 
 def test_p9_artifacts_are_source_namespace_and_accepted_capabilities_are_available() -> None:
@@ -84,8 +90,6 @@ def test_p9_artifacts_are_source_namespace_and_accepted_capabilities_are_availab
     assert CAPABILITY_BY_ID[Capability.IDENTITY_RESOLUTION].availability == CapabilityAvailability.AVAILABLE
     assert CAPABILITY_BY_ID[Capability.SCENE_RESOLUTION].availability == CapabilityAvailability.AVAILABLE
     assert CAPABILITY_BY_ID[Capability.PROP_RESOLUTION].availability == CapabilityAvailability.AVAILABLE
-    # P10 has passed real product acceptance; P9's historical regression must follow the
-    # current accepted capability baseline rather than freezing the old pre-P10 state.
     assert CAPABILITY_BY_ID[Capability.SOURCE_SNAPSHOT].availability == CapabilityAvailability.AVAILABLE
 
 
