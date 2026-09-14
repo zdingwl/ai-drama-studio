@@ -117,15 +117,20 @@ def test_p10_professional_skill_and_root_contract_require_independent_speakers()
     assert "GET" in rules
     assert "Target" in rules
 
-    for project_type in (ProjectType.REPLICA, ProjectType.REDRAW):
-        root = get_root_skill(project_type)
-        assert "source-video-snapshot" in root.subskills
-        finalize = next(step for step in root.steps if step.id == "source_finalize")
-        assert set(finalize.requires) == set(P10_REQUIRED_ARTIFACT_TYPES)
-        assert ArtifactType.SOURCE_SPEAKERS in finalize.requires
-        assert finalize.produces == (ArtifactType.SOURCE_VIDEO_SNAPSHOT,)
+    replica = get_root_skill(ProjectType.REPLICA)
+    assert replica.version == "1.7.0"
+    assert "source-video-snapshot" in replica.subskills
+    source_storyboard = next(step for step in replica.steps if step.id == "source_storyboard")
+    assert Capability.SOURCE_SNAPSHOT in source_storyboard.capabilities
+    assert ArtifactType.SOURCE_SPEAKERS in source_storyboard.produces
+    assert ArtifactType.SOURCE_VIDEO_SNAPSHOT in source_storyboard.produces
 
     redraw = get_root_skill(ProjectType.REDRAW)
+    assert "source-video-snapshot" in redraw.subskills
+    finalize = next(step for step in redraw.steps if step.id == "source_finalize")
+    assert set(finalize.requires) == set(P10_REQUIRED_ARTIFACT_TYPES)
+    assert ArtifactType.SOURCE_SPEAKERS in finalize.requires
+    assert finalize.produces == (ArtifactType.SOURCE_VIDEO_SNAPSHOT,)
     source_breakdown = next(step for step in redraw.steps if step.id == "source_breakdown")
     assert ArtifactType.SOURCE_CHARACTERS in source_breakdown.produces
     assert ArtifactType.SOURCE_SPEAKERS in source_breakdown.produces
