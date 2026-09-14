@@ -8,6 +8,10 @@ Turn the accepted source storyboard into the actual working target storyboard. T
 
 `CURRENT SOURCE_VIDEO_SNAPSHOT` only, plus project target language/region settings.
 
+## Runtime provider
+
+The current Step 2 runtime uses Volcengine Ark / Doubao directly. It does **not** inherit the project's Step 1 `source_understanding_provider`; a project may use local Qwen for source understanding while storyboard localization still executes through Volcengine Ark. The current default model is `doubao-seed-2-1-pro-260628`, using the configured Ark endpoint and credentials.
+
 ## Output language contract
 
 - Visual/action/setting review prose: Simplified Chinese.
