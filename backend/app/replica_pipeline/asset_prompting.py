@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from arkruntime import Ark
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import Settings
 from app.core.errors import AppError
@@ -15,6 +15,8 @@ MAX_OUTPUT_TOKENS = 32768
 
 
 class FluxAssetPromptSemantic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     target_entity_id: str = Field(min_length=1, max_length=160)
     visual_design_zh: str = Field(min_length=8, max_length=4000)
     visual_facts_en: str = Field(min_length=8, max_length=5000)
@@ -22,6 +24,8 @@ class FluxAssetPromptSemantic(BaseModel):
 
 
 class FluxAssetPromptBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     items: list[FluxAssetPromptSemantic] = Field(min_length=1, max_length=128)
 
 
@@ -47,6 +51,17 @@ def _assert_chinese(value: str) -> None:
         raise AppError(
             "ASSET_PROMPT_REVIEW_LANGUAGE_INVALID",
             "资产视觉设计审核说明必须以简体中文为主",
+            status_code=502,
+        )
+
+
+def _assert_english(label: str, value: str) -> None:
+    latin = len(re.findall(r"[A-Za-z]", value))
+    cjk = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", value))
+    if latin < 20 or (cjk > 8 and latin < cjk * 2):
+        raise AppError(
+            "ASSET_PROMPT_EXECUTION_LANGUAGE_INVALID",
+            f"{label} 必须是可直接交给 Flux 的英文视觉提示内容",
             status_code=502,
         )
 
@@ -78,12 +93,12 @@ Prompt contract：{FLUX_ASSET_PROMPT_CONTRACT}
 硬规则：
 1. items 必须与输入 target_entity_id 一一对应，不能漏项、重复、改 ID、合并或新增实体。
 2. visual_design_zh 是给中国用户审核的资产级视觉设计，必须使用简体中文，具体、可视、可复用；不要复述故事情节、对白、镜头节奏或人物关系。
-3. visual_facts_en 是给 Flux.1 Schnell 的英文视觉事实，只描述画面中可见的外观、材质、颜色、构图所需的身份特征；不要写抽象剧情、心理活动、对白、运镜或视频动作。
-4. 可以把输入里过于抽象的“身份/设定”具体化为稳定视觉方案，但不能改变已经给出的核心身份、地区、时代、职业/功能或显式外观事实。
+3. visual_facts_en 是给 Flux.1 Schnell 的英文视觉事实，必须用自然、具体、直接的英文，只描述画面中可见的外观、材质、颜色、稳定身份特征；不要写抽象剧情、心理活动、对白、运镜或视频动作。
+4. 可以把输入里过于抽象的“身份/设定”具体化为稳定视觉方案，但不能改变已经给出的核心身份、地区、时代、职业/功能或显式外观事实。缺少的非剧情视觉细节可以选择一个合理且稳定的方案，之后所有镜头必须复用这一方案。
 5. CHARACTER：必须形成单一稳定人物身份，重点具体化年龄感、脸型五官、肤色/妆容（仅在事实允许时）、发型发色、体态、基础服装轮廓/材质/颜色、标志性可见特征。不要设计逐镜换装。
 6. SCENE：必须形成空场景视觉基线，重点具体化空间布局、建筑/室内风格、固定地标、材质、色彩、稳定光照；不要加入人物，不要根据剧情擅自发明时间推进。
 7. PROP：必须形成单一道具的形态、比例、材质、颜色、尺度和标志性细节；不要加入手、人物或场景剧情。
-8. avoid_en 写最重要的视觉排除项。禁止文字、水印、拼图、多格图、重复主体、额外人物/物体、截断主体，以及与当前 asset_type 冲突的元素。
+8. avoid_en 必须用英文写最重要的视觉排除项。禁止文字、水印、拼图、多格图、重复主体、额外人物/物体、截断主体，以及与当前 asset_type 冲突的元素。
 9. 不输出 Markdown、解释或思考过程，只输出符合 JSON Schema 的单个 object。
 
 输入资产：
@@ -114,7 +129,7 @@ def _compose_execution_prompt(*, asset_type: str, display_name: str, visual_fact
         )
     return (
         f"{framing} Asset name: {display_name}. Target region context: {target_region}. "
-        f"Visual identity facts: {visual_facts_en.strip()} Visual style: {visual_style}. "
+        f"Visual identity facts: {visual_facts_en.strip()} Project visual style note: {visual_style}. "
         f"Avoid: {avoid_en.strip()} No text, captions, labels, watermark, logo overlay, collage, split screen or contact sheet."
     )
 
@@ -216,6 +231,8 @@ class DoubaoFluxAssetPromptCompiler:
             entity_id = str(source["entity_id"])
             semantic = semantic_by_id[entity_id]
             _assert_chinese(semantic.visual_design_zh)
+            _assert_english("visual_facts_en", semantic.visual_facts_en)
+            _assert_english("avoid_en", semantic.avoid_en)
             asset_type = _asset_type_name(source["asset_type"])
             compiled.append(
                 {
