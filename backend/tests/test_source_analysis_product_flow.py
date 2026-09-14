@@ -120,6 +120,18 @@ def _dialogue(utterance_id: str, number: int, text: str):
     )
 
 
+def _mock_no_formal_source_script(monkeypatch) -> None:
+    monkeypatch.setattr(
+        script_service,
+        "get_source_script_artifact",
+        lambda db, project_id: SimpleNamespace(
+            status=SimpleNamespace(value="NOT_BUILT"),
+            content=None,
+            artifact_id=None,
+        ),
+    )
+
+
 def test_source_analysis_get_is_read_only_and_one_command_creates_one_master_task(
     client: TestClient,
     session_factory: sessionmaker[Session],
@@ -268,6 +280,7 @@ def test_source_analysis_child_failure_fails_top_level_task(
 
 
 def test_source_script_splits_scene_runs_at_episode_boundaries_and_dedupes_dialogue(monkeypatch) -> None:
+    _mock_no_formal_source_script(monkeypatch)
     monkeypatch.setattr(
         script_service,
         "get_source_analysis_status",
@@ -339,6 +352,7 @@ def test_source_script_splits_scene_runs_at_episode_boundaries_and_dedupes_dialo
 
 
 def test_source_script_action_summary_is_deterministic_and_does_not_treat_speaker_as_present(monkeypatch) -> None:
+    _mock_no_formal_source_script(monkeypatch)
     monkeypatch.setattr(
         script_service,
         "get_source_analysis_status",
@@ -388,6 +402,7 @@ def test_source_script_action_summary_is_deterministic_and_does_not_treat_speake
 
 
 def test_source_script_splits_noncontiguous_scene_revisits_and_short_scenes(monkeypatch) -> None:
+    _mock_no_formal_source_script(monkeypatch)
     monkeypatch.setattr(
         script_service,
         "get_source_analysis_status",
