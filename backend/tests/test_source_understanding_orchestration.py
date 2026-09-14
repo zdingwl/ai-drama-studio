@@ -8,22 +8,17 @@ def _steps(project_type: ProjectType):
     return {step.id: step for step in skill.steps}
 
 
-def test_replica_source_evidence_reads_full_episode_not_shot_clips() -> None:
+def test_replica_source_evidence_and_breakdown_are_internal_to_source_storyboard_stage() -> None:
     steps = _steps(ProjectType.REPLICA)
+    source = steps["source_storyboard"]
 
-    assert steps["shot_boundary"].requires == (ArtifactType.SOURCE_VIDEO,)
-    assert steps["source_dialogue"].requires == (ArtifactType.SOURCE_VIDEO,)
-    assert steps["source_dialogue"].capabilities == (Capability.SOURCE_DIALOGUE_EVIDENCE,)
-    assert ArtifactType.SHOT_ANCHORS not in steps["source_dialogue"].requires
-
-    assert steps["source_story"].requires == (
-        ArtifactType.SOURCE_VIDEO,
-        ArtifactType.SOURCE_DIALOGUE,
-    )
-    assert ArtifactType.SHOT_ANCHORS not in steps["source_story"].requires
-
-    assert ArtifactType.SHOT_ANCHORS in steps["source_breakdown"].requires
-    assert ArtifactType.SOURCE_BIBLE in steps["source_breakdown"].requires
+    assert source.requires == (ArtifactType.SOURCE_VIDEO,)
+    assert Capability.SHOT_BOUNDARY in source.capabilities
+    assert Capability.SOURCE_DIALOGUE_EVIDENCE in source.capabilities
+    assert Capability.EPISODE_UNDERSTANDING in source.capabilities
+    assert Capability.SHOT_BREAKDOWN in source.capabilities
+    assert Capability.SOURCE_SNAPSHOT in source.capabilities
+    assert source.produces == (ArtifactType.SOURCE_SHOT_FACTS, ArtifactType.SOURCE_VIDEO_SNAPSHOT)
 
 
 def test_redraw_whole_episode_understanding_precedes_shot_breakdown() -> None:
