@@ -21,7 +21,10 @@ _DEFAULT_AUDIO_POLICY = {
     ProjectType.REDRAW: AudioPolicy.KEEP_SOURCE_AUDIO,
 }
 
-_TARGET_BIBLE_CONFIG_FIELDS = {
+# These settings participate in Replica v2 storyboard-localization semantics. Changing any of them
+# must stale TARGET_STORYBOARD first so TARGET_ASSETS, GENERATION_SEGMENTS and generated selections
+# cannot silently keep consuming a storyboard authored for a different target market/style.
+_TARGET_LOCALIZATION_CONFIG_FIELDS = {
     "target_language",
     "target_region",
     "scene_strategy",
@@ -75,7 +78,7 @@ def update_project(db: Session, project_id: str, payload: ProjectUpdate) -> Proj
         return project
 
     provider_changed = "source_understanding_provider" in actual_changes
-    target_bible_config_changed = bool(_TARGET_BIBLE_CONFIG_FIELDS & set(actual_changes))
+    target_localization_config_changed = bool(_TARGET_LOCALIZATION_CONFIG_FIELDS & set(actual_changes))
     for field, value in actual_changes.items():
         setattr(project, field, value)
 
@@ -104,14 +107,20 @@ def update_project(db: Session, project_id: str, payload: ProjectUpdate) -> Proj
         )
         db.refresh(project)
 
-    if target_bible_config_changed:
-        # P11 fingerprints target language/region/scene strategy/visual style. A change to any of
-        # these settings invalidates the old Target world but must never mutate the Source chain.
-        # Invalidate both roots defensively: ADAPTATION_PLAN normally propagates to TARGET_BIBLE
-        # through Artifact Graph, while the second call also covers legacy/incomplete graph data.
+    if target_localization_config_changed:
         from app.artifacts.service import invalidate_current_artifact_type
         from app.skills.models import ArtifactType
 
+        # Replica v2 primary path: TARGET_STORYBOARD is the semantic root for every target-side
+        # downstream artifact. Artifact Graph propagation is responsible for assets/prompts/video.
+        invalidate_current_artifact_type(
+            db,
+            project_id=project_id,
+            artifact_type=ArtifactType.TARGET_STORYBOARD,
+        )
+
+        # Historical compatibility path. These artifacts may still exist on older projects or
+        # advanced/debug routes, but they are not prerequisites of the ordinary Replica v2 flow.
         invalidate_current_artifact_type(
             db,
             project_id=project_id,
