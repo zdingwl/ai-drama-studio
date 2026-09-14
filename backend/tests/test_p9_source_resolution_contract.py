@@ -71,11 +71,17 @@ def test_replica_root_skill_keeps_p9_inside_source_storyboard_product_step() -> 
     assert Capability.IDENTITY_RESOLUTION in source_storyboard.capabilities
     assert Capability.SCENE_RESOLUTION in source_storyboard.capabilities
     assert Capability.PROP_RESOLUTION in source_storyboard.capabilities
-    assert ArtifactType.SOURCE_CHARACTERS in source_storyboard.produces
-    assert ArtifactType.SOURCE_SPEAKERS in source_storyboard.produces
-    assert ArtifactType.SOURCE_SCENES in source_storyboard.produces
-    assert ArtifactType.SOURCE_PROPS in source_storyboard.produces
-    assert ArtifactType.SOURCE_VIDEO_SNAPSHOT in source_storyboard.produces
+    for artifact_type in (
+        ArtifactType.SOURCE_CHARACTERS,
+        ArtifactType.SOURCE_SPEAKERS,
+        ArtifactType.SOURCE_SCENES,
+        ArtifactType.SOURCE_PROPS,
+    ):
+        assert artifact_type in skill.readable_artifacts
+    assert source_storyboard.produces == (
+        ArtifactType.SOURCE_SHOT_FACTS,
+        ArtifactType.SOURCE_VIDEO_SNAPSHOT,
+    )
 
 
 def test_p9_artifacts_are_source_namespace_and_accepted_capabilities_are_available() -> None:
