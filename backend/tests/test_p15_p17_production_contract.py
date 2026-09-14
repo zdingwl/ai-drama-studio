@@ -38,27 +38,39 @@ def _project(client: TestClient, project_type: str = "REPLICA") -> dict:
     return response.json()
 
 
-def test_root_p15_p17_contract_exists_but_capabilities_remain_planned() -> None:
+def test_p15_p17_remain_legacy_compatibility_without_reentering_replica_root() -> None:
     root = get_root_skill(ProjectType.REPLICA)
-    assert root.version == "1.6.0"
+    assert root.version == "1.7.0"
     steps = {step.id: step for step in root.steps}
-    assert steps["replica_storyboard"].requires == (
-        ArtifactType.SOURCE_VIDEO_SNAPSHOT,
-        ArtifactType.TARGET_BIBLE,
-        ArtifactType.TARGET_SCRIPT,
+    assert list(steps) == [
+        "source_storyboard",
+        "localized_storyboard",
+        "asset_images",
+        "model_prompting",
+        "generate",
+    ]
+    assert steps["localized_storyboard"].requires == (ArtifactType.SOURCE_VIDEO_SNAPSHOT,)
+    assert steps["asset_images"].requires == (ArtifactType.TARGET_STORYBOARD,)
+    assert steps["model_prompting"].requires == (
+        ArtifactType.TARGET_STORYBOARD,
         ArtifactType.TARGET_ASSETS,
-        ArtifactType.TARGET_AUDIO,
-        ArtifactType.TIMING_PLAN,
     )
-    assert steps["generate"].produces == (ArtifactType.GENERATED_VIDEO, ArtifactType.GENERATION_SELECTION)
-    assert steps["post"].requires == (
+    assert steps["generate"].requires == (
+        ArtifactType.TARGET_STORYBOARD,
+        ArtifactType.TARGET_ASSETS,
+        ArtifactType.GENERATION_SEGMENTS,
+    )
+    assert steps["generate"].produces == (
+        ArtifactType.GENERATED_VIDEO,
         ArtifactType.GENERATION_SELECTION,
-        ArtifactType.TARGET_AUDIO,
-        ArtifactType.TARGET_SCRIPT,
-        ArtifactType.TIMING_PLAN,
     )
-    assert steps["post"].produces == (ArtifactType.FINAL_OUTPUT,)
+    assert "replica_storyboard" not in steps
+    assert "target_audio" not in steps
+    assert "dialogue_timing" not in steps
+    assert "post" not in steps
 
+    # Historical Professional Skills and artifact namespaces still exist for old projects/debug
+    # routes. Keeping them loadable must not turn them back into ordinary Replica prerequisites.
     assert get_professional_skill("storyboard-directing").required_capabilities == (Capability.STORYBOARD,)
     assert get_professional_skill("video-generation-qc").required_capabilities == (Capability.VIDEO_GENERATION, Capability.QC_SELECTION)
     assert get_professional_skill("post-production").required_capabilities == (Capability.LIP_SYNC, Capability.POST_PRODUCTION)
