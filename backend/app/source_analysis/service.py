@@ -84,8 +84,6 @@ def _latest_pipeline_task(db: Session, project_id: str) -> Task | None:
 def _pipeline_input_fingerprint(db: Session, project_id: str, source: ArtifactNode) -> str:
     project = get_project(db, project_id)
     latest = _latest_pipeline_task(db, project_id)
-    source_script = get_source_script_artifact(db, project_id)
-    script_ready = _status_value(source_script.status) == "CURRENT"
     restart_after_terminal = None
     if latest is not None and (
         latest.status in {TaskStatus.SUCCEEDED, TaskStatus.CANCELLED}
@@ -129,6 +127,15 @@ def _pipeline_message(task: Task | None, state: SourceAnalysisState) -> str:
 
 def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisStatusRead:
     _assert_source_analysis_project(db, project_id)
+
+    # SOURCE_SCRIPT can become available before the full visual enrichment chain
+    # finishes. Surface that independently instead of referencing an unbound
+    # local variable. Lightweight test/session adapters that do not implement
+    # SQLAlchemy scalars simply report False; production Sessions always do.
+    script_ready = False
+    if hasattr(db, "scalars"):
+        source_script = get_source_script_artifact(db, project_id)
+        script_ready = _status_value(source_script.status) == "CURRENT"
 
     latest = _latest_pipeline_task(db, project_id)
     if latest is not None and latest.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
