@@ -85,15 +85,14 @@ describe('AssetImagesWorkspace task progress', () => {
     wrapper.unmount()
   })
 
-  it('shows the Doubao Flux prompt compilation stage before local image rendering starts', async () => {
+  it('shows the localized-storyboard asset extraction stage before model prompt authoring starts', async () => {
     mockReads([{ ...runningTask, progress_percent: 0 }])
 
     const wrapper = await mountWorkspace()
 
     const progress = wrapper.get('[data-testid="asset-images-progress"]')
-    expect(progress.text()).toContain('火山引擎 Doubao')
-    expect(progress.text()).toContain('Flux.1 Schnell')
-    expect(wrapper.text()).toContain('正在生成资产图；完成后会在这里显示待审核的人物、场景和道具参考图。')
+    expect(progress.text()).toContain('正在从本土化分镜提取实际使用的人物、场景和道具')
+    expect(wrapper.text()).toContain('整段人物小传不会直接送进图片模型')
 
     wrapper.unmount()
   })
@@ -138,7 +137,7 @@ describe('AssetImagesWorkspace task progress', () => {
     const progress = wrapper.get('[data-testid="asset-images-progress"]')
     expect(progress.text()).toContain('排队中')
     expect(progress.text()).toContain('0%')
-    expect(wrapper.text()).toContain('失败原因会直接显示')
+    expect(wrapper.text()).toContain('如果失败会直接显示失败原因')
 
     wrapper.unmount()
   })
