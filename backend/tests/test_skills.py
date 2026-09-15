@@ -35,7 +35,7 @@ def test_skill_detail_contains_replica_five_step_contract(client: TestClient) ->
     assert detail["version"] == "1.7.0"
     assert "唯一普通主流程" in detail["manual"]
     assert "minimax-h3-prompting@1.0.0" in detail["manual"]
-    assert "z-image-turbo-asset-prompting@1.0.0" in detail["manual"]
+    assert "z-image-turbo-asset-prompting@1.1.0" in detail["manual"]
     assert "z-image-turbo-asset-prompting" in detail["subskills"]
 
     assert [step["id"] for step in detail["steps"]] == [
@@ -126,25 +126,26 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     assets = client.get("/api/v3/skills/professional/asset-image-generation")
     assert assets.status_code == 200
     assets_detail = assets.json()
-    assert assets_detail["version"] == "1.1.0"
+    assert assets_detail["version"] == "1.2.0"
     assert assets_detail["required_inputs"] == ["TARGET_STORYBOARD"]
     assert assets_detail["output_contracts"] == ["TARGET_ASSETS"]
     asset_rules = "\n".join(assets_detail["provider_rules"])
     assert "Professional Prompt Skill" in asset_rules
-    assert "front full-body" in asset_rules
-    assert "face close-up" in asset_rules
+    assert "deterministically composed" in asset_rules
+    assert "front/side/back" in asset_rules
     assert "three full-body views plus a face close-up" in assets_detail["manual"]
+    assert "same base seed" in assets_detail["manual"]
     assert "Z-Image Turbo" in assets_detail["manual"]
 
     zimage = client.get("/api/v3/skills/professional/z-image-turbo-asset-prompting")
     assert zimage.status_code == 200
     zimage_detail = zimage.json()
-    assert zimage_detail["version"] == "1.0.0"
+    assert zimage_detail["version"] == "1.1.0"
     assert zimage_detail["required_inputs"] == ["TARGET_STORYBOARD"]
     assert zimage_detail["output_contracts"] == []
     zimage_rules = "\n".join(zimage_detail["provider_rules"])
-    assert "front full-body" in zimage_rules
-    assert "face close-up" in zimage_rules
+    assert "single-character visual identity" in zimage_rules
+    assert "derives the face close-up from the front render" in zimage_rules
 
     h3 = client.get("/api/v3/skills/professional/minimax-h3-prompting")
     assert h3.status_code == 200

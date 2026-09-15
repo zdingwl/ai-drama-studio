@@ -33,18 +33,19 @@ The execution prompt should be concise, concrete English optimized for the image
 
 ## Character asset contract
 
-A Character asset is one landscape production reference sheet containing exactly this useful layout:
+The Skill must compile a **single-character identity prompt**, not a multi-panel layout prompt. `image_prompt` describes only stable visible identity: facial structure, age appearance, hair, skin, body proportions, baseline wardrobe silhouette/material/color and signature visible features. It must not ask Z-Image Turbo to draw a turnaround/reference/contact sheet or to place front/side/back/face views in one generation.
 
-1. **front full-body view** — neutral standing pose;
-2. **side full-body view** — neutral standing profile;
-3. **back full-body view** — neutral standing pose;
-4. **face close-up** — larger front-facing head/shoulders portrait showing hair, eyes, nose, mouth and neutral expression.
+The Runtime owns the production layout deterministically:
 
-This is intentionally **three full-body views plus a facial close-up**. Do not generate four equal full-body directions. Do not generate a single mood portrait, action scene, couple image or lifestyle scene.
+1. render exactly one **front full-body** image;
+2. render exactly one **side-profile full-body** image;
+3. render exactly one **back full-body** image;
+4. derive the **face close-up** from the generated front view so the face is literally the same front identity;
+5. compose those four panels into one landscape production reference sheet in fixed order.
 
-All four panels must depict the **same character** with the same face, hairstyle, body proportions, wardrobe and colors. Use a clean white or very light neutral studio background, clear spacing, no text labels, no watermark, no props unless the asset identity absolutely requires one.
+The three model renders use the same canonical identity prompt, the same base seed and the same fixed wardrobe/color constraints. Each model render explicitly forbids collage/contact-sheet/multiple-person layouts. This moves structural correctness out of model free-form layout generation and into deterministic Runtime composition.
 
-The final Character `image_prompt` must literally contain the anchor phrases `front full-body view`, `side full-body view`, `back full-body view`, `face close-up`, and `same character` so the server can fail closed when the layout contract is missing.
+Do not generate a single mood portrait, action scene, couple image or lifestyle scene. Narrative relationships and temporary story props must not enter the stable character identity prompt.
 
 ## Scene asset contract
 

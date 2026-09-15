@@ -3,13 +3,14 @@ import json
 import math
 import secrets
 import time
+from io import BytesIO
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode
 from uuid import uuid4
 
 import httpx
-from PIL import Image
+from PIL import Image, ImageOps
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -57,8 +58,10 @@ SKILL_ID = "asset-image-generation"
 DEFAULT_UNET = "z_image_turbo_bf16.safetensors"
 DEFAULT_CLIP = "qwen_3_4b.safetensors"
 DEFAULT_VAE = "ae.safetensors"
-CHARACTER_WIDTH = 1280
-CHARACTER_HEIGHT = 736
+CHARACTER_PANEL_WIDTH = 384
+CHARACTER_PANEL_HEIGHT = 768
+CHARACTER_WIDTH = CHARACTER_PANEL_WIDTH * 4
+CHARACTER_HEIGHT = CHARACTER_PANEL_HEIGHT
 SCENE_WIDTH = 1280
 SCENE_HEIGHT = 736
 PROP_WIDTH = 1024
@@ -125,7 +128,8 @@ class ComfyUIZImageTurboRuntime:
             "model": self.model_name,
             "clip": self.clip_name,
             "vae": self.vae_name,
-            "workflow": "z-image-turbo-t2i-v1",
+            "workflow": "z-image-turbo-assets-v2",
+            "character_sheet": "three-independent-views-plus-front-face-crop-v1",
             "steps": 8,
             "sampler": "res_multistep",
             "scheduler": "simple",
@@ -191,6 +195,137 @@ class ComfyUIZImageTurboRuntime:
             "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": prefix}},
         }
         return {"prompt": graph, "client_id": f"ai-drama-assets-{uuid4()}"}
+
+    @staticmethod
+    def _character_view_prompt(identity_prompt: str, view: str) -> str:
+        view_instruction = {
+            "front": (
+                "Exactly one person, single full-body FRONT view, straight toward camera, neutral standing pose, "
+                "head to shoes fully visible, arms relaxed, eye-level orthographic-like character reference."
+            ),
+            "side": (
+                "Exactly one person, single full-body SIDE PROFILE view, true 90-degree profile, neutral standing pose, "
+                "head to shoes fully visible, arms relaxed, eye-level orthographic-like character reference."
+            ),
+            "back": (
+                "Exactly one person, single full-body BACK view, facing directly away from camera, neutral standing pose, "
+                "head to shoes fully visible, arms relaxed, eye-level orthographic-like character reference."
+            ),
+        }[view]
+        return (
+            f"{view_instruction} Preserve the exact same character identity, hairstyle, body proportions, base wardrobe, colors and materials across all views. "
+            "Clean seamless white or very light neutral studio background, soft even lighting, no props, no environment, no text. "
+            f"Character identity: {identity_prompt.strip()} "
+            "Do not create a collage, contact sheet, split screen, duplicate person, second pose, couple, group, action scene or lifestyle scene."
+        )
+
+    def _character_workflow(self, identity_prompt: str, negative_prompt: str, *, prefix: str, seed: int) -> dict:
+        graph: dict[str, dict] = {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": self.model_name, "weight_dtype": "default"}},
+            "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": self.clip_name, "type": "lumina2", "device": "default"}},
+            "3": {"class_type": "VAELoader", "inputs": {"vae_name": self.vae_name}},
+            "4": {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 3.0, "model": ["1", 0]}},
+        }
+        for branch, view in enumerate(("front", "side", "back"), 1):
+            base = branch * 10
+            execution_prompt = self._character_view_prompt(identity_prompt, view)
+            if negative_prompt.strip():
+                execution_prompt += f"\n\nHard exclusions — do not include any of the following: {negative_prompt.strip()}"
+            graph[str(base)] = {"class_type": "CLIPTextEncode", "inputs": {"text": execution_prompt, "clip": ["2", 0]}}
+            graph[str(base + 1)] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": [str(base), 0]}}
+            graph[str(base + 2)] = {"class_type": "EmptySD3LatentImage", "inputs": {"width": CHARACTER_PANEL_WIDTH, "height": CHARACTER_PANEL_HEIGHT, "batch_size": 1}}
+            graph[str(base + 3)] = {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 8, "cfg": 1.0, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1.0, "model": ["4", 0], "positive": [str(base), 0], "negative": [str(base + 1), 0], "latent_image": [str(base + 2), 0]}}
+            graph[str(base + 4)] = {"class_type": "VAEDecode", "inputs": {"samples": [str(base + 3), 0], "vae": ["3", 0]}}
+            graph[str(base + 5)] = {"class_type": "SaveImage", "inputs": {"images": [str(base + 4), 0], "filename_prefix": f"{prefix}/{view}"}}
+        return {"prompt": graph, "client_id": f"ai-drama-character-assets-{uuid4()}"}
+
+    @staticmethod
+    def _find_saved_image(entry: dict, node_id: str) -> dict | None:
+        outputs = entry.get("outputs")
+        if not isinstance(outputs, dict):
+            return None
+        save = outputs.get(node_id)
+        if not isinstance(save, dict):
+            return None
+        images = save.get("images")
+        if not isinstance(images, list) or not images:
+            return None
+        return images[0] if isinstance(images[0], dict) else None
+
+    @staticmethod
+    def _download_pil(client: httpx.Client, base_url: str, image: dict) -> Image.Image:
+        params = {"filename": image.get("filename", ""), "subfolder": image.get("subfolder", ""), "type": image.get("type", "output")}
+        response = client.get(f"{base_url}/view", params=params, timeout=httpx.Timeout(300.0))
+        response.raise_for_status()
+        with Image.open(BytesIO(response.content)) as source:
+            return source.convert("RGB").copy()
+
+    @staticmethod
+    def _compose_character_sheet(front: Image.Image, side: Image.Image, back: Image.Image) -> Image.Image:
+        panel_size = (CHARACTER_PANEL_WIDTH, CHARACTER_PANEL_HEIGHT)
+        normalized = [ImageOps.fit(image.convert("RGB"), panel_size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5)) for image in (front, side, back)]
+        front_image = normalized[0]
+        crop_box = (
+            int(front_image.width * 0.24),
+            0,
+            int(front_image.width * 0.76),
+            int(front_image.height * 0.42),
+        )
+        face_source = front_image.crop(crop_box)
+        face_panel = ImageOps.fit(face_source, panel_size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.16))
+        sheet = Image.new("RGB", (CHARACTER_WIDTH, CHARACTER_HEIGHT), "white")
+        for index, panel in enumerate((*normalized, face_panel)):
+            sheet.paste(panel, (index * CHARACTER_PANEL_WIDTH, 0))
+        return sheet
+
+    def generate_character_sheet(self, *, project_id: str, task_id: str, asset_id: str, prompt: str, negative_prompt: str) -> GeneratedImage:
+        self.assert_ready()
+        prefix = f"ai_drama_studio/assets/{project_id}/{task_id}/{asset_id.replace(':', '_')}/character_views"
+        seed = secrets.randbelow((1 << 63) - 1)
+        payload = self._character_workflow(prompt, negative_prompt, prefix=prefix, seed=seed)
+        with httpx.Client(timeout=httpx.Timeout(120.0), trust_env=False) as client:
+            response = client.post(f"{self.base_url}/prompt", json=payload)
+            try:
+                body = response.json()
+            except Exception as exc:
+                raise AppError("ASSET_IMAGE_CREATE_FAILED", f"ComfyUI /prompt 返回非 JSON：HTTP {response.status_code}；{self._safe_preview(response)}", status_code=502) from exc
+            if response.status_code >= 400:
+                raise AppError("ASSET_IMAGE_CREATE_FAILED", f"ComfyUI 人物三视图工作流拒绝：{str(body)[:600]}", status_code=502)
+            prompt_id = str(body.get("prompt_id") or "").strip()
+            if not prompt_id:
+                raise AppError("ASSET_IMAGE_CREATE_FAILED", "ComfyUI /prompt 缺少 prompt_id", status_code=502)
+            deadline = time.monotonic() + self.timeout_seconds
+            view_nodes = ("15", "25", "35")
+            found: list[dict] | None = None
+            while time.monotonic() < deadline:
+                history = client.get(f"{self.base_url}/history/{prompt_id}")
+                if history.status_code != 200:
+                    raise AppError("ASSET_IMAGE_QUERY_FAILED", f"ComfyUI history 返回 HTTP {history.status_code}", status_code=502)
+                entry = self._history_entry(history.json(), prompt_id)
+                if entry:
+                    status = entry.get("status") if isinstance(entry.get("status"), dict) else {}
+                    if str(status.get("status_str") or "").lower() in {"error", "failed"}:
+                        raise AppError("ASSET_IMAGE_GENERATION_FAILED", f"ComfyUI Z-Image Turbo 人物三视图生成失败：{str(status.get('messages'))[:800]}", status_code=502)
+                    images = [self._find_saved_image(entry, node_id) for node_id in view_nodes]
+                    if all(image is not None for image in images):
+                        found = [image for image in images if image is not None]
+                        break
+                    if status.get("completed") is True:
+                        raise AppError("ASSET_IMAGE_MEDIA_MISSING", "ComfyUI 完成人物三视图任务但缺少 front/side/back 输出", status_code=502)
+                time.sleep(self.poll_interval)
+            if found is None:
+                raise AppError("ASSET_IMAGE_TIMEOUT", "ComfyUI 人物三视图生成超时", status_code=504)
+            front, side, back = [self._download_pil(client, self.base_url, image) for image in found]
+
+        storage_relpath = f"target_asset_images/{project_id}/{task_id}/{asset_id.replace(':', '_')}.png"
+        output = (self.settings.artifact_root / storage_relpath).resolve()
+        root = self.settings.artifact_root.resolve()
+        if root not in output.parents:
+            raise AppError("ASSET_IMAGE_STORAGE_INVALID", "人物资产图存储路径越界", status_code=500)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        sheet = self._compose_character_sheet(front, side, back)
+        sheet.save(output, format="PNG")
+        return GeneratedImage(storage_relpath=storage_relpath, sha256=_file_sha(output), width=CHARACTER_WIDTH, height=CHARACTER_HEIGHT, mime_type="image/png", remote_url="", remote_job_id=prompt_id)
 
     @staticmethod
     def _history_entry(body: dict, prompt_id: str) -> dict | None:
@@ -538,15 +673,24 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
                 job, generated = reused
             else:
                 def _remote(job):
-                    generated = runtime.generate(
-                        project_id=task.project_id,
-                        task_id=task.id,
-                        asset_id=asset_id,
-                        prompt=authored.image_prompt,
-                        negative_prompt=authored.negative_prompt,
-                        width=spec["width"],
-                        height=spec["height"],
-                    )
+                    if spec["asset_type"] == TargetAssetType.CHARACTER:
+                        generated = runtime.generate_character_sheet(
+                            project_id=task.project_id,
+                            task_id=task.id,
+                            asset_id=asset_id,
+                            prompt=authored.image_prompt,
+                            negative_prompt=authored.negative_prompt,
+                        )
+                    else:
+                        generated = runtime.generate(
+                            project_id=task.project_id,
+                            task_id=task.id,
+                            asset_id=asset_id,
+                            prompt=authored.image_prompt,
+                            negative_prompt=authored.negative_prompt,
+                            width=spec["width"],
+                            height=spec["height"],
+                        )
                     return ProviderDispatchResult(value=generated, remote_job_id=generated.remote_job_id)
                 job, dispatched = dispatch_provider_call(db, task_id=task.id, provider=runtime.provider_name, model=runtime.model_name, capability=Capability.ASSET_IMAGE_GENERATION, payload=job_payload, artifact_id=storyboard_artifact.id, remote_call=_remote)
                 generated = dispatched.value

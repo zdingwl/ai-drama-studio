@@ -1,9 +1,9 @@
 {
   "id": "z-image-turbo-asset-prompting",
   "name": "Z-Image Turbo 资产图提示词编译",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "category": "target-assets",
-  "description": "把从 CURRENT TARGET_STORYBOARD v2 提取出的单个人物/场景/道具及其实际分镜证据编译成 Z-Image Turbo 专属资产图执行提示词；人物固定输出三视图加面部特写。",
+  "description": "把从 CURRENT TARGET_STORYBOARD v2 提取出的单个人物/场景/道具及其实际分镜证据编译成 Z-Image Turbo 专属资产图执行提示词；人物 Prompt 只描述稳定身份，三视图加面部特写由 Runtime 确定性生成与合成。",
   "when_to_use": ["Replica 第 3 步已从本土化分镜提取目标资产，并选择本机 Z-Image Turbo 生成真实资产图"],
   "when_not_to_use": ["TARGET_STORYBOARD v2 缺失或 STALE", "需要生成视频提示词", "需要改变本土化分镜中的人物/场景/道具语义"],
   "required_inputs": ["TARGET_STORYBOARD"],
@@ -19,8 +19,8 @@
   "provider_rules": [
     "Analyze only the extracted asset and localized shots that reference it; do not turn narrative relationships or dialogue into extra visible people.",
     "Return one prompt result for every requested target_entity_id and no others.",
-    "Character image_prompt must describe exactly front full-body view, side full-body view, back full-body view, and face close-up of the same character on a clean light background.",
-    "Character image_prompt must not request four equal full-body directions, a single portrait, an action scene, a couple image or a lifestyle scene.",
+    "Character image_prompt must contain only stable single-character visual identity and must not request a multi-panel/reference/contact sheet.",
+    "The Runtime deterministically renders front full-body, side-profile full-body and back full-body with the same identity prompt/base seed, derives the face close-up from the front render, and composes the final four-panel sheet.",
     "Scene prompts isolate stable environment identity and must not add story characters.",
     "Prop prompts isolate the object identity and must not add unrelated people or scenery.",
     "Final execution prompts are concrete English for Z-Image Turbo; review_prompt_zh is Simplified Chinese for the operator.",
@@ -28,6 +28,6 @@
     "Do not generate Artifact ids, stable target ids, media paths, image bytes or video prompts."
   ],
   "output_contracts": [],
-  "completion_criteria": ["每个提取资产都有模型专属 image_prompt 与 negative_prompt", "人物提示词满足三视图加面部特写布局", "提示词没有把叙事人物关系误绘为多人资产图", "Runtime 尚未执行且未伪造 reference_media"],
-  "failure_policy": ["Provider coverage 不完整时整批失败", "人物布局锚点缺失时 fail closed", "不得回退到通用字符串拼接器冒充模型专属 Skill"]
+  "completion_criteria": ["每个提取资产都有模型专属 image_prompt 与 negative_prompt", "人物提示词只包含稳定单人物视觉身份而不承担多面板排版", "提示词没有把叙事人物关系误绘为多人资产图", "Runtime 尚未执行且未伪造 reference_media"],
+  "failure_policy": ["Provider coverage 不完整时整批失败", "人物 Prompt 泄漏多面板布局指令时 fail closed", "不得回退到通用字符串拼接器冒充模型专属 Skill"]
 }

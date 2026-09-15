@@ -14,7 +14,7 @@ class ImageModelPromptSkillBinding:
 _Z_IMAGE_TURBO_BINDING = ImageModelPromptSkillBinding(
     model_id="Z-Image-Turbo",
     prompt_skill_id="z-image-turbo-asset-prompting",
-    prompt_contract="z-image-turbo-replica-assets-v1",
+    prompt_contract="z-image-turbo-replica-assets-v2",
 )
 
 

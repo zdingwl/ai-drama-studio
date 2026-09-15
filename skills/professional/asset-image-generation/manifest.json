@@ -1,7 +1,7 @@
 {
   "id": "asset-image-generation",
   "name": "Replica Asset Image Generation",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "category": "target-assets",
   "description": "Extract used target entities from the localized storyboard, invoke the selected image model's Professional Prompt Skill against storyboard evidence, then render real managed reference images for characters, scenes and props.",
   "when_to_use": ["CURRENT TARGET_STORYBOARD v2 exists and downstream video generation needs visual references"],
@@ -17,8 +17,8 @@
     {"id":"render_reference_images","phase":"资产图","title":"生成真实资产图","description":"Render managed image files, persist SHA/dimensions and bind them to stable target assets.","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":["TARGET_ASSETS"]}
   ],
   "fact_levels": ["TARGET_LOCALIZED_ENTITY", "IMAGE_MODEL_PROMPT", "REAL_REFERENCE_MEDIA"],
-  "provider_rules": ["No text-only asset may satisfy the image contract", "Every referenced target entity must receive at least one real reference image", "Every image execution prompt must be authored by the selected image model Professional Prompt Skill from the extracted asset plus its localized storyboard evidence; do not concatenate raw biography/story prose directly into the Runtime prompt", "Character assets must be one sheet with front full-body, side full-body, back full-body and face close-up of the same character", "Narrative relationships must not create extra people in a single-character asset", "Reference media must be persisted by Studio with SHA256 and dimensions", "Do not generate video prompts"],
+  "provider_rules": ["No text-only asset may satisfy the image contract", "Every referenced target entity must receive at least one real reference image", "Every image execution prompt must be authored by the selected image model Professional Prompt Skill from the extracted asset plus its localized storyboard evidence; do not concatenate raw biography/story prose directly into the Runtime prompt", "Character assets must be deterministically composed by Runtime from separate front/side/back full-body renders plus a face close-up cropped from the front render; do not rely on one free-form multi-panel model generation", "Narrative relationships must not create extra people in a single-character asset", "Reference media must be persisted by Studio with SHA256 and dimensions", "Do not generate video prompts"],
   "output_contracts": ["TARGET_ASSETS"],
-  "completion_criteria": ["Every referenced target entity has a model-specific Skill-authored image prompt", "Character prompt/output follows three full-body views plus facial close-up", "Every referenced target entity has real reference media", "All media is managed and technically readable", "Candidate is explicitly accepted"],
+  "completion_criteria": ["Every referenced target entity has a model-specific Skill-authored image prompt", "Character output structurally contains deterministic front/side/back full-body panels plus a front-derived facial close-up", "Every referenced target entity has real reference media", "All media is managed and technically readable", "Candidate is explicitly accepted"],
   "failure_policy": ["Any required entity without a generated image blocks publication", "Runtime failure does not replace an existing CURRENT asset revision"]
 }

@@ -32,19 +32,19 @@ Task 成功只产生 NEEDS_REVIEW candidate；显式 ACCEPT 才发布 `TARGET_ST
 
 ## Step 3 资产图
 
-`asset-image-generation@1.1.0` 只读取 CURRENT `TARGET_STORYBOARD v2`，提取实际使用的人物、场景、道具。提取后不能直接把人物卡/场景说明字符串拼进图片模型，而是必须把该资产及其实际引用镜头证据交给当前图片模型对应的 Professional Prompt Skill。
+`asset-image-generation@1.2.0` 只读取 CURRENT `TARGET_STORYBOARD v2`，提取实际使用的人物、场景、道具。提取后不能直接把人物卡/场景说明字符串拼进图片模型，而是必须把该资产及其实际引用镜头证据交给当前图片模型对应的 Professional Prompt Skill。
 
 当前 Windows 图片模型绑定为：
 
 ```text
 提取资产 + 本土化分镜证据
-→ z-image-turbo-asset-prompting@1.0.0
+→ z-image-turbo-asset-prompting@1.1.0
 → image_prompt / negative_prompt
 → 本机 ComfyUI + z_image_turbo_bf16.safetensors
 → PNG reference_media
 ```
 
-人物资产固定是一张横向生产参考板：**正面全身 + 侧面全身 + 背面全身 + 面部特写**。不是四个全身方向，也不是单张情绪肖像、情侣照或剧情生活照。人物关系等叙事事实不得自动变成额外人物。
+人物资产固定是一张横向生产参考板：**正面全身 + 侧面全身 + 背面全身 + 面部特写**。结构不能交给模型一次自由排版：Runtime 分别生成正面/侧面/背面单人全身图，使用同一身份 Prompt 与同一 base seed，再从正面图确定性裁出面部特写并固定合成四格参考板。人物关系等叙事事实不得自动变成额外人物。
 
 正式资产必须有真实 `reference_media`、受管存储路径、SHA256、宽高和 ProviderJob。`reference_media=[]` 不算完成。显式 ACCEPT 后发布 `TARGET_ASSETS v2`。
 

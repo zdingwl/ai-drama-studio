@@ -1,4 +1,5 @@
 import pytest
+from PIL import Image
 
 from app.core.errors import AppError
 from app.replica_pipeline.asset_images import (
@@ -65,7 +66,7 @@ def _character_context() -> dict:
 
 def test_asset_orchestration_skill_requires_model_prompt_compilation() -> None:
     skill = get_professional_skill("asset-image-generation")
-    assert skill.version == "1.1.0"
+    assert skill.version == "1.2.0"
     assert [step.id for step in skill.steps] == [
         "extract_entities",
         "compile_model_prompt",
@@ -74,9 +75,9 @@ def test_asset_orchestration_skill_requires_model_prompt_compilation() -> None:
 
     binding, prompt_skill = selected_image_model_prompt_skill()
     assert binding.model_id == "Z-Image-Turbo"
-    assert binding.prompt_contract == "z-image-turbo-replica-assets-v1"
+    assert binding.prompt_contract == "z-image-turbo-replica-assets-v2"
     assert prompt_skill.id == "z-image-turbo-asset-prompting"
-    assert prompt_skill.version == "1.0.0"
+    assert prompt_skill.version == "1.1.0"
 
 
 def test_character_asset_extraction_preserves_storyboard_evidence_without_direct_prompt() -> None:
@@ -95,41 +96,44 @@ def test_character_asset_extraction_preserves_storyboard_evidence_without_direct
     }]
 
 
-def test_character_prompt_contract_requires_three_views_plus_face_closeup() -> None:
+def test_character_prompt_contract_keeps_layout_out_of_model_authored_identity_prompt() -> None:
     context = _character_context()
     valid = AssetImagePromptAuthoringResult.model_validate({
         "assets": [{
             "target_entity_id": "target-char-1",
             "image_prompt": (
-                "A clean production reference sheet of the same character. "
-                "Show exactly a front full-body view, side full-body view, back full-body view, "
-                "and a large face close-up on a white background. Do not add another person."
+                "Single young Chinese man in his twenties, short black hair, brown eyes, fair skin, average build, "
+                "light gray hoodie, blue jeans, neutral expression, stable realistic character identity, clean studio styling. "
+                "Do not add another person, romantic partner, phone, text or watermark."
             ),
-            "negative_prompt": "extra people, couple, text, watermark",
-            "review_prompt_zh": "同一人物的正面全身、侧面全身、背面全身和面部特写参考板。",
+            "negative_prompt": "extra people, couple, phone, text, watermark",
+            "review_prompt_zh": "稳定单人物视觉身份，版式由运行时生成。",
         }],
     })
     authored = validate_authored_asset_batch([context], valid)
-    assert authored["target-char-1"].image_prompt.startswith("A clean production reference sheet")
+    assert "short black hair" in authored["target-char-1"].image_prompt
 
     invalid = AssetImagePromptAuthoringResult.model_validate({
         "assets": [{
             "target_entity_id": "target-char-1",
-            "image_prompt": "A single half-body portrait of Jake looking at a phone.",
-            "negative_prompt": "extra people",
-            "review_prompt_zh": "单张人物半身肖像。",
+            "image_prompt": (
+                "A production reference sheet with front full-body view, side full-body view, "
+                "back full-body view and face close-up of Jake."
+            ),
+            "negative_prompt": "extra people, text, watermark",
+            "review_prompt_zh": "错误地把多面板排版交给模型。",
         }],
     })
     with pytest.raises(AppError) as exc_info:
         validate_authored_asset_batch([context], invalid)
-    assert exc_info.value.code == "ASSET_IMAGE_CHARACTER_LAYOUT_INVALID"
+    assert exc_info.value.code == "ASSET_IMAGE_CHARACTER_PROMPT_SCOPE_INVALID"
 
 
 def test_z_image_runtime_matches_verified_local_comfyui_workflow() -> None:
     runtime = ComfyUIZImageTurboRuntime()
     payload = runtime._workflow(
-        "front full-body view, side full-body view, back full-body view, face close-up, same character",
-        "extra people, text",
+        "Empty apartment kitchen, pale oak cabinets, matte stone counters, clean architectural reference.",
+        "people, text",
         prefix="test/z-image",
         seed=123,
         width=1280,
@@ -146,3 +150,43 @@ def test_z_image_runtime_matches_verified_local_comfyui_workflow() -> None:
     assert graph["8"]["inputs"]["sampler_name"] == "res_multistep"
     assert graph["8"]["inputs"]["scheduler"] == "simple"
     assert "Hard exclusions" in graph["4"]["inputs"]["text"]
+
+
+def test_character_runtime_renders_three_single_view_branches_with_one_identity_seed() -> None:
+    runtime = ComfyUIZImageTurboRuntime()
+    payload = runtime._character_workflow(
+        "Single young Chinese man, short black hair, light gray hoodie and blue jeans.",
+        "extra people, text",
+        prefix="test/character",
+        seed=777,
+    )
+    graph = payload["prompt"]
+
+    assert graph["4"] == {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 3.0, "model": ["1", 0]}}
+    assert graph["12"]["inputs"] == {"width": 384, "height": 768, "batch_size": 1}
+    assert graph["22"]["inputs"] == {"width": 384, "height": 768, "batch_size": 1}
+    assert graph["32"]["inputs"] == {"width": 384, "height": 768, "batch_size": 1}
+    assert {graph[node]["inputs"]["seed"] for node in ("13", "23", "33")} == {777}
+    assert "FRONT view" in graph["10"]["inputs"]["text"]
+    assert "SIDE PROFILE view" in graph["20"]["inputs"]["text"]
+    assert "BACK view" in graph["30"]["inputs"]["text"]
+    for node in ("10", "20", "30"):
+        assert "Do not create a collage" in graph[node]["inputs"]["text"]
+        assert "Hard exclusions" in graph[node]["inputs"]["text"]
+    assert graph["15"]["inputs"]["filename_prefix"].endswith("/front")
+    assert graph["25"]["inputs"]["filename_prefix"].endswith("/side")
+    assert graph["35"]["inputs"]["filename_prefix"].endswith("/back")
+
+
+def test_character_sheet_composition_has_fixed_three_views_plus_front_derived_face() -> None:
+    front = Image.new("RGB", (384, 768), "red")
+    side = Image.new("RGB", (384, 768), "green")
+    back = Image.new("RGB", (384, 768), "blue")
+
+    sheet = ComfyUIZImageTurboRuntime._compose_character_sheet(front, side, back)
+
+    assert sheet.size == (CHARACTER_WIDTH, CHARACTER_HEIGHT) == (1536, 768)
+    assert sheet.getpixel((100, 700)) == (255, 0, 0)
+    assert sheet.getpixel((500, 700)) == (0, 128, 0)
+    assert sheet.getpixel((900, 700)) == (0, 0, 255)
+    assert sheet.getpixel((1400, 400)) == (255, 0, 0)

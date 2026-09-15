@@ -81,8 +81,8 @@ CURRENT TARGET_STORYBOARD v2
 - 有中文可审核视觉定义；
 - 至少有一张真实、已持久化、带 SHA256 和尺寸的 `reference_media`；
 - 图片由真实 Image Runtime 生成，不允许 `reference_media=[]` 冒充完成；
-- 当前 Windows 默认使用本机 ComfyUI + `z_image_turbo_bf16.safetensors`；其模型专属 Prompt Skill 为 `z-image-turbo-asset-prompting@1.0.0`，CLIP 为 `qwen_3_4b.safetensors`、VAE 为 `ae.safetensors`；
-- 人物资产固定是一张生产参考板：**正面全身 + 侧面全身 + 背面全身 + 面部特写**。禁止改成四个全身方向，也禁止退化成单张情绪肖像 / 情侣图 / 剧情场景图；
+- 当前 Windows 默认使用本机 ComfyUI + `z_image_turbo_bf16.safetensors`；其模型专属 Prompt Skill 为 `z-image-turbo-asset-prompting@1.1.0`，CLIP 为 `qwen_3_4b.safetensors`、VAE 为 `ae.safetensors`；
+- 人物资产固定是一张生产参考板：**正面全身 + 侧面全身 + 背面全身 + 面部特写**。禁止把四格结构交给图片模型一次自由排版；Runtime 必须分别生成正面/侧面/背面单人全身图，使用同一身份 Prompt 与同一 base seed，再从正面图确定性裁出面部特写并固定合成四格参考板；禁止四个全身方向、单张情绪肖像 / 情侣图 / 剧情场景图；
 - 场景资产是隔离人物后的环境身份参考图；道具资产是隔离环境和无关人物后的道具身份参考图；
 - 候选必须人工确认后才能成为 CURRENT TARGET_ASSETS。
 
