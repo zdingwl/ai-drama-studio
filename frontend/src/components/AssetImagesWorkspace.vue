@@ -6,6 +6,7 @@ import { listProjectTasks } from '@/features/projects/api'
 import {
   getAssetImages,
   listAssetImageCandidates,
+  regenerateAssetImages,
   reviewAssetImages,
   startAssetImages,
   type AssetImageCandidate,
@@ -102,6 +103,7 @@ async function refreshTask(silent = false) {
       startTaskPolling()
     } else {
       stopTaskPolling()
+      if (message.value.includes('任务已启动')) message.value = ''
       if (assetTask.value?.status === 'succeeded') await refresh(true)
     }
   } catch (exc) {
@@ -129,7 +131,20 @@ async function generate() {
   error.value = ''
   message.value = ''
   try {
-    assetTask.value = await startAssetImages(projectId.value)
+    const previousTaskId = assetTask.value?.id ?? null
+    const startedTask = current.value?.status === 'CURRENT'
+      ? await regenerateAssetImages(projectId.value)
+      : await startAssetImages(projectId.value)
+    if (startedTask.task_type !== 'replica.asset-images' || startedTask.project_id !== projectId.value) {
+      throw new Error('后端没有返回有效的资产图任务，请刷新页面后重试。')
+    }
+    if (previousTaskId && startedTask.id === previousTaskId) {
+      throw new Error('没有创建新的资产图任务，请刷新页面后重试。')
+    }
+    if (startedTask.status !== 'queued' && startedTask.status !== 'running') {
+      throw new Error(startedTask.last_error || '资产图任务没有进入执行队列，请刷新页面后重试。')
+    }
+    assetTask.value = startedTask
     message.value = '资产提取 → Prompt Skill 分析分镜 → Z-Image Turbo 出图任务已启动，可在下方查看实时进度；如果失败会直接显示失败原因。'
     if (taskRunning.value) startTaskPolling()
     await refresh(true)

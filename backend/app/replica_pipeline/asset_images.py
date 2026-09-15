@@ -23,6 +23,7 @@ from app.core.time import utc_now
 from app.projects.enums import ProjectType
 from app.projects.service import get_project
 from app.replica_pipeline.asset_prompting import (
+    CHARACTER_RUNTIME_LAYOUT_TOKENS,
     MAX_ASSET_PROMPT_BATCH_SIZE,
     AssetPromptAuthorInput,
     AssetPromptAuthorResult,
@@ -60,6 +61,8 @@ DEFAULT_CLIP = "qwen_3_4b.safetensors"
 DEFAULT_VAE = "ae.safetensors"
 CHARACTER_PANEL_WIDTH = 384
 CHARACTER_PANEL_HEIGHT = 768
+CHARACTER_RENDER_WIDTH = 512
+CHARACTER_RENDER_HEIGHT = 1024
 CHARACTER_WIDTH = CHARACTER_PANEL_WIDTH * 4
 CHARACTER_HEIGHT = CHARACTER_PANEL_HEIGHT
 SCENE_WIDTH = 1280
@@ -129,7 +132,8 @@ class ComfyUIZImageTurboRuntime:
             "clip": self.clip_name,
             "vae": self.vae_name,
             "workflow": "z-image-turbo-assets-v2",
-            "character_sheet": "three-independent-views-plus-front-face-crop-v1",
+            "character_sheet": "three-independent-single-person-renders-plus-front-face-crop-v2",
+            "character_render_size": [CHARACTER_RENDER_WIDTH, CHARACTER_RENDER_HEIGHT],
             "steps": 8,
             "sampler": "res_multistep",
             "scheduler": "simple",
@@ -197,26 +201,65 @@ class ComfyUIZImageTurboRuntime:
         return {"prompt": graph, "client_id": f"ai-drama-assets-{uuid4()}"}
 
     @staticmethod
-    def _character_view_prompt(identity_prompt: str, view: str) -> str:
-        view_instruction = {
+    def _contains_character_layout_language(value: str) -> bool:
+        lowered = value.lower()
+        return any(token in lowered for token in CHARACTER_RUNTIME_LAYOUT_TOKENS)
+
+    @classmethod
+    def _character_identity_for_runtime(cls, identity_prompt: str) -> str:
+        """Remove only Runtime-owned layout language from legacy character prompts.
+
+        Prompt Skill v1.2 no longer emits these phrases, but existing/older authored
+        prompts can contain negated phrases such as ``do not create a reference sheet``.
+        Z-Image Turbo can still react to those words and produce miniature turnarounds,
+        so the Runtime strips only those layout clauses while preserving visual identity.
+        """
+        chunks = [chunk.strip() for chunk in identity_prompt.replace("\n", " ").split(".") if chunk.strip()]
+        kept: list[str] = []
+        for chunk in chunks:
+            if cls._contains_character_layout_language(chunk):
+                comma_parts = [part.strip() for part in chunk.split(",") if part.strip()]
+                clean_parts = [part for part in comma_parts if not cls._contains_character_layout_language(part)]
+                if clean_parts:
+                    kept.append(", ".join(clean_parts))
+                continue
+            kept.append(chunk)
+        cleaned = ". ".join(kept).strip()
+        if not cleaned:
+            raise AppError(
+                "ASSET_IMAGE_CHARACTER_IDENTITY_PROMPT_EMPTY",
+                "人物 Prompt 去除 Runtime 版式词后没有剩余稳定视觉身份内容",
+                status_code=502,
+            )
+        return cleaned
+
+    @classmethod
+    def _character_negative_for_runtime(cls, negative_prompt: str) -> str:
+        parts = [part.strip() for part in negative_prompt.replace("\n", ",").split(",") if part.strip()]
+        return ", ".join(part for part in parts if not cls._contains_character_layout_language(part))
+
+    @classmethod
+    def _character_view_prompt(cls, identity_prompt: str, view: str) -> str:
+        orientation = {
             "front": (
-                "Exactly one person, single full-body FRONT view, straight toward camera, neutral standing pose, "
-                "head to shoes fully visible, arms relaxed, eye-level orthographic-like character reference."
+                "A full-length studio photograph of ONE person only. The person stands alone in the center, "
+                "body and face square to the camera, neutral standing pose, arms relaxed, head and both shoes fully visible."
             ),
             "side": (
-                "Exactly one person, single full-body SIDE PROFILE view, true 90-degree profile, neutral standing pose, "
-                "head to shoes fully visible, arms relaxed, eye-level orthographic-like character reference."
+                "A full-length studio photograph of ONE person only. The person stands alone in the center in an exact "
+                "90-degree left-facing profile, nose pointing left, shoulders perpendicular to the camera, neutral pose, head and shoes fully visible."
             ),
             "back": (
-                "Exactly one person, single full-body BACK view, facing directly away from camera, neutral standing pose, "
-                "head to shoes fully visible, arms relaxed, eye-level orthographic-like character reference."
+                "A full-length studio photograph of ONE person only. The person stands alone in the center with the back of the head "
+                "and body facing the camera, face not visible, neutral pose, arms relaxed, head and shoes fully visible."
             ),
         }[view]
+        identity = cls._character_identity_for_runtime(identity_prompt)
         return (
-            f"{view_instruction} Preserve the exact same character identity, hairstyle, body proportions, base wardrobe, colors and materials across all views. "
-            "Clean seamless white or very light neutral studio background, soft even lighting, no props, no environment, no text. "
-            f"Character identity: {identity_prompt.strip()} "
-            "Do not create a collage, contact sheet, split screen, duplicate person, second pose, couple, group, action scene or lifestyle scene."
+            f"{orientation} The image contains exactly one human figure total, one pose only, with no miniature repetitions or secondary figures anywhere in the frame. "
+            "The subject should occupy most of the image height with empty space on both sides. "
+            "Clean seamless very light neutral studio background, soft even lighting, no props, no environment, no text. "
+            f"Stable appearance: {identity}"
         )
 
     def _character_workflow(self, identity_prompt: str, negative_prompt: str, *, prefix: str, seed: int) -> dict:
@@ -229,11 +272,12 @@ class ComfyUIZImageTurboRuntime:
         for branch, view in enumerate(("front", "side", "back"), 1):
             base = branch * 10
             execution_prompt = self._character_view_prompt(identity_prompt, view)
-            if negative_prompt.strip():
-                execution_prompt += f"\n\nHard exclusions — do not include any of the following: {negative_prompt.strip()}"
+            runtime_negative = self._character_negative_for_runtime(negative_prompt)
+            if runtime_negative:
+                execution_prompt += f"\n\nHard exclusions — do not include any of the following: {runtime_negative}"
             graph[str(base)] = {"class_type": "CLIPTextEncode", "inputs": {"text": execution_prompt, "clip": ["2", 0]}}
             graph[str(base + 1)] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": [str(base), 0]}}
-            graph[str(base + 2)] = {"class_type": "EmptySD3LatentImage", "inputs": {"width": CHARACTER_PANEL_WIDTH, "height": CHARACTER_PANEL_HEIGHT, "batch_size": 1}}
+            graph[str(base + 2)] = {"class_type": "EmptySD3LatentImage", "inputs": {"width": CHARACTER_RENDER_WIDTH, "height": CHARACTER_RENDER_HEIGHT, "batch_size": 1}}
             graph[str(base + 3)] = {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 8, "cfg": 1.0, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1.0, "model": ["4", 0], "positive": [str(base), 0], "negative": [str(base + 1), 0], "latent_image": [str(base + 2), 0]}}
             graph[str(base + 4)] = {"class_type": "VAEDecode", "inputs": {"samples": [str(base + 3), 0], "vae": ["3", 0]}}
             graph[str(base + 5)] = {"class_type": "SaveImage", "inputs": {"images": [str(base + 4), 0], "filename_prefix": f"{prefix}/{view}"}}
@@ -531,22 +575,26 @@ def _entity_specs(content: ReplicaLocalizedStoryboardContent, visual_style: str)
     return specs
 
 
-def create_asset_images_task(db: Session, *, project_id: str, idempotency_key: str) -> Task:
+def create_asset_images_task(db: Session, *, project_id: str, idempotency_key: str, regenerate: bool = False) -> Task:
     project = get_project(db, project_id)
     if project.project_type != ProjectType.REPLICA: raise AppError("ASSET_IMAGES_PROJECT_UNSUPPORTED", "当前五步主生产链只正式支持 REPLICA", status_code=422)
     storyboard_artifact, content = _load_storyboard(db, project_id)
     runtime = ComfyUIZImageTurboRuntime(); runtime.assert_ready()
     binding, prompt_skill = selected_image_model_prompt_skill()
     prompt_provider = asset_prompt_author_provider()
-    fingerprint = _sha({
+    fingerprint_payload = {
         "storyboard": storyboard_artifact.input_fingerprint,
         "visual_style": project.visual_style,
         "runtime": runtime.profile(),
         "orchestration_skill": get_professional_skill(SKILL_ID).version,
         "prompt_skill": [prompt_skill.id, prompt_skill.version, binding.prompt_contract],
         "prompt_provider": prompt_provider.profile(),
-    })
-    return create_task_from_command(db, project_id=project_id, idempotency_key=idempotency_key, payload=TaskCommandCreate(task_type=TASK_TYPE, task_name="提取资产、Skill 生成提示词并生成资产图", input_fingerprint=fingerprint, input_artifact_ids=[storyboard_artifact.id], max_attempts=3))
+    }
+    if regenerate:
+        fingerprint_payload["regeneration_request"] = idempotency_key.strip()
+    fingerprint = _sha(fingerprint_payload)
+    task_name = "重新提取并生成资产图" if regenerate else "提取资产、Skill 生成提示词并生成资产图"
+    return create_task_from_command(db, project_id=project_id, idempotency_key=idempotency_key, payload=TaskCommandCreate(task_type=TASK_TYPE, task_name=task_name, input_fingerprint=fingerprint, input_artifact_ids=[storyboard_artifact.id], max_attempts=3))
 
 
 def _generation_sequence(db: Session, project_id: str, storyboard_artifact_id: str) -> int:

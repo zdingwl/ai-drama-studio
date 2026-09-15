@@ -23,7 +23,46 @@ CHARACTER_RUNTIME_LAYOUT_TOKENS = (
     "reference sheet",
     "contact sheet",
     "multi-panel",
+    "turnaround",
+    "collage",
+    "split screen",
 )
+
+_CHARACTER_LAYOUT_NEGATION_RE = re.compile(
+    r"\b(?:do\s+not|don['’]?t|no|never|avoid|without|must\s+not|should\s+not|exclude(?:d|s|ing)?|forbid(?:s|den|ding)?)\b",
+    flags=re.IGNORECASE,
+)
+_CHARACTER_LAYOUT_CONTRAST_RE = re.compile(r"\b(?:but|however|instead|rather)\b", flags=re.IGNORECASE)
+
+
+def _positive_character_layout_tokens(prompt: str) -> list[str]:
+    """Return Runtime-owned layout tokens that are requested positively.
+
+    Older Prompt Skill revisions could repeat Runtime-owned layout exclusions in
+    ``image_prompt`` (for example, ``Do not create a reference sheet``). Those
+    explicit negative constraints remain accepted for backward compatibility and
+    must not be confused with a positive request for model-authored layout.
+    """
+    lowered = prompt.lower()
+    leaked: list[str] = []
+    for token in CHARACTER_RUNTIME_LAYOUT_TOKENS:
+        for match in re.finditer(re.escape(token), lowered):
+            clause_start = max(
+                lowered.rfind(".", 0, match.start()),
+                lowered.rfind(";", 0, match.start()),
+                lowered.rfind("!", 0, match.start()),
+                lowered.rfind("?", 0, match.start()),
+                lowered.rfind("\n", 0, match.start()),
+            ) + 1
+            prefix = lowered[clause_start:match.start()]
+            contrasts = list(_CHARACTER_LAYOUT_CONTRAST_RE.finditer(prefix))
+            if contrasts:
+                prefix = prefix[contrasts[-1].end():]
+            if _CHARACTER_LAYOUT_NEGATION_RE.search(prefix):
+                continue
+            leaked.append(token)
+            break
+    return leaked
 
 
 def _assert_execution_english(label: str, value: str, *, target_entity_id: str) -> None:
@@ -86,10 +125,11 @@ Prompt Contract：{payload.binding.prompt_contract}
 - image_prompt 以具体清晰的英文为主，直接服务 {payload.binding.model_id}；review_prompt_zh 使用简体中文解释出图目标。
 - 人物关系、婚姻、亲属、同事等叙事关系不能导致单人物资产图出现第二个人。
 - CHARACTER 的 image_prompt 只描述一个人物的稳定视觉身份：脸型五官、年龄感、发型发色、肤色、体态、基础服装轮廓/材质/颜色和标志性可见特征。不要要求模型自己排版三视图、四视图、reference sheet、contact sheet 或 face close-up。
-- CHARACTER 禁止把人物关系、剧情动作、手机等临时道具写成资产身份；除非稳定身份绝对需要，不要加入剧情道具。前/侧/背三张全身视图与面部特写的版式由 Runtime 确定性生成和合成，而不是由 Prompt 自由排版。
+- CHARACTER 的 image_prompt 与 negative_prompt 都不要出现 multi-panel、turnaround、reference sheet、contact sheet、collage、split screen、front/side/back view、face close-up 等版式词，即使是否定句也不要写；这些词会激活 Z-Image Turbo 的角色设定表先验。Runtime 会自己加入单人朝向约束并负责最终四栏合成。
+- CHARACTER 禁止把人物关系、剧情动作、手机等临时道具写成资产身份；除非稳定身份绝对需要，不要加入剧情道具。前/侧/背三张全身图与面部特写的版式由 Runtime 确定性生成和合成，而不是由 Prompt 自由排版。
 - SCENE 只表现稳定环境身份、空间布局、材质、landmarks、光照和色彩，不把剧情中的人物带进环境资产图。
 - PROP 只表现稳定物体身份、形态、尺度、材质、颜色和标志性细节，不加入无关人物/场景。
-- 当前 Turbo Runtime 使用 zeroed negative conditioning，因此关键排除项必须同时作为 `Do not ...` 约束写进 image_prompt；negative_prompt 也必须返回用于审计。
+- 当前 Turbo Runtime 使用 zeroed negative conditioning，因此人物/场景/道具的语义排除项（其他人物、临时道具、文字、水印、剧情场景等）必须同时作为 `Do not ...` 约束写进 image_prompt；negative_prompt 也必须返回用于审计。CHARACTER 的版式排除词是唯一例外：不要在 Skill 输出中重复，由 Runtime 自己控制。
 - 不修改 target entity identity，不创造 Artifact/media/id，不生成视频提示词。
 - 只输出符合 JSON Schema 的 JSON object，不输出 Markdown 或额外解释。
 
@@ -192,8 +232,7 @@ def validate_authored_asset_batch(
     asset_type_by_id = {str(item["target_entity_id"]): str(item["asset_type"]) for item in expected_assets}
     for entity_id, item in by_id.items():
         if asset_type_by_id[entity_id] == TargetAssetType.CHARACTER.value:
-            prompt = item.image_prompt.lower()
-            leaked_layout = [token for token in CHARACTER_RUNTIME_LAYOUT_TOKENS if token in prompt]
+            leaked_layout = _positive_character_layout_tokens(item.image_prompt)
             if leaked_layout:
                 raise AppError(
                     "ASSET_IMAGE_CHARACTER_PROMPT_SCOPE_INVALID",

@@ -181,6 +181,7 @@ export const reviewLocalizedStoryboard = (projectId: string, candidate: Localize
 export const getAssetImages = (projectId: string) => apiRequest<AssetImagesRead>(`/projects/${projectId}/asset-images`, { cache: 'no-store' })
 export const listAssetImageCandidates = (projectId: string) => apiRequest<AssetImageCandidate[]>(`/projects/${projectId}/asset-images/candidates`, { cache: 'no-store' })
 export const startAssetImages = (projectId: string) => apiRequest<TaskRead>(`/projects/${projectId}/commands/asset-images`, { method: 'POST', headers: { 'Idempotency-Key': key('asset-images') } })
+export const regenerateAssetImages = (projectId: string) => apiRequest<TaskRead>(`/projects/${projectId}/commands/asset-images/regenerate`, { method: 'POST', headers: { 'Idempotency-Key': key('asset-images-regenerate') } })
 export const reviewAssetImages = (projectId: string, candidate: AssetImageCandidate, accept: boolean, reason: string) => apiRequest<AssetImagesRead | AssetImageCandidate>(`/projects/${projectId}/asset-images/candidates/${candidate.id}/commands/${accept ? 'accept' : 'reject'}`, {
   method: 'POST',
   body: JSON.stringify({ expected_upstream_artifact_id: candidate.content.target_storyboard_artifact_id, expected_generation_sequence: candidate.generation_sequence, reason }),

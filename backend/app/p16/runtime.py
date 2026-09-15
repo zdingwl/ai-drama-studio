@@ -119,7 +119,7 @@ def create_generation_task(db: Session, *, project_id: str, idempotency_key: str
 
 
 def replace_generation_task_for_retry_if_needed(db: Session, *, project_id: str, task: Task) -> Task | None:
-    """Create a fresh P16 task when an explicit retry can no longer reuse the failed task.
+    """Create a fresh P16 task when an explicit retry/resume cannot reuse the old task.
 
     A failed task fingerprints the selected H3 runtime profile. Re-queuing that exact task after
     switching from SGLang to ComfyUI would fail immediately as stale. The same applies when P15 has
@@ -128,11 +128,9 @@ def replace_generation_task_for_retry_if_needed(db: Session, *, project_id: str,
     lineage or the runtime/profile fingerprint changed. Missing/non-CURRENT inputs still fail closed
     through load_inputs(), and the failed task's retry limit remains authoritative.
     """
-    if (
-        task.task_type != P16_TASK_TYPE
-        or task.status != TaskStatus.FAILED
-        or task.attempt >= task.max_attempts
-    ):
+    if task.task_type != P16_TASK_TYPE or task.status not in {TaskStatus.FAILED, TaskStatus.INTERRUPTED}:
+        return None
+    if task.status == TaskStatus.FAILED and task.attempt >= task.max_attempts:
         return None
     project = get_project(db, project_id)
     inputs = load_inputs(db, project)
@@ -151,10 +149,12 @@ def replace_generation_task_for_retry_if_needed(db: Session, *, project_id: str,
         project_id=project_id,
         idempotency_key=f"p16-runtime-retry-{task.id}-{current_fingerprint[:16]}",
     )
-    if (replacement.checkpoint_json or {}).get("p16_replaces_failed_task_id") != task.id:
+    if (replacement.checkpoint_json or {}).get("p16_replaces_task_id") != task.id:
         replacement.checkpoint_json = {
             **(replacement.checkpoint_json or {}),
-            "p16_replaces_failed_task_id": task.id,
+            "p16_replaces_task_id": task.id,
+            # Retain the legacy checkpoint key for existing diagnostics and API clients.
+            "p16_replaces_failed_task_id": task.id if task.status == TaskStatus.FAILED else None,
         }
         db.add(replacement)
         db.commit()

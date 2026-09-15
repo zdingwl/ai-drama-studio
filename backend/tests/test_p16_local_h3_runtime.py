@@ -462,3 +462,68 @@ def test_retry_replaces_failed_p16_task_when_current_artifact_lineage_changes(mo
 
     assert result is replacement
     assert replacement.checkpoint_json["p16_replaces_failed_task_id"] == "old-task"
+
+
+def test_resume_replaces_interrupted_p16_task_when_current_artifact_lineage_changes(monkeypatch) -> None:
+    old_task = SimpleNamespace(
+        id="old-task",
+        task_type=p16_runtime.P16_TASK_TYPE,
+        status=p16_runtime.TaskStatus.INTERRUPTED,
+        project_id="project-1",
+        input_artifact_ids_json=["old-storyboard", "old-segments", "assets"],
+        input_fingerprint="a" * 64,
+        checkpoint_json={"p16_generation_sequence": 1},
+        attempt=1,
+        max_attempts=3,
+    )
+    replacement = SimpleNamespace(id="new-task", checkpoint_json={})
+    inputs = object()
+
+    class FakeProvider:
+        def assert_ready(self) -> None:
+            return None
+
+    class FakeDB:
+        def add(self, value) -> None:
+            self.added = value
+
+        def commit(self) -> None:
+            return None
+
+        def refresh(self, value) -> None:
+            return None
+
+    monkeypatch.setattr(p16_runtime, "get_project", lambda db, project_id: SimpleNamespace(id=project_id))
+    monkeypatch.setattr(p16_runtime, "load_inputs", lambda db, project: inputs)
+    monkeypatch.setattr(p16_runtime, "input_artifact_ids", lambda loaded: ["new-storyboard", "new-segments", "assets"])
+    monkeypatch.setattr(p16_runtime, "build_h3_generation_provider", lambda: FakeProvider())
+    monkeypatch.setattr(p16_runtime, "_fingerprint", lambda loaded, sequence, provider: "b" * 64)
+    monkeypatch.setattr(p16_runtime, "create_generation_task", lambda db, **kwargs: replacement)
+
+    result = p16_runtime.replace_generation_task_for_retry_if_needed(
+        FakeDB(),
+        project_id="project-1",
+        task=old_task,
+    )
+
+    assert result is replacement
+    assert replacement.checkpoint_json["p16_replaces_task_id"] == "old-task"
+    assert replacement.checkpoint_json["p16_replaces_failed_task_id"] is None
+
+
+def test_comfyui_reference_workflow_uses_autogrow_v3_container() -> None:
+    provider = LocalComfyUIH3Provider(_comfy_config())
+    segment = _segment().model_copy(update={"reference_conditions": [object(), object()]})
+
+    payload = provider.workflow_payload(
+        segment,
+        seed=7,
+        uploaded_images=["refs/one.png", "refs/two.png"],
+    )
+
+    inputs = payload["prompt"]["5"]["inputs"]
+    assert inputs["ref_images"] == {
+        "ref_image_0": ["15", 0],
+        "ref_image_1": ["16", 0],
+    }
+    assert "ref_image_1" not in {key for key in inputs if key != "ref_images"}

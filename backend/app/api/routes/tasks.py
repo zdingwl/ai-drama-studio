@@ -178,6 +178,12 @@ def resume_task_route(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> TaskRead:
+    existing = get_task(db, project_id, task_id)
+    if existing.task_type == P16_TASK_TYPE:
+        replacement = replace_generation_task_for_retry_if_needed(db, project_id=project_id, task=existing)
+        if replacement is not None:
+            _schedule_task_if_needed(background_tasks, db, replacement)
+            return task_to_read(replacement)
     task = resume_task(db, project_id, task_id)
     _schedule_task_if_needed(background_tasks, db, task)
     return task_to_read(task)

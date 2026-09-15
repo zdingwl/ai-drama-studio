@@ -72,7 +72,15 @@ def localized_storyboard_reject(project_id: str, candidate_id: str, command: Pip
 
 @router.post("/projects/{project_id}/commands/asset-images", response_model=TaskRead, status_code=status.HTTP_202_ACCEPTED)
 def asset_images_command(project_id: str, background_tasks: BackgroundTasks, idempotency_key: Annotated[str, Header(alias="Idempotency-Key")], db: Session = Depends(get_db)) -> TaskRead:
-    task = create_asset_images_task(db, project_id=project_id, idempotency_key=idempotency_key)
+    task = create_asset_images_task(db, project_id=project_id, idempotency_key=idempotency_key, regenerate=False)
+    if task.status.value == "queued":
+        background_tasks.add_task(run_asset_images_task, _session_factory(db), task.id)
+    return task_to_read(task)
+
+
+@router.post("/projects/{project_id}/commands/asset-images/regenerate", response_model=TaskRead, status_code=status.HTTP_202_ACCEPTED)
+def asset_images_regenerate_command(project_id: str, background_tasks: BackgroundTasks, idempotency_key: Annotated[str, Header(alias="Idempotency-Key")], db: Session = Depends(get_db)) -> TaskRead:
+    task = create_asset_images_task(db, project_id=project_id, idempotency_key=idempotency_key, regenerate=True)
     if task.status.value == "queued":
         background_tasks.add_task(run_asset_images_task, _session_factory(db), task.id)
     return task_to_read(task)

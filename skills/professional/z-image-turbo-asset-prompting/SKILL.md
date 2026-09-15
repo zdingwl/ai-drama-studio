@@ -33,7 +33,7 @@ The execution prompt should be concise, concrete English optimized for the image
 
 ## Character asset contract
 
-The Skill must compile a **single-character identity prompt**, not a multi-panel layout prompt. `image_prompt` describes only stable visible identity: facial structure, age appearance, hair, skin, body proportions, baseline wardrobe silhouette/material/color and signature visible features. It must not ask Z-Image Turbo to draw a turnaround/reference/contact sheet or to place front/side/back/face views in one generation.
+The Skill must compile a **single-character identity prompt**, not a multi-panel layout prompt. `image_prompt` describes only stable visible identity: facial structure, age appearance, hair, skin, body proportions, baseline wardrobe silhouette/material/color and signature visible features. It must not ask Z-Image Turbo to draw a turnaround/reference/contact sheet or to place front/side/back/face views in one generation. It also must not repeat those Runtime-owned layout words as negative wording in either `image_prompt` or `negative_prompt`: Z-Image Turbo can still react to a negated `reference sheet` / `turnaround` / `multi-panel` phrase and produce miniature duplicated figures.
 
 The Runtime owns the production layout deterministically:
 
@@ -43,7 +43,7 @@ The Runtime owns the production layout deterministically:
 4. derive the **face close-up** from the generated front view so the face is literally the same front identity;
 5. compose those four panels into one landscape production reference sheet in fixed order.
 
-The three model renders use the same canonical identity prompt, the same base seed and the same fixed wardrobe/color constraints. Each model render explicitly forbids collage/contact-sheet/multiple-person layouts. This moves structural correctness out of model free-form layout generation and into deterministic Runtime composition.
+The three model renders use the same canonical identity prompt, the same base seed and the same fixed wardrobe/color constraints. Runtime phrases each generation as one ordinary full-length studio photograph containing exactly one human figure, without using `character reference`, plural `views`, `turnaround`, `collage`, `contact sheet` or similar layout-trigger words. This moves structural correctness out of model free-form layout generation and into deterministic Runtime composition. For compatibility with older authored prompts, Runtime may deterministically remove only Runtime-owned layout clauses before execution; it must preserve the stable visual identity content.
 
 Do not generate a single mood portrait, action scene, couple image or lifestyle scene. Narrative relationships and temporary story props must not enter the stable character identity prompt.
 
@@ -57,11 +57,11 @@ Generate an isolated prop identity reference on a clean neutral background. Clea
 
 ## Negative constraints
 
-Z-Image Turbo's current local workflow uses zeroed negative conditioning. Therefore critical exclusions must also be written directly into `image_prompt` as explicit `Do not ...` constraints. `negative_prompt` is still returned and persisted for audit/future adapters, but the Runtime may inline it as hard exclusions rather than using a separate negative conditioning encoder.
+Z-Image Turbo's current local workflow uses zeroed negative conditioning. Therefore semantic exclusions (extra people, temporary props, text/watermarks, scene-specific backgrounds) must also be written directly into `image_prompt` as explicit `Do not ...` constraints. `negative_prompt` is still returned and persisted for audit/future adapters, but the Runtime may inline it as hard exclusions rather than using a separate negative conditioning encoder. Character layout vocabulary is the exception: do not put it in either prompt field; Runtime owns orientation and composition.
 
 ## Separation
 
 - Prompt Skill: analyzes storyboard evidence and authors final image-model prompt.
-- ComfyUI Runtime: executes exactly that compiled prompt and persists the resulting media.
-- Runtime must not infer relationships, invent another person, rewrite the asset identity or replace the prompt with a generic template.
+- ComfyUI Runtime: executes the compiled stable identity plus deterministic single-person orientation constraints and persists the resulting media.
+- Runtime must not infer relationships, invent another person, rewrite the asset identity or replace the prompt with a generic template. Its only compatibility normalization is stripping legacy Runtime-owned layout clauses before character execution.
 

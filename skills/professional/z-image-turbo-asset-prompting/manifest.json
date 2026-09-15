@@ -1,7 +1,7 @@
 {
   "id": "z-image-turbo-asset-prompting",
   "name": "Z-Image Turbo 资产图提示词编译",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "category": "target-assets",
   "description": "把从 CURRENT TARGET_STORYBOARD v2 提取出的单个人物/场景/道具及其实际分镜证据编译成 Z-Image Turbo 专属资产图执行提示词；人物 Prompt 只描述稳定身份，三视图加面部特写由 Runtime 确定性生成与合成。",
   "when_to_use": ["Replica 第 3 步已从本土化分镜提取目标资产，并选择本机 Z-Image Turbo 生成真实资产图"],
@@ -13,18 +13,18 @@
   "manual_path": "z-image-turbo-asset-prompting/SKILL.md",
   "steps": [
     {"id":"analyze_asset_evidence","phase":"资产图","title":"分析资产分镜证据","description":"只读取该资产在本土化分镜中的实体定义和实际引用镜头，提炼可观察视觉信息，过滤人物关系等不可直接绘制叙事。","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]},
-    {"id":"compile_zimage_prompt","phase":"资产图","title":"编译 Z-Image Turbo 提示词","description":"按 Z-Image Turbo 模型能力生成最终 image_prompt / negative_prompt；人物严格使用正面全身、侧面全身、背面全身和面部特写。","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]}
+    {"id":"compile_zimage_prompt","phase":"资产图","title":"编译 Z-Image Turbo 提示词","description":"按 Z-Image Turbo 模型能力生成最终 image_prompt / negative_prompt；人物 Prompt 只编译稳定单人物视觉身份，正面/侧面/背面与面部特写由 Runtime 负责。","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]}
   ],
   "fact_levels": ["TARGET_LOCALIZED_ENTITY", "STORYBOARD_VISUAL_EVIDENCE", "ZIMAGE_EXECUTION_PROMPT"],
   "provider_rules": [
     "Analyze only the extracted asset and localized shots that reference it; do not turn narrative relationships or dialogue into extra visible people.",
     "Return one prompt result for every requested target_entity_id and no others.",
-    "Character image_prompt must contain only stable single-character visual identity and must not request a multi-panel/reference/contact sheet.",
+    "Character image_prompt must contain only stable single-character visual identity; image_prompt and negative_prompt must not mention Runtime-owned layout vocabulary (multi-panel, turnaround, reference/contact sheet, collage, split screen or front/side/back/face layout), even as negative wording.",
     "The Runtime deterministically renders front full-body, side-profile full-body and back full-body with the same identity prompt/base seed, derives the face close-up from the front render, and composes the final four-panel sheet.",
     "Scene prompts isolate stable environment identity and must not add story characters.",
     "Prop prompts isolate the object identity and must not add unrelated people or scenery.",
     "Final execution prompts are concrete English for Z-Image Turbo; review_prompt_zh is Simplified Chinese for the operator.",
-    "Critical exclusions must be explicit in image_prompt as Do not constraints as well as negative_prompt because the current Turbo runtime uses zeroed negative conditioning.",
+    "Semantic exclusions must be explicit in image_prompt as Do not constraints as well as negative_prompt because the current Turbo runtime uses zeroed negative conditioning; character layout exclusions are the exception and are owned only by Runtime.",
     "Do not generate Artifact ids, stable target ids, media paths, image bytes or video prompts."
   ],
   "output_contracts": [],

@@ -94,9 +94,15 @@ def get_generation_selection(db: Session, project_id: str) -> ReplicaGenerationS
     )
 
 
-def _review_context(db: Session, project_id: str, candidate_id: str, command: P16ReviewCommand):
+def _candidate_review_target(db: Session, project_id: str, candidate_id: str, command: P16ReviewCommand):
+    """Resolve the exact candidate named by an explicit review command.
+
+    Rejecting a historical candidate is only a review-state mutation: it does not publish
+    production artifacts.  Therefore a candidate may still be explicitly rejected after
+    TARGET_ASSETS / GENERATION_SEGMENTS have advanced.  We still require the caller's
+    optimistic-concurrency fields to match the exact candidate being acted on.
+    """
     project = get_project(db, project_id)
-    inputs = load_inputs(db, project)
     candidate = db.get(ReplicaGenerationSelectionCandidate, candidate_id)
     if candidate is None or candidate.project_id != project_id:
         raise AppError("P16_SELECTION_CANDIDATE_NOT_FOUND", "视频 Selection candidate 不存在", status_code=404)
@@ -107,15 +113,27 @@ def _review_context(db: Session, project_id: str, candidate_id: str, command: P1
         command.expected_generation_segments_artifact_id,
         command.expected_target_assets_artifact_id,
     ]
-    if expected != input_artifact_ids(inputs) or candidate.generation_sequence != command.expected_generation_sequence:
-        raise AppError("P16_REVIEW_INPUT_CHANGED", "P16 当前正式输入或 candidate sequence 已变化", status_code=409)
-    if [candidate.target_storyboard_artifact_id, candidate.generation_segments_artifact_id, candidate.target_assets_artifact_id] != expected:
-        raise AppError("P16_SELECTION_CANDIDATE_STALE", "Selection candidate 不属于当前正式生产输入", status_code=409)
+    candidate_inputs = [
+        candidate.target_storyboard_artifact_id,
+        candidate.generation_segments_artifact_id,
+        candidate.target_assets_artifact_id,
+    ]
+    if candidate.generation_sequence != command.expected_generation_sequence or candidate_inputs != expected:
+        raise AppError("P16_REVIEW_INPUT_CHANGED", "P16 candidate 已变化，请刷新后重试", status_code=409)
+    return project, candidate, expected
+
+
+def _review_context(db: Session, project_id: str, candidate_id: str, command: P16ReviewCommand):
+    """Acceptance context: candidate must still belong to every CURRENT formal input."""
+    project, candidate, expected = _candidate_review_target(db, project_id, candidate_id, command)
+    inputs = load_inputs(db, project)
+    if expected != input_artifact_ids(inputs):
+        raise AppError("P16_REVIEW_INPUT_CHANGED", "P16 当前正式输入已变化，旧候选不能确认发布", status_code=409)
     return project, inputs, candidate
 
 
 def reject_selection_candidate(db: Session, *, project_id: str, candidate_id: str, command: P16ReviewCommand) -> P16SelectionCandidateRead:
-    _project, _inputs, candidate = _review_context(db, project_id, candidate_id, command)
+    _project, candidate, _expected = _candidate_review_target(db, project_id, candidate_id, command)
     candidate.review_status = SelectionReviewStatus.REJECTED.value
     candidate.review_reason = command.reason
     candidate.reviewed_at = utc_now()

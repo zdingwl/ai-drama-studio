@@ -680,7 +680,7 @@ class LocalComfyUIH3Provider:
         for index, image_name in enumerate(uploaded, 1):
             node_id = str(14 + index)
             graph[node_id] = {"class_type": "LoadImage", "inputs": {"image": image_name}}
-            graph["5"]["inputs"][f"ref_image_{index}"] = [node_id, 0]
+            graph["5"]["inputs"].setdefault("ref_images", {})[f"ref_image_{index - 1}"] = [node_id, 0]
         return {"prompt": graph, "client_id": f"ai-drama-studio-{uuid4()}"}
 
     def _request_json(self, response: httpx.Response, *, code: str, action: str) -> dict:

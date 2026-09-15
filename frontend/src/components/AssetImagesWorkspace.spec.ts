@@ -14,6 +14,7 @@ vi.mock('@/features/projects/api', () => ({
 vi.mock('@/features/projects/replicaFiveStep', () => ({
   getAssetImages: vi.fn(),
   listAssetImageCandidates: vi.fn(),
+  regenerateAssetImages: vi.fn(),
   reviewAssetImages: vi.fn(),
   startAssetImages: vi.fn(),
 }))
@@ -138,6 +139,43 @@ describe('AssetImagesWorkspace task progress', () => {
     expect(progress.text()).toContain('排队中')
     expect(progress.text()).toContain('0%')
     expect(wrapper.text()).toContain('如果失败会直接显示失败原因')
+
+    wrapper.unmount()
+  })
+
+  it('does not claim regeneration started when the backend returns the previous task', async () => {
+    const completedTask: TaskRead = {
+      ...runningTask,
+      status: 'succeeded',
+      progress_percent: 100,
+      finished_at: '2026-09-15T00:49:53Z',
+      can_cancel: false,
+    }
+    mockReads([completedTask])
+    vi.mocked(replicaApi.getAssetImages).mockResolvedValue({
+      project_id: 'project-1',
+      status: 'CURRENT',
+      artifact_id: 'assets-1',
+      revision: 1,
+      content: {
+        target_storyboard_artifact_id: 'storyboard-1',
+        target_language: 'en-US',
+        target_region: 'US',
+        visual_style: '写实电影感',
+        assets: [],
+      },
+    })
+    vi.mocked(replicaApi.regenerateAssetImages).mockResolvedValue(completedTask)
+
+    const wrapper = await mountWorkspace()
+    const regenerate = wrapper.findAll('button').find(button => button.text() === '重新生成资产图')
+    expect(regenerate).toBeTruthy()
+    await regenerate!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('没有创建新的资产图任务')
+    expect(wrapper.text()).not.toContain('出图任务已启动')
+    expect(replicaApi.regenerateAssetImages).toHaveBeenCalledWith('project-1')
 
     wrapper.unmount()
   })
