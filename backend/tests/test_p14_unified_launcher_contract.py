@@ -1,7 +1,13 @@
 from pathlib import Path
+import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS_ROOT = REPO_ROOT / "scripts"
+if str(SCRIPTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_ROOT))
+
+import studio_windows_lifecycle as lifecycle
 
 
 def test_unified_launcher_is_single_user_entrypoint_without_legacy_tts_bootstrap() -> None:
@@ -65,3 +71,33 @@ def test_managed_runtime_cache_is_not_committed() -> None:
     gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
     assert "/.models/" in gitignore
     assert "/.runtime/" in gitignore
+
+
+def test_windows_cleanup_accepts_repo_owned_uvicorn_parent_for_external_uv_worker(monkeypatch, tmp_path: Path) -> None:
+    repo_root = tmp_path / "ai-drama-studio"
+    repo_python = repo_root / ".venv" / "Scripts" / "python.exe"
+    listener = lifecycle.WindowsProcessInfo(
+        process_id=11720,
+        parent_process_id=35532,
+        executable_path=r"C:\Users\Admin\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\python.exe",
+        command_line=(
+            r'"C:\Users\Admin\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\python.exe" '
+            r"-m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+        ),
+    )
+    parent = lifecycle.WindowsProcessInfo(
+        process_id=35532,
+        parent_process_id=1,
+        executable_path=str(repo_python),
+        command_line=f'"{repo_python}" -m uvicorn app.main:app --host 127.0.0.1 --port 8000',
+    )
+    port_states = iter((True, False, False))
+    terminated: list[int] = []
+
+    monkeypatch.setattr(lifecycle, "port_open", lambda _port: next(port_states))
+    monkeypatch.setattr(lifecycle, "listener_process", lambda _port: listener)
+    monkeypatch.setattr(lifecycle, "process_info", lambda pid: parent if pid == parent.process_id else None)
+    monkeypatch.setattr(lifecycle, "terminate_tree", terminated.append)
+
+    assert lifecycle.cleanup_repo_listener(repo_root, 8000, "backend", trusted_identity=False, timeout=0.1) is True
+    assert terminated == [parent.process_id]

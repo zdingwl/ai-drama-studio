@@ -309,6 +309,34 @@ def _verified_backend_tree_root(listener: WindowsProcessInfo) -> WindowsProcessI
     return root
 
 
+def _repo_owned_backend_tree_root(listener: WindowsProcessInfo, repo_root: Path) -> WindowsProcessInfo | None:
+    """Find a repo-owned Uvicorn ancestor for a backend listener.
+
+    A Uvicorn reload worker can be spawned by a Python executable managed by
+    ``uv`` outside the checkout even when its reload supervisor is the
+    checkout's ``.venv`` process.  In that case the listener itself contains
+    no repository path and an old runtime fingerprint intentionally no longer
+    matches after a source update.  Walking only Uvicorn ``app.main:app``
+    ancestors lets the lifecycle guard prove checkout ownership without
+    broadening cleanup to arbitrary parent processes.
+    """
+    if not _is_uvicorn_backend_process(listener):
+        return None
+
+    current = listener
+    owned: WindowsProcessInfo | None = current if belongs_to_repo(current, repo_root) else None
+    seen = {current.process_id}
+    while current.parent_process_id > 0 and current.parent_process_id not in seen:
+        seen.add(current.parent_process_id)
+        parent = process_info(current.parent_process_id)
+        if parent is None or not _is_uvicorn_backend_process(parent):
+            break
+        current = parent
+        if belongs_to_repo(current, repo_root):
+            owned = current
+    return owned
+
+
 def terminate_tree(process_id: int) -> None:
     subprocess.run(
         ["taskkill", "/PID", str(process_id), "/T", "/F"],
@@ -336,15 +364,28 @@ def cleanup_repo_listener(
             f"Port {port} is occupied, but Studio could not identify its Windows owner. "
             "It was not terminated."
         )
-    if not trusted_identity and not belongs_to_repo(info, repo_root):
+    path_owned_target = (
+        _repo_owned_backend_tree_root(info, repo_root)
+        if port == 8000
+        else (info if belongs_to_repo(info, repo_root) else None)
+    )
+    if not trusted_identity and path_owned_target is None:
         detail = info.command_line or info.executable_path or f"PID {info.process_id}"
         raise RuntimeError(
             f"Port {port} is occupied by a process outside this AI Drama Studio checkout: {detail}. "
             "It was not terminated."
         )
 
-    target = _verified_backend_tree_root(info) if port == 8000 and trusted_identity else info
-    identity_note = "runtime fingerprint" if trusted_identity and not belongs_to_repo(info, repo_root) else "repo path"
+    if port == 8000 and trusted_identity:
+        target = _verified_backend_tree_root(info)
+    else:
+        target = path_owned_target or info
+    if trusted_identity and path_owned_target is None:
+        identity_note = "runtime fingerprint"
+    elif target.process_id != info.process_id:
+        identity_note = "repo-owned Uvicorn parent"
+    else:
+        identity_note = "repo path"
     root_note = f", tree root PID {target.process_id}" if target.process_id != info.process_id else ""
     print(
         f"[Studio] removing orphaned {label} from this checkout "
