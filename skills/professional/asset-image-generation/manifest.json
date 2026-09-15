@@ -3,7 +3,7 @@
   "name": "Replica Asset Image Generation",
   "version": "1.1.0",
   "category": "target-assets",
-  "description": "Extract used target entities from the localized storyboard, compile model-specific visual reference prompts, and render real managed reference images for characters, scenes and props.",
+  "description": "Extract used target entities from the localized storyboard, invoke the selected image model's Professional Prompt Skill against storyboard evidence, then render real managed reference images for characters, scenes and props.",
   "when_to_use": ["CURRENT TARGET_STORYBOARD v2 exists and downstream video generation needs visual references"],
   "when_not_to_use": ["Localized storyboard is missing or stale"],
   "required_inputs": ["TARGET_STORYBOARD"],
@@ -13,22 +13,12 @@
   "manual_path": "asset-image-generation/SKILL.md",
   "steps": [
     {"id":"extract_entities","phase":"资产图","title":"提取目标资产","description":"Collect only target characters/scenes/props actually referenced by the localized storyboard.","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]},
-    {"id":"compile_image_prompts","phase":"资产图","title":"编译模型专属资产提示词","description":"Turn localized review facts into asset-local visual designs and Flux-specific execution prompts without changing stable target identity.","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]},
+    {"id":"compile_model_prompt","phase":"资产图","title":"生成图片模型专属提示词","description":"Route each extracted asset and its localized storyboard evidence through the selected image model's Professional Prompt Skill; generic direct string concatenation is forbidden.","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]},
     {"id":"render_reference_images","phase":"资产图","title":"生成真实资产图","description":"Render managed image files, persist SHA/dimensions and bind them to stable target assets.","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":["TARGET_ASSETS"]}
   ],
-  "fact_levels": ["TARGET_LOCALIZED_ENTITY", "ASSET_LOCAL_VISUAL_DESIGN", "MODEL_SPECIFIC_IMAGE_PROMPT", "REAL_REFERENCE_MEDIA"],
-  "provider_rules": [
-    "No text-only asset may satisfy the image contract",
-    "Every referenced target entity must receive at least one real reference image",
-    "Chinese review prose and image-model execution prompts are different contracts and must not be treated as the same text",
-    "The current Flux.1 Schnell adapter must compile concrete asset-local execution prompts before rendering",
-    "Prompt compilation may concretize visual design but may not change stable target identity, story facts, shot order or dialogue",
-    "Character prompts must request one head-to-toe person on a neutral studio background; scene prompts must request an empty environment; prop prompts must request one isolated object",
-    "Flux Schnell avoidance constraints must be folded into the positive execution prompt because the current CFG=1 workflow does not rely on a separate negative-conditioning prompt",
-    "Reference media must be persisted by Studio with SHA256 and dimensions",
-    "Do not generate video prompts"
-  ],
+  "fact_levels": ["TARGET_LOCALIZED_ENTITY", "IMAGE_MODEL_PROMPT", "REAL_REFERENCE_MEDIA"],
+  "provider_rules": ["No text-only asset may satisfy the image contract", "Every referenced target entity must receive at least one real reference image", "Every image execution prompt must be authored by the selected image model Professional Prompt Skill from the extracted asset plus its localized storyboard evidence; do not concatenate raw biography/story prose directly into the Runtime prompt", "Character assets must be one sheet with front full-body, side full-body, back full-body and face close-up of the same character", "Narrative relationships must not create extra people in a single-character asset", "Reference media must be persisted by Studio with SHA256 and dimensions", "Do not generate video prompts"],
   "output_contracts": ["TARGET_ASSETS"],
-  "completion_criteria": ["Every referenced target entity has a Chinese reviewable visual design", "Every referenced target entity has a model-specific image execution prompt", "Every referenced target entity has real reference media", "All media is managed and technically readable", "Candidate is explicitly accepted"],
-  "failure_policy": ["Prompt compiler coverage mismatch fails closed before image rendering", "Any required entity without a generated image blocks publication", "Runtime failure does not replace an existing CURRENT asset revision"]
+  "completion_criteria": ["Every referenced target entity has a model-specific Skill-authored image prompt", "Character prompt/output follows three full-body views plus facial close-up", "Every referenced target entity has real reference media", "All media is managed and technically readable", "Candidate is explicitly accepted"],
+  "failure_policy": ["Any required entity without a generated image blocks publication", "Runtime failure does not replace an existing CURRENT asset revision"]
 }

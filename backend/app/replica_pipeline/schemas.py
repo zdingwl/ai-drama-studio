@@ -227,6 +227,11 @@ class AssetImageEntity(BaseModel):
     review_description_zh: str
     image_prompt: str
     negative_prompt: str = ""
+    prompt_review_zh: str | None = None
+    image_model_id: str | None = None
+    prompt_skill_id: str | None = None
+    prompt_skill_version: str | None = None
+    prompt_contract: str | None = None
     reference_media: list[TargetReferenceMedia] = Field(min_length=1)
 
 
@@ -247,10 +252,28 @@ class AssetImageProvenance(BaseModel):
     generation_sequence: int = Field(ge=1)
     professional_skill_id: str = "asset-image-generation"
     professional_skill_version: str
+    image_model_id: str | None = None
+    prompt_skill_id: str | None = None
+    prompt_skill_version: str | None = None
+    prompt_contract: str | None = None
+    prompt_provider: str | None = None
+    prompt_model: str | None = None
+    prompt_provider_job_ids: list[str] = Field(default_factory=list)
     provider_job_ids: list[str] = Field(default_factory=list)
     image_runtime: str
     image_model: str
     generated_by_task_id: str
+
+
+class AssetImagePromptAuthoredEntity(_StrictProvider):
+    target_entity_id: str = Field(min_length=1, max_length=240)
+    image_prompt: str = Field(min_length=1, max_length=12000)
+    negative_prompt: str = Field(default="", max_length=6000)
+    review_prompt_zh: str = Field(min_length=1, max_length=6000)
+
+
+class AssetImagePromptAuthoringResult(_StrictProvider):
+    assets: list[AssetImagePromptAuthoredEntity] = Field(min_length=1, max_length=24)
 
 
 class AssetImageCandidateRead(BaseModel):

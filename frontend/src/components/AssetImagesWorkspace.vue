@@ -47,13 +47,14 @@ const taskStageText = computed(() => {
   const task = assetTask.value
   if (!task) return ''
   if (task.status === 'queued') return '任务已进入队列，等待资产图 Worker 开始执行。'
-  if (task.status === 'failed') return task.last_error || '资产图生成失败，请检查火山引擎 Prompt Compiler、ComfyUI、Flux 模型和任务日志后重试。'
+  if (task.status === 'failed') return task.last_error || '资产图生成失败，请检查 Prompt Skill、ComfyUI、Z-Image Turbo 模型和任务日志后重试。'
   if (task.status === 'cancelled') return '资产图生成任务已取消。'
   if (task.status === 'interrupted') return task.last_error || '资产图生成任务已中断，可以重新发起。'
   if (task.status === 'succeeded') return '资产图已经生成完成，正在加载待审核候选。'
   if (task.progress_percent >= 95) return '人物、场景和道具参考图已生成，正在保存候选并完成一致性检查。'
-  if (task.progress_percent >= 10) return 'Flux 专属资产提示词已编译完成，正在通过本机 ComfyUI / Flux 逐项生成参考图。'
-  return '正在通过火山引擎 Doubao 整理资产视觉设计，并编译 Flux.1 Schnell 专属执行提示词。'
+  if (task.progress_percent >= 30) return '模型专属提示词已经编译，正在通过本机 ComfyUI / Z-Image Turbo 逐项生成真实资产图。'
+  if (task.progress_percent > 0) return '已从本土化分镜提取资产，正在用 Z-Image Turbo Professional Skill 分析分镜证据并生成资产提示词。'
+  return '正在从本土化分镜提取实际使用的人物、场景和道具。'
 })
 
 const generateButtonText = computed(() => {
@@ -129,7 +130,7 @@ async function generate() {
   message.value = ''
   try {
     assetTask.value = await startAssetImages(projectId.value)
-    message.value = '资产任务已启动：先由火山引擎编译 Flux 专属资产提示词，再由本机 ComfyUI / Flux 逐项生成；失败原因会直接显示。'
+    message.value = '资产提取 → Prompt Skill 分析分镜 → Z-Image Turbo 出图任务已启动，可在下方查看实时进度；如果失败会直接显示失败原因。'
     if (taskRunning.value) startTaskPolling()
     await refresh(true)
   } catch (exc) {
@@ -154,7 +155,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="workspace" data-testid="asset-images-workspace">
-    <header><div><p class="eyebrow">步骤 3 / 5</p><h2>从本土化分镜提取资产并生成资产图</h2><p>只为实际出现在镜头或对白中的人物、场景、道具生成正式参考图；没有真实图片的文字资产不能进入 H3 多参考生成。</p></div><button type="button" :disabled="Boolean(action) || Boolean(pending) || taskRunning" @click="generate">{{ generateButtonText }}</button></header>
+    <header><div><p class="eyebrow">步骤 3 / 5</p><h2>提取资产 → Skill 生成提示词 → 生成资产图</h2><p>只为本土化分镜实际使用的人物、场景、道具生成正式参考图。人物固定为“正面全身 + 侧面全身 + 背面全身 + 面部特写”；整段人物小传不会直接送进图片模型。</p></div><button type="button" :disabled="Boolean(action) || Boolean(pending) || taskRunning" @click="generate">{{ generateButtonText }}</button></header>
     <p v-if="error" class="error">{{ error }}</p><p v-if="message" class="success">{{ message }}</p>
     <div v-if="showTaskProgress && assetTask" class="task-progress" :class="{ failed: taskFailed }" data-testid="asset-images-progress" role="status" aria-live="polite">
       <div class="task-progress-heading">
@@ -167,15 +168,15 @@ onBeforeUnmount(() => {
       <p v-if="taskFailed" class="task-error">{{ assetTask.last_error || '任务没有返回更详细的错误信息，请查看后端日志后重试。' }}</p>
     </div>
     <label v-if="pending" class="review"><span>审核备注</span><input v-model="reason" maxlength="800" /></label>
-    <div v-if="!content" class="empty">{{ taskRunning ? '正在生成资产图；完成后会在这里显示待审核的人物、场景和道具参考图。' : '先确认步骤 2 的本土化分镜，再提取人物、场景和道具。' }}</div>
+    <div v-if="!content" class="empty">先确认步骤 2 的本土化分镜，再提取人物、场景和道具。</div>
     <template v-else>
       <div class="metrics"><span>{{ content.assets.length }} 个正式资产</span><span>{{ content.visual_style }}</span><span>{{ pending?'待人工确认':current?.status==='CURRENT'?'正式 CURRENT':'历史结果' }}</span></div>
-      <div class="grid"><article v-for="asset in content.assets" :key="asset.target_asset_id"><div class="image"><img v-if="asset.reference_media[0]" :src="asset.reference_media[0].uri" :alt="asset.display_name" loading="lazy" /></div><div class="copy"><small>{{ label(asset.asset_type) }}</small><h3>{{ asset.display_name }}</h3><p>{{ asset.review_description_zh }}</p><details><summary>查看 Flux 执行提示词</summary><p>{{ asset.image_prompt }}</p></details></div></article></div>
+      <div class="grid"><article v-for="asset in content.assets" :key="asset.target_asset_id"><div class="image"><img v-if="asset.reference_media[0]" :src="asset.reference_media[0].uri" :alt="asset.display_name" loading="lazy" /></div><div class="copy"><small>{{ label(asset.asset_type) }}</small><h3>{{ asset.display_name }}</h3><p>{{ asset.review_description_zh }}</p><p v-if="asset.prompt_review_zh" class="prompt-review">{{ asset.prompt_review_zh }}</p><details><summary>查看模型专属资产提示词</summary><p v-if="asset.prompt_skill_id" class="prompt-meta">{{ asset.prompt_skill_id }}@{{ asset.prompt_skill_version }} · {{ asset.image_model_id }}</p><p>{{ asset.image_prompt }}</p><p v-if="asset.negative_prompt"><strong>避免：</strong>{{ asset.negative_prompt }}</p></details></div></article></div>
       <div v-if="pending" class="actions"><button type="button" :disabled="Boolean(action)||!reason.trim()" @click="review(pending,true)">确认资产图</button><button type="button" class="secondary" :disabled="Boolean(action)||!reason.trim()" @click="review(pending,false)">拒绝重做</button></div>
     </template>
   </section>
 </template>
 
 <style scoped>
-.workspace{display:grid;gap:16px;max-width:1360px;margin:20px auto}.workspace>header{display:flex;justify-content:space-between;gap:18px;padding:22px;border:1px solid #deded8;border-radius:18px;background:#fff}.workspace h2{margin:3px 0}.workspace header p:last-child{color:#716d66}.eyebrow{margin:0;color:#5a4ed8;font-size:11px;font-weight:850}.workspace button{min-height:38px;padding:0 15px;border:0;border-radius:9px;background:#292925;color:#fff;font-weight:750}.workspace button:disabled{opacity:.5}.task-progress{display:grid;gap:10px;padding:15px 17px;border:1px solid #dedbe9;border-radius:14px;background:#fff}.task-progress.failed{border-color:#e5b8b3;background:#fff8f7}.task-progress-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.task-progress-heading>div{display:grid;gap:4px}.task-progress-heading strong{font-size:13px}.task-progress-heading span{color:#706d67;font-size:12px;line-height:1.5}.task-progress-heading>b{font-size:15px;font-variant-numeric:tabular-nums}.progress-track{height:8px;overflow:hidden;border-radius:999px;background:#e7e5ee}.progress-value{height:100%;border-radius:inherit;background:#6558e8;transition:width .25s ease}.progress-value.active{position:relative;overflow:hidden}.progress-value.active::after{position:absolute;inset:0;content:"";background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);animation:progress-shimmer 1.4s linear infinite}.task-error{margin:0;padding:9px 10px;border-radius:9px;background:#fff0ee;color:#9a3129;font-size:12px;line-height:1.55}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.grid article{overflow:hidden;border:1px solid #e1dfd9;border-radius:14px;background:#fff}.image{aspect-ratio:1;background:#eee}.image img{width:100%;height:100%;object-fit:cover}.copy{padding:13px}.copy small{color:#6558df;font-weight:800}.copy h3{margin:3px 0}.copy p{color:#65615b;line-height:1.55}.copy details{font-size:12px}.metrics,.actions{display:flex;gap:8px;flex-wrap:wrap}.metrics span{padding:7px 10px;border-radius:999px;background:#efeee9;font-size:12px}.review{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center}.review input{min-height:36px;padding:0 10px;border:1px solid #d7d3cc;border-radius:8px}.secondary{background:#fff!important;color:#333!important;border:1px solid #d4d0c9!important}.empty{padding:26px;border:1px dashed #cbc7c0;border-radius:14px;color:#746f68}.error{color:#a33b32}.success{color:#2d7140}@keyframes progress-shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}@media(max-width:900px){.grid{grid-template-columns:1fr 1fr}.workspace>header,.task-progress-heading{flex-direction:column}}@media(max-width:600px){.grid{grid-template-columns:1fr}}
+.workspace{display:grid;gap:16px;max-width:1360px;margin:20px auto}.workspace>header{display:flex;justify-content:space-between;gap:18px;padding:22px;border:1px solid #deded8;border-radius:18px;background:#fff}.workspace h2{margin:3px 0}.workspace header p:last-child{color:#716d66}.eyebrow{margin:0;color:#5a4ed8;font-size:11px;font-weight:850}.workspace button{min-height:38px;padding:0 15px;border:0;border-radius:9px;background:#292925;color:#fff;font-weight:750}.workspace button:disabled{opacity:.5}.task-progress{display:grid;gap:10px;padding:15px 17px;border:1px solid #dedbe9;border-radius:14px;background:#fff}.task-progress.failed{border-color:#e5b8b3;background:#fff8f7}.task-progress-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.task-progress-heading>div{display:grid;gap:4px}.task-progress-heading strong{font-size:13px}.task-progress-heading span{color:#706d67;font-size:12px;line-height:1.5}.task-progress-heading>b{font-size:15px;font-variant-numeric:tabular-nums}.progress-track{height:8px;overflow:hidden;border-radius:999px;background:#e7e5ee}.progress-value{height:100%;border-radius:inherit;background:#6558e8;transition:width .25s ease}.progress-value.active{position:relative;overflow:hidden}.progress-value.active::after{position:absolute;inset:0;content:"";background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);animation:progress-shimmer 1.4s linear infinite}.task-error{margin:0;padding:9px 10px;border-radius:9px;background:#fff0ee;color:#9a3129;font-size:12px;line-height:1.55}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.grid article{overflow:hidden;border:1px solid #e1dfd9;border-radius:14px;background:#fff}.image{aspect-ratio:1;background:#eee}.image img{width:100%;height:100%;object-fit:contain}.copy{padding:13px}.copy small{color:#6558df;font-weight:800}.copy h3{margin:3px 0}.copy p{color:#65615b;line-height:1.55}.copy details{font-size:12px}.prompt-review{padding:9px 10px;border-radius:9px;background:#f5f3fb;color:#4d4960!important;font-size:12px}.prompt-meta{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#706b80!important}.metrics,.actions{display:flex;gap:8px;flex-wrap:wrap}.metrics span{padding:7px 10px;border-radius:999px;background:#efeee9;font-size:12px}.review{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center}.review input{min-height:36px;padding:0 10px;border:1px solid #d7d3cc;border-radius:8px}.secondary{background:#fff!important;color:#333!important;border:1px solid #d4d0c9!important}.empty{padding:26px;border:1px dashed #cbc7c0;border-radius:14px;color:#746f68}.error{color:#a33b32}.success{color:#2d7140}@keyframes progress-shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}@media(max-width:900px){.grid{grid-template-columns:1fr 1fr}.workspace>header,.task-progress-heading{flex-direction:column}}@media(max-width:600px){.grid{grid-template-columns:1fr}}
 </style>

@@ -35,6 +35,8 @@ def test_skill_detail_contains_replica_five_step_contract(client: TestClient) ->
     assert detail["version"] == "1.7.0"
     assert "唯一普通主流程" in detail["manual"]
     assert "minimax-h3-prompting@1.0.0" in detail["manual"]
+    assert "z-image-turbo-asset-prompting@1.0.0" in detail["manual"]
+    assert "z-image-turbo-asset-prompting" in detail["subskills"]
 
     assert [step["id"] for step in detail["steps"]] == [
         "source_storyboard",
@@ -50,6 +52,8 @@ def test_skill_detail_contains_replica_five_step_contract(client: TestClient) ->
     assert steps["localized_storyboard"]["produces"] == ["TARGET_STORYBOARD"]
     assert steps["asset_images"]["requires"] == ["TARGET_STORYBOARD"]
     assert steps["asset_images"]["produces"] == ["TARGET_ASSETS"]
+    assert "Skill" in steps["asset_images"]["title"]
+    assert "面部特写" in steps["asset_images"]["description"]
     assert steps["model_prompting"]["requires"] == ["TARGET_STORYBOARD", "TARGET_ASSETS"]
     assert steps["model_prompting"]["produces"] == ["GENERATION_SEGMENTS"]
     assert steps["generate"]["requires"] == ["TARGET_STORYBOARD", "TARGET_ASSETS", "GENERATION_SEGMENTS"]
@@ -126,11 +130,21 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     assert assets_detail["required_inputs"] == ["TARGET_STORYBOARD"]
     assert assets_detail["output_contracts"] == ["TARGET_ASSETS"]
     asset_rules = "\n".join(assets_detail["provider_rules"])
-    assert "Chinese review prose" in asset_rules
-    assert "Flux.1 Schnell" in asset_rules
-    assert "negative-conditioning" in asset_rules
-    assert "Review text is not the model prompt" in assets_detail["manual"]
-    assert "Flux.1 Schnell" in assets_detail["manual"]
+    assert "Professional Prompt Skill" in asset_rules
+    assert "front full-body" in asset_rules
+    assert "face close-up" in asset_rules
+    assert "three full-body views plus a face close-up" in assets_detail["manual"]
+    assert "Z-Image Turbo" in assets_detail["manual"]
+
+    zimage = client.get("/api/v3/skills/professional/z-image-turbo-asset-prompting")
+    assert zimage.status_code == 200
+    zimage_detail = zimage.json()
+    assert zimage_detail["version"] == "1.0.0"
+    assert zimage_detail["required_inputs"] == ["TARGET_STORYBOARD"]
+    assert zimage_detail["output_contracts"] == []
+    zimage_rules = "\n".join(zimage_detail["provider_rules"])
+    assert "front full-body" in zimage_rules
+    assert "face close-up" in zimage_rules
 
     h3 = client.get("/api/v3/skills/professional/minimax-h3-prompting")
     assert h3.status_code == 200

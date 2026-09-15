@@ -32,11 +32,21 @@ Task 成功只产生 NEEDS_REVIEW candidate；显式 ACCEPT 才发布 `TARGET_ST
 
 ## Step 3 资产图
 
-`asset-image-generation@1.1.0` 只读取 CURRENT `TARGET_STORYBOARD v2`，提取实际使用的人物、场景、道具。当前正式链路是：本土化资产事实 → 火山引擎 Ark / Doubao 资产视觉设计与 Flux Prompt Compiler → `flux-schnell-asset-reference-v2` → 本机 ComfyUI / Flux.1 Schnell 生成 PNG。
+`asset-image-generation@1.1.0` 只读取 CURRENT `TARGET_STORYBOARD v2`，提取实际使用的人物、场景、道具。提取后不能直接把人物卡/场景说明字符串拼进图片模型，而是必须把该资产及其实际引用镜头证据交给当前图片模型对应的 Professional Prompt Skill。
 
-中文 `review_description_zh` 只用于审核，不再直接冒充图片模型执行 Prompt。真正的 `image_prompt` 必须是针对当前图片模型编译的执行提示词。Character 必须是单人、完整全身、中性参考姿态和中性棚拍背景；Scene 必须是无人空场景环境基线；Prop 必须是单一孤立道具。当前 Flux Schnell CFG=1.0，因此禁止文字、水印、拼图、重复主体、裁切主体、额外人物/物体等关键约束必须进入真实执行 Prompt，而不能只留在未实际参与采样的 negative 文本字段里。
+当前 Windows 图片模型绑定为：
 
-正式资产必须有真实 `reference_media`、受管存储路径、SHA256、宽高和 ProviderJob。Prompt Compiler 与 Image Runtime 都必须留下 ProviderJob；`reference_media=[]` 不算完成。显式 ACCEPT 后发布 `TARGET_ASSETS v2`。
+```text
+提取资产 + 本土化分镜证据
+→ z-image-turbo-asset-prompting@1.0.0
+→ image_prompt / negative_prompt
+→ 本机 ComfyUI + z_image_turbo_bf16.safetensors
+→ PNG reference_media
+```
+
+人物资产固定是一张横向生产参考板：**正面全身 + 侧面全身 + 背面全身 + 面部特写**。不是四个全身方向，也不是单张情绪肖像、情侣照或剧情生活照。人物关系等叙事事实不得自动变成额外人物。
+
+正式资产必须有真实 `reference_media`、受管存储路径、SHA256、宽高和 ProviderJob。`reference_media=[]` 不算完成。显式 ACCEPT 后发布 `TARGET_ASSETS v2`。
 
 ## Step 4 模型专属 Prompt Skill
 

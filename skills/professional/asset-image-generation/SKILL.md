@@ -1,26 +1,54 @@
 # Replica Asset Image Generation
 
-The localized storyboard is the semantic source. Extract only the people, locations and props actually used by shots, turn those entities into stable asset-local visual designs, compile the current image model's execution prompts, render real reference images, persist them in Studio storage, and expose them as `TargetReferenceMedia` with SHA256 and dimensions.
+## Purpose
 
-Text-only packets or `reference_media=[]` do not satisfy this skill.
+The localized storyboard is the semantic source. Step 3 is explicitly a three-part pipeline:
 
-## Review text is not the model prompt
+```text
+extract used assets
+→ execute the selected image model's Professional Prompt Skill against localized storyboard evidence
+→ render the compiled prompt with the image Runtime
+```
 
-Chinese review prose and image-model execution prompts are different contracts.
+The orchestration Skill must never skip the middle step by directly concatenating entity prose into a generic image prompt.
 
-- `review_description_zh` is for Chinese human review. It should explain the stable visual identity of the character / scene / prop in clear Simplified Chinese.
-- `image_prompt` is the execution prompt for the active image model. It may be English or otherwise model-optimized.
-- Never feed abstract Chinese review prose directly to the image runtime as if it were already a model-specific prompt.
-- Prompt compilation may concretize underspecified visual details into a stable production design, but it may not alter the localized entity's core identity, story function, target region, explicit appearance facts, shot order or dialogue.
+## Hard input
 
-## Current Flux.1 Schnell adapter
+Only CURRENT `TARGET_STORYBOARD v2` plus project visual style. Extract only Character / Scene / Prop entities actually referenced by shots or canonical target dialogue speaker bindings.
 
-The default Windows runtime is local ComfyUI with Flux.1 Schnell. Before rendering, the adapter uses Volcengine Ark / Doubao to compile each localized entity into an asset-local visual design and concrete English Flux execution facts. The server then adds deterministic composition constraints for the asset type.
+For every extracted asset, gather the target entity definition and the localized visual descriptions of the shots that actually reference it. This is the evidence supplied to the model-specific image Prompt Skill.
 
-Character reference images must request exactly one fictional person, head-to-toe visible, neutral standing pose, front three-quarter view, neutral studio background, with a stable face / hair / body / base wardrobe identity. Scene reference images must be empty environment references with no people. Prop reference images must contain exactly one isolated object with no hands or people.
+## Current image model binding
 
-The current Flux Schnell workflow runs at CFG 1.0. Therefore important avoidance constraints are folded into the positive execution prompt instead of pretending that a separate negative-conditioning string is authoritative. `negative_prompt` remains useful as review/provenance data, but the positive prompt must itself contain the no-text / no-watermark / no-collage / no-duplicate / no-cropping and asset-type-specific exclusions that matter to rendering.
+Current Windows default:
 
-The Prompt Compiler must preserve exact target entity coverage. Missing, duplicate or invented target entity IDs fail closed before any image is rendered.
+```text
+Z-Image Turbo
+→ z-image-turbo-asset-prompting@1.0.0
+→ local ComfyUI
+→ z_image_turbo_bf16.safetensors
+```
 
-Human ACCEPT is required before publishing CURRENT `TARGET_ASSETS v2`.
+The image Runtime executes the Skill-authored prompt. Runtime code may map that prompt into native ComfyUI nodes and inline hard exclusions required by the model profile, but may not re-author asset identity or replace it with a generic template.
+
+## Character output
+
+One Character asset image is a landscape production reference sheet containing:
+
+1. front full-body view;
+2. side full-body view;
+3. back full-body view;
+4. larger face close-up.
+
+It is **three full-body views plus a face close-up**, not four full-body directions. The same person, face, hairstyle, proportions, wardrobe and colors must remain consistent. Use a clean light studio background; no couple composition, no story reenactment, no phone/lifestyle pose unless the identity itself requires a signature prop.
+
+## Scene / Prop output
+
+- Scene: stable environment identity, layout, landmarks, materials and lighting; no story characters.
+- Prop: isolated object identity, form, scale, material, color and signature details; no unrelated person/environment.
+
+## Publication
+
+Text-only packets or `reference_media=[]` do not satisfy this skill. Generated media must be persisted in Studio storage and exposed as `TargetReferenceMedia` with SHA256 and dimensions.
+
+Human ACCEPT is required before publishing CURRENT TARGET_ASSETS v2.

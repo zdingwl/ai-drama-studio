@@ -1,38 +1,39 @@
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Protocol
 
 from arkruntime import Ark
-from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.errors import AppError
+from app.replica_pipeline.image_model_skills import ImageModelPromptSkillBinding
+from app.replica_pipeline.schemas import AssetImagePromptAuthoringResult, AssetImagePromptAuthoredEntity
+from app.skills.professional import ProfessionalSkillDetail
+from app.target_assets.schemas import TargetAssetType
 
 
-FLUX_ASSET_PROMPT_CONTRACT = "flux-schnell-asset-reference-v2"
+MAX_ASSET_PROMPT_BATCH_SIZE = 12
 MAX_OUTPUT_TOKENS = 32768
+CHARACTER_LAYOUT_ANCHORS = (
+    "front full-body view",
+    "side full-body view",
+    "back full-body view",
+    "face close-up",
+    "same character",
+)
 
 
-class FluxAssetPromptSemantic(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    target_entity_id: str = Field(min_length=1, max_length=160)
-    visual_design_zh: str = Field(min_length=8, max_length=4000)
-    visual_facts_en: str = Field(min_length=8, max_length=5000)
-    avoid_en: str = Field(min_length=3, max_length=2000)
-
-
-class FluxAssetPromptBatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    items: list[FluxAssetPromptSemantic] = Field(min_length=1, max_length=128)
-
-
-@dataclass(frozen=True)
-class FluxPromptCompileResult:
-    specs: list[dict[str, Any]]
-    remote_job_id: str | None = None
+def _assert_execution_english(label: str, value: str, *, target_entity_id: str) -> None:
+    latin = len(re.findall(r"[A-Za-z]", value))
+    cjk = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", value))
+    if latin < 20 or (cjk > 8 and latin < cjk * 2):
+        raise AppError(
+            "ASSET_IMAGE_PROMPT_EXECUTION_LANGUAGE_INVALID",
+            f"{label} 必须是可直接交给 Z-Image Turbo 的英文视觉提示内容",
+            status_code=502,
+            details={"target_entity_id": target_entity_id},
+        )
 
 
 def _json_object(text: str) -> str:
@@ -43,125 +44,86 @@ def _json_object(text: str) -> str:
     start, end = value.find("{"), value.rfind("}")
     if start >= 0 and end > start:
         return value[start : end + 1]
-    raise AppError("ASSET_PROMPT_PROVIDER_INVALID", "资产图 Prompt Provider 未返回 JSON object", status_code=502)
+    raise AppError("ASSET_IMAGE_PROMPT_PROVIDER_INVALID", "资产 Prompt Skill Provider 未返回 JSON object", status_code=502)
 
 
-def _assert_chinese(value: str) -> None:
-    if len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", value)) < 6:
-        raise AppError(
-            "ASSET_PROMPT_REVIEW_LANGUAGE_INVALID",
-            "资产视觉设计审核说明必须以简体中文为主",
-            status_code=502,
-        )
+@dataclass(frozen=True)
+class AssetPromptAuthorInput:
+    binding: ImageModelPromptSkillBinding
+    skill: ProfessionalSkillDetail
+    assets: tuple[dict, ...]
 
 
-def _assert_english(label: str, value: str) -> None:
-    latin = len(re.findall(r"[A-Za-z]", value))
-    cjk = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", value))
-    if latin < 20 or (cjk > 8 and latin < cjk * 2):
-        raise AppError(
-            "ASSET_PROMPT_EXECUTION_LANGUAGE_INVALID",
-            f"{label} 必须是可直接交给 Flux 的英文视觉提示内容",
-            status_code=502,
-        )
+@dataclass(frozen=True)
+class AssetPromptAuthorResult:
+    content: AssetImagePromptAuthoringResult
+    remote_job_id: str | None = None
 
 
-def _asset_type_name(value: Any) -> str:
-    raw = getattr(value, "value", value)
-    return str(raw).upper()
+class AssetPromptAuthorProvider(Protocol):
+    provider_name: str
+    model_name: str
+
+    def profile(self) -> dict: ...
+    def author(self, payload: AssetPromptAuthorInput) -> AssetPromptAuthorResult: ...
 
 
-def _provider_prompt(*, specs: list[dict[str, Any]], target_region: str, visual_style: str) -> str:
-    source = [
-        {
-            "target_entity_id": str(item["entity_id"]),
-            "asset_type": _asset_type_name(item["asset_type"]),
-            "display_name": str(item["display_name"]),
-            "localized_review_facts_zh": str(item["review_zh"]),
-        }
-        for item in specs
-    ]
-    schema = FluxAssetPromptBatch.model_json_schema()
-    return f"""你正在执行 AI Drama Studio 第 3 步资产图的 Flux.1 Schnell 专属 Prompt Compiler。
+def _authoring_prompt(payload: AssetPromptAuthorInput) -> str:
+    schema = AssetImagePromptAuthoringResult.model_json_schema()
+    rules = "\n".join(f"{index}. {rule}" for index, rule in enumerate(payload.skill.provider_rules, 1))
+    return f"""你正在执行 AI Drama Studio 的图片模型专属 Professional Skill。
 
-这一步不是重新写故事，也不是视频提示词。输入事实来自已经人工确认的本土化分镜；你只负责把人物、场景、道具变成可稳定复用的视觉资产设计，并把它整理成适合 Flux.1 Schnell 的图像执行事实。
+目标图片模型：{payload.binding.model_id}
+Prompt Skill：{payload.skill.id}@{payload.skill.version}
+Prompt Contract：{payload.binding.prompt_contract}
 
-目标地区：{target_region}
-视觉风格：{visual_style}
-Prompt contract：{FLUX_ASSET_PROMPT_CONTRACT}
+你收到的不是要原样塞进图片模型的人物小传，而是正式本土化分镜中已经提取好的资产和它实际出现的镜头视觉证据。你的职责是分析这些证据，只保留可观察的稳定视觉信息，然后编译成图片模型可以直接执行的最终提示词。
 
 硬规则：
-1. items 必须与输入 target_entity_id 一一对应，不能漏项、重复、改 ID、合并或新增实体。
-2. visual_design_zh 是给中国用户审核的资产级视觉设计，必须使用简体中文，具体、可视、可复用；不要复述故事情节、对白、镜头节奏或人物关系。
-3. visual_facts_en 是给 Flux.1 Schnell 的英文视觉事实，必须用自然、具体、直接的英文，只描述画面中可见的外观、材质、颜色、稳定身份特征；并把项目视觉风格翻译/具体化为英文图像风格要求。不要写抽象剧情、心理活动、对白、运镜或视频动作。
-4. 可以把输入里过于抽象的“身份/设定”具体化为稳定视觉方案，但不能改变已经给出的核心身份、地区、时代、职业/功能或显式外观事实。缺少的非剧情视觉细节可以选择一个合理且稳定的方案，之后所有镜头必须复用这一方案。
-5. CHARACTER：必须形成单一稳定人物身份，重点具体化年龄感、脸型五官、肤色/妆容（仅在事实允许时）、发型发色、体态、基础服装轮廓/材质/颜色、标志性可见特征。不要设计逐镜换装。
-6. SCENE：必须形成空场景视觉基线，重点具体化空间布局、建筑/室内风格、固定地标、材质、色彩、稳定光照；不要加入人物，不要根据剧情擅自发明时间推进。
-7. PROP：必须形成单一道具的形态、比例、材质、颜色、尺度和标志性细节；不要加入手、人物或场景剧情。
-8. avoid_en 必须用英文写最重要的视觉排除项。禁止文字、水印、拼图、多格图、重复主体、额外人物/物体、截断主体，以及与当前 asset_type 冲突的元素。
-9. 不输出 Markdown、解释或思考过程，只输出符合 JSON Schema 的单个 object。
+- 必须逐项精确覆盖输入 target_entity_id，不得漏项、重复、增加、合并或拆分资产。
+- image_prompt 以具体清晰的英文为主，直接服务 {payload.binding.model_id}；review_prompt_zh 使用简体中文解释出图目标。
+- 人物关系、婚姻、亲属、同事等叙事关系不能导致单人物资产图出现第二个人。
+- CHARACTER 必须是一张横向 production reference sheet，严格包含 front full-body view、side full-body view、back full-body view、face close-up，并明确 same character；三个全身视图使用中性站姿，面部特写是正面头肩像。
+- CHARACTER 禁止四个全身方向、单张情绪肖像、情侣照、剧情动作场景、生活照；除非稳定身份绝对需要，否则不要让人物拿手机或其他剧情道具。
+- SCENE 只表现稳定环境身份、空间布局、材质、landmarks、光照和色彩，不把剧情中的人物带进环境资产图。
+- PROP 只表现稳定物体身份、形态、尺度、材质、颜色和标志性细节，不加入无关人物/场景。
+- 当前 Turbo Runtime 使用 zeroed negative conditioning，因此关键排除项必须同时作为 `Do not ...` 约束写进 image_prompt；negative_prompt 也必须返回用于审计。
+- 不修改 target entity identity，不创造 Artifact/media/id，不生成视频提示词。
+- 只输出符合 JSON Schema 的 JSON object，不输出 Markdown 或额外解释。
 
-输入资产：
-{json.dumps(source, ensure_ascii=False, separators=(",", ":"))}
+Professional Skill rules：
+{rules}
+
+Professional Skill manual：
+{payload.skill.manual}
+
+待编译资产及本土化分镜证据：
+{json.dumps(payload.assets, ensure_ascii=False, separators=(",", ":"))}
 
 输出 JSON Schema：
 {json.dumps(schema, ensure_ascii=False, separators=(",", ":"))}
 """
 
 
-def _compose_execution_prompt(*, asset_type: str, display_name: str, visual_facts_en: str, avoid_en: str, visual_style: str, target_region: str) -> str:
-    kind = asset_type.upper()
-    if kind == "CHARACTER":
-        framing = (
-            "Single fictional character production reference image. Exactly one person. Full body from head to shoes fully visible, "
-            "neutral relaxed standing pose, front three-quarter view, eye-level camera, natural proportions, 50mm portrait perspective. "
-            "Plain seamless light-gray studio background, soft even studio lighting. Preserve one consistent face, hairstyle, body type and base wardrobe."
-        )
-    elif kind == "SCENE":
-        framing = (
-            "Empty environment production reference image. No people, no characters. Wide establishing view that clearly shows the stable spatial layout, "
-            "architecture, fixed landmarks, materials and lighting baseline. Realistic perspective, coherent scale, production-design reference quality."
-        )
-    else:
-        framing = (
-            "Single prop production reference image. Exactly one isolated object, entire object fully visible, centered three-quarter product view, "
-            "plain neutral studio background, soft even lighting, clear shape, scale, materials, colors and signature details. No hands and no people."
-        )
-    return (
-        f"{framing} Asset name: {display_name}. Target region context: {target_region}. "
-        f"Visual identity and style facts: {visual_facts_en.strip()} "
-        f"Avoid: {avoid_en.strip()} No text, captions, labels, watermark, logo overlay, collage, split screen or contact sheet."
-    )
-
-
-class DoubaoFluxAssetPromptCompiler:
+class DoubaoAssetPromptAuthor:
     provider_name = "volcengine-ark"
 
     def __init__(self, settings: Settings):
         self.settings = settings
         self.model_name = settings.p7_doubao_model
         if settings.p7_doubao_api_key is None or not settings.p7_doubao_api_key.get_secret_value().strip():
-            raise AppError(
-                "ASSET_PROMPT_PROVIDER_NOT_CONFIGURED",
-                "火山引擎资产图 Prompt Provider 尚未配置",
-                status_code=409,
-            )
+            raise AppError("ASSET_IMAGE_PROMPT_PROVIDER_NOT_CONFIGURED", "资产图 Prompt Skill 的火山引擎执行 Provider 尚未配置", status_code=409)
 
-    def profile(self) -> dict[str, Any]:
+    def profile(self) -> dict:
         return {
             "provider": self.provider_name,
             "model": self.model_name,
-            "mode": "CLOUD_API_STRUCTURED_TEXT",
-            "prompt_contract": FLUX_ASSET_PROMPT_CONTRACT,
+            "mode": "CLOUD_TEXT_SKILL_EXECUTOR",
+            "prompt_contract": "z-image-turbo-replica-assets-v1",
+            "response_contract": "STRICT_JSON_SCHEMA",
         }
 
-    def compile(
-        self,
-        *,
-        specs: list[dict[str, Any]],
-        target_region: str,
-        visual_style: str,
-    ) -> FluxPromptCompileResult:
+    def author(self, payload: AssetPromptAuthorInput) -> AssetPromptAuthorResult:
         assert self.settings.p7_doubao_api_key is not None
         client = Ark(
             api_key=self.settings.p7_doubao_api_key.get_secret_value(),
@@ -171,23 +133,13 @@ class DoubaoFluxAssetPromptCompiler:
         )
         response = client.responses.create(
             model=self.model_name,
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": _provider_prompt(specs=specs, target_region=target_region, visual_style=visual_style),
-                        }
-                    ],
-                }
-            ],
+            input=[{"role": "user", "content": [{"type": "input_text", "text": _authoring_prompt(payload)}]}],
             thinking={"type": "enabled"},
             text={
                 "format": {
                     "type": "json_schema",
-                    "name": "flux_asset_prompt_batch",
-                    "schema": FluxAssetPromptBatch.model_json_schema(),
+                    "name": "z_image_turbo_asset_prompt_batch",
+                    "schema": AssetImagePromptAuthoringResult.model_json_schema(),
                     "strict": True,
                 }
             },
@@ -201,55 +153,60 @@ class DoubaoFluxAssetPromptCompiler:
                     if getattr(part, "type", None) == "output_text" and getattr(part, "text", None):
                         chunks.append(str(part.text))
             text = "".join(chunks)
-        if not text:
-            raise AppError("ASSET_PROMPT_PROVIDER_EMPTY", "资产图 Prompt Provider 未返回可用文本", status_code=502)
-
+        if not isinstance(text, str) or not text.strip():
+            raise AppError("ASSET_IMAGE_PROMPT_PROVIDER_EMPTY", "资产图 Prompt Skill Provider 未返回可用文本", status_code=502)
         try:
-            batch = FluxAssetPromptBatch.model_validate_json(_json_object(text))
+            content = AssetImagePromptAuthoringResult.model_validate_json(_json_object(text))
         except AppError:
             raise
         except Exception as exc:
-            raise AppError(
-                "ASSET_PROMPT_PROVIDER_INVALID",
-                f"资产图 Prompt Provider 结果未通过数据契约校验（{type(exc).__name__}）",
-                status_code=502,
-            ) from exc
-
-        expected_ids = [str(item["entity_id"]) for item in specs]
-        actual_ids = [item.target_entity_id for item in batch.items]
-        if len(actual_ids) != len(set(actual_ids)) or set(actual_ids) != set(expected_ids):
-            raise AppError(
-                "ASSET_PROMPT_PROVIDER_COVERAGE_INVALID",
-                "资产图 Prompt Provider 没有完整覆盖本土化分镜中的资产实体",
-                status_code=502,
-                details={"expected": expected_ids, "actual": actual_ids},
-            )
-
-        semantic_by_id = {item.target_entity_id: item for item in batch.items}
-        compiled: list[dict[str, Any]] = []
-        for source in specs:
-            entity_id = str(source["entity_id"])
-            semantic = semantic_by_id[entity_id]
-            _assert_chinese(semantic.visual_design_zh)
-            _assert_english("visual_facts_en", semantic.visual_facts_en)
-            _assert_english("avoid_en", semantic.avoid_en)
-            asset_type = _asset_type_name(source["asset_type"])
-            compiled.append(
-                {
-                    **source,
-                    "review_zh": semantic.visual_design_zh.strip(),
-                    "prompt": _compose_execution_prompt(
-                        asset_type=asset_type,
-                        display_name=str(source["display_name"]),
-                        visual_facts_en=semantic.visual_facts_en,
-                        avoid_en=semantic.avoid_en,
-                        visual_style=visual_style,
-                        target_region=target_region,
-                    ),
-                    "negative_prompt": semantic.avoid_en.strip(),
-                }
-            )
-        return FluxPromptCompileResult(
-            specs=compiled,
+            raise AppError("ASSET_IMAGE_PROMPT_PROVIDER_SCHEMA_INVALID", "资产图 Prompt Skill Provider 输出不符合 typed contract", status_code=502) from exc
+        return AssetPromptAuthorResult(
+            content=content,
             remote_job_id=str(getattr(response, "id", "") or "") or None,
         )
+
+
+def asset_prompt_author_provider(settings: Settings | None = None) -> AssetPromptAuthorProvider:
+    # Step 3 prompt authoring is its own Professional Skill execution policy. It does not
+    # inherit the Step 1 source-understanding provider, matching Step 2's explicit Ark policy.
+    return DoubaoAssetPromptAuthor(settings or get_settings())
+
+
+def validate_authored_asset_batch(
+    expected_assets: list[dict],
+    authored: AssetImagePromptAuthoringResult,
+) -> dict[str, AssetImagePromptAuthoredEntity]:
+    expected_ids = [str(item["target_entity_id"]) for item in expected_assets]
+    actual_ids = [item.target_entity_id for item in authored.assets]
+    if len(actual_ids) != len(set(actual_ids)) or set(actual_ids) != set(expected_ids):
+        raise AppError(
+            "ASSET_IMAGE_PROMPT_PROVIDER_COVERAGE_INVALID",
+            "资产图 Prompt Skill Provider 必须精确覆盖本批全部资产",
+            status_code=502,
+            details={"expected": expected_ids, "actual": actual_ids},
+        )
+    by_id = {item.target_entity_id: item for item in authored.assets}
+    asset_type_by_id = {str(item["target_entity_id"]): str(item["asset_type"]) for item in expected_assets}
+    for entity_id, item in by_id.items():
+        if asset_type_by_id[entity_id] == TargetAssetType.CHARACTER.value:
+            prompt = item.image_prompt.lower()
+            missing = [anchor for anchor in CHARACTER_LAYOUT_ANCHORS if anchor not in prompt]
+            if missing:
+                raise AppError(
+                    "ASSET_IMAGE_CHARACTER_LAYOUT_INVALID",
+                    "人物资产提示词必须是正面全身、侧面全身、背面全身加面部特写，并明确同一人物",
+                    status_code=502,
+                    details={"target_entity_id": entity_id, "missing_anchors": missing},
+                )
+        _assert_execution_english("image_prompt", item.image_prompt, target_entity_id=entity_id)
+        if item.negative_prompt.strip():
+            _assert_execution_english("negative_prompt", item.negative_prompt, target_entity_id=entity_id)
+        if len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", item.review_prompt_zh)) < 4:
+            raise AppError(
+                "ASSET_IMAGE_PROMPT_REVIEW_LANGUAGE_INVALID",
+                "资产图 Prompt Skill 必须提供简体中文审核说明",
+                status_code=502,
+                details={"target_entity_id": entity_id},
+            )
+    return by_id

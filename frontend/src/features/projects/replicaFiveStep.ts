@@ -90,6 +90,11 @@ export interface AssetImageEntity {
   review_description_zh: string
   image_prompt: string
   negative_prompt: string
+  prompt_review_zh: string | null
+  image_model_id: string | null
+  prompt_skill_id: string | null
+  prompt_skill_version: string | null
+  prompt_contract: string | null
   reference_media: ReferenceMedia[]
 }
 
