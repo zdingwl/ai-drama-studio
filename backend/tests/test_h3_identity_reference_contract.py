@@ -6,7 +6,8 @@ import pytest
 
 from app.core.errors import AppError
 from app.p16.common import _validate_reference_contract
-from app.replica_pipeline.h3_prompting import _references
+from app.replica_pipeline.asset_images import _content_matches_current_asset_contract
+from app.replica_pipeline.h3_prompting import _asset_lookup, _references
 from app.target_assets.schemas import ReferenceMediaRole, TargetAssetRef, TargetAssetType
 
 
@@ -30,8 +31,34 @@ def _asset(entity_id: str, asset_type: TargetAssetType, media: list):
         target_asset_revision=1,
         asset_type=asset_type,
         target_entity_id=entity_id,
+        image_model_id="Z-Image-Turbo",
+        prompt_skill_id="z-image-turbo-asset-prompting",
+        prompt_skill_version="1.4.0",
+        prompt_contract="replica-assets-zimage-front-qwen-edit-v4",
         reference_media=media,
     )
+
+
+def test_old_character_asset_contract_is_stale_and_blocked_before_h3_prompting() -> None:
+    current = _asset("char-current", TargetAssetType.CHARACTER, [
+        _media(ReferenceMediaRole.OTHER, "board"),
+        _media(ReferenceMediaRole.FULL_BODY, "front"),
+        _media(ReferenceMediaRole.FACE, "face"),
+    ])
+    assert _content_matches_current_asset_contract(SimpleNamespace(assets=[current])) is True
+    assert _asset_lookup(SimpleNamespace(assets=[current]))["char-current"] is current
+
+    legacy = SimpleNamespace(**{**current.__dict__, "prompt_skill_version": "1.2.0", "prompt_contract": "z-image-turbo-replica-assets-v2"})
+    assert _content_matches_current_asset_contract(SimpleNamespace(assets=[legacy])) is False
+    with pytest.raises(AppError) as captured:
+        _asset_lookup(SimpleNamespace(assets=[legacy]))
+    assert captured.value.code == "H3_PROMPT_ASSET_CONTRACT_STALE"
+
+    missing_face = _asset("char-no-face", TargetAssetType.CHARACTER, [
+        _media(ReferenceMediaRole.OTHER, "board-only"),
+        _media(ReferenceMediaRole.FULL_BODY, "front-only"),
+    ])
+    assert _content_matches_current_asset_contract(SimpleNamespace(assets=[missing_face])) is False
 
 
 def test_h3_reference_priority_locks_visible_character_face_and_body_before_scene_and_prop() -> None:

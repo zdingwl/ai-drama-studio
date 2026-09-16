@@ -126,7 +126,7 @@ Prompt Contract：{payload.binding.prompt_contract}
 - 人物关系、婚姻、亲属、同事等叙事关系不能导致单人物资产图出现第二个人。
 - CHARACTER 的 image_prompt 只描述一个人物的稳定视觉身份：脸型五官、年龄感、发型发色、肤色、体态、基础服装轮廓/材质/颜色和标志性可见特征。不要要求模型自己排版三视图、四视图、reference sheet、contact sheet 或 face close-up。
 - CHARACTER 的 image_prompt 与 negative_prompt 都不要出现 multi-panel、turnaround、reference sheet、contact sheet、collage、split screen、front/side/back view、face close-up 等版式词，即使是否定句也不要写；这些词会激活 Z-Image Turbo 的角色设定表先验。Runtime 会自己加入单人朝向约束并负责最终四栏合成。
-- CHARACTER 禁止把人物关系、剧情动作、手机等临时道具写成资产身份；除非稳定身份绝对需要，不要加入剧情道具。前/侧/背三张全身图与面部特写的版式由 Runtime 确定性生成和合成，而不是由 Prompt 自由排版。
+- CHARACTER 禁止把人物关系、剧情动作、手机等临时道具写成资产身份；除非稳定身份绝对需要，不要加入剧情道具。Runtime 先用 Z-Image 生成唯一正面主身份图，再把正面图作为 Image 1 交给 Qwen Image Edit 2511，按其 Professional Skill 只编辑朝向生成侧面和背面；面部特写直接来自正面主图；Prompt 不负责多面板排版。
 - SCENE 只表现稳定环境身份、空间布局、材质、landmarks、光照和色彩，不把剧情中的人物带进环境资产图。
 - PROP 只表现稳定物体身份、形态、尺度、材质、颜色和标志性细节，不加入无关人物/场景。
 - 当前 Turbo Runtime 使用 zeroed negative conditioning，因此人物/场景/道具的语义排除项（其他人物、临时道具、文字、水印、剧情场景等）必须同时作为 `Do not ...` 约束写进 image_prompt；negative_prompt 也必须返回用于审计。CHARACTER 的版式排除词是唯一例外：不要在 Skill 输出中重复，由 Runtime 自己控制。
@@ -161,7 +161,7 @@ class DoubaoAssetPromptAuthor:
             "provider": self.provider_name,
             "model": self.model_name,
             "mode": "CLOUD_TEXT_SKILL_EXECUTOR",
-            "prompt_contract": "z-image-turbo-replica-assets-v2",
+            "prompt_contract": "replica-assets-zimage-front-qwen-edit-v4",
             "response_contract": "STRICT_JSON_SCHEMA",
         }
 

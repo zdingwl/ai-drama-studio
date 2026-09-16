@@ -24,12 +24,14 @@ Current Windows default:
 
 ```text
 Z-Image Turbo
-→ z-image-turbo-asset-prompting@1.2.0
+→ z-image-turbo-asset-prompting@1.4.0
+→ z_image_turbo_bf16.safetensors → canonical FRONT master
+→ qwen-image-edit-character-asset-prompting@1.0.0
+→ qwen_image_edit_2511_fp8mixed.safetensors → SIDE / BACK
 → local ComfyUI
-→ z_image_turbo_bf16.safetensors
 ```
 
-The image Runtime executes the Skill-authored identity prompt. For Character assets, Runtime is additionally responsible for deterministic structural composition: it applies fixed front/side/back view instructions around the identity prompt, runs those views independently with the same base seed, derives the facial close-up from the front view, and composes the final four-panel sheet. Runtime may not change the underlying identity facts.
+The image Runtime executes the Skill-authored identity prompt. For Character assets, Runtime first generates one authoritative front full-body master with Z-Image Turbo. It then uploads that exact front image as Qwen Image Edit `Image 1`; the Qwen-specific Professional Skill locks identity, body, wardrobe and footwear while allowing only side/back orientation changes. The facial close-up is derived from the front master, and Runtime composes the final four-panel sheet deterministically. Runtime may not change the underlying identity facts.
 
 ## Character output
 
@@ -40,7 +42,7 @@ One Character asset image is a landscape production reference sheet containing:
 3. back full-body view;
 4. larger face close-up.
 
-It is **three full-body views plus a face close-up**, not four full-body directions. The layout is not entrusted to one free-form image generation. Front/side/back are separate model branches using one identity prompt and one base seed; the face close-up is cropped from the front render; Runtime then composes the fixed four-panel sheet. Use a clean light studio background; no couple composition, no story reenactment, no phone/lifestyle pose unless the identity itself requires a signature prop.
+It is **three full-body views plus a face close-up**, not four independent text-to-image directions. The front full-body render is the identity master. Side/back are Qwen Image Edit derivatives that directly receive the front master as reference input and may change orientation only; they must preserve garment topology and footwear exactly. The face close-up is cropped from the front master; Runtime then composes the fixed four-panel sheet. Use a clean light studio background; no couple composition, no story reenactment, no phone/lifestyle pose unless the identity itself requires a signature prop.
 
 ## Scene / Prop output
 

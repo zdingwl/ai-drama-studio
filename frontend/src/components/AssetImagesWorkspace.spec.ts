@@ -182,6 +182,61 @@ describe('AssetImagesWorkspace task progress', () => {
     wrapper.unmount()
   })
 
+  it('marks an old asset contract for regeneration and uses the regenerate command', async () => {
+    mockReads([])
+    vi.mocked(replicaApi.getAssetImages).mockResolvedValue({
+      project_id: 'project-1',
+      status: 'STALE',
+      artifact_id: 'assets-old',
+      revision: 1,
+      content: {
+        target_storyboard_artifact_id: 'storyboard-1',
+        target_language: 'en-US',
+        target_region: 'US',
+        visual_style: '写实电影感',
+        assets: [{
+          target_asset_id: 'asset-old',
+          target_asset_revision: 1,
+          asset_type: 'CHARACTER',
+          target_entity_id: 'char-1',
+          display_name: 'Marge Thompson',
+          review_description_zh: '老年女性人物资产',
+          image_prompt: 'elderly woman in orange floral shirt',
+          negative_prompt: 'extra people, text',
+          prompt_review_zh: '旧人物资产',
+          image_model_id: 'Z-Image-Turbo',
+          prompt_skill_id: 'z-image-turbo-asset-prompting',
+          prompt_skill_version: '1.2.0',
+          prompt_contract: 'z-image-turbo-replica-assets-v2',
+          reference_media: [{
+            reference_id: 'ref-old',
+            role: 'FULL_BODY',
+            uri: '/old.png',
+            mime_type: 'image/png',
+            sha256: 'b'.repeat(64),
+            width: 1536,
+            height: 768,
+            storage_relpath: 'old.png',
+          }],
+        }],
+      },
+    })
+    vi.mocked(replicaApi.regenerateAssetImages).mockResolvedValue({ ...runningTask, status: 'queued', progress_percent: 0, started_at: null })
+
+    const wrapper = await mountWorkspace()
+
+    expect(wrapper.text()).toContain('需要重新生成')
+    expect(wrapper.text()).toContain('旧人物一致性合同')
+    const regenerate = wrapper.findAll('button').find(button => button.text() === '重新生成资产图')
+    expect(regenerate).toBeTruthy()
+    await regenerate!.trigger('click')
+    await flushPromises()
+
+    expect(replicaApi.regenerateAssetImages).toHaveBeenCalledWith('project-1')
+    expect(replicaApi.startAssetImages).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('does not require a separate batch confirmation after assets become current', async () => {
     mockReads([])
     vi.mocked(replicaApi.getAssetImages).mockResolvedValue({
@@ -206,8 +261,8 @@ describe('AssetImagesWorkspace task progress', () => {
           prompt_review_zh: '保持无人场景',
           image_model_id: 'Z-Image-Turbo',
           prompt_skill_id: 'z-image-turbo-asset-prompting',
-          prompt_skill_version: '1.2.0',
-          prompt_contract: 'z-image-turbo-replica-assets-v2',
+          prompt_skill_version: '1.4.0',
+          prompt_contract: 'replica-assets-zimage-front-qwen-edit-v4',
           reference_media: [{
             reference_id: 'ref-1',
             role: 'LAYOUT',

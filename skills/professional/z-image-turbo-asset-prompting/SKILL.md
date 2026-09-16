@@ -35,15 +35,16 @@ The execution prompt should be concise, concrete English optimized for the image
 
 The Skill must compile a **single-character identity prompt**, not a multi-panel layout prompt. `image_prompt` describes only stable visible identity: facial structure, age appearance, hair, skin, body proportions, baseline wardrobe silhouette/material/color and signature visible features. It must not ask Z-Image Turbo to draw a turnaround/reference/contact sheet or to place front/side/back/face views in one generation. It also must not repeat those Runtime-owned layout words as negative wording in either `image_prompt` or `negative_prompt`: Z-Image Turbo can still react to a negated `reference sheet` / `turnaround` / `multi-panel` phrase and produce miniature duplicated figures.
 
-The Runtime owns the production layout deterministically:
+The Runtime owns the production layout deterministically. Z-Image is responsible for the canonical front identity only:
 
-1. render exactly one **front full-body** image;
-2. render exactly one **side-profile full-body** image;
-3. render exactly one **back full-body** image;
-4. derive the **face close-up** from the generated front view so the face is literally the same front identity;
-5. compose those four panels into one landscape production reference sheet in fixed order.
+1. render exactly one **front full-body** master image from this Skill-authored identity prompt;
+2. treat that exact front image as the canonical visual identity;
+3. pass the canonical front as `Image 1` to `qwen-image-edit-character-asset-prompting@1.0.0` + Qwen Image Edit 2511 for the side-profile derivative;
+4. pass the same canonical front to the Qwen edit path for the rear derivative;
+5. derive the **face close-up** from the generated front master so the face is literally the same front identity;
+6. compose those four panels into one landscape production reference sheet in fixed order.
 
-The three model renders use the same canonical identity prompt, the same base seed and the same fixed wardrobe/color constraints. Runtime phrases each generation as one ordinary full-length studio photograph containing exactly one human figure, without using `character reference`, plural `views`, `turnaround`, `collage`, `contact sheet` or similar layout-trigger words. This moves structural correctness out of model free-form layout generation and into deterministic Runtime composition. For compatibility with older authored prompts, Runtime may deterministically remove only Runtime-owned layout clauses before execution; it must preserve the stable visual identity content.
+The front render is the only free text-to-image identity sample. Side/back must never be independent Z-Image text-to-image generations and must never rely on same-seed resemblance. They are reference-image edits governed by the Qwen-specific Professional Skill. Runtime phrases the front as one ordinary full-length studio photograph containing exactly one human figure, without using `character reference`, plural `views`, `turnaround`, `collage`, `contact sheet` or similar layout-trigger words. For compatibility with older authored prompts, Runtime may deterministically remove only Runtime-owned layout clauses before front execution; it must preserve the stable visual identity content.
 
 Do not generate a single mood portrait, action scene, couple image or lifestyle scene. Narrative relationships and temporary story props must not enter the stable character identity prompt.
 

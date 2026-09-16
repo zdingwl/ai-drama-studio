@@ -278,6 +278,7 @@ def test_p13_legacy_professional_skill_is_not_replica_five_step_asset_stage() ->
     assert "replica-target-assets" not in root.subskills
     assert "asset-image-generation" in root.subskills
     assert "z-image-turbo-asset-prompting" in root.subskills
+    assert "qwen-image-edit-character-asset-prompting" in root.subskills
     step = next(item for item in root.steps if item.id == "asset_images")
     assert step.requires == (ArtifactType.TARGET_STORYBOARD,)
     assert step.produces == (ArtifactType.TARGET_ASSETS,)

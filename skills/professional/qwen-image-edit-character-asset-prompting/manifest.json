@@ -1,0 +1,30 @@
+{
+  "id": "qwen-image-edit-character-asset-prompting",
+  "name": "Qwen Image Edit 2511 人物朝向编辑提示词",
+  "version": "1.0.0",
+  "category": "target-assets",
+  "description": "为 Replica 人物资产的 canonical front 主身份图编译 Qwen Image Edit 2511 朝向编辑约束，只允许把同一人物转换为侧面或背面，并强制保持身份、体型、服装与鞋履一致。",
+  "when_to_use": ["人物资产已由 Z-Image Turbo 生成唯一正面主身份图，需要基于该图生成同一人物的严格侧面或背面全身图"],
+  "when_not_to_use": ["没有 canonical front 主身份图", "需要创造新人物身份", "需要生成场景或道具", "需要改变人物服装、年龄、发型或体型"],
+  "required_inputs": ["TARGET_STORYBOARD"],
+  "optional_inputs": [],
+  "readable_artifacts": ["TARGET_STORYBOARD"],
+  "required_capabilities": ["ASSET_IMAGE_GENERATION"],
+  "manual_path": "qwen-image-edit-character-asset-prompting/SKILL.md",
+  "steps": [
+    {"id":"compile_orientation_edit","phase":"人物资产图","title":"编译同身份朝向编辑约束","description":"Treat Image 1 as the authoritative character identity and wardrobe source, then compile a side-profile or rear-view edit instruction that changes orientation only.","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]}
+  ],
+  "fact_levels": ["CANONICAL_FRONT_IDENTITY", "QWEN_IMAGE_EDIT_ORIENTATION_CONSTRAINT"],
+  "provider_rules": [
+    "Image 1 is the authoritative canonical identity and wardrobe reference; do not redesign or reinterpret the person.",
+    "Only camera/person orientation may change. Preserve the same facial structure, apparent age, hairstyle, hair color, skin tone and body proportions.",
+    "Preserve garment topology exactly: same upper garment, sleeve length, lower-garment type and length, colors, patterns, fabric appearance and footwear presence/type/color.",
+    "Never substitute trousers, shorts, skirts or dresses for one another; never remove footwear or change footwear type.",
+    "Side output must be a strict 90-degree left-facing full-body profile; rear output must show the exact back of head and body with no visible face.",
+    "Keep exactly one person, neutral standing pose, head and both feet fully visible, clean light studio background, no added props, text or extra people.",
+    "Do not invent character facts from the storyboard or dialogue; the canonical front image is the visual identity truth for these derived orientations."
+  ],
+  "output_contracts": [],
+  "completion_criteria": ["Qwen edit instruction treats the canonical front as authoritative identity", "Only orientation changes", "Wardrobe and footwear are explicitly locked", "No new semantic character identity is invented"],
+  "failure_policy": ["Missing canonical front image blocks side/back generation", "Missing Qwen Image Edit model or required ComfyUI nodes fails closed", "Runtime must not fall back to independent text-to-image side/back sampling"]
+}

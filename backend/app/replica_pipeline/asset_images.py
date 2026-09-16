@@ -30,7 +30,7 @@ from app.replica_pipeline.asset_prompting import (
     asset_prompt_author_provider,
     validate_authored_asset_batch,
 )
-from app.replica_pipeline.image_model_skills import selected_image_model_prompt_skill
+from app.replica_pipeline.image_model_skills import selected_character_edit_prompt_skill, selected_image_model_prompt_skill
 from app.replica_pipeline.models import ReplicaAssetImageCandidate, ReplicaAssetImageRevision, ReplicaLocalizedStoryboardRevision
 from app.replica_pipeline.schemas import (
     ASSET_IMAGES_SCHEMA_VERSION,
@@ -59,6 +59,12 @@ SKILL_ID = "asset-image-generation"
 DEFAULT_UNET = "z_image_turbo_bf16.safetensors"
 DEFAULT_CLIP = "qwen_3_4b.safetensors"
 DEFAULT_VAE = "ae.safetensors"
+QWEN_CHARACTER_EDIT_UNET = "qwen_image_edit_2511_fp8mixed.safetensors"
+QWEN_CHARACTER_EDIT_CLIP = "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+QWEN_CHARACTER_EDIT_VAE = "qwen_image_vae.safetensors"
+QWEN_CHARACTER_EDIT_STEPS = 20
+QWEN_CHARACTER_EDIT_CFG = 4.0
+QWEN_CHARACTER_EDIT_SHIFT = 3.1
 CHARACTER_PANEL_WIDTH = 384
 CHARACTER_PANEL_HEIGHT = 768
 CHARACTER_RENDER_WIDTH = 512
@@ -163,7 +169,7 @@ def _character_identity_reference_media(
 
 class ComfyUIZImageTurboRuntime:
     provider_name = "local-comfyui"
-    _required_nodes = {
+    _base_required_nodes = {
         "UNETLoader",
         "CLIPLoader",
         "VAELoader",
@@ -175,6 +181,14 @@ class ComfyUIZImageTurboRuntime:
         "VAEDecode",
         "SaveImage",
     }
+    _character_edit_required_nodes = {
+        "LoadImage",
+        "FluxKontextImageScale",
+        "TextEncodeQwenImageEditPlus",
+        "FluxKontextMultiReferenceLatentMethod",
+        "CFGNorm",
+        "VAEEncode",
+    }
 
     def __init__(self):
         settings = get_settings()
@@ -183,19 +197,36 @@ class ComfyUIZImageTurboRuntime:
         self.model_name = DEFAULT_UNET
         self.clip_name = DEFAULT_CLIP
         self.vae_name = DEFAULT_VAE
+        self.character_edit_model_name = QWEN_CHARACTER_EDIT_UNET
+        self.character_edit_clip_name = QWEN_CHARACTER_EDIT_CLIP
+        self.character_edit_vae_name = QWEN_CHARACTER_EDIT_VAE
         self.timeout_seconds = 1800.0
         self.poll_interval = 1.0
 
     def profile(self) -> dict:
+        character_edit_binding, character_edit_skill = selected_character_edit_prompt_skill()
         return {
             "provider": self.provider_name,
             "base_url": self.base_url,
             "model": self.model_name,
             "clip": self.clip_name,
             "vae": self.vae_name,
-            "workflow": "z-image-turbo-assets-v2",
-            "character_sheet": "three-independent-single-person-renders-plus-front-face-crop-v2",
+            "workflow": "replica-assets-hybrid-v4",
+            "character_sheet": "zimage-front-master-qwen-edit-side-back-plus-front-face-crop-v4",
             "character_render_size": [CHARACTER_RENDER_WIDTH, CHARACTER_RENDER_HEIGHT],
+            "character_front_model": self.model_name,
+            "character_edit_model_id": character_edit_binding.model_id,
+            "character_edit_model": self.character_edit_model_name,
+            "character_edit_clip": self.character_edit_clip_name,
+            "character_edit_vae": self.character_edit_vae_name,
+            "character_edit_prompt_skill_id": character_edit_skill.id,
+            "character_edit_prompt_skill_version": character_edit_skill.version,
+            "character_edit_prompt_contract": character_edit_binding.prompt_contract,
+            "character_edit_steps": QWEN_CHARACTER_EDIT_STEPS,
+            "character_edit_cfg": QWEN_CHARACTER_EDIT_CFG,
+            "character_edit_sampling_shift": QWEN_CHARACTER_EDIT_SHIFT,
+            "character_edit_sampler": "euler",
+            "character_edit_scheduler": "simple",
             "steps": 8,
             "sampler": "res_multistep",
             "scheduler": "simple",
@@ -203,13 +234,21 @@ class ComfyUIZImageTurboRuntime:
             "negative_conditioning": "zeroed-with-inline-hard-exclusions",
         }
 
+    @property
+    def character_pipeline_model_name(self) -> str:
+        return f"{self.model_name}+{self.character_edit_model_name}"
+
+    @property
+    def pipeline_model_name(self) -> str:
+        return f"{self.model_name}; character-edit={self.character_edit_model_name}"
+
     @staticmethod
     def _safe_preview(response: httpx.Response) -> str:
         try: text = " ".join(response.text.split())
         except Exception: return "<unreadable body>"
         return text[:400] if text else "<empty body>"
 
-    def assert_ready(self) -> None:
+    def assert_ready(self, *, require_character_edit: bool = False) -> None:
         try:
             with httpx.Client(timeout=5.0, trust_env=False) as client:
                 stats = client.get(f"{self.base_url}/system_stats")
@@ -221,7 +260,10 @@ class ComfyUIZImageTurboRuntime:
                 nodes = info.json()
                 if not isinstance(nodes, dict):
                     raise AppError("ASSET_IMAGE_RUNTIME_INCOMPATIBLE", "ComfyUI /object_info 返回格式无效", status_code=502)
-                missing_nodes = sorted(self._required_nodes - set(nodes))
+                required_nodes = set(self._base_required_nodes)
+                if require_character_edit:
+                    required_nodes.update(self._character_edit_required_nodes)
+                missing_nodes = sorted(required_nodes - set(nodes))
                 if missing_nodes:
                     raise AppError("ASSET_IMAGE_RUNTIME_INCOMPATIBLE", "ComfyUI 缺少 Z-Image Turbo 所需节点：" + "、".join(missing_nodes), status_code=502)
 
@@ -229,17 +271,24 @@ class ComfyUIZImageTurboRuntime:
                     required = ((nodes.get(node_name, {}).get("input") or {}).get("required") or {}).get(field) or []
                     return required[0] if isinstance(required, list) and required and isinstance(required[0], list) else []
 
+                required_models = [
+                    ("UNETLoader", "unet_name", self.model_name),
+                    ("CLIPLoader", "clip_name", self.clip_name),
+                    ("VAELoader", "vae_name", self.vae_name),
+                ]
+                if require_character_edit:
+                    required_models.extend([
+                        ("UNETLoader", "unet_name", self.character_edit_model_name),
+                        ("CLIPLoader", "clip_name", self.character_edit_clip_name),
+                        ("VAELoader", "vae_name", self.character_edit_vae_name),
+                    ])
                 missing_models = [
                     filename
-                    for node_name, field, filename in (
-                        ("UNETLoader", "unet_name", self.model_name),
-                        ("CLIPLoader", "clip_name", self.clip_name),
-                        ("VAELoader", "vae_name", self.vae_name),
-                    )
+                    for node_name, field, filename in required_models
                     if filename not in _options(node_name, field)
                 ]
                 if missing_models:
-                    raise AppError("ASSET_IMAGE_MODEL_MISSING", "ComfyUI 缺少 Z-Image Turbo 资产图模型文件：" + "、".join(missing_models), status_code=502)
+                    raise AppError("ASSET_IMAGE_MODEL_MISSING", "ComfyUI 缺少资产图模型文件：" + "、".join(missing_models), status_code=502)
         except AppError: raise
         except (httpx.HTTPError, OSError, ValueError) as exc:
             raise AppError("ASSET_IMAGE_RUNTIME_NOT_READY", f"无法连接本地 ComfyUI：{self.base_url}", status_code=503) from exc
@@ -301,49 +350,141 @@ class ComfyUIZImageTurboRuntime:
         return ", ".join(part for part in parts if not cls._contains_character_layout_language(part))
 
     @classmethod
-    def _character_view_prompt(cls, identity_prompt: str, view: str) -> str:
-        orientation = {
-            "front": (
-                "A full-length studio photograph of ONE person only. The person stands alone in the center, "
-                "body and face square to the camera, neutral standing pose, arms relaxed, head and both shoes fully visible."
-            ),
-            "side": (
-                "A full-length studio photograph of ONE person only. The person stands alone in the center in an exact "
-                "90-degree left-facing profile, nose pointing left, shoulders perpendicular to the camera, neutral pose, head and shoes fully visible."
-            ),
-            "back": (
-                "A full-length studio photograph of ONE person only. The person stands alone in the center with the back of the head "
-                "and body facing the camera, face not visible, neutral pose, arms relaxed, head and shoes fully visible."
-            ),
-        }[view]
+    def _character_front_prompt(cls, identity_prompt: str) -> str:
         identity = cls._character_identity_for_runtime(identity_prompt)
         return (
-            f"{orientation} The image contains exactly one human figure total, one pose only, with no miniature repetitions or secondary figures anywhere in the frame. "
+            "A full-length studio photograph of ONE person only. This image is the canonical MASTER identity image. "
+            "The person stands alone in the center, body and face square to the camera, neutral standing pose, arms relaxed, head and both shoes fully visible. "
+            "The image contains exactly one human figure total, one pose only, with no miniature repetitions or secondary figures anywhere in the frame. "
             "The subject should occupy most of the image height with empty space on both sides. "
             "Clean seamless very light neutral studio background, soft even lighting, no props, no environment, no text. "
             f"Stable appearance: {identity}"
         )
 
-    def _character_workflow(self, identity_prompt: str, negative_prompt: str, *, prefix: str, seed: int) -> dict:
+    @classmethod
+    def _qwen_character_edit_prompt(cls, negative_prompt: str, view: str) -> str:
+        orientation = {
+            "side": (
+                "Rotate only the person/camera orientation into a strict 90-degree left-facing full-body profile. "
+                "The nose points left and the shoulders are perpendicular to the camera."
+            ),
+            "back": (
+                "Rotate only the person/camera orientation into an exact rear full-body view. "
+                "Show the back of the head and body; the face must not be visible."
+            ),
+        }[view]
+        prompt = (
+            "Image 1 is the authoritative canonical identity and wardrobe reference. Edit the image; do not redesign the person. "
+            f"{orientation} Preserve exactly the same person identity, facial structure, apparent age, hairstyle, hair color, skin tone, body proportions, "
+            "and every wardrobe detail visible in Image 1. Preserve garment topology exactly: same upper garment, same sleeve length, same lower-garment type and length, "
+            "same colors, same patterns, same fabric appearance, and the same footwear presence, type and color. Do not substitute trousers, shorts, skirts or dresses for one another. "
+            "Do not remove footwear and do not change footwear type. Only orientation may change. Keep a neutral standing pose, exactly one person, head and both feet fully visible, "
+            "clean seamless very light neutral studio background, soft even lighting, no added props, no text, no extra people."
+        )
+        runtime_negative = cls._character_negative_for_runtime(negative_prompt)
+        if runtime_negative:
+            prompt += f" Do not introduce any excluded content: {runtime_negative}."
+        return prompt
+
+    def _character_front_workflow(self, identity_prompt: str, negative_prompt: str, *, prefix: str, seed: int) -> dict:
         graph: dict[str, dict] = {
             "1": {"class_type": "UNETLoader", "inputs": {"unet_name": self.model_name, "weight_dtype": "default"}},
             "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": self.clip_name, "type": "lumina2", "device": "default"}},
             "3": {"class_type": "VAELoader", "inputs": {"vae_name": self.vae_name}},
             "4": {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 3.0, "model": ["1", 0]}},
         }
-        for branch, view in enumerate(("front", "side", "back"), 1):
-            base = branch * 10
-            execution_prompt = self._character_view_prompt(identity_prompt, view)
-            runtime_negative = self._character_negative_for_runtime(negative_prompt)
-            if runtime_negative:
-                execution_prompt += f"\n\nHard exclusions — do not include any of the following: {runtime_negative}"
-            graph[str(base)] = {"class_type": "CLIPTextEncode", "inputs": {"text": execution_prompt, "clip": ["2", 0]}}
-            graph[str(base + 1)] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": [str(base), 0]}}
-            graph[str(base + 2)] = {"class_type": "EmptySD3LatentImage", "inputs": {"width": CHARACTER_RENDER_WIDTH, "height": CHARACTER_RENDER_HEIGHT, "batch_size": 1}}
-            graph[str(base + 3)] = {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 8, "cfg": 1.0, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1.0, "model": ["4", 0], "positive": [str(base), 0], "negative": [str(base + 1), 0], "latent_image": [str(base + 2), 0]}}
-            graph[str(base + 4)] = {"class_type": "VAEDecode", "inputs": {"samples": [str(base + 3), 0], "vae": ["3", 0]}}
-            graph[str(base + 5)] = {"class_type": "SaveImage", "inputs": {"images": [str(base + 4), 0], "filename_prefix": f"{prefix}/{view}"}}
-        return {"prompt": graph, "client_id": f"ai-drama-character-assets-{uuid4()}"}
+        runtime_negative = self._character_negative_for_runtime(negative_prompt)
+        front_prompt = self._character_front_prompt(identity_prompt)
+        if runtime_negative:
+            front_prompt += f"\n\nHard exclusions — do not include any of the following: {runtime_negative}"
+        graph["10"] = {"class_type": "CLIPTextEncode", "inputs": {"text": front_prompt, "clip": ["2", 0]}}
+        graph["11"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["10", 0]}}
+        graph["12"] = {"class_type": "EmptySD3LatentImage", "inputs": {"width": CHARACTER_RENDER_WIDTH, "height": CHARACTER_RENDER_HEIGHT, "batch_size": 1}}
+        graph["13"] = {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 8, "cfg": 1.0, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1.0, "model": ["4", 0], "positive": ["10", 0], "negative": ["11", 0], "latent_image": ["12", 0]}}
+        graph["14"] = {"class_type": "VAEDecode", "inputs": {"samples": ["13", 0], "vae": ["3", 0]}}
+        graph["15"] = {"class_type": "SaveImage", "inputs": {"images": ["14", 0], "filename_prefix": f"{prefix}/front"}}
+        return {"prompt": graph, "client_id": f"ai-drama-character-front-{uuid4()}"}
+
+    def _character_edit_workflow(self, reference_image_name: str, negative_prompt: str, *, prefix: str, seed: int) -> dict:
+        graph: dict[str, dict] = {
+            "101": {"class_type": "UNETLoader", "inputs": {"unet_name": self.character_edit_model_name, "weight_dtype": "default"}},
+            "102": {"class_type": "CLIPLoader", "inputs": {"clip_name": self.character_edit_clip_name, "type": "qwen_image", "device": "default"}},
+            "103": {"class_type": "VAELoader", "inputs": {"vae_name": self.character_edit_vae_name}},
+            "104": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["101", 0], "shift": QWEN_CHARACTER_EDIT_SHIFT}},
+            "105": {"class_type": "CFGNorm", "inputs": {"model": ["104", 0], "strength": 1.0}},
+            "106": {"class_type": "LoadImage", "inputs": {"image": reference_image_name}},
+            "107": {"class_type": "FluxKontextImageScale", "inputs": {"image": ["106", 0]}},
+            "108": {"class_type": "VAEEncode", "inputs": {"pixels": ["107", 0], "vae": ["103", 0]}},
+        }
+        for base, view in ((120, "side"), (130, "back")):
+            prompt = self._qwen_character_edit_prompt(negative_prompt, view)
+            graph[str(base)] = {"class_type": "TextEncodeQwenImageEditPlus", "inputs": {"clip": ["102", 0], "prompt": prompt, "vae": ["103", 0], "image1": ["107", 0]}}
+            graph[str(base + 1)] = {"class_type": "TextEncodeQwenImageEditPlus", "inputs": {"clip": ["102", 0], "prompt": "", "vae": ["103", 0], "image1": ["107", 0]}}
+            graph[str(base + 2)] = {"class_type": "FluxKontextMultiReferenceLatentMethod", "inputs": {"conditioning": [str(base), 0], "reference_latents_method": "index_timestep_zero"}}
+            graph[str(base + 3)] = {"class_type": "FluxKontextMultiReferenceLatentMethod", "inputs": {"conditioning": [str(base + 1), 0], "reference_latents_method": "index_timestep_zero"}}
+            branch_seed = (seed + (0 if view == "side" else 1)) % ((1 << 63) - 1)
+            graph[str(base + 4)] = {"class_type": "KSampler", "inputs": {"seed": branch_seed, "steps": QWEN_CHARACTER_EDIT_STEPS, "cfg": QWEN_CHARACTER_EDIT_CFG, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0, "model": ["105", 0], "positive": [str(base + 2), 0], "negative": [str(base + 3), 0], "latent_image": ["108", 0]}}
+            graph[str(base + 5)] = {"class_type": "VAEDecode", "inputs": {"samples": [str(base + 4), 0], "vae": ["103", 0]}}
+            graph[str(base + 6)] = {"class_type": "SaveImage", "inputs": {"images": [str(base + 5), 0], "filename_prefix": f"{prefix}/{view}"}}
+        return {"prompt": graph, "client_id": f"ai-drama-character-qwen-edit-{uuid4()}"}
+
+    def _submit_prompt(self, client: httpx.Client, payload: dict, *, label: str) -> str:
+        response = client.post(f"{self.base_url}/prompt", json=payload)
+        try:
+            body = response.json()
+        except Exception as exc:
+            raise AppError("ASSET_IMAGE_CREATE_FAILED", f"ComfyUI {label} /prompt 返回非 JSON：HTTP {response.status_code}；{self._safe_preview(response)}", status_code=502) from exc
+        if response.status_code >= 400:
+            raise AppError("ASSET_IMAGE_CREATE_FAILED", f"ComfyUI {label} 工作流拒绝：{str(body)[:600]}", status_code=502)
+        prompt_id = str(body.get("prompt_id") or "").strip()
+        if not prompt_id:
+            raise AppError("ASSET_IMAGE_CREATE_FAILED", f"ComfyUI {label} /prompt 缺少 prompt_id", status_code=502)
+        return prompt_id
+
+    def _wait_saved_images(self, client: httpx.Client, prompt_id: str, node_ids: tuple[str, ...], *, label: str) -> list[dict]:
+        deadline = time.monotonic() + self.timeout_seconds
+        while time.monotonic() < deadline:
+            history = client.get(f"{self.base_url}/history/{prompt_id}")
+            if history.status_code != 200:
+                raise AppError("ASSET_IMAGE_QUERY_FAILED", f"ComfyUI {label} history 返回 HTTP {history.status_code}", status_code=502)
+            entry = self._history_entry(history.json(), prompt_id)
+            if entry:
+                status = entry.get("status") if isinstance(entry.get("status"), dict) else {}
+                if str(status.get("status_str") or "").lower() in {"error", "failed"}:
+                    raise AppError("ASSET_IMAGE_GENERATION_FAILED", f"ComfyUI {label} 生成失败：{str(status.get('messages'))[:800]}", status_code=502)
+                images = [self._find_saved_image(entry, node_id) for node_id in node_ids]
+                if all(image is not None for image in images):
+                    return [image for image in images if image is not None]
+                if status.get("completed") is True:
+                    raise AppError("ASSET_IMAGE_MEDIA_MISSING", f"ComfyUI 完成 {label} 任务但缺少预期输出", status_code=502)
+            time.sleep(self.poll_interval)
+        raise AppError("ASSET_IMAGE_TIMEOUT", f"ComfyUI {label} 生成超时", status_code=504)
+
+    def _upload_character_master(self, client: httpx.Client, front: Image.Image, *, project_id: str, task_id: str, asset_id: str) -> str:
+        buffer = BytesIO()
+        front.save(buffer, format="PNG")
+        buffer.seek(0)
+        subfolder = f"ai_drama_studio/character_refs/{project_id}/{task_id}/{asset_id.replace(':', '_')}"
+        try:
+            response = client.post(
+                f"{self.base_url}/upload/image",
+                data={"type": "input", "overwrite": "true", "subfolder": subfolder},
+                files={"image": ("front-master.png", buffer, "image/png")},
+                timeout=httpx.Timeout(300.0),
+            )
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise AppError("ASSET_IMAGE_REFERENCE_UPLOAD_FAILED", "上传人物正面主身份图到 ComfyUI 失败", status_code=503) from exc
+        try:
+            body = response.json()
+        except Exception as exc:
+            raise AppError("ASSET_IMAGE_REFERENCE_UPLOAD_FAILED", f"ComfyUI 人物主身份图上传返回非 JSON：HTTP {response.status_code}；{self._safe_preview(response)}", status_code=502) from exc
+        if response.status_code >= 400:
+            raise AppError("ASSET_IMAGE_REFERENCE_UPLOAD_FAILED", f"ComfyUI 人物主身份图上传失败：{str(body)[:600]}", status_code=502)
+        name = str(body.get("name") or "").strip()
+        actual_subfolder = str(body.get("subfolder") or subfolder).strip("/\\")
+        if not name:
+            raise AppError("ASSET_IMAGE_REFERENCE_UPLOAD_FAILED", "ComfyUI 人物主身份图上传响应缺少 name", status_code=502)
+        return f"{actual_subfolder}/{name}" if actual_subfolder else name
 
     @staticmethod
     def _find_saved_image(entry: dict, node_id: str) -> dict | None:
@@ -385,43 +526,21 @@ class ComfyUIZImageTurboRuntime:
         return sheet
 
     def generate_character_sheet(self, *, project_id: str, task_id: str, asset_id: str, prompt: str, negative_prompt: str) -> GeneratedImage:
-        self.assert_ready()
+        self.assert_ready(require_character_edit=True)
         prefix = f"ai_drama_studio/assets/{project_id}/{task_id}/{asset_id.replace(':', '_')}/character_views"
-        seed = secrets.randbelow((1 << 63) - 1)
-        payload = self._character_workflow(prompt, negative_prompt, prefix=prefix, seed=seed)
+        front_seed = secrets.randbelow((1 << 63) - 1)
+        edit_seed = secrets.randbelow((1 << 63) - 2)
+        front_payload = self._character_front_workflow(prompt, negative_prompt, prefix=prefix, seed=front_seed)
         with httpx.Client(timeout=httpx.Timeout(120.0), trust_env=False) as client:
-            response = client.post(f"{self.base_url}/prompt", json=payload)
-            try:
-                body = response.json()
-            except Exception as exc:
-                raise AppError("ASSET_IMAGE_CREATE_FAILED", f"ComfyUI /prompt 返回非 JSON：HTTP {response.status_code}；{self._safe_preview(response)}", status_code=502) from exc
-            if response.status_code >= 400:
-                raise AppError("ASSET_IMAGE_CREATE_FAILED", f"ComfyUI 人物三视图工作流拒绝：{str(body)[:600]}", status_code=502)
-            prompt_id = str(body.get("prompt_id") or "").strip()
-            if not prompt_id:
-                raise AppError("ASSET_IMAGE_CREATE_FAILED", "ComfyUI /prompt 缺少 prompt_id", status_code=502)
-            deadline = time.monotonic() + self.timeout_seconds
-            view_nodes = ("15", "25", "35")
-            found: list[dict] | None = None
-            while time.monotonic() < deadline:
-                history = client.get(f"{self.base_url}/history/{prompt_id}")
-                if history.status_code != 200:
-                    raise AppError("ASSET_IMAGE_QUERY_FAILED", f"ComfyUI history 返回 HTTP {history.status_code}", status_code=502)
-                entry = self._history_entry(history.json(), prompt_id)
-                if entry:
-                    status = entry.get("status") if isinstance(entry.get("status"), dict) else {}
-                    if str(status.get("status_str") or "").lower() in {"error", "failed"}:
-                        raise AppError("ASSET_IMAGE_GENERATION_FAILED", f"ComfyUI Z-Image Turbo 人物三视图生成失败：{str(status.get('messages'))[:800]}", status_code=502)
-                    images = [self._find_saved_image(entry, node_id) for node_id in view_nodes]
-                    if all(image is not None for image in images):
-                        found = [image for image in images if image is not None]
-                        break
-                    if status.get("completed") is True:
-                        raise AppError("ASSET_IMAGE_MEDIA_MISSING", "ComfyUI 完成人物三视图任务但缺少 front/side/back 输出", status_code=502)
-                time.sleep(self.poll_interval)
-            if found is None:
-                raise AppError("ASSET_IMAGE_TIMEOUT", "ComfyUI 人物三视图生成超时", status_code=504)
-            front, side, back = [self._download_pil(client, self.base_url, image) for image in found]
+            front_prompt_id = self._submit_prompt(client, front_payload, label="Z-Image 人物正面主身份")
+            [front_image] = self._wait_saved_images(client, front_prompt_id, ("15",), label="Z-Image 人物正面主身份")
+            front = self._download_pil(client, self.base_url, front_image)
+            reference_image_name = self._upload_character_master(client, front, project_id=project_id, task_id=task_id, asset_id=asset_id)
+            edit_payload = self._character_edit_workflow(reference_image_name, negative_prompt, prefix=prefix, seed=edit_seed)
+            edit_prompt_id = self._submit_prompt(client, edit_payload, label="Qwen Image Edit 人物朝向")
+            side_image, back_image = self._wait_saved_images(client, edit_prompt_id, ("126", "136"), label="Qwen Image Edit 人物侧面/背面")
+            side = self._download_pil(client, self.base_url, side_image)
+            back = self._download_pil(client, self.base_url, back_image)
 
         storage_relpath = f"target_asset_images/{project_id}/{task_id}/{asset_id.replace(':', '_')}.png"
         output = (self.settings.artifact_root / storage_relpath).resolve()
@@ -431,7 +550,8 @@ class ComfyUIZImageTurboRuntime:
         output.parent.mkdir(parents=True, exist_ok=True)
         sheet = self._compose_character_sheet(front, side, back)
         sheet.save(output, format="PNG")
-        return GeneratedImage(storage_relpath=storage_relpath, sha256=_file_sha(output), width=CHARACTER_WIDTH, height=CHARACTER_HEIGHT, mime_type="image/png", remote_url="", remote_job_id=prompt_id)
+        remote_job_id = f"front:{front_prompt_id};qwen-edit:{edit_prompt_id}"
+        return GeneratedImage(storage_relpath=storage_relpath, sha256=_file_sha(output), width=CHARACTER_WIDTH, height=CHARACTER_HEIGHT, mime_type="image/png", remote_url="", remote_job_id=remote_job_id)
 
     @staticmethod
     def _history_entry(body: dict, prompt_id: str) -> dict | None:
@@ -802,7 +922,8 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
                             height=spec["height"],
                         )
                     return ProviderDispatchResult(value=generated, remote_job_id=generated.remote_job_id)
-                job, dispatched = dispatch_provider_call(db, task_id=task.id, provider=runtime.provider_name, model=runtime.model_name, capability=Capability.ASSET_IMAGE_GENERATION, payload=job_payload, artifact_id=storyboard_artifact.id, remote_call=_remote)
+                runtime_model = runtime.character_pipeline_model_name if spec["asset_type"] == TargetAssetType.CHARACTER else runtime.model_name
+                job, dispatched = dispatch_provider_call(db, task_id=task.id, provider=runtime.provider_name, model=runtime_model, capability=Capability.ASSET_IMAGE_GENERATION, payload=job_payload, artifact_id=storyboard_artifact.id, remote_call=_remote)
                 generated = dispatched.value
         provider_job_ids.append(job.id)
         reference_id = f"ref:{hashlib.sha256(f'{asset_id}|{generated.sha256}'.encode()).hexdigest()[:24]}"
@@ -851,7 +972,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
         prompt_provider_job_ids=prompt_provider_job_ids,
         provider_job_ids=provider_job_ids,
         image_runtime=runtime.provider_name,
-        image_model=runtime.model_name,
+        image_model=runtime.pipeline_model_name,
         generated_by_task_id=task.id,
     )
     return content, provenance
@@ -933,12 +1054,38 @@ def list_asset_image_candidates(db: Session, project_id: str) -> list[AssetImage
     return [_candidate_read(row) for row in db.scalars(select(ReplicaAssetImageCandidate).where(ReplicaAssetImageCandidate.project_id == project_id).order_by(ReplicaAssetImageCandidate.created_at.desc())).all()]
 
 
+def _content_matches_current_asset_contract(content: ReplicaAssetImagesContent) -> bool:
+    """Treat old asset revisions as read-only history without mutating them on GET.
+
+    A model/prompt-skill version bump or the absence of dedicated character FACE + front
+    FULL_BODY media means the revision cannot satisfy the current Ref2VA production chain.
+    """
+    binding, prompt_skill = selected_image_model_prompt_skill()
+    if not content.assets:
+        return False
+    for asset in content.assets:
+        if (
+            asset.image_model_id != binding.model_id
+            or asset.prompt_skill_id != prompt_skill.id
+            or asset.prompt_skill_version != prompt_skill.version
+            or asset.prompt_contract != binding.prompt_contract
+        ):
+            return False
+        if asset.asset_type == TargetAssetType.CHARACTER:
+            roles = {media.role for media in asset.reference_media}
+            if not {ReferenceMediaRole.FACE, ReferenceMediaRole.FULL_BODY}.issubset(roles):
+                return False
+    return True
+
+
 def get_asset_images(db: Session, project_id: str) -> AssetImagesRead:
     get_project(db, project_id); current = _current_artifact(db, project_id, ArtifactType.TARGET_ASSETS); latest = current or _latest_artifact(db, project_id, ArtifactType.TARGET_ASSETS)
     if latest is None: return AssetImagesRead(project_id=project_id, status=ResultStatus.NOT_BUILT)
     row = db.scalar(select(ReplicaAssetImageRevision).where(ReplicaAssetImageRevision.artifact_id == latest.id))
     if row is None: return AssetImagesRead(project_id=project_id, status=ResultStatus.NOT_BUILT)
-    return AssetImagesRead(project_id=project_id, status=ResultStatus.CURRENT if current else ResultStatus.STALE, artifact_id=latest.id, revision=latest.revision, input_fingerprint=latest.input_fingerprint, content=ReplicaAssetImagesContent.model_validate(row.content_json), provenance=row.provenance_json)
+    content = ReplicaAssetImagesContent.model_validate(row.content_json)
+    contract_current = current is not None and _content_matches_current_asset_contract(content)
+    return AssetImagesRead(project_id=project_id, status=ResultStatus.CURRENT if contract_current else ResultStatus.STALE, artifact_id=latest.id, revision=latest.revision, input_fingerprint=latest.input_fingerprint, content=content, provenance=row.provenance_json)
 
 
 def _find_reference(db: Session, project_id: str, reference_id: str) -> TargetReferenceMedia:

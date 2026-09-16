@@ -81,13 +81,14 @@ CURRENT TARGET_STORYBOARD v2
 - 有中文可审核视觉定义；
 - 至少有一张真实、已持久化、带 SHA256 和尺寸的 `reference_media`；
 - 图片由真实 Image Runtime 生成，不允许 `reference_media=[]` 冒充完成；
-- 当前 Windows 默认使用本机 ComfyUI + `z_image_turbo_bf16.safetensors`；其模型专属 Prompt Skill 为 `z-image-turbo-asset-prompting@1.2.0`，CLIP 为 `qwen_3_4b.safetensors`、VAE 为 `ae.safetensors`；
-- 人物资产固定是一张生产参考板：**正面全身 + 侧面全身 + 背面全身 + 面部特写**。禁止把四格结构交给图片模型一次自由排版；Runtime 必须分别生成正面/侧面/背面单人全身图，使用同一身份 Prompt 与同一 base seed，再从正面图确定性裁出面部特写并固定合成四格参考板；每个模型分支都使用“单张全身棚拍、画面只出现一个人物”的措辞，禁止在模型执行文本中出现 `character reference`、复数 `views`、`turnaround`、`multi-panel`、`collage`、`contact sheet` 等容易诱发缩略多人排版的词；Prompt Skill 1.2 起连否定句也不再输出这些版式词，Runtime 对旧 Prompt 只做版式词兼容清理而不改人物身份；禁止四个全身方向、单张情绪肖像 / 情侣图 / 剧情场景图；
+- 当前 Windows 场景/道具及人物正面 master 默认使用本机 ComfyUI + `z_image_turbo_bf16.safetensors`；主 Prompt Skill 为 `z-image-turbo-asset-prompting@1.4.0`，整体资产 Prompt Contract 为 `replica-assets-zimage-front-qwen-edit-v4`，Z-Image CLIP 为 `qwen_3_4b.safetensors`、VAE 为 `ae.safetensors`；人物侧面/背面固定使用 `qwen-image-edit-character-asset-prompting@1.0.0` + `qwen_image_edit_2511_fp8mixed.safetensors` + `qwen_2.5_vl_7b_fp8_scaled.safetensors` + `qwen_image_vae.safetensors`；
+- 人物资产固定是一张生产参考板：**正面全身 + 侧面全身 + 背面全身 + 面部特写**。禁止把四格结构交给图片模型一次自由排版；Runtime 只允许 Z-Image 自由生成一次唯一正面全身 canonical master，然后把该真实正面图作为 Qwen Image Edit 的 `Image 1`。侧面和背面不得再独立文生图，也不得用同 seed 相似性冒充身份锁定；Qwen 专属 Skill 必须锁定同一人的脸、年龄、发型、肤色、体型、上装、袖长、下装类型/长度、花纹/颜色以及鞋履存在/类型/颜色，只允许改变朝向。面部特写直接从正面主图确定性裁出，再固定合成四格参考板；禁止单张情绪肖像 / 情侣图 / 剧情场景图；
 - 四栏人物参考板是人工审核表面，不得作为 H3 唯一人物输入。Runtime 必须从该确定性参考板额外持久化独立 `FACE` 与正面 `FULL_BODY` reference media（复用同一次真实生成 ProviderJob provenance）；H3 Ref2VA 人物身份只能使用这些独立媒体，禁止退化为把四栏拼图当成一张 full-body 身份图；
 - 场景资产是隔离人物后的环境身份参考图；道具资产是隔离环境和无关人物后的道具身份参考图；
 - 真实资产图生成完成后，服务端必须先完成 `reference_media` 完整性与 CURRENT `TARGET_STORYBOARD` lineage 校验；校验通过即自动发布为 CURRENT `TARGET_ASSETS`，普通用户不再额外执行整批“确认资产图”。用户在资产页直接检查结果，发现问题时使用重新生成 / 后续单资产重做能力纠正。
 
 历史 `TARGET_ASSETS v1` 的 text-only 资产仍可回看，但不能作为新 H3 Ref2VA 主链的资产图输入。
+历史 `z-image-turbo-replica-assets-v2` / `z-image-turbo-replica-assets-v3` 人物资产即使已有四栏图，也属于旧合同：页面只读保留，但应显示为需要重新生成；Step 4 必须 fail closed，直到重新生成得到 `replica-assets-zimage-front-qwen-edit-v4` 的 Z-Image front master + Qwen reference-edit identity-lock 资产。
 
 ## 5. 模型专属 Prompt Skill
 

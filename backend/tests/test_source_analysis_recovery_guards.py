@@ -51,7 +51,7 @@ def test_interrupted_pipeline_is_exposed_as_retryable_failure(monkeypatch) -> No
     monkeypatch.setattr(
         source_analysis_service,
         "_latest_pipeline_task",
-        lambda db, project_id: interrupted,
+        lambda db, project_id, episode_id=None: interrupted,
     )
     monkeypatch.setattr(
         source_analysis_service,
@@ -87,7 +87,7 @@ def test_interrupted_pipeline_at_attempt_limit_is_not_retryable(monkeypatch) -> 
     monkeypatch.setattr(
         source_analysis_service,
         "_latest_pipeline_task",
-        lambda db, project_id: interrupted,
+        lambda db, project_id, episode_id=None: interrupted,
     )
     monkeypatch.setattr(
         source_analysis_service,
@@ -115,7 +115,7 @@ def test_terminal_interruption_rotates_pipeline_business_fingerprint(monkeypatch
     monkeypatch.setattr(
         source_analysis_service,
         "_latest_pipeline_task",
-        lambda db, project_id: latest["task"],
+        lambda db, project_id, episode_id=None: latest["task"],
     )
 
     initial = source_analysis_service._pipeline_input_fingerprint(SimpleNamespace(), "project-1", source)

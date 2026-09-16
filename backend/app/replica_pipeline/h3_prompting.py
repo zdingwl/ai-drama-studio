@@ -28,6 +28,7 @@ from app.p15.schemas import (
 from app.projects.enums import ProjectType, SourceUnderstandingProvider
 from app.projects.service import get_project
 from app.replica_pipeline.models import ReplicaAssetImageRevision, ReplicaH3PromptRevision, ReplicaLocalizedStoryboardRevision
+from app.replica_pipeline.image_model_skills import selected_image_model_prompt_skill
 from app.replica_pipeline.schemas import (
     H3_PROMPT_SCHEMA_VERSION,
     H3PromptAuthoringResult,
@@ -114,7 +115,26 @@ def _load_inputs(db: Session, project_id: str) -> tuple[ArtifactNode, ReplicaLoc
 
 def _asset_lookup(assets: ReplicaAssetImagesContent) -> dict[str, object]:
     lookup = {item.target_entity_id: item for item in assets.assets}
+    binding, prompt_skill = selected_image_model_prompt_skill()
     for entity_id, asset in lookup.items():
+        if (
+            asset.image_model_id != binding.model_id
+            or asset.prompt_skill_id != prompt_skill.id
+            or asset.prompt_skill_version != prompt_skill.version
+            or asset.prompt_contract != binding.prompt_contract
+        ):
+            raise AppError(
+                "H3_PROMPT_ASSET_CONTRACT_STALE",
+                "当前资产图使用旧图片生成合同，请先在资产页重新生成，再进入 H3 提示词",
+                status_code=409,
+                details={
+                    "target_entity_id": entity_id,
+                    "actual_prompt_contract": asset.prompt_contract,
+                    "required_prompt_contract": binding.prompt_contract,
+                    "actual_prompt_skill_version": asset.prompt_skill_version,
+                    "required_prompt_skill_version": prompt_skill.version,
+                },
+            )
         if not asset.reference_media:
             raise AppError("H3_PROMPT_REFERENCE_MISSING", "H3 Prompt 需要每个目标资产都有正式参考图", status_code=409, details={"target_entity_id": entity_id})
         if any(not media.storage_relpath for media in asset.reference_media):
@@ -203,7 +223,7 @@ def _references(
         if face is None or full_body is None:
             raise AppError(
                 "H3_PROMPT_CHARACTER_IDENTITY_REFERENCES_REQUIRED",
-                "人物 H3 Ref2VA 必须同时使用 FACE + 正面 FULL_BODY 身份参考；请重新生成并确认步骤 3 资产图",
+                "人物 H3 Ref2VA 必须同时使用 FACE + 正面 FULL_BODY 身份参考；请重新生成步骤 3 资产图",
                 status_code=409,
                 details={"target_entity_id": entity_id, "available_roles": [media.role.value for media in asset.reference_media]},
             )

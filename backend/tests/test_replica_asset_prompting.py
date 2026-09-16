@@ -17,6 +17,11 @@ from app.replica_pipeline.asset_images import (
     CHARACTER_PANEL_HEIGHT,
     CHARACTER_PANEL_WIDTH,
     CHARACTER_WIDTH,
+    QWEN_CHARACTER_EDIT_CFG,
+    QWEN_CHARACTER_EDIT_CLIP,
+    QWEN_CHARACTER_EDIT_STEPS,
+    QWEN_CHARACTER_EDIT_UNET,
+    QWEN_CHARACTER_EDIT_VAE,
     ComfyUIZImageTurboRuntime,
     GeneratedImage,
     _character_identity_reference_media,
@@ -27,7 +32,7 @@ from app.replica_pipeline.asset_images import (
 from app.replica_pipeline.asset_prompting import validate_authored_asset_batch
 from app.replica_pipeline.models import ReplicaAssetImageCandidate, ReplicaAssetImageRevision
 from app.replica_pipeline.schemas import ASSET_IMAGES_SCHEMA_VERSION, CandidateStatus
-from app.replica_pipeline.image_model_skills import selected_image_model_prompt_skill
+from app.replica_pipeline.image_model_skills import selected_character_edit_prompt_skill, selected_image_model_prompt_skill
 from app.replica_pipeline.schemas import AssetImagePromptAuthoringResult, ReplicaLocalizedStoryboardContent
 from app.skills.professional import get_professional_skill
 from app.skills.models import ArtifactType
@@ -85,7 +90,7 @@ def _character_context() -> dict:
 
 def test_asset_orchestration_skill_requires_model_prompt_compilation() -> None:
     skill = get_professional_skill("asset-image-generation")
-    assert skill.version == "1.2.0"
+    assert skill.version == "1.4.0"
     assert [step.id for step in skill.steps] == [
         "extract_entities",
         "compile_model_prompt",
@@ -94,9 +99,15 @@ def test_asset_orchestration_skill_requires_model_prompt_compilation() -> None:
 
     binding, prompt_skill = selected_image_model_prompt_skill()
     assert binding.model_id == "Z-Image-Turbo"
-    assert binding.prompt_contract == "z-image-turbo-replica-assets-v2"
+    assert binding.prompt_contract == "replica-assets-zimage-front-qwen-edit-v4"
     assert prompt_skill.id == "z-image-turbo-asset-prompting"
-    assert prompt_skill.version == "1.2.0"
+    assert prompt_skill.version == "1.4.0"
+
+    edit_binding, edit_skill = selected_character_edit_prompt_skill()
+    assert edit_binding.model_id == "Qwen-Image-Edit-2511"
+    assert edit_binding.prompt_contract == "qwen-image-edit-2511-character-orientation-v1"
+    assert edit_skill.id == "qwen-image-edit-character-asset-prompting"
+    assert edit_skill.version == "1.0.0"
 
 
 def test_character_asset_extraction_preserves_storyboard_evidence_without_direct_prompt() -> None:
@@ -187,37 +198,54 @@ def test_z_image_runtime_matches_verified_local_comfyui_workflow() -> None:
     assert "Hard exclusions" in graph["4"]["inputs"]["text"]
 
 
-def test_character_runtime_renders_three_single_view_branches_with_one_identity_seed() -> None:
+def test_character_runtime_uses_zimage_front_master_and_qwen_reference_edit_identity_lock() -> None:
     runtime = ComfyUIZImageTurboRuntime()
-    payload = runtime._character_workflow(
+    front_payload = runtime._character_front_workflow(
         "Single young Chinese man, short black hair, light gray hoodie and blue jeans.",
         "extra people, text",
         prefix="test/character",
         seed=777,
     )
-    graph = payload["prompt"]
+    front = front_payload["prompt"]
+    assert front["4"] == {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 3.0, "model": ["1", 0]}}
+    assert front["12"]["inputs"] == {"width": 512, "height": 1024, "batch_size": 1}
+    assert front["13"]["inputs"]["seed"] == 777
+    assert "body and face square to the camera" in front["10"]["inputs"]["text"]
+    assert "canonical MASTER identity image" in front["10"]["inputs"]["text"]
+    assert "Hard exclusions" in front["10"]["inputs"]["text"]
+    assert front["15"]["inputs"]["filename_prefix"].endswith("/front")
 
-    assert graph["4"] == {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 3.0, "model": ["1", 0]}}
-    assert graph["12"]["inputs"] == {"width": 512, "height": 1024, "batch_size": 1}
-    assert graph["22"]["inputs"] == {"width": 512, "height": 1024, "batch_size": 1}
-    assert graph["32"]["inputs"] == {"width": 512, "height": 1024, "batch_size": 1}
-    assert {graph[node]["inputs"]["seed"] for node in ("13", "23", "33")} == {777}
-    assert "body and face square to the camera" in graph["10"]["inputs"]["text"]
-    assert "90-degree left-facing profile" in graph["20"]["inputs"]["text"]
-    assert "back of the head" in graph["30"]["inputs"]["text"]
-    for node in ("10", "20", "30"):
-        text = graph[node]["inputs"]["text"].lower()
-        assert "exactly one human figure" in text
-        assert "hard exclusions" in text
-        assert "reference sheet" not in text
-        assert "turnaround" not in text
-        assert "multi-panel" not in text
-        assert "collage" not in text
-        assert "contact sheet" not in text
-        assert "split screen" not in text
-    assert graph["15"]["inputs"]["filename_prefix"].endswith("/front")
-    assert graph["25"]["inputs"]["filename_prefix"].endswith("/side")
-    assert graph["35"]["inputs"]["filename_prefix"].endswith("/back")
+    edit_payload = runtime._character_edit_workflow(
+        "refs/front-master.png",
+        "extra people, text",
+        prefix="test/character",
+        seed=888,
+    )
+    edit = edit_payload["prompt"]
+    assert edit["101"]["inputs"]["unet_name"] == QWEN_CHARACTER_EDIT_UNET
+    assert edit["102"]["inputs"] == {"clip_name": QWEN_CHARACTER_EDIT_CLIP, "type": "qwen_image", "device": "default"}
+    assert edit["103"]["inputs"]["vae_name"] == QWEN_CHARACTER_EDIT_VAE
+    assert edit["106"] == {"class_type": "LoadImage", "inputs": {"image": "refs/front-master.png"}}
+    assert edit["108"] == {"class_type": "VAEEncode", "inputs": {"pixels": ["107", 0], "vae": ["103", 0]}}
+    assert edit["120"]["inputs"]["image1"] == ["107", 0]
+    assert edit["130"]["inputs"]["image1"] == ["107", 0]
+    assert edit["124"]["inputs"]["steps"] == QWEN_CHARACTER_EDIT_STEPS
+    assert edit["124"]["inputs"]["cfg"] == QWEN_CHARACTER_EDIT_CFG
+    assert edit["124"]["inputs"]["seed"] == 888
+    assert edit["134"]["inputs"]["seed"] == 889
+    assert edit["124"]["inputs"]["latent_image"] == ["108", 0]
+    assert edit["134"]["inputs"]["latent_image"] == ["108", 0]
+    side_prompt = edit["120"]["inputs"]["prompt"]
+    back_prompt = edit["130"]["inputs"]["prompt"]
+    assert "authoritative canonical identity and wardrobe reference" in side_prompt
+    assert "90-degree left-facing" in side_prompt
+    assert "Never" not in side_prompt
+    assert "Do not substitute trousers, shorts, skirts or dresses" in side_prompt
+    assert "Do not remove footwear" in side_prompt
+    assert "exact rear full-body view" in back_prompt
+    assert "face must not be visible" in back_prompt
+    assert edit["126"]["inputs"]["filename_prefix"].endswith("/side")
+    assert edit["136"]["inputs"]["filename_prefix"].endswith("/back")
 
 
 def test_character_runtime_strips_legacy_layout_language_before_z_image_execution() -> None:
@@ -229,18 +257,24 @@ def test_character_runtime_strips_legacy_layout_language_before_z_image_executio
     )
     legacy_negative = "other people, multi-panel layouts, reference sheets, turnaround, text, watermarks"
 
-    payload = runtime._character_workflow(legacy_prompt, legacy_negative, prefix="test/senior", seed=123)
+    payload = runtime._character_front_workflow(legacy_prompt, legacy_negative, prefix="test/senior", seed=123)
+    text = payload["prompt"]["10"]["inputs"]["text"].lower()
+    assert "senior east asian woman" in text
+    assert "gray striped knit sweater" in text
+    assert "other people" in text
+    assert "text" in text
+    assert "watermarks" in text
+    assert "multi-panel" not in text
+    assert "reference sheet" not in text
+    assert "turnaround" not in text
 
-    for node in ("10", "20", "30"):
-        text = payload["prompt"][node]["inputs"]["text"].lower()
-        assert "senior east asian woman" in text
-        assert "gray striped knit sweater" in text
-        assert "other people" in text
-        assert "text" in text
-        assert "watermarks" in text
-        assert "multi-panel" not in text
-        assert "reference sheet" not in text
-        assert "turnaround" not in text
+    qwen_text = runtime._qwen_character_edit_prompt(legacy_negative, "side").lower()
+    assert "other people" in qwen_text
+    assert "text" in qwen_text
+    assert "watermarks" in qwen_text
+    assert "multi-panel" not in qwen_text
+    assert "reference sheet" not in qwen_text
+    assert "turnaround" not in qwen_text
 
 
 def test_character_sheet_composition_has_fixed_three_views_plus_front_derived_face() -> None:
@@ -384,8 +418,8 @@ def test_generated_asset_candidate_can_be_auto_published_without_user_confirmati
                     "prompt_review_zh": "保持无人场景。",
                     "image_model_id": "Z-Image-Turbo",
                     "prompt_skill_id": "z-image-turbo-asset-prompting",
-                    "prompt_skill_version": "1.2.0",
-                    "prompt_contract": "z-image-turbo-replica-assets-v2",
+                    "prompt_skill_version": "1.4.0",
+                    "prompt_contract": "replica-assets-zimage-front-qwen-edit-v4",
                     "reference_media": [{
                         "reference_id": "ref:scene-1",
                         "role": "LAYOUT",
