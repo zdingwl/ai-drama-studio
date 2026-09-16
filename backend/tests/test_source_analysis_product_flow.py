@@ -220,6 +220,118 @@ def test_source_analysis_skips_current_snapshot_without_creating_task(
         assert db.scalar(select(func.count(Task.id))) == 0
 
 
+def test_source_analysis_current_snapshot_allows_episode_scoped_reanalysis(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
+    project = _project(client)
+    source = _seed_source(session_factory, project)
+    monkeypatch.setattr(
+        source_analysis_service,
+        "get_source_video_snapshot",
+        lambda db, project_id: SimpleNamespace(status="CURRENT"),
+    )
+
+    with session_factory() as db:
+        episode = db.scalar(select(Episode).where(Episode.project_id == project["id"], Episode.episode_order == 1))
+        assert episode is not None
+        assert create_source_analysis_task(
+            db,
+            project_id=project["id"],
+            idempotency_key="global-current",
+        ) is None
+        task = create_source_analysis_task(
+            db,
+            project_id=project["id"],
+            idempotency_key="episode-reanalysis",
+            episode_id=episode.id,
+        )
+        assert task is not None
+        assert task.episode_id == episode.id
+        assert task.task_name == "第 1 集：重新分析原片"
+        assert task.input_artifact_ids_json == [source.id]
+        assert task.status == TaskStatus.QUEUED
+
+
+def test_episode_reanalysis_orchestration_only_dispatches_selected_episode(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
+    project = _project(client)
+    _seed_source(session_factory, project)
+    with session_factory() as db:
+        first = db.scalar(select(Episode).where(Episode.project_id == project["id"], Episode.episode_order == 1))
+        assert first is not None
+        asset = SourceAsset(
+            project_id=project["id"],
+            asset_kind=SourceAssetKind.VIDEO,
+            original_filename="episode-2.mp4",
+            mime_type="video/mp4",
+            size_bytes=2048,
+            sha256="c" * 64,
+            relative_path=f'{project["id"]}/source/episode-2.mp4',
+            immutable=True,
+        )
+        db.add(asset)
+        db.flush()
+        second = Episode(
+            project_id=project["id"],
+            source_asset_id=asset.id,
+            episode_order=2,
+            duration_us=6_000_000,
+            width=1080,
+            height=1920,
+            codec_name="h264",
+            avg_frame_rate="25/1",
+            has_audio=True,
+            probe_json={},
+        )
+        db.add(second)
+        db.commit()
+        target_episode_id = first.id
+        other_episode_id = second.id
+
+    calls: list[tuple[str, str | None]] = []
+
+    def child_factory(stage: str):
+        def create_child(_db, **kwargs):
+            calls.append((stage, kwargs.get("episode_id")))
+            return SimpleNamespace(id=f"{stage}-task")
+        return create_child
+
+    monkeypatch.setattr(source_analysis_service, "create_shot_boundary_task", child_factory("p5"))
+    monkeypatch.setattr(source_analysis_service, "create_source_evidence_task", child_factory("p6"))
+    monkeypatch.setattr(source_analysis_service, "create_source_bible_task", child_factory("p7"))
+    monkeypatch.setattr(source_analysis_service, "create_shot_breakdown_task", child_factory("p8"))
+    monkeypatch.setattr(source_analysis_service, "create_source_resolution_task", child_factory("p9"))
+    monkeypatch.setattr(source_analysis_service, "_ensure_child_succeeded", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        source_analysis_service,
+        "publish_source_script",
+        lambda db, project_id, generated_by_task_id: SimpleNamespace(status="CURRENT"),
+    )
+    monkeypatch.setattr(
+        source_analysis_service,
+        "finalize_source_video_snapshot",
+        lambda db, project_id: SimpleNamespace(status="CURRENT"),
+    )
+
+    context = SimpleNamespace(session_factory=session_factory, checkpoint=lambda *args, **kwargs: None)
+    task = SimpleNamespace(project_id=project["id"], id="master-task", attempt=1)
+    source_analysis_service._execute_episode_reanalysis(context, task, target_episode_id)
+
+    assert calls == [
+        ("p5", target_episode_id),
+        ("p6", target_episode_id),
+        ("p7", target_episode_id),
+        ("p8", target_episode_id),
+        ("p9", target_episode_id),
+    ]
+    assert all(episode_id != other_episode_id for _stage, episode_id in calls)
+
+
 def test_source_analysis_schedules_new_pipeline_after_success_becomes_stale(
     client: TestClient,
     session_factory: sessionmaker[Session],

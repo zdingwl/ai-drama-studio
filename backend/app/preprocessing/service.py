@@ -94,6 +94,12 @@ def create_shot_boundary_task(
         raise AppError("SHOT_BOUNDARY_NOT_ALLOWED", "当前项目类型不处理原片镜头", status_code=422)
     episode, asset = _episode_with_asset(db, project_id, episode_id)
     source_artifact = _current_source_video_artifact(db, project_id)
+    previous_boundary_set_id = db.scalar(
+        select(ShotBoundarySet.id)
+        .where(ShotBoundarySet.project_id == project_id, ShotBoundarySet.episode_id == episode.id)
+        .order_by(ShotBoundarySet.revision.desc(), ShotBoundarySet.id.desc())
+        .limit(1)
+    )
     fingerprint = _canonical_sha256(
         {
             "task": P5_TASK_TYPE,
@@ -105,6 +111,11 @@ def create_shot_boundary_task(
             "source_asset_id": asset.id,
             "source_sha256": asset.sha256,
             "duration_us": episode.duration_us,
+            # An explicit re-analysis of the same immutable source must create a
+            # new execution generation instead of business-key deduping to the
+            # previous SUCCEEDED P5 task. The previous set id gives that command
+            # a stable, auditable generation boundary without changing Source Truth.
+            "previous_shot_boundary_set_id": previous_boundary_set_id,
         }
     )
     payload = TaskCommandCreate(

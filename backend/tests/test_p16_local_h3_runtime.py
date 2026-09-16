@@ -513,7 +513,10 @@ def test_resume_replaces_interrupted_p16_task_when_current_artifact_lineage_chan
 
 def test_comfyui_reference_workflow_uses_autogrow_v3_container() -> None:
     provider = LocalComfyUIH3Provider(_comfy_config())
-    segment = _segment().model_copy(update={"reference_conditions": [object(), object()]})
+    segment = _segment().model_copy(update={"reference_conditions": [
+        SimpleNamespace(picture_index=1, reference_id="ref-one"),
+        SimpleNamespace(picture_index=2, reference_id="ref-two"),
+    ]})
 
     payload = provider.workflow_payload(
         segment,
@@ -527,3 +530,44 @@ def test_comfyui_reference_workflow_uses_autogrow_v3_container() -> None:
         "ref_image_1": ["16", 0],
     }
     assert "ref_image_1" not in {key for key in inputs if key != "ref_images"}
+
+
+def test_sglang_adapter_fails_closed_instead_of_dropping_formal_references() -> None:
+    provider = LocalSGLangH3Provider(
+        LocalSGLangH3Config(
+            base_url="http://127.0.0.1:30010",
+            model="MiniMaxAI/MiniMax-H3",
+            short_edge=768,
+            num_inference_steps=50,
+            flow_shift=12.0,
+            audio_flow_shift=3.0,
+            timeout_seconds=60,
+            poll_interval_seconds=1,
+            readiness_timeout_seconds=3,
+        )
+    )
+    segment = _segment().model_copy(update={"reference_conditions": [SimpleNamespace(picture_index=1, reference_id="ref-one")]})
+
+    with pytest.raises(AppError) as captured:
+        provider.request_payload(segment)
+
+    assert captured.value.code == "P16_RUNTIME_REFERENCE_UNSUPPORTED"
+
+
+def test_cloud_adapter_fails_closed_instead_of_sending_reference_segment_as_text_only() -> None:
+    provider = MiniMaxH3Provider(
+        MiniMaxH3Config(
+            api_key="server-only",
+            base_url="https://api.minimax.io",
+            model="MiniMax-H3",
+            resolution="768P",
+            timeout_seconds=60,
+            poll_interval_seconds=1,
+        )
+    )
+    segment = _segment().model_copy(update={"reference_conditions": [SimpleNamespace(picture_index=1, reference_id="ref-one")]})
+
+    with pytest.raises(AppError) as captured:
+        provider._create(SimpleNamespace(), segment)
+
+    assert captured.value.code == "P16_RUNTIME_REFERENCE_UNSUPPORTED"

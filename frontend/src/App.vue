@@ -4,6 +4,8 @@ import { useRoute } from 'vue-router'
 
 import AppShell from '@/components/AppShell.vue'
 import AssetImagesWorkspace from '@/components/AssetImagesWorkspace.vue'
+import EpisodeManagementWorkspace from '@/components/EpisodeManagementWorkspace.vue'
+import EpisodeWorkspaceNav from '@/components/EpisodeWorkspaceNav.vue'
 import H3GenerationWorkspace from '@/components/H3GenerationWorkspace.vue'
 import H3PromptWorkspace from '@/components/H3PromptWorkspace.vue'
 import LocalizedStoryboardWorkspace from '@/components/LocalizedStoryboardWorkspace.vue'
@@ -11,6 +13,7 @@ import P6AcceptancePanel from '@/components/P6AcceptancePanel.vue'
 import P7SourceUnderstandingWorkspace from '@/components/P7SourceUnderstandingWorkspace.vue'
 import P8ShotBreakdownPanel from '@/components/P8ShotBreakdownPanel.vue'
 import P9SourceResolutionPanel from '@/components/P9SourceResolutionPanel.vue'
+import ProjectOverviewWorkspace from '@/components/ProjectOverviewWorkspace.vue'
 import ProductJourneyNav from '@/components/ProductJourneyNav.vue'
 import ReplicaProductionWorkspace from '@/components/ReplicaProductionWorkspace.vue'
 import SourceResultApprovalBar from '@/components/SourceResultApprovalBar.vue'
@@ -23,63 +26,39 @@ const route = useRoute()
 const isProjectWorkspace = computed(() => route.name === 'project-workspace')
 const debugMode = computed(() => route.query.debug === '1')
 const activeWorkspace = computed(() => String(route.params.workspace ?? 'source'))
-const showRoutedView = computed(() => (
-  !isProjectWorkspace.value
-  || debugMode.value
-  || activeWorkspace.value === 'source'
-))
+const hideEpisodeNav = computed(() => activeWorkspace.value === 'overview' || activeWorkspace.value === 'episodes')
+const showRoutedView = computed(() => !isProjectWorkspace.value || debugMode.value)
 </script>
 
 <template>
-  <AppShell>
-    <div :class="[{ 'product-mode': isProjectWorkspace && !debugMode }, `workspace-${activeWorkspace}`]">
-      <ProductJourneyNav v-if="isProjectWorkspace && !debugMode" />
+  <AppShell :wide="isProjectWorkspace && !debugMode">
+    <RouterView v-if="showRoutedView" />
 
-      <!--
-        ProjectWorkspaceView is the source ingest/preflight host only. Mounting it on localize/assets/
-        prompts/generation would execute the historical plan/task UI and visually mix old P11-P17
-        concepts into the Replica v2 five-step path. Non-project routes and explicit debug mode still
-        use the router view normally.
-      -->
-      <RouterView v-if="showRoutedView" />
+    <div v-if="isProjectWorkspace && !debugMode" :class="['product-mode', `workspace-${activeWorkspace}`]">
+      <aside class="product-sidebar"><ProductJourneyNav /></aside>
+      <div class="product-content" :class="{ 'without-episode-nav': hideEpisodeNav }">
+        <EpisodeWorkspaceNav v-if="!hideEpisodeNav" />
+        <main id="project-workspace-main" class="product-stage-host">
+          <section v-if="activeWorkspace === 'overview'" class="product-page"><ProjectOverviewWorkspace /></section>
+          <section v-if="activeWorkspace === 'episodes'" class="product-page"><EpisodeManagementWorkspace /></section>
+          <section v-if="activeWorkspace === 'source'" class="product-page"><SourceStoryboardWorkspace /></section>
+          <section v-if="activeWorkspace === 'localize'" class="product-page"><LocalizedStoryboardWorkspace /></section>
+          <section v-if="activeWorkspace === 'assets'" class="product-page"><AssetImagesWorkspace /></section>
+          <section v-if="activeWorkspace === 'prompts'" class="product-page"><H3PromptWorkspace /></section>
+          <section v-if="activeWorkspace === 'generation'" class="product-page"><H3GenerationWorkspace /></section>
+          <section v-if="activeWorkspace === 'script'" class="product-page legacy-product-page"><SourceScriptStoryboardWorkspace /><TargetBibleWorkspace /><TargetScriptWorkspace /></section>
+          <section v-if="activeWorkspace === 'storyboard'" class="product-page legacy-product-page"><ReplicaProductionWorkspace workspace="storyboard" /></section>
+          <section v-if="activeWorkspace === 'final'" class="product-page legacy-product-page"><ReplicaProductionWorkspace workspace="final" /></section>
+        </main>
+      </div>
+    </div>
 
-      <!-- Replica v2 ordinary product path: docs/55 is the highest-priority contract. -->
-      <section v-if="isProjectWorkspace && !debugMode && activeWorkspace === 'source'" class="product-page">
-        <SourceStoryboardWorkspace />
-      </section>
-      <section v-if="isProjectWorkspace && !debugMode && activeWorkspace === 'localize'" class="product-page">
-        <LocalizedStoryboardWorkspace />
-      </section>
-      <section v-if="isProjectWorkspace && !debugMode && activeWorkspace === 'assets'" class="product-page">
-        <AssetImagesWorkspace />
-      </section>
-      <section v-if="isProjectWorkspace && !debugMode && activeWorkspace === 'prompts'" class="product-page">
-        <H3PromptWorkspace />
-      </section>
-      <section v-if="isProjectWorkspace && !debugMode && activeWorkspace === 'generation'" class="product-page">
-        <H3GenerationWorkspace />
-      </section>
-
-      <!-- Historical routes remain readable for old projects / bookmarked URLs, but are not Replica v2 main-flow prerequisites. -->
-      <section v-if="isProjectWorkspace && !debugMode && activeWorkspace === 'script'" class="product-page legacy-product-page">
-        <SourceScriptStoryboardWorkspace />
-        <TargetBibleWorkspace />
-        <TargetScriptWorkspace />
-      </section>
-      <section v-if="isProjectWorkspace && !debugMode && activeWorkspace === 'storyboard'" class="product-page legacy-product-page">
-        <ReplicaProductionWorkspace workspace="storyboard" />
-      </section>
-      <section v-if="isProjectWorkspace && !debugMode && activeWorkspace === 'final'" class="product-page legacy-product-page">
-        <ReplicaProductionWorkspace workspace="final" />
-      </section>
-
-      <template v-if="isProjectWorkspace && debugMode">
-        <P6AcceptancePanel />
-        <P7SourceUnderstandingWorkspace />
-        <P8ShotBreakdownPanel />
-        <P9SourceResolutionPanel />
-        <SourceResultApprovalBar />
-      </template>
+    <div v-if="isProjectWorkspace && debugMode" :class="`workspace-${activeWorkspace}`">
+      <P6AcceptancePanel />
+      <P7SourceUnderstandingWorkspace />
+      <P8ShotBreakdownPanel />
+      <P9SourceResolutionPanel />
+      <SourceResultApprovalBar />
     </div>
   </AppShell>
 </template>
@@ -112,9 +91,10 @@ const showRoutedView = computed(() => (
 
 .product-mode .product-page {
   display: grid;
-  gap: 18px;
-  max-width: 1360px;
-  margin: 0 auto;
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
 }
 
 .product-mode .product-page > * {
@@ -122,4 +102,21 @@ const showRoutedView = computed(() => (
   margin-top: 0;
   margin-bottom: 0;
 }
+
+.product-mode {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  height: calc(100dvh - 56px);
+  min-height: 0;
+  overflow: hidden;
+  border-top: 0;
+  background: #fff;
+}
+.product-sidebar { min-width: 0; min-height: 0; background: #fbfcff; }
+.product-content { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
+.product-content.without-episode-nav { grid-template-rows: minmax(0, 1fr); }
+.product-stage-host { min-width: 0; min-height: 0; overflow: auto; padding: 10px 14px 12px; background: #f7f8fb; }
+.product-mode.workspace-source .product-stage-host { overflow: hidden; }
+.product-mode.workspace-source .product-page { height: 100%; min-height: 0; }
+@media(max-width:980px){.product-mode{grid-template-columns:1fr;height:auto;min-height:calc(100dvh - 56px);overflow:visible}.product-sidebar{position:sticky;top:56px;z-index:50}.product-content,.product-stage-host{overflow:visible}.product-stage-host{padding:10px}.product-mode.workspace-source .product-page{height:auto}}
 </style>

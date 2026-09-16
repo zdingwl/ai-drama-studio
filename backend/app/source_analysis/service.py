@@ -72,18 +72,40 @@ def _current_artifact(db: Session, project_id: str, artifact_type: ArtifactType)
     )
 
 
-def _latest_pipeline_task(db: Session, project_id: str) -> Task | None:
+def _latest_pipeline_task(db: Session, project_id: str, episode_id: str | None = None) -> Task | None:
+    conditions = [Task.project_id == project_id, Task.task_type == SOURCE_ANALYSIS_TASK_TYPE]
+    if episode_id is not None:
+        conditions.append(Task.episode_id == episode_id)
     return db.scalar(
         select(Task)
-        .where(Task.project_id == project_id, Task.task_type == SOURCE_ANALYSIS_TASK_TYPE)
+        .where(*conditions)
         .order_by(Task.created_at.desc(), Task.id.desc())
         .limit(1)
     )
 
 
-def _pipeline_input_fingerprint(db: Session, project_id: str, source: ArtifactNode) -> str:
+def _active_pipeline_task(db: Session, project_id: str) -> Task | None:
+    return db.scalar(
+        select(Task)
+        .where(
+            Task.project_id == project_id,
+            Task.task_type == SOURCE_ANALYSIS_TASK_TYPE,
+            Task.status.in_((TaskStatus.QUEUED, TaskStatus.RUNNING)),
+        )
+        .order_by(Task.created_at.desc(), Task.id.desc())
+        .limit(1)
+    )
+
+
+def _pipeline_input_fingerprint(
+    db: Session,
+    project_id: str,
+    source: ArtifactNode,
+    *,
+    episode_id: str | None = None,
+) -> str:
     project = get_project(db, project_id)
-    latest = _latest_pipeline_task(db, project_id)
+    latest = _latest_pipeline_task(db, project_id, episode_id=episode_id)
     restart_after_terminal = None
     if latest is not None and (
         latest.status in {TaskStatus.SUCCEEDED, TaskStatus.CANCELLED}
@@ -93,10 +115,17 @@ def _pipeline_input_fingerprint(db: Session, project_id: str, source: ArtifactNo
         )
     ):
         restart_after_terminal = latest.id
+    episode_scope = None
+    if episode_id is not None:
+        episode = db.scalar(select(Episode).where(Episode.id == episode_id, Episode.project_id == project_id))
+        if episode is None:
+            raise AppError("EPISODE_NOT_FOUND", "Episode 不存在", status_code=404)
+        episode_scope = [episode.id, episode.episode_order, episode.source_asset_id, episode.duration_us]
     return _sha(
         {
             "task": SOURCE_ANALYSIS_TASK_TYPE,
             "source_video": [source.id, source.input_fingerprint],
+            "episode_scope": episode_scope,
             "project_type": project.project_type.value,
             "source_language": project.source_language,
             "source_understanding_provider": project.source_understanding_provider.value,
@@ -125,8 +154,17 @@ def _pipeline_message(task: Task | None, state: SourceAnalysisState) -> str:
     return "上传原片后即可开始解析。"
 
 
-def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisStatusRead:
+def get_source_analysis_status(
+    db: Session,
+    project_id: str,
+    *,
+    episode_id: str | None = None,
+) -> SourceAnalysisStatusRead:
     _assert_source_analysis_project(db, project_id)
+    if episode_id is not None:
+        episode_exists = db.scalar(select(Episode.id).where(Episode.id == episode_id, Episode.project_id == project_id))
+        if episode_exists is None:
+            raise AppError("EPISODE_NOT_FOUND", "Episode 不存在", status_code=404)
 
     # SOURCE_SCRIPT can become available before the full visual enrichment chain
     # finishes. Surface that independently instead of referencing an unbound
@@ -137,7 +175,7 @@ def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisSt
         source_script = get_source_script_artifact(db, project_id)
         script_ready = _status_value(source_script.status) == "CURRENT"
 
-    latest = _latest_pipeline_task(db, project_id)
+    latest = _latest_pipeline_task(db, project_id, episode_id=episode_id)
     if latest is not None and latest.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
         state = SourceAnalysisState.RUNNING
         stage = str((latest.checkpoint_json or {}).get("stage_label") or "正在解析原片")
@@ -154,18 +192,6 @@ def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisSt
         )
 
     snapshot = get_source_video_snapshot(db, project_id)
-    if _status_value(snapshot.status) == "CURRENT":
-        return SourceAnalysisStatusRead(
-            project_id=project_id,
-            state=SourceAnalysisState.READY,
-            progress_percent=100,
-            current_stage="解析完成",
-            task_id=latest.id if latest is not None else None,
-            can_retry=False,
-            message=_pipeline_message(latest, SourceAnalysisState.READY),
-            script_ready=True,
-            visual_enrichment_ready=True,
-        )
     if latest is not None and latest.status in {TaskStatus.FAILED, TaskStatus.INTERRUPTED}:
         fallback_stage = "解析已中断" if latest.status == TaskStatus.INTERRUPTED else "解析失败"
         return SourceAnalysisStatusRead(
@@ -178,6 +204,18 @@ def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisSt
             message=_pipeline_message(latest, SourceAnalysisState.FAILED),
             script_ready=script_ready,
             visual_enrichment_ready=False,
+        )
+    if _status_value(snapshot.status) == "CURRENT":
+        return SourceAnalysisStatusRead(
+            project_id=project_id,
+            state=SourceAnalysisState.READY,
+            progress_percent=100,
+            current_stage="解析完成",
+            task_id=latest.id if latest is not None else None,
+            can_retry=False,
+            message=_pipeline_message(latest, SourceAnalysisState.READY),
+            script_ready=True,
+            visual_enrichment_ready=True,
         )
     if _status_value(snapshot.status) == "STALE":
         return SourceAnalysisStatusRead(
@@ -204,7 +242,13 @@ def get_source_analysis_status(db: Session, project_id: str) -> SourceAnalysisSt
     )
 
 
-def create_source_analysis_task(db: Session, *, project_id: str, idempotency_key: str) -> Task | None:
+def create_source_analysis_task(
+    db: Session,
+    *,
+    project_id: str,
+    idempotency_key: str,
+    episode_id: str | None = None,
+) -> Task | None:
     _assert_source_analysis_project(db, project_id)
     source = _current_artifact(db, project_id, ArtifactType.SOURCE_VIDEO)
     if source is None:
@@ -213,13 +257,34 @@ def create_source_analysis_task(db: Session, *, project_id: str, idempotency_key
     if episode_count <= 0:
         raise AppError("SOURCE_VIDEO_REQUIRED", "请先上传至少一个原片 Episode", status_code=409)
 
-    snapshot = get_source_video_snapshot(db, project_id)
-    if _status_value(snapshot.status) == "CURRENT":
-        return None
+    episode = None
+    if episode_id is not None:
+        episode = db.scalar(select(Episode).where(Episode.id == episode_id, Episode.project_id == project_id))
+        if episode is None:
+            raise AppError("EPISODE_NOT_FOUND", "Episode 不存在", status_code=404)
 
-    latest = _latest_pipeline_task(db, project_id)
-    if latest is not None and latest.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
-        return latest
+    snapshot = get_source_video_snapshot(db, project_id)
+    if episode_id is None and _status_value(snapshot.status) == "CURRENT":
+        return None
+    if episode_id is not None and _status_value(snapshot.status) != "CURRENT":
+        raise AppError(
+            "SOURCE_ANALYSIS_EPISODE_REANALYSIS_REQUIRES_BASELINE",
+            "单集重新分析需要先完成一次完整原片解析",
+            status_code=409,
+        )
+
+    active = _active_pipeline_task(db, project_id)
+    if active is not None:
+        if active.episode_id == episode_id:
+            return active
+        raise AppError(
+            "SOURCE_ANALYSIS_BUSY",
+            "当前已有其他原片解析任务正在执行，请完成后再重新分析本集",
+            status_code=409,
+            details={"active_task_id": active.id, "active_episode_id": active.episode_id},
+        )
+
+    latest = _latest_pipeline_task(db, project_id, episode_id=episode_id)
     if latest is not None and latest.status == TaskStatus.FAILED and latest.attempt < latest.max_attempts:
         return retry_task(db, project_id, latest.id)
     if latest is not None and latest.status == TaskStatus.INTERRUPTED and latest.attempt < latest.max_attempts:
@@ -227,9 +292,10 @@ def create_source_analysis_task(db: Session, *, project_id: str, idempotency_key
 
     payload = TaskCommandCreate(
         task_type=SOURCE_ANALYSIS_TASK_TYPE,
-        task_name="解析原片",
-        input_fingerprint=_pipeline_input_fingerprint(db, project_id, source),
+        task_name=f"第 {episode.episode_order} 集：重新分析原片" if episode is not None else "解析原片",
+        input_fingerprint=_pipeline_input_fingerprint(db, project_id, source, episode_id=episode_id),
         input_artifact_ids=[source.id],
+        episode_id=episode_id,
         max_attempts=3,
     )
     return create_task_from_command(
@@ -445,12 +511,120 @@ def _episode_ids(db: Session, project_id: str) -> list[str]:
     )
 
 
+def _execute_episode_reanalysis(
+    context: TaskExecutionContext,
+    task: TaskWorkerRead,
+    episode_id: str,
+) -> None:
+    with context.session_factory() as db:
+        episode = db.scalar(
+            select(Episode).where(Episode.id == episode_id, Episode.project_id == task.project_id)
+        )
+        if episode is None:
+            raise AppError("EPISODE_NOT_FOUND", "重新分析的 Episode 不存在", status_code=404)
+        episode_order = episode.episode_order
+
+    context.checkpoint(
+        {"stage": "shot_boundary", "stage_label": f"第 {episode_order} 集：正在重新分析镜头结构"},
+        progress_percent=8,
+    )
+    with context.session_factory() as db:
+        child = create_shot_boundary_task(
+            db,
+            project_id=task.project_id,
+            episode_id=episode_id,
+            idempotency_key=_child_idempotency_key(task.id, task.attempt, "p5", episode_id),
+        )
+    _ensure_child_succeeded(context, child=child, runner=run_p5_shot_boundary_task)
+
+    context.checkpoint(
+        {"stage": "source_evidence", "stage_label": f"第 {episode_order} 集：正在重新识别对白和画面文字"},
+        progress_percent=24,
+    )
+    with context.session_factory() as db:
+        child = create_source_evidence_task(
+            db,
+            project_id=task.project_id,
+            episode_id=episode_id,
+            idempotency_key=_child_idempotency_key(task.id, task.attempt, "p6", episode_id),
+        )
+    _ensure_child_succeeded(context, child=child, runner=run_p6_source_evidence_task)
+
+    context.checkpoint(
+        {"stage": "episode_understanding", "stage_label": f"第 {episode_order} 集：正在重新理解整集故事与人物"},
+        progress_percent=42,
+    )
+    with context.session_factory() as db:
+        child = create_source_bible_task(
+            db,
+            project_id=task.project_id,
+            episode_id=episode_id,
+            idempotency_key=_child_idempotency_key(task.id, task.attempt, "p7", episode_id),
+        )
+    _ensure_child_succeeded(context, child=child, runner=run_p7_source_bible_task)
+
+    context.checkpoint(
+        {"stage": "source_script", "stage_label": f"第 {episode_order} 集：正在更新原片剧本"},
+        progress_percent=58,
+    )
+    with context.session_factory() as db:
+        script = publish_source_script(db, task.project_id, generated_by_task_id=task.id)
+        if _status_value(script.status) != "CURRENT":
+            raise AppError("SOURCE_SCRIPT_PUBLICATION_FAILED", "原片剧本未能形成 CURRENT 正式版本", status_code=409)
+
+    context.checkpoint(
+        {"stage": "shot_breakdown", "stage_label": f"第 {episode_order} 集：正在重新分析逐镜动作和镜头语言"},
+        progress_percent=68,
+    )
+    with context.session_factory() as db:
+        child = create_shot_breakdown_task(
+            db,
+            project_id=task.project_id,
+            episode_id=episode_id,
+            idempotency_key=_child_idempotency_key(task.id, task.attempt, "p8", episode_id),
+        )
+    _ensure_child_succeeded(context, child=child, runner=run_p8_shot_breakdown_task)
+
+    context.checkpoint(
+        {"stage": "source_resolution", "stage_label": f"第 {episode_order} 集：正在更新人物、说话人、场景和道具"},
+        progress_percent=84,
+    )
+    with context.session_factory() as db:
+        child = create_source_resolution_task(
+            db,
+            project_id=task.project_id,
+            episode_id=episode_id,
+            idempotency_key=_child_idempotency_key(task.id, task.attempt, "p9", episode_id),
+        )
+    _ensure_child_succeeded(context, child=child, runner=run_p9_source_resolution_task)
+
+    context.checkpoint(
+        {"stage": "publish", "stage_label": f"第 {episode_order} 集：正在更新正式分镜结果"},
+        progress_percent=96,
+    )
+    with context.session_factory() as db:
+        snapshot = finalize_source_video_snapshot(db, task.project_id)
+        if _status_value(snapshot.status) != "CURRENT":
+            raise AppError("SOURCE_ANALYSIS_PUBLICATION_FAILED", "单集重新分析后未能形成当前正式版本", status_code=409)
+
+
 def _execute_pipeline(context: TaskExecutionContext, task: TaskWorkerRead) -> None:
     with context.session_factory() as db:
         source = _current_artifact(db, task.project_id, ArtifactType.SOURCE_VIDEO)
         if source is None or source.id not in task.input_artifact_ids_json:
             raise AppError("STALE_ARTIFACT_INPUT", "原片已变化，请重新开始解析", status_code=409)
-        episode_ids = _episode_ids(db, task.project_id)
+        if task.episode_id is not None:
+            episode_exists = db.scalar(
+                select(Episode.id).where(Episode.id == task.episode_id, Episode.project_id == task.project_id)
+            )
+            if episode_exists is None:
+                raise AppError("EPISODE_NOT_FOUND", "重新分析的 Episode 不存在", status_code=404)
+            episode_ids = []
+        else:
+            episode_ids = _episode_ids(db, task.project_id)
+    if task.episode_id is not None:
+        _execute_episode_reanalysis(context, task, task.episode_id)
+        return
     if not episode_ids:
         raise AppError("SOURCE_VIDEO_REQUIRED", "没有可解析的原片 Episode", status_code=409)
 

@@ -5,7 +5,7 @@ import secrets
 import time
 from io import BytesIO
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -97,6 +97,68 @@ class GeneratedImage:
     mime_type: str
     remote_url: str
     remote_job_id: str | None
+
+
+def _character_identity_reference_media(
+    *,
+    project_id: str,
+    asset_id: str,
+    generated: GeneratedImage,
+    provider_job_id: str,
+) -> list[TargetReferenceMedia]:
+    """Persist H3-ready identity crops from the deterministic four-panel character board.
+
+    The board remains the human review surface, while Ref2VA receives dedicated FACE and
+    front FULL_BODY images.  Feeding the entire four-panel board to H3 encourages the model
+    to treat four depictions as separate identities, especially in close-ups.
+    """
+    root = get_settings().artifact_root.resolve()
+    source = (root / generated.storage_relpath).resolve()
+    if root not in source.parents or not source.is_file():
+        raise AppError("ASSET_IMAGE_CHARACTER_BOARD_MISSING", "人物资产参考板不存在，无法派生 H3 身份参考图", status_code=500)
+    if _file_sha(source) != generated.sha256:
+        raise AppError("ASSET_IMAGE_CHARACTER_BOARD_HASH_MISMATCH", "人物资产参考板 hash 已变化，禁止派生 H3 身份参考图", status_code=409)
+
+    with Image.open(source) as board:
+        board = board.convert("RGB")
+        if board.size != (CHARACTER_WIDTH, CHARACTER_HEIGHT):
+            raise AppError(
+                "ASSET_IMAGE_CHARACTER_BOARD_SIZE_INVALID",
+                "人物资产参考板尺寸不符合固定四栏合同",
+                status_code=500,
+                details={"actual": list(board.size), "expected": [CHARACTER_WIDTH, CHARACTER_HEIGHT]},
+            )
+        crops = (
+            (ReferenceMediaRole.FULL_BODY, "front", (0, 0, CHARACTER_PANEL_WIDTH, CHARACTER_PANEL_HEIGHT)),
+            (
+                ReferenceMediaRole.FACE,
+                "face",
+                (3 * CHARACTER_PANEL_WIDTH, 0, 4 * CHARACTER_PANEL_WIDTH, CHARACTER_PANEL_HEIGHT),
+            ),
+        )
+        result: list[TargetReferenceMedia] = []
+        source_rel = PurePosixPath(generated.storage_relpath)
+        for role, suffix, box in crops:
+            relpath = str(source_rel.with_name(f"{source_rel.stem}.{suffix}.png"))
+            output = (root / relpath).resolve()
+            if root not in output.parents:
+                raise AppError("ASSET_IMAGE_STORAGE_INVALID", "人物身份参考图存储路径越界", status_code=500)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            board.crop(box).save(output, format="PNG")
+            digest = _file_sha(output)
+            reference_id = f"ref:{hashlib.sha256(f'{asset_id}|{role.value}|{digest}'.encode()).hexdigest()[:24]}"
+            result.append(TargetReferenceMedia(
+                reference_id=reference_id,
+                role=role,
+                uri=f"/api/v3/projects/{project_id}/asset-images/media/{reference_id}",
+                mime_type="image/png",
+                sha256=digest,
+                width=CHARACTER_PANEL_WIDTH,
+                height=CHARACTER_PANEL_HEIGHT,
+                provider_job_id=provider_job_id,
+                storage_relpath=relpath,
+            ))
+    return result
 
 
 class ComfyUIZImageTurboRuntime:
@@ -745,8 +807,16 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
         provider_job_ids.append(job.id)
         reference_id = f"ref:{hashlib.sha256(f'{asset_id}|{generated.sha256}'.encode()).hexdigest()[:24]}"
         uri = f"/api/v3/projects/{task.project_id}/asset-images/media/{reference_id}"
-        role = ReferenceMediaRole.FULL_BODY if spec["asset_type"] == TargetAssetType.CHARACTER else ReferenceMediaRole.LAYOUT if spec["asset_type"] == TargetAssetType.SCENE else ReferenceMediaRole.DETAIL
+        role = ReferenceMediaRole.OTHER if spec["asset_type"] == TargetAssetType.CHARACTER else ReferenceMediaRole.LAYOUT if spec["asset_type"] == TargetAssetType.SCENE else ReferenceMediaRole.DETAIL
         media = TargetReferenceMedia(reference_id=reference_id, role=role, uri=uri, mime_type=generated.mime_type, sha256=generated.sha256, width=generated.width, height=generated.height, provider_job_id=job.id, storage_relpath=generated.storage_relpath)
+        reference_media = [media]
+        if spec["asset_type"] == TargetAssetType.CHARACTER:
+            reference_media.extend(_character_identity_reference_media(
+                project_id=task.project_id,
+                asset_id=asset_id,
+                generated=generated,
+                provider_job_id=job.id,
+            ))
         assets.append(AssetImageEntity(
             target_asset_id=asset_id,
             target_asset_revision=1,
@@ -761,7 +831,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
             prompt_skill_id=prompt_skill.id,
             prompt_skill_version=prompt_skill.version,
             prompt_contract=binding.prompt_contract,
-            reference_media=[media],
+            reference_media=reference_media,
         ))
         context.checkpoint({"stage": "image-runtime", "generation_sequence": sequence, "generated_assets": index, "total_assets": len(specs), "prompt_provider_job_ids": prompt_provider_job_ids, "provider_job_ids": provider_job_ids}, progress_percent=min(95, 30 + math.floor(index / len(specs) * 65)))
     content = ReplicaAssetImagesContent(target_storyboard_artifact_id=storyboard_artifact.id, target_language=storyboard.target_language, target_region=storyboard.target_region, visual_style=project.visual_style or "写实电影感", assets=assets)
@@ -810,12 +880,48 @@ def run_asset_images_task(session_factory: sessionmaker[Session], task_id: str) 
     except Exception as exc:
         with session_factory() as db: mark_task_failed(db, snapshot.id, safe_error=f"资产图生成失败（{type(exc).__name__}）", worker_id=worker_id)
         return
-    with session_factory() as db:
-        finished = mark_task_succeeded(db, snapshot.id, worker_id=worker_id)
-        if finished.status == TaskStatus.CANCELLED: return
-        existing = db.scalar(select(ReplicaAssetImageCandidate).where(ReplicaAssetImageCandidate.generated_by_task_id == snapshot.id))
-        if existing is None:
-            db.add(ReplicaAssetImageCandidate(project_id=snapshot.project_id, target_storyboard_artifact_id=content.target_storyboard_artifact_id, generated_by_task_id=snapshot.id, generation_sequence=provenance.generation_sequence, input_fingerprint=snapshot.input_fingerprint, schema_version=ASSET_IMAGES_SCHEMA_VERSION, content_json=content.model_dump(mode="json"), provenance_json=provenance.model_dump(mode="json"), review_status=CandidateStatus.NEEDS_REVIEW.value)); db.commit()
+    try:
+        with session_factory() as db:
+            task = db.get(Task, snapshot.id)
+            if task is None or task.status != TaskStatus.RUNNING or task.worker_id != worker_id:
+                return
+            if task.cancel_requested:
+                mark_task_succeeded(db, snapshot.id, worker_id=worker_id)
+                return
+            candidate = db.scalar(select(ReplicaAssetImageCandidate).where(ReplicaAssetImageCandidate.generated_by_task_id == snapshot.id))
+            if candidate is None:
+                candidate = ReplicaAssetImageCandidate(
+                    project_id=snapshot.project_id,
+                    target_storyboard_artifact_id=content.target_storyboard_artifact_id,
+                    generated_by_task_id=snapshot.id,
+                    generation_sequence=provenance.generation_sequence,
+                    input_fingerprint=snapshot.input_fingerprint,
+                    schema_version=ASSET_IMAGES_SCHEMA_VERSION,
+                    content_json=content.model_dump(mode="json"),
+                    provenance_json=provenance.model_dump(mode="json"),
+                    review_status=CandidateStatus.NEEDS_REVIEW.value,
+                )
+                db.add(candidate)
+                db.flush()
+            if candidate.review_status == CandidateStatus.NEEDS_REVIEW.value:
+                _promote_asset_image_candidate(
+                    db,
+                    project_id=snapshot.project_id,
+                    candidate=candidate,
+                    reviewed_by="SYSTEM_AUTO_PUBLISH",
+                    review_reason="资产图生成完成并通过正式 reference_media 与上游一致性校验后自动采用。",
+                )
+            mark_task_succeeded(db, snapshot.id, worker_id=worker_id)
+    except AppError as exc:
+        with session_factory() as db:
+            task = db.get(Task, snapshot.id)
+            if task is not None and task.status == TaskStatus.RUNNING and task.worker_id == worker_id:
+                mark_task_failed(db, snapshot.id, safe_error=f"资产图发布失败（{exc.code}）：{exc.message}", worker_id=worker_id)
+    except Exception as exc:
+        with session_factory() as db:
+            task = db.get(Task, snapshot.id)
+            if task is not None and task.status == TaskStatus.RUNNING and task.worker_id == worker_id:
+                mark_task_failed(db, snapshot.id, safe_error=f"资产图发布失败（{type(exc).__name__}）", worker_id=worker_id)
 
 
 def _candidate_read(row: ReplicaAssetImageCandidate) -> AssetImageCandidateRead:
@@ -854,11 +960,17 @@ def asset_image_media_path(db: Session, project_id: str, reference_id: str) -> P
     return path
 
 
-def accept_asset_image_candidate(db: Session, *, project_id: str, candidate_id: str, command: PipelineReviewCommand) -> AssetImagesRead:
-    project = get_project(db, project_id); candidate = db.get(ReplicaAssetImageCandidate, candidate_id)
+def _promote_asset_image_candidate(
+    db: Session,
+    *,
+    project_id: str,
+    candidate: ReplicaAssetImageCandidate,
+    reviewed_by: str,
+    review_reason: str,
+) -> tuple[ArtifactNode, ReplicaAssetImagesContent, dict]:
+    project = get_project(db, project_id)
     if candidate is None or candidate.project_id != project_id: raise AppError("ASSET_IMAGE_CANDIDATE_NOT_FOUND", "资产图候选不存在", status_code=404)
     if candidate.review_status != CandidateStatus.NEEDS_REVIEW.value: raise AppError("ASSET_IMAGE_CANDIDATE_NOT_REVIEWABLE", "资产图候选当前不可审核", status_code=409)
-    if candidate.target_storyboard_artifact_id != command.expected_upstream_artifact_id or candidate.generation_sequence != command.expected_generation_sequence: raise AppError("ASSET_IMAGE_REVIEW_STALE", "资产图审核输入已经变化", status_code=409)
     storyboard = _current_artifact(db, project_id, ArtifactType.TARGET_STORYBOARD)
     if storyboard is None or storyboard.id != candidate.target_storyboard_artifact_id: raise AppError("ASSET_IMAGE_REVIEW_STALE", "本土化分镜已经更新，请重新生成资产图", status_code=409)
     content = ReplicaAssetImagesContent.model_validate(candidate.content_json)
@@ -867,11 +979,20 @@ def accept_asset_image_candidate(db: Session, *, project_id: str, candidate_id: 
     if previous: _mark_stale_with_downstream(db, [previous])
     skill = get_professional_skill(SKILL_ID)
     artifact = ArtifactNode(project_id=project_id, artifact_type=ArtifactType.TARGET_ASSETS.value, namespace=ArtifactNamespace.TARGET, label="目标资产图", revision=(latest.revision if latest else 0)+1, input_fingerprint=_sha({"candidate": candidate.input_fingerprint, "content": content.model_dump(mode="json")}), skill_id=skill.id, skill_version=skill.version, validity=ArtifactValidity.CURRENT, is_current=True, metadata_json={"schema_version": ASSET_IMAGES_SCHEMA_VERSION, "target_storyboard_artifact_id": storyboard.id, "asset_count": len(content.assets), "reference_media_count": sum(len(x.reference_media) for x in content.assets)})
-    reviewed_at = utc_now(); provenance = dict(candidate.provenance_json); provenance.update({"candidate_id": candidate.id, "reviewed_by": "USER_EXPLICIT_ACTION", "reviewed_at": reviewed_at.isoformat(), "review_reason": command.reason, "supersedes_artifact_id": latest.id if latest else None})
+    reviewed_at = utc_now(); provenance = dict(candidate.provenance_json); provenance.update({"candidate_id": candidate.id, "reviewed_by": reviewed_by, "reviewed_at": reviewed_at.isoformat(), "review_reason": review_reason, "supersedes_artifact_id": latest.id if latest else None})
     db.add(artifact); db.flush(); db.add(ReplicaAssetImageRevision(project_id=project_id, artifact_id=artifact.id, target_storyboard_artifact_id=storyboard.id, candidate_id=candidate.id, generated_by_task_id=candidate.generated_by_task_id, schema_version=ASSET_IMAGES_SCHEMA_VERSION, content_json=content.model_dump(mode="json"), provenance_json=provenance)); db.add(ArtifactEdge(project_id=project_id, source_node_id=storyboard.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.DERIVED_FROM))
     if latest: db.add(ArtifactEdge(project_id=project_id, source_node_id=artifact.id, target_node_id=latest.id, relation_type=ArtifactRelationType.SUPERSEDES))
     for other in db.scalars(select(ReplicaAssetImageCandidate).where(ReplicaAssetImageCandidate.project_id == project_id, ReplicaAssetImageCandidate.review_status == CandidateStatus.NEEDS_REVIEW.value, ReplicaAssetImageCandidate.id != candidate.id)).all(): other.review_status=CandidateStatus.SUPERSEDED.value; other.review_reason="A newer asset image candidate was accepted."; other.reviewed_at=reviewed_at; db.add(other)
-    candidate.review_status=CandidateStatus.ACCEPTED.value; candidate.review_reason=command.reason; candidate.reviewed_at=reviewed_at; db.add(candidate); _invalidate_project_plan(db, project); db.commit(); db.refresh(artifact)
+    candidate.review_status=CandidateStatus.ACCEPTED.value; candidate.review_reason=review_reason; candidate.reviewed_at=reviewed_at; db.add(candidate); _invalidate_project_plan(db, project)
+    return artifact, content, provenance
+
+
+def accept_asset_image_candidate(db: Session, *, project_id: str, candidate_id: str, command: PipelineReviewCommand) -> AssetImagesRead:
+    candidate = db.get(ReplicaAssetImageCandidate, candidate_id)
+    if candidate is None or candidate.project_id != project_id: raise AppError("ASSET_IMAGE_CANDIDATE_NOT_FOUND", "资产图候选不存在", status_code=404)
+    if candidate.target_storyboard_artifact_id != command.expected_upstream_artifact_id or candidate.generation_sequence != command.expected_generation_sequence: raise AppError("ASSET_IMAGE_REVIEW_STALE", "资产图审核输入已经变化", status_code=409)
+    artifact, content, provenance = _promote_asset_image_candidate(db, project_id=project_id, candidate=candidate, reviewed_by="USER_EXPLICIT_ACTION", review_reason=command.reason)
+    db.commit(); db.refresh(artifact)
     return AssetImagesRead(project_id=project_id, status=ResultStatus.CURRENT, artifact_id=artifact.id, revision=artifact.revision, input_fingerprint=artifact.input_fingerprint, content=content, provenance=provenance)
 
 

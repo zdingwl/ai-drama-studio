@@ -26,12 +26,23 @@ describe('ProductJourneyNav', () => {
   it('shows exactly the five Replica production stages', async () => {
     const { wrapper } = await mountNavigation()
     expect(wrapper.findAll('button')).toHaveLength(5)
-    for (const label of ['分镜分析', '本土化分镜', '资产图', 'H3 提示词', '视频生成']) {
+    for (const label of ['原片分镜', '本土化分镜', '视觉资产', 'H3 提示词', '视频生成']) {
       expect(wrapper.text()).toContain(label)
     }
     for (const legacy of ['目标设定', '配音', '成片']) {
       expect(wrapper.text()).not.toContain(legacy)
     }
+  })
+
+  it('opens real project overview and episode management pages', async () => {
+    const { wrapper, router } = await mountNavigation()
+    const utilityLinks = wrapper.findAll('.utility-link')
+    await utilityLinks[0].trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.fullPath).toBe('/projects/project-1/overview')
+    await utilityLinks[1].trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.fullPath).toBe('/projects/project-1/episodes')
   })
 
   it('navigates through the real five-step workspace routes', async () => {

@@ -20,7 +20,7 @@
     {"id":"generate","phase":"5 视频生成","title":"根据资产与提示词生成视频","description":"MiniMax H3 读取正式资产图和模型专属 Prompt Contract 进行 Ref2VA 音画同步生成；Technical QC 后由用户播放选片。","capabilities":["VIDEO_GENERATION","QC_SELECTION"],"requires":["TARGET_STORYBOARD","TARGET_ASSETS","GENERATION_SEGMENTS"],"produces":["GENERATED_VIDEO","GENERATION_SELECTION"]}
   ],
   "user_decision_policy": ["本土化分镜候选必须人工确认后成为 CURRENT TARGET_STORYBOARD", "真实资产图必须人工查看并确认后成为 CURRENT TARGET_ASSETS", "H3 提示词必须可在 UI 中逐段查看并追溯到 minimax-h3-prompting Skill", "只有 Technical QC PASS 的真实视频可以进入选片，正式 Selection 必须用户显式确认"],
-  "auto_decision_policy": ["Source Shot 顺序、authoritative timing 与结构化 camera facts 不被本土化改写", "目标稳定 entity id 由服务端生成，Provider 不拥有 id", "H3 reference slots 按场景→说话/可见角色→其他角色→重要道具确定性排序，最多 9 张", "中文对白翻译只用于审核，不作为 H3 要说出的第二句对白", "H3 Runtime 只执行 Prompt Skill 已编译的 prompt/reference contract，不自行润色或换资产"],
+  "auto_decision_policy": ["Source Shot 顺序、authoritative timing 与结构化 camera facts 不被本土化改写", "目标稳定 entity id 由服务端生成，Provider 不拥有 id", "H3 reference slots 按可见人物身份优先排序：每人 FACE→正面 FULL_BODY，再使用剩余槽位放场景 LAYOUT→重要道具 DETAIL；画外音人物不占视觉槽，最多 9 张", "中文对白翻译只用于审核，不作为 H3 要说出的第二句对白", "H3 Runtime 只执行 Prompt Skill 已编译的 prompt/reference contract，不自行润色或换资产"],
   "output_contracts": ["SOURCE_VIDEO_SNAPSHOT", "TARGET_STORYBOARD", "TARGET_ASSETS", "GENERATION_SEGMENTS", "GENERATED_VIDEO", "GENERATION_SELECTION"],
   "completion_criteria": ["原片分镜表可逐镜审核且 grounded", "本土化分镜包含中文描述、目标语言对白和中文对白翻译", "每个实际引用目标实体都有真实资产图", "每个 H3 segment 持久化模型 Skill id/version 和 reference slots", "真实 H3 视频通过技术 QC 并完成人工选片"],
   "failure_policy": ["原片分镜未完成则阻断本土化", "本土化分镜未人工确认则阻断资产图", "任何实际引用实体缺少真实资产图则阻断 H3 Prompt", "Prompt reference slot 无法解析到受管媒体或 hash 不一致时阻断视频生成", "生成失败只允许有限重试，不得用 mock/占位媒体冒充结果"],

@@ -154,6 +154,9 @@ describe('H3GenerationWorkspace stale candidate handling', () => {
     const wrapper = await mountWorkspace()
 
     expect(wrapper.text()).toContain('确认正式视频')
+    expect(wrapper.text()).toContain('媒体技术 PASS · 人物待审')
+    expect(wrapper.text()).toContain('不代表人物一致性已经通过')
+    expect(wrapper.text()).toContain('H3 原始输出')
     expect(wrapper.text()).not.toContain('旧生成候选')
     const reject = wrapper.findAll('button').find(button => button.text() === '拒绝并重新生成')
     expect(reject).toBeTruthy()

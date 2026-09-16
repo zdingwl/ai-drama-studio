@@ -1,7 +1,7 @@
 {
   "id": "minimax-h3-prompting",
   "name": "MiniMax H3 Multi-reference AV Prompting",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "category": "generation-prompting",
   "description": "Compile localized storyboard shots and approved asset images into MiniMax H3 native multi-reference synchronized audio-video prompts and reference slots.",
   "when_to_use": ["MiniMax H3 is the selected video model and CURRENT TARGET_STORYBOARD + TARGET_ASSETS v2 are available"],
@@ -16,8 +16,8 @@
     {"id":"compile_h3_prompt","phase":"H3提示词","title":"编译 H3 音画提示词","description":"Compile model-native execution prompt, target-language speech, camera/action, ambience/SFX, negative constraints, duration and reference conditions.","capabilities":["MODEL_PROMPTING"],"requires":["TARGET_STORYBOARD","TARGET_ASSETS"],"produces":["GENERATION_SEGMENTS"]}
   ],
   "fact_levels": ["TARGET_LOCALIZED_STORYBOARD", "APPROVED_REFERENCE_MEDIA", "MODEL_NATIVE_GENERATION_PROMPT"],
-  "provider_rules": ["Use <Picture 1>..<Picture N> exactly in reference connection order", "Use at most 9 reference images per segment", "Prefer current scene, then speaking/visible characters, then important props", "Actors speak only target-language dialogue, verbatim and once", "Chinese dialogue translations are review-only and must not be spoken", "Request native synchronized picture and audio with natural ambience/SFX", "Do not invent assets or references", "Runtime executes this contract and must not rewrite it"],
+  "provider_rules": ["Use <Picture 1>..<Picture N> exactly in reference connection order", "Use at most 9 reference images per segment", "Visible character identity has highest reference priority: bind each visible character to both FACE and front FULL_BODY before scene or prop references", "FACE and FULL_BODY for one character are the same exact person; lock facial geometry, apparent age, hair, skin tone, body proportions and wardrobe identity across every frame", "Never mix character identities or use an off-screen/voice-over speaker image unless that character is visually present in target_character_ids", "Use remaining slots for current scene layout and important props", "Actors speak only target-language dialogue, verbatim and once", "Chinese dialogue translations are review-only and must not be spoken", "Request native synchronized picture and audio with natural ambience/SFX", "Do not invent assets or references", "Runtime executes this contract and must not rewrite it"],
   "output_contracts": ["GENERATION_SEGMENTS"],
-  "completion_criteria": ["Every segment has execution prompt and bounded duration/ratio", "Reference slots resolve to real approved media", "Dialogue/reference coverage is deterministic", "Skill id/version is persisted in provenance"],
-  "failure_policy": ["Missing reference media for a referenced target entity fails closed", "More than 9 required image references must be deterministically prioritized; never silently substitute another identity", "Prompt compilation never calls video generation"]
+  "completion_criteria": ["Every segment has execution prompt and bounded duration/ratio", "Every visible character resolves to a FACE + front FULL_BODY identity pair before lower-priority references", "Reference slots resolve to real approved media", "Dialogue/reference coverage is deterministic", "Skill id/version is persisted in provenance"],
+  "failure_policy": ["Missing FACE or front FULL_BODY media for any visually present character fails closed", "More than 9 required character identity images fails closed; lower-priority scene/prop references may use only remaining slots and may never displace character identity", "Never silently substitute another identity", "Prompt compilation never calls video generation"]
 }

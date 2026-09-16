@@ -45,7 +45,7 @@ from app.replica_pipeline.video_model_skills import (
 )
 from app.skills.models import ArtifactType, Capability
 from app.skills.professional import ProfessionalSkillDetail
-from app.target_assets.schemas import TargetAssetRef, TargetAssetType
+from app.target_assets.schemas import ReferenceMediaRole, TargetAssetRef, TargetAssetType
 from app.workflow.models import Task, TaskStatus
 from app.workflow.provider_service import ProviderDispatchResult, dispatch_provider_call
 from app.workflow.schemas import TaskCommandCreate, TaskWorkerRead
@@ -104,7 +104,7 @@ def _load_inputs(db: Session, project_id: str) -> tuple[ArtifactNode, ReplicaLoc
     if storyboard_row is None:
         raise AppError("H3_PROMPT_REQUIRES_V2_STORYBOARD", "当前分镜不是第 2 步本土化分镜，请先按五步主链重新生成", status_code=409)
     if assets_row is None:
-        raise AppError("H3_PROMPT_REQUIRES_ASSET_IMAGES", "当前资产不是第 3 步真实资产图，请先生成并确认资产图", status_code=409)
+        raise AppError("H3_PROMPT_REQUIRES_ASSET_IMAGES", "当前资产不是第 3 步真实资产图，请先生成资产图", status_code=409)
     storyboard = ReplicaLocalizedStoryboardContent.model_validate(storyboard_row.content_json)
     assets = ReplicaAssetImagesContent.model_validate(assets_row.content_json)
     if assets.target_storyboard_artifact_id != storyboard_artifact.id:
@@ -116,19 +116,27 @@ def _asset_lookup(assets: ReplicaAssetImagesContent) -> dict[str, object]:
     lookup = {item.target_entity_id: item for item in assets.assets}
     for entity_id, asset in lookup.items():
         if not asset.reference_media:
-            raise AppError("H3_PROMPT_REFERENCE_MISSING", "H3 Prompt 需要每个目标资产都有已确认参考图", status_code=409, details={"target_entity_id": entity_id})
+            raise AppError("H3_PROMPT_REFERENCE_MISSING", "H3 Prompt 需要每个目标资产都有正式参考图", status_code=409, details={"target_entity_id": entity_id})
         if any(not media.storage_relpath for media in asset.reference_media):
             raise AppError("H3_PROMPT_REFERENCE_PATH_MISSING", "H3 Prompt 参考图缺少受管存储路径", status_code=409, details={"target_entity_id": entity_id})
     return lookup
 
 
-def _ordered_entity_ids(shot, overlapping_dialogue: list[StoryboardDialogueRef]) -> list[str]:
-    ordered: list[str] = []
-    ordered.extend(shot.target_scene_ids)
-    ordered.extend(item.target_character_id for item in overlapping_dialogue if item.target_character_id)
-    ordered.extend(shot.target_character_ids)
-    ordered.extend(shot.target_prop_ids)
-    return list(dict.fromkeys(value for value in ordered if value))
+def _visual_entity_ids(shot) -> list[str]:
+    """Return only entities that are visually present in the shot.
+
+    Dialogue speakers that are off-screen/voice-over remain dialogue facts, but feeding their
+    character image to Ref2VA can cause identity blending or hallucinate an extra person.
+    """
+    return list(dict.fromkeys([
+        *shot.target_character_ids,
+        *shot.target_scene_ids,
+        *shot.target_prop_ids,
+    ]))
+
+
+def _media_for_role(asset, role: ReferenceMediaRole):
+    return next((media for media in asset.reference_media if media.role == role), None)
 
 
 def _references(
@@ -137,12 +145,11 @@ def _references(
     assets_artifact_id: str,
     asset_by_entity: dict[str, object],
 ) -> tuple[list[H3ReferenceCondition], list[TargetAssetRef]]:
-    required_ids = list(dict.fromkeys([
-        *shot.target_scene_ids,
-        *(item.target_character_id for item in overlapping_dialogue if item.target_character_id),
-        *shot.target_character_ids,
-        *shot.target_prop_ids,
-    ]))
+    del overlapping_dialogue  # dialogue facts do not imply visual presence
+    visible_character_ids = list(dict.fromkeys(value for value in shot.target_character_ids if value))
+    scene_ids = list(dict.fromkeys(value for value in shot.target_scene_ids if value))
+    prop_ids = list(dict.fromkeys(value for value in shot.target_prop_ids if value))
+    required_ids = _visual_entity_ids(shot)
     missing = [entity_id for entity_id in required_ids if entity_id not in asset_by_entity]
     if missing:
         raise AppError(
@@ -152,11 +159,11 @@ def _references(
             details={"target_entity_ids": missing},
         )
 
-    ordered_ids = _ordered_entity_ids(shot, overlapping_dialogue)
     conditions: list[H3ReferenceCondition] = []
     refs: list[TargetAssetRef] = []
-    for entity_id in ordered_ids:
-        asset = asset_by_entity[entity_id]
+    seen_reference_ids: set[str] = set()
+
+    def add_ref(asset) -> None:
         refs.append(TargetAssetRef(
             target_assets_artifact_id=assets_artifact_id,
             target_asset_id=asset.target_asset_id,
@@ -164,10 +171,14 @@ def _references(
             asset_type=asset.asset_type,
             target_entity_id=asset.target_entity_id,
         ))
+
+    def add_condition(asset, media) -> bool:
+        if media.reference_id in seen_reference_ids:
+            return True
         if len(conditions) >= 9:
-            continue
-        media = asset.reference_media[0]
+            return False
         assert media.storage_relpath is not None
+        seen_reference_ids.add(media.reference_id)
         conditions.append(H3ReferenceCondition(
             picture_index=len(conditions) + 1,
             target_asset_id=asset.target_asset_id,
@@ -179,6 +190,43 @@ def _references(
             reference_sha256=media.sha256,
             storage_relpath=media.storage_relpath,
         ))
+        return True
+
+    # Character identity owns the highest-priority Ref2VA slots.  Every visually present
+    # character receives a canonical FACE + front FULL_BODY pair before scene/prop refs.
+    for entity_id in visible_character_ids:
+        asset = asset_by_entity[entity_id]
+        if asset.asset_type != TargetAssetType.CHARACTER:
+            raise AppError("H3_PROMPT_CHARACTER_ASSET_TYPE_INVALID", "人物引用没有绑定 CHARACTER 资产", status_code=409, details={"target_entity_id": entity_id})
+        face = _media_for_role(asset, ReferenceMediaRole.FACE)
+        full_body = _media_for_role(asset, ReferenceMediaRole.FULL_BODY)
+        if face is None or full_body is None:
+            raise AppError(
+                "H3_PROMPT_CHARACTER_IDENTITY_REFERENCES_REQUIRED",
+                "人物 H3 Ref2VA 必须同时使用 FACE + 正面 FULL_BODY 身份参考；请重新生成并确认步骤 3 资产图",
+                status_code=409,
+                details={"target_entity_id": entity_id, "available_roles": [media.role.value for media in asset.reference_media]},
+            )
+        if len(conditions) + 2 > 9:
+            raise AppError(
+                "H3_PROMPT_CHARACTER_REFERENCE_CAPACITY_EXCEEDED",
+                "本镜头可见人物过多，9 个 H3 reference slots 无法完整容纳每人的 FACE + FULL_BODY 身份参考",
+                status_code=409,
+                details={"target_character_ids": visible_character_ids},
+            )
+        add_ref(asset)
+        add_condition(asset, face)
+        add_condition(asset, full_body)
+
+    # Scene and prop identity use only the slots left after all character identity pairs.
+    for entity_id, preferred_role in [
+        *((entity_id, ReferenceMediaRole.LAYOUT) for entity_id in scene_ids),
+        *((entity_id, ReferenceMediaRole.DETAIL) for entity_id in prop_ids),
+    ]:
+        asset = asset_by_entity[entity_id]
+        add_ref(asset)
+        media = _media_for_role(asset, preferred_role) or asset.reference_media[0]
+        add_condition(asset, media)
     return conditions, refs
 
 
@@ -224,6 +272,25 @@ class H3SegmentDraft:
     ambience: tuple[str, ...]
 
     def provider_view(self, character_names: dict[str, str]) -> dict:
+        identity_groups: dict[str, dict] = {}
+        for item in self.reference_conditions:
+            if item.asset_type != TargetAssetType.CHARACTER.value:
+                continue
+            group = identity_groups.setdefault(item.target_entity_id, {
+                "target_entity_id": item.target_entity_id,
+                "display_name": character_names.get(item.target_entity_id),
+                "face_picture_tag": None,
+                "full_body_picture_tag": None,
+            })
+            if item.reference_role == ReferenceMediaRole.FACE.value:
+                group["face_picture_tag"] = f"<Picture {item.picture_index}>"
+            elif item.reference_role == ReferenceMediaRole.FULL_BODY.value:
+                group["full_body_picture_tag"] = f"<Picture {item.picture_index}>"
+        for group in identity_groups.values():
+            group["identity_lock"] = (
+                "FACE and FULL_BODY pictures are the same exact person. Preserve facial geometry, apparent age, "
+                "hair, skin tone, body proportions and wardrobe identity across every frame; never mix this identity with another character."
+            )
         return {
             "generation_segment_id": self.generation_segment_id,
             "duration_seconds": round(self.duration_us / 1_000_000, 3),
@@ -243,6 +310,7 @@ class H3SegmentDraft:
                 }
                 for item in self.reference_conditions
             ],
+            "character_identity_groups": list(identity_groups.values()),
             "dialogue": [
                 {
                     "utterance_id": item.utterance_id,
@@ -348,6 +416,8 @@ Professional Skill manual：
 强制输出规则：
 - 对每个输入 generation_segment_id 精确输出一次，不得漏项、重复或增加 segment。
 - execution_prompt 必须明确使用输入给出的每个 <Picture N>，且不得出现不存在的 Picture slot。
+- character_identity_groups 是人物身份硬约束：每组 FACE + FULL_BODY 属于同一个人。execution_prompt 必须按人物姓名同时绑定这两个 Picture，并明确锁定脸型五官比例、年龄感、发型发色、肤色、体态与基础服装身份；镜头只允许改变姿态、表情和观察角度，禁止换脸、年龄漂移、发型漂移、体型漂移、角色互换或把两个人的特征混合。
+- 不在 shot.target_character_ids 中的画外音/旁白说话人不得因为有对白就被当作视觉人物参考；其声音事实只通过 dialogue 编译。
 - target_dialogue 必须原样、完整、只出现一次；不得翻译、删改、补写或增加其他对白。
 - target_dialogue_zh_review_only 只帮助你理解，不允许作为第二句台词写入 execution_prompt。
 - 必须要求 native synchronized picture + audio，并让人物口型与所给目标语言对白匹配。

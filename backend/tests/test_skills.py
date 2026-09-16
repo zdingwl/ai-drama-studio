@@ -34,7 +34,7 @@ def test_skill_detail_contains_replica_five_step_contract(client: TestClient) ->
     assert detail["manual_path"] == "replica/SKILL.md"
     assert detail["version"] == "1.7.0"
     assert "唯一普通主流程" in detail["manual"]
-    assert "minimax-h3-prompting@1.0.0" in detail["manual"]
+    assert "minimax-h3-prompting@1.1.0" in detail["manual"]
     assert "z-image-turbo-asset-prompting@1.1.0" in detail["manual"]
     assert "z-image-turbo-asset-prompting" in detail["subskills"]
 
@@ -151,12 +151,14 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     h3 = client.get("/api/v3/skills/professional/minimax-h3-prompting")
     assert h3.status_code == 200
     h3_detail = h3.json()
-    assert h3_detail["version"] == "1.0.0"
+    assert h3_detail["version"] == "1.1.0"
     assert h3_detail["required_inputs"] == ["TARGET_STORYBOARD", "TARGET_ASSETS"]
     assert h3_detail["output_contracts"] == ["GENERATION_SEGMENTS"]
     h3_rules = "\n".join(h3_detail["provider_rules"])
     assert "<Picture" in h3_rules
     assert "Chinese dialogue translations" in h3_rules
+    assert "FACE and front FULL_BODY" in h3_rules
+    assert "off-screen/voice-over" in h3_rules
 
 
 def test_missing_professional_skill_returns_404(client: TestClient) -> None:

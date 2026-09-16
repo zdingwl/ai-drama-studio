@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, status
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.errors import AppError
@@ -40,9 +40,13 @@ def _assert_supported_project(db: Session, project_id: str) -> None:
 
 
 @router.get("/projects/{project_id}/source-analysis", response_model=SourceAnalysisStatusRead)
-def get_source_analysis_route(project_id: str, db: Session = Depends(get_db)) -> SourceAnalysisStatusRead:
+def get_source_analysis_route(
+    project_id: str,
+    episode_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> SourceAnalysisStatusRead:
     _assert_supported_project(db, project_id)
-    return get_source_analysis_status(db, project_id)
+    return get_source_analysis_status(db, project_id, episode_id=episode_id)
 
 
 @router.post(
@@ -54,13 +58,19 @@ def start_source_analysis_route(
     project_id: str,
     background_tasks: BackgroundTasks,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    episode_id: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> SourceAnalysisStatusRead:
     _assert_supported_project(db, project_id)
-    task = create_source_analysis_task(db, project_id=project_id, idempotency_key=idempotency_key)
+    task = create_source_analysis_task(
+        db,
+        project_id=project_id,
+        idempotency_key=idempotency_key,
+        episode_id=episode_id,
+    )
     if task is not None and task.status.value == "queued":
         background_tasks.add_task(run_source_analysis_task, _request_session_factory(db), task.id)
-    return get_source_analysis_status(db, project_id)
+    return get_source_analysis_status(db, project_id, episode_id=episode_id)
 
 
 @router.get("/projects/{project_id}/source-script", response_model=SourceScriptRead)

@@ -83,8 +83,9 @@ CURRENT TARGET_STORYBOARD v2
 - 图片由真实 Image Runtime 生成，不允许 `reference_media=[]` 冒充完成；
 - 当前 Windows 默认使用本机 ComfyUI + `z_image_turbo_bf16.safetensors`；其模型专属 Prompt Skill 为 `z-image-turbo-asset-prompting@1.2.0`，CLIP 为 `qwen_3_4b.safetensors`、VAE 为 `ae.safetensors`；
 - 人物资产固定是一张生产参考板：**正面全身 + 侧面全身 + 背面全身 + 面部特写**。禁止把四格结构交给图片模型一次自由排版；Runtime 必须分别生成正面/侧面/背面单人全身图，使用同一身份 Prompt 与同一 base seed，再从正面图确定性裁出面部特写并固定合成四格参考板；每个模型分支都使用“单张全身棚拍、画面只出现一个人物”的措辞，禁止在模型执行文本中出现 `character reference`、复数 `views`、`turnaround`、`multi-panel`、`collage`、`contact sheet` 等容易诱发缩略多人排版的词；Prompt Skill 1.2 起连否定句也不再输出这些版式词，Runtime 对旧 Prompt 只做版式词兼容清理而不改人物身份；禁止四个全身方向、单张情绪肖像 / 情侣图 / 剧情场景图；
+- 四栏人物参考板是人工审核表面，不得作为 H3 唯一人物输入。Runtime 必须从该确定性参考板额外持久化独立 `FACE` 与正面 `FULL_BODY` reference media（复用同一次真实生成 ProviderJob provenance）；H3 Ref2VA 人物身份只能使用这些独立媒体，禁止退化为把四栏拼图当成一张 full-body 身份图；
 - 场景资产是隔离人物后的环境身份参考图；道具资产是隔离环境和无关人物后的道具身份参考图；
-- 候选必须人工确认后才能成为 CURRENT TARGET_ASSETS。
+- 真实资产图生成完成后，服务端必须先完成 `reference_media` 完整性与 CURRENT `TARGET_STORYBOARD` lineage 校验；校验通过即自动发布为 CURRENT `TARGET_ASSETS`，普通用户不再额外执行整批“确认资产图”。用户在资产页直接检查结果，发现问题时使用重新生成 / 后续单资产重做能力纠正。
 
 历史 `TARGET_ASSETS v1` 的 text-only 资产仍可回看，但不能作为新 H3 Ref2VA 主链的资产图输入。
 
@@ -96,7 +97,7 @@ CURRENT TARGET_STORYBOARD v2
 
 ```text
 MiniMax H3
-→ minimax-h3-prompting@1.0.0
+→ minimax-h3-prompting@1.1.0
 → GENERATION_SEGMENTS v2
 ```
 
@@ -113,6 +114,8 @@ H3 Skill 每个 Generation Segment 至少输出：
 - `reference_conditions[]`；
 - `reference_conditions` 明确 Picture slot 1..9、target asset、reference media、role；
 - execution prompt 使用 `<Picture 1>` ... `<Picture N>` 精确引用对应图片。
+- reference slot 采用人物身份优先：每个 `target_character_ids` 中的可见人物先固定占用 `FACE` + 正面 `FULL_BODY` 两个槽位，并在 execution prompt 中声明为同一人物，锁定脸型五官比例、年龄感、发型发色、肤色、体态和基础服装身份；场景 `LAYOUT` 与道具 `DETAIL` 只能使用剩余槽位；
+- 画外音 / 旁白说话人如果不在 `target_character_ids`，不得仅因 dialogue 而上传人物图片，避免 Ref2VA 引入额外人物或跨角色特征混合；
 
 中文对白翻译只用于审核 UI，不得进入“演员说出”的文本。
 
@@ -125,7 +128,7 @@ H3 Skill 每个 Generation Segment 至少输出：
 Runtime 的职责仅为：
 
 1. 把 Studio 管理的正式资产图上传到 ComfyUI input；
-2. 按 Prompt Skill 已确定的 Picture slot 连接 `ref_image_1..N`；
+2. 对每个 Picture slot fail-closed 校验 `target_asset_id / target_entity_id / role / reference_id / SHA256 / storage path` 与 CURRENT TARGET_ASSETS 完全一致，再按 Prompt Skill 已确定的顺序连接 `ref_image_1..N`；
 3. 把目标语言对白、环境声、音效规则与镜头动作作为 H3 原生音画提示词执行；
 4. 执行模型并直接得到带同步音轨的 MP4；
 5. SHA256 / ffprobe / Technical QC；
@@ -151,7 +154,7 @@ VIDEO_GENERATION         = PLANNED
 QC_SELECTION             = PLANNED
 ```
 
-完成代码、自动测试、ComfyUI readiness 或生成 candidate 都不等于 AVAILABLE / PASS。必须在同一真实 Replica 项目上完成：本土化分镜人工审核、真实资产图审核、H3 Prompt 审核、真实 Ref2VA 音画视频播放审核后，用户明确确认，才能更新状态。
+完成代码、自动测试、ComfyUI readiness 或生成 candidate 都不等于 AVAILABLE / PASS。必须在同一真实 Replica 项目上完成：本土化分镜人工审核、真实资产图可视检查（无需单独确认按钮）、H3 Prompt 审核、真实 Ref2VA 音画视频播放审核后，用户对整条真实链路明确确认，才能更新状态。
 
 ## 8. 历史兼容
 

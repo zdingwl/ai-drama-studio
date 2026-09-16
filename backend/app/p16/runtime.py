@@ -223,6 +223,18 @@ def _generate_attempt(
         "planned_duration_us": segment.duration_us,
         "requested_duration_seconds": provider.requested_duration(segment),
         "output_ratio": segment.output_ratio,
+        "reference_conditions": [
+            {
+                "picture_index": item.picture_index,
+                "target_asset_id": item.target_asset_id,
+                "target_entity_id": item.target_entity_id,
+                "asset_type": item.asset_type,
+                "reference_id": item.reference_id,
+                "reference_role": item.reference_role,
+                "reference_sha256": item.reference_sha256,
+            }
+            for item in segment.reference_conditions
+        ],
         "provider_profile": provider.profile(),
     }
 

@@ -161,6 +161,12 @@ class LocalSGLangH3Provider:
         return max(4, min(15, int(math.ceil(segment.duration_us / 1_000_000))))
 
     def request_payload(self, segment: GenerationSegment) -> dict:
+        if segment.reference_conditions:
+            raise AppError(
+                "P16_RUNTIME_REFERENCE_UNSUPPORTED",
+                "当前 SGLang FL2VA adapter 不支持正式 H3 reference_conditions；禁止静默丢弃人物/场景参考图，请使用 LOCAL_COMFYUI Ref2VA",
+                status_code=409,
+            )
         duration = self.requested_duration(segment)
         prompt = segment.generation_prompt
         if segment.negative_prompt.strip():
@@ -627,6 +633,12 @@ class LocalComfyUIH3Provider:
         return uploaded
 
     def workflow_payload(self, segment: GenerationSegment, *, seed: int | None = None, uploaded_images: list[str] | None = None) -> dict:
+        picture_indices = [condition.picture_index for condition in segment.reference_conditions]
+        if picture_indices and picture_indices != list(range(1, len(picture_indices) + 1)):
+            raise AppError("P16_REFERENCE_SLOTS_INVALID", "H3 reference slots 必须按 Picture 1..N 连续排序", status_code=409)
+        reference_ids = [condition.reference_id for condition in segment.reference_conditions]
+        if len(reference_ids) != len(set(reference_ids)):
+            raise AppError("P16_REFERENCE_SLOTS_INVALID", "H3 reference slots 不允许重复同一 reference media", status_code=409)
         duration = self.requested_duration(segment)
         width, height = self._dimensions(segment.output_ratio)
         prompt = segment.generation_prompt
@@ -872,6 +884,12 @@ class MiniMaxH3Provider:
 
     def _create(self, client: httpx.Client, segment: GenerationSegment) -> tuple[str, int]:
         duration = self.requested_duration(segment)
+        if segment.reference_conditions:
+            raise AppError(
+                "P16_RUNTIME_REFERENCE_UNSUPPORTED",
+                "当前 MiniMax Cloud adapter 尚未实现 Studio 正式 reference_conditions 上传；禁止静默退化为纯文本生成，请使用 LOCAL_COMFYUI Ref2VA",
+                status_code=409,
+            )
         prompt = segment.generation_prompt
         if segment.negative_prompt.strip():
             prompt = f"{prompt}\nAvoid: {segment.negative_prompt.strip()}"

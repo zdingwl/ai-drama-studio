@@ -17,6 +17,7 @@ from app.projects.enums import ProjectType
 from app.replica_pipeline.models import ReplicaAssetImageRevision, ReplicaH3PromptRevision, ReplicaLocalizedStoryboardRevision
 from app.replica_pipeline.schemas import ReplicaAssetImagesContent, ReplicaLocalizedStoryboardContent
 from app.skills.models import ArtifactType
+from app.target_assets.schemas import ReferenceMediaRole, TargetAssetType
 from app.workflow.models import ProviderJob
 
 
@@ -54,6 +55,40 @@ def _current(db: Session, project_id: str, artifact_type: ArtifactType) -> Artif
     return rows[0]
 
 
+def _validate_reference_contract(*, assets_artifact: ArtifactNode, assets: ReplicaAssetImagesContent, segments: ReplicaGenerationSegmentsContent) -> None:
+    """Fail closed if Step 4 reference slots no longer exactly resolve to Step 3 media."""
+    asset_by_id = {asset.target_asset_id: asset for asset in assets.assets}
+    for segment in segments.segments:
+        conditions_by_asset: dict[str, list] = {}
+        for condition in segment.reference_conditions:
+            asset = asset_by_id.get(condition.target_asset_id)
+            if asset is None:
+                raise AppError("P16_REFERENCE_CONTRACT_MISMATCH", "H3 reference slot 指向不存在的 CURRENT target asset", status_code=409, details={"generation_segment_id": segment.generation_segment_id, "target_asset_id": condition.target_asset_id})
+            if asset.target_entity_id != condition.target_entity_id or asset.asset_type.value != condition.asset_type:
+                raise AppError("P16_REFERENCE_CONTRACT_MISMATCH", "H3 reference slot 的 target entity / asset type 与 CURRENT 资产不一致", status_code=409, details={"generation_segment_id": segment.generation_segment_id, "reference_id": condition.reference_id})
+            media = next((item for item in asset.reference_media if item.reference_id == condition.reference_id), None)
+            if media is None or media.role.value != condition.reference_role or media.uri != condition.reference_uri or media.sha256 != condition.reference_sha256 or media.storage_relpath != condition.storage_relpath:
+                raise AppError("P16_REFERENCE_CONTRACT_MISMATCH", "H3 reference slot 的 role/URI/hash/path 与 CURRENT 资产媒体不一致", status_code=409, details={"generation_segment_id": segment.generation_segment_id, "reference_id": condition.reference_id})
+            conditions_by_asset.setdefault(asset.target_asset_id, []).append(condition)
+
+        for asset_ref in segment.target_asset_refs:
+            if asset_ref.target_assets_artifact_id != assets_artifact.id:
+                raise AppError("P16_REFERENCE_CONTRACT_MISMATCH", "GenerationSegment target_asset_ref 不属于 CURRENT TARGET_ASSETS", status_code=409, details={"generation_segment_id": segment.generation_segment_id, "target_asset_id": asset_ref.target_asset_id})
+            asset = asset_by_id.get(asset_ref.target_asset_id)
+            if asset is None or asset.target_asset_revision != asset_ref.target_asset_revision or asset.target_entity_id != asset_ref.target_entity_id or asset.asset_type != asset_ref.asset_type:
+                raise AppError("P16_REFERENCE_CONTRACT_MISMATCH", "GenerationSegment target_asset_ref 与 CURRENT TARGET_ASSETS 不一致", status_code=409, details={"generation_segment_id": segment.generation_segment_id, "target_asset_id": asset_ref.target_asset_id})
+            if asset_ref.asset_type == TargetAssetType.CHARACTER:
+                roles = {item.reference_role for item in conditions_by_asset.get(asset_ref.target_asset_id, [])}
+                required = {ReferenceMediaRole.FACE.value, ReferenceMediaRole.FULL_BODY.value}
+                if not required.issubset(roles):
+                    raise AppError(
+                        "P16_CHARACTER_IDENTITY_REFERENCES_REQUIRED",
+                        "人物视频生成必须同时携带 FACE + 正面 FULL_BODY Ref2VA 身份参考；请重新完成步骤 3/4",
+                        status_code=409,
+                        details={"generation_segment_id": segment.generation_segment_id, "target_asset_id": asset_ref.target_asset_id, "actual_roles": sorted(roles)},
+                    )
+
+
 def load_inputs(db: Session, project) -> P16Inputs:
     if project.project_type != ProjectType.REPLICA:
         raise AppError("P16_REPLICA_ONLY", "P16 视频生成只允许 REPLICA 项目", status_code=422)
@@ -86,6 +121,7 @@ def load_inputs(db: Session, project) -> P16Inputs:
         raise AppError("P16_PROMPT_SKILL_REQUIRED", "视频生成禁止消费没有模型专属 Prompt Skill provenance 的提示词", status_code=409)
     if any(not segment.reference_conditions for segment in segments.segments if segment.target_asset_refs):
         raise AppError("P16_REFERENCE_CONDITION_REQUIRED", "有正式资产引用的镜头必须使用 H3 多参考 reference_conditions", status_code=409)
+    _validate_reference_contract(assets_artifact=assets_artifact, assets=assets, segments=segments)
     return P16Inputs(
         project=project,
         storyboard_artifact=storyboard_artifact,

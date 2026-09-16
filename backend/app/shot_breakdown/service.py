@@ -390,24 +390,20 @@ def _fingerprint_inputs(
     )
 
 
-def create_shot_breakdown_task(db: Session, *, project_id: str, idempotency_key: str) -> Task:
-    project = get_project(db, project_id)
-    if project.project_type not in SOURCE_BIBLE_PROJECT_TYPES:
-        raise AppError("SHOT_BREAKDOWN_NOT_ALLOWED", "当前项目类型不执行 P8 逐镜精细拉片", status_code=422)
-    source = _required_source(db, project_id)
-    dialogue = _required_dialogue(db, project_id, source)
-    bible, bible_content, _ = _required_bible(db, project_id, source, dialogue)
-    shots = _required_shots(db, project_id, source)
-    contexts = _episode_contexts(
-        db,
-        project_id=project_id,
-        source=source,
-        dialogue_artifact=dialogue,
-        shots_artifact=shots,
-        bible_content=bible_content,
-    )
-    provider = _provider_for_project(project)
-    previous = db.scalar(
+def _scoped_episode_contexts(contexts: list[EpisodeContext], episode_id: str | None) -> list[EpisodeContext]:
+    if episode_id is None:
+        return contexts
+    scoped = [item for item in contexts if item.episode.id == episode_id]
+    if not scoped:
+        raise AppError("EPISODE_NOT_FOUND", "P8 目标 Episode 不存在", status_code=404)
+    return scoped
+
+
+def _latest_shot_facts_revision(
+    db: Session,
+    project_id: str,
+) -> tuple[ArtifactNode, SourceShotFactsContent, ShotBreakdownProvenance] | None:
+    artifact = db.scalar(
         select(ArtifactNode)
         .where(
             ArtifactNode.project_id == project_id,
@@ -416,6 +412,73 @@ def create_shot_breakdown_task(db: Session, *, project_id: str, idempotency_key:
         .order_by(ArtifactNode.revision.desc())
         .limit(1)
     )
+    if artifact is None:
+        return None
+    row = db.scalar(select(SourceShotFactsRevision).where(SourceShotFactsRevision.artifact_id == artifact.id))
+    if row is None:
+        raise AppError("SOURCE_SHOT_FACTS_CONTENT_MISSING", "上一版 SOURCE_SHOT_FACTS 缺少正式 revision 内容", status_code=409)
+    return (
+        artifact,
+        SourceShotFactsContent.model_validate(row.content_json),
+        ShotBreakdownProvenance.model_validate(row.provenance_json),
+    )
+
+
+def _merge_scoped_shot_facts(
+    *,
+    previous_content: SourceShotFactsContent,
+    replacement_episode: SourceShotFactsEpisode,
+    all_contexts: list[EpisodeContext],
+) -> SourceShotFactsContent:
+    previous_by_id = {item.episode_id: item for item in previous_content.episodes}
+    expected_ids = [item.episode.id for item in all_contexts]
+    if len(previous_by_id) != len(previous_content.episodes) or set(previous_by_id) != set(expected_ids):
+        raise AppError(
+            "SOURCE_SHOT_FACTS_EPISODE_SET_INVALID",
+            "单集重新分析要求上一版 SOURCE_SHOT_FACTS 已完整覆盖全部 Episode",
+            status_code=409,
+        )
+    return SourceShotFactsContent(
+        schema_version=P8_SCHEMA_VERSION,
+        episodes=[
+            replacement_episode if current_id == replacement_episode.episode_id else previous_by_id[current_id]
+            for current_id in expected_ids
+        ],
+    )
+
+
+def create_shot_breakdown_task(
+    db: Session,
+    *,
+    project_id: str,
+    idempotency_key: str,
+    episode_id: str | None = None,
+) -> Task:
+    project = get_project(db, project_id)
+    if project.project_type not in SOURCE_BIBLE_PROJECT_TYPES:
+        raise AppError("SHOT_BREAKDOWN_NOT_ALLOWED", "当前项目类型不执行 P8 逐镜精细拉片", status_code=422)
+    source = _required_source(db, project_id)
+    dialogue = _required_dialogue(db, project_id, source)
+    bible, bible_content, _ = _required_bible(db, project_id, source, dialogue)
+    shots = _required_shots(db, project_id, source)
+    all_contexts = _episode_contexts(
+        db,
+        project_id=project_id,
+        source=source,
+        dialogue_artifact=dialogue,
+        shots_artifact=shots,
+        bible_content=bible_content,
+    )
+    contexts = _scoped_episode_contexts(all_contexts, episode_id)
+    provider = _provider_for_project(project)
+    previous_bundle = _latest_shot_facts_revision(db, project_id)
+    previous = previous_bundle[0] if previous_bundle is not None else None
+    if episode_id is not None and previous_bundle is None:
+        raise AppError(
+            "SOURCE_SHOT_FACTS_BASELINE_REQUIRED",
+            "单集重新分析需要已有完整 SOURCE_SHOT_FACTS 基线",
+            status_code=409,
+        )
     fingerprint = _fingerprint_inputs(
         source,
         bible,
@@ -431,9 +494,14 @@ def create_shot_breakdown_task(db: Session, *, project_id: str, idempotency_key:
         idempotency_key=idempotency_key,
         payload=TaskCommandCreate(
             task_type=P8_TASK_TYPE,
-            task_name="带 Source Bible 的逐镜精细拉片",
+            task_name=(
+                f"第 {contexts[0].episode.episode_order} 集：逐镜精细拉片"
+                if episode_id is not None
+                else "带 Source Bible 的逐镜精细拉片"
+            ),
             input_fingerprint=fingerprint,
             input_artifact_ids=[source.id, bible.id, shots.id, dialogue.id],
+            episode_id=episode_id,
             max_attempts=3,
         ),
     )
@@ -575,7 +643,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
         expected_inputs = {source.id, bible.id, shots.id, dialogue.id}
         if set(task.input_artifact_ids_json) != expected_inputs:
             raise AppError("STALE_ARTIFACT_INPUT", "P8 输入 Artifact 已变化，请重新创建任务", status_code=409)
-        episode_contexts = _episode_contexts(
+        all_episode_contexts = _episode_contexts(
             db,
             project_id=task.project_id,
             source=source,
@@ -583,16 +651,16 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
             shots_artifact=shots,
             bible_content=bible_content,
         )
+        episode_contexts = _scoped_episode_contexts(all_episode_contexts, task.episode_id)
         provider = _provider_for_project(project)
-        previous = db.scalar(
-            select(ArtifactNode)
-            .where(
-                ArtifactNode.project_id == task.project_id,
-                ArtifactNode.artifact_type == ArtifactType.SOURCE_SHOT_FACTS.value,
+        previous_bundle = _latest_shot_facts_revision(db, task.project_id)
+        previous = previous_bundle[0] if previous_bundle is not None else None
+        if task.episode_id is not None and previous_bundle is None:
+            raise AppError(
+                "SOURCE_SHOT_FACTS_BASELINE_REQUIRED",
+                "单集重新分析需要已有完整 SOURCE_SHOT_FACTS 基线",
+                status_code=409,
             )
-            .order_by(ArtifactNode.revision.desc())
-            .limit(1)
-        )
         if task.input_fingerprint != _fingerprint_inputs(
             source,
             bible,
@@ -681,7 +749,21 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
         )
 
     profile = provider.profile
-    content = SourceShotFactsContent(schema_version=P8_SCHEMA_VERSION, episodes=episodes)
+    if task.episode_id is not None:
+        if len(episodes) != 1 or previous_bundle is None:
+            raise AppError("SOURCE_SHOT_FACTS_SCOPED_RESULT_INVALID", "单集 P8 没有生成唯一 Episode 结果", status_code=500)
+        content = _merge_scoped_shot_facts(
+            previous_content=previous_bundle[1],
+            replacement_episode=episodes[0],
+            all_contexts=all_episode_contexts,
+        )
+        provider_jobs = [
+            item.model_dump(mode="json")
+            for item in previous_bundle[2].provider_jobs
+            if item.episode_id != task.episode_id
+        ] + provider_jobs
+    else:
+        content = SourceShotFactsContent(schema_version=P8_SCHEMA_VERSION, episodes=episodes)
     provenance = ShotBreakdownProvenance(
         source_video_artifact_id=source.id,
         source_video_fingerprint=source.input_fingerprint,
@@ -699,7 +781,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
                 "source_evidence_set_id": item.evidence_set.id,
                 "source_evidence_fingerprint": item.evidence_set.input_fingerprint,
             }
-            for item in episode_contexts
+            for item in all_episode_contexts
         ],
         provider_jobs=provider_jobs,
         provider=provider.provider_name,
@@ -757,7 +839,7 @@ def _publish(
     expected_inputs = {source.id, bible.id, shots.id, dialogue.id}
     if set(task.input_artifact_ids_json) != expected_inputs:
         raise AppError("STALE_ARTIFACT_INPUT", "P8 发布时上游 Artifact 已变化", status_code=409)
-    episode_contexts = _episode_contexts(
+    all_episode_contexts = _episode_contexts(
         db,
         project_id=task.project_id,
         source=source,
@@ -765,16 +847,10 @@ def _publish(
         shots_artifact=shots,
         bible_content=bible_content,
     )
+    episode_contexts = _scoped_episode_contexts(all_episode_contexts, task.episode_id)
     provider = _provider_for_project(project)
-    previous = db.scalar(
-        select(ArtifactNode)
-        .where(
-            ArtifactNode.project_id == task.project_id,
-            ArtifactNode.artifact_type == ArtifactType.SOURCE_SHOT_FACTS.value,
-        )
-        .order_by(ArtifactNode.revision.desc())
-        .limit(1)
-    )
+    previous_bundle = _latest_shot_facts_revision(db, task.project_id)
+    previous = previous_bundle[0] if previous_bundle is not None else None
     if task.input_fingerprint != _fingerprint_inputs(
         source,
         bible,

@@ -268,22 +268,20 @@ def _provider_for_project(project) -> SourceEpisodeUnderstandingProvider:
     )
 
 
-def create_source_bible_task(db: Session, *, project_id: str, idempotency_key: str) -> Task:
-    project = get_project(db, project_id)
-    if project.project_type not in SOURCE_BIBLE_PROJECT_TYPES:
-        raise AppError("SOURCE_BIBLE_NOT_ALLOWED", "当前项目类型不执行 SOURCE_BIBLE 整集原片理解", status_code=422)
-    source = _required_source(db, project_id)
-    dialogue = _required_dialogue(db, project_id, source)
-    shots = _optional_shots(db, project_id, source)
-    contexts = _episode_contexts(
-        db,
-        project_id=project_id,
-        source=source,
-        dialogue_artifact=dialogue,
-        shots_artifact=shots,
-    )
-    provider = _provider_for_project(project)
-    previous = db.scalar(
+def _scoped_episode_contexts(contexts: list[EpisodeContext], episode_id: str | None) -> list[EpisodeContext]:
+    if episode_id is None:
+        return contexts
+    scoped = [item for item in contexts if item.episode.id == episode_id]
+    if not scoped:
+        raise AppError("EPISODE_NOT_FOUND", "P7 目标 Episode 不存在", status_code=404)
+    return scoped
+
+
+def _latest_source_bible_revision(
+    db: Session,
+    project_id: str,
+) -> tuple[ArtifactNode, SourceBibleContent, SourceBibleProvenance] | None:
+    artifact = db.scalar(
         select(ArtifactNode)
         .where(
             ArtifactNode.project_id == project_id,
@@ -292,6 +290,69 @@ def create_source_bible_task(db: Session, *, project_id: str, idempotency_key: s
         .order_by(ArtifactNode.revision.desc())
         .limit(1)
     )
+    if artifact is None:
+        return None
+    row = db.scalar(select(SourceBibleRevision).where(SourceBibleRevision.artifact_id == artifact.id))
+    if row is None:
+        raise AppError("SOURCE_BIBLE_CONTENT_MISSING", "上一版 SOURCE_BIBLE 缺少正式 revision 内容", status_code=409)
+    return (
+        artifact,
+        SourceBibleContent.model_validate(row.content_json),
+        SourceBibleProvenance.model_validate(row.provenance_json),
+    )
+
+
+def _merge_scoped_source_bible(
+    *,
+    previous_content: SourceBibleContent,
+    replacement_episode: SourceBibleEpisode,
+    all_contexts: list[EpisodeContext],
+) -> SourceBibleContent:
+    previous_by_id = {item.material_baseline.episode_id: item for item in previous_content.episodes}
+    expected_ids = [item.episode.id for item in all_contexts]
+    if len(previous_by_id) != len(previous_content.episodes) or set(previous_by_id) != set(expected_ids):
+        raise AppError(
+            "SOURCE_BIBLE_EPISODE_SET_INVALID",
+            "单集重新分析要求上一版 SOURCE_BIBLE 已完整覆盖全部 Episode",
+            status_code=409,
+        )
+    replacement_id = replacement_episode.material_baseline.episode_id
+    return SourceBibleContent(
+        schema_version=P7_SCHEMA_VERSION,
+        episodes=[replacement_episode if current_id == replacement_id else previous_by_id[current_id] for current_id in expected_ids],
+    )
+
+
+def create_source_bible_task(
+    db: Session,
+    *,
+    project_id: str,
+    idempotency_key: str,
+    episode_id: str | None = None,
+) -> Task:
+    project = get_project(db, project_id)
+    if project.project_type not in SOURCE_BIBLE_PROJECT_TYPES:
+        raise AppError("SOURCE_BIBLE_NOT_ALLOWED", "当前项目类型不执行 SOURCE_BIBLE 整集原片理解", status_code=422)
+    source = _required_source(db, project_id)
+    dialogue = _required_dialogue(db, project_id, source)
+    shots = _optional_shots(db, project_id, source)
+    all_contexts = _episode_contexts(
+        db,
+        project_id=project_id,
+        source=source,
+        dialogue_artifact=dialogue,
+        shots_artifact=shots,
+    )
+    contexts = _scoped_episode_contexts(all_contexts, episode_id)
+    provider = _provider_for_project(project)
+    previous_bundle = _latest_source_bible_revision(db, project_id)
+    previous = previous_bundle[0] if previous_bundle is not None else None
+    if episode_id is not None and previous_bundle is None:
+        raise AppError(
+            "SOURCE_BIBLE_BASELINE_REQUIRED",
+            "单集重新分析需要已有完整 SOURCE_BIBLE 基线",
+            status_code=409,
+        )
     fingerprint = _fingerprint_inputs(
         source,
         dialogue,
@@ -309,9 +370,14 @@ def create_source_bible_task(db: Session, *, project_id: str, idempotency_key: s
         idempotency_key=idempotency_key,
         payload=TaskCommandCreate(
             task_type=P7_TASK_TYPE,
-            task_name="整集多模态原片理解 / 源作概览分析",
+            task_name=(
+                f"第 {contexts[0].episode.episode_order} 集：多模态原片理解"
+                if episode_id is not None
+                else "整集多模态原片理解 / 源作概览分析"
+            ),
             input_fingerprint=fingerprint,
             input_artifact_ids=inputs,
+            episode_id=episode_id,
             max_attempts=3,
         ),
     )
@@ -477,23 +543,19 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
         expected_inputs = {source.id, dialogue.id, *([shots.id] if shots else [])}
         if set(task.input_artifact_ids_json) != expected_inputs:
             raise AppError("STALE_ARTIFACT_INPUT", "P7 输入 Artifact 已变化，请重新创建任务", status_code=409)
-        episode_contexts = _episode_contexts(
+        all_episode_contexts = _episode_contexts(
             db,
             project_id=task.project_id,
             source=source,
             dialogue_artifact=dialogue,
             shots_artifact=shots,
         )
+        episode_contexts = _scoped_episode_contexts(all_episode_contexts, task.episode_id)
         provider = _provider_for_project(project)
-        previous = db.scalar(
-            select(ArtifactNode)
-            .where(
-                ArtifactNode.project_id == task.project_id,
-                ArtifactNode.artifact_type == ArtifactType.SOURCE_BIBLE.value,
-            )
-            .order_by(ArtifactNode.revision.desc())
-            .limit(1)
-        )
+        previous_bundle = _latest_source_bible_revision(db, task.project_id)
+        previous = previous_bundle[0] if previous_bundle is not None else None
+        if task.episode_id is not None and previous_bundle is None:
+            raise AppError("SOURCE_BIBLE_BASELINE_REQUIRED", "单集重新分析需要已有完整 SOURCE_BIBLE 基线", status_code=409)
         if task.input_fingerprint != _fingerprint_inputs(
             source,
             dialogue,
@@ -579,7 +641,21 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
         )
 
     provider_profile = provider.profile
-    content = SourceBibleContent(schema_version=P7_SCHEMA_VERSION, episodes=episodes)
+    if task.episode_id is not None:
+        if len(episodes) != 1 or previous_bundle is None:
+            raise AppError("SOURCE_BIBLE_SCOPED_RESULT_INVALID", "单集 P7 没有生成唯一 Episode 结果", status_code=500)
+        content = _merge_scoped_source_bible(
+            previous_content=previous_bundle[1],
+            replacement_episode=episodes[0],
+            all_contexts=all_episode_contexts,
+        )
+        provider_jobs = [
+            item.model_dump(mode="json")
+            for item in previous_bundle[2].provider_jobs
+            if item.episode_id != task.episode_id
+        ] + provider_jobs
+    else:
+        content = SourceBibleContent(schema_version=P7_SCHEMA_VERSION, episodes=episodes)
     provenance = SourceBibleProvenance(
         source_video_artifact_id=source.id,
         source_video_fingerprint=source.input_fingerprint,
@@ -593,7 +669,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
                 "source_evidence_set_id": item.evidence_set.id,
                 "evidence_fingerprint": item.evidence_set.input_fingerprint,
             }
-            for item in episode_contexts
+            for item in all_episode_contexts
         ],
         provider_jobs=provider_jobs,
         provider=provider.provider_name,
@@ -721,23 +797,17 @@ def _publish(
     expected = {source.id, dialogue.id, *([shots.id] if shots else [])}
     if set(task.input_artifact_ids_json) != expected:
         raise AppError("STALE_ARTIFACT_INPUT", "P7 发布时上游 Artifact 已变化", status_code=409)
-    contexts = _episode_contexts(
+    all_contexts = _episode_contexts(
         db,
         project_id=task.project_id,
         source=source,
         dialogue_artifact=dialogue,
         shots_artifact=shots,
     )
+    contexts = _scoped_episode_contexts(all_contexts, task.episode_id)
     current_provider = _provider_for_project(project)
-    previous = db.scalar(
-        select(ArtifactNode)
-        .where(
-            ArtifactNode.project_id == task.project_id,
-            ArtifactNode.artifact_type == ArtifactType.SOURCE_BIBLE.value,
-        )
-        .order_by(ArtifactNode.revision.desc())
-        .limit(1)
-    )
+    previous_bundle = _latest_source_bible_revision(db, task.project_id)
+    previous = previous_bundle[0] if previous_bundle is not None else None
     if task.input_fingerprint != _fingerprint_inputs(
         source,
         dialogue,

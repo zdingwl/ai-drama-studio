@@ -29,9 +29,11 @@ async function mountApp(path: string) {
       stubs: {
         AppShell: { template: '<div><slot /></div>' },
         ProductJourneyNav: { template: '<nav data-testid="journey-nav" />' },
+        EpisodeWorkspaceNav: { template: '<section data-testid="episode-workspace-nav" />' },
         SourceStoryboardWorkspace: { template: '<section data-testid="source-storyboard-workspace" />' },
         LocalizedStoryboardWorkspace: { template: '<section data-testid="localized-storyboard-workspace" />' },
         AssetImagesWorkspace: { template: '<section data-testid="asset-images-workspace" />' },
+        EpisodeManagementWorkspace: { template: '<section data-testid="episode-management-workspace" />' },
         H3PromptWorkspace: { template: '<section data-testid="h3-prompt-workspace" />' },
         H3GenerationWorkspace: { template: '<section data-testid="h3-generation-workspace" />' },
         SourceScriptStoryboardWorkspace: { template: '<section data-testid="source-workspace" />' },
@@ -42,6 +44,7 @@ async function mountApp(path: string) {
         P7SourceUnderstandingWorkspace: { template: '<section data-testid="p7-panel" />' },
         P8ShotBreakdownPanel: { template: '<section data-testid="p8-panel" />' },
         P9SourceResolutionPanel: { template: '<section data-testid="p9-panel" />' },
+        ProjectOverviewWorkspace: { template: '<section data-testid="project-overview-workspace" />' },
         SourceResultApprovalBar: { template: '<section data-testid="source-result-approval" />' },
       },
     },
@@ -65,9 +68,22 @@ function expectOnlyFiveStep(wrapper: ReturnType<typeof mount>, expected: string)
 }
 
 describe('App Replica five-step product workspaces', () => {
-  it('routes source to the ingest host plus final source storyboard surface', async () => {
+  it.each([
+    ['overview', 'project-overview-workspace'],
+    ['episodes', 'episode-management-workspace'],
+  ])('routes %s to a real project page without the episode switch rail', async (workspace, testId) => {
+    const wrapper = await mountApp(`/projects/project-1/${workspace}`)
+    expect(wrapper.get(`[data-testid="${testId}"]`)).toBeTruthy()
+    expect(wrapper.find('[data-testid="episode-workspace-nav"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="journey-nav"]')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('routes source to the isolated Chinese production shell and source storyboard surface', async () => {
     const wrapper = await mountApp('/projects/project-1/source')
-    expect(wrapper.get('[data-testid="project-route"]')).toBeTruthy()
+    expect(wrapper.find('[data-testid="project-route"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="journey-nav"]')).toBeTruthy()
+    expect(wrapper.get('[data-testid="episode-workspace-nav"]')).toBeTruthy()
     expectOnlyFiveStep(wrapper, 'source-storyboard-workspace')
     wrapper.unmount()
   })

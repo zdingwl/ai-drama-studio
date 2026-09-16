@@ -2,21 +2,35 @@ from types import SimpleNamespace
 
 import pytest
 from PIL import Image
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.artifacts.enums import ArtifactNamespace, ArtifactValidity
+from app.artifacts.models import ArtifactNode
 
 from app.core.errors import AppError
-from app.projects.enums import ProjectType
+from app.projects.enums import AudioPolicy, ProjectType, SceneStrategy
+from app.projects.models import Project
 from app.replica_pipeline import asset_images as asset_images_module
 from app.replica_pipeline.asset_images import (
     CHARACTER_HEIGHT,
+    CHARACTER_PANEL_HEIGHT,
+    CHARACTER_PANEL_WIDTH,
     CHARACTER_WIDTH,
     ComfyUIZImageTurboRuntime,
+    GeneratedImage,
+    _character_identity_reference_media,
     _entity_specs,
+    _promote_asset_image_candidate,
     create_asset_images_task,
 )
 from app.replica_pipeline.asset_prompting import validate_authored_asset_batch
+from app.replica_pipeline.models import ReplicaAssetImageCandidate, ReplicaAssetImageRevision
+from app.replica_pipeline.schemas import ASSET_IMAGES_SCHEMA_VERSION, CandidateStatus
 from app.replica_pipeline.image_model_skills import selected_image_model_prompt_skill
 from app.replica_pipeline.schemas import AssetImagePromptAuthoringResult, ReplicaLocalizedStoryboardContent
 from app.skills.professional import get_professional_skill
+from app.skills.models import ArtifactType
 
 
 def _storyboard() -> ReplicaLocalizedStoryboardContent:
@@ -243,6 +257,43 @@ def test_character_sheet_composition_has_fixed_three_views_plus_front_derived_fa
     assert sheet.getpixel((1400, 400)) == (255, 0, 0)
 
 
+def test_character_board_persists_dedicated_h3_front_and_face_identity_media() -> None:
+    root = asset_images_module.get_settings().artifact_root
+    relpath = "target_asset_images/project-1/task-1/character.png"
+    path = root / relpath
+    path.parent.mkdir(parents=True, exist_ok=True)
+    board = Image.new("RGB", (CHARACTER_WIDTH, CHARACTER_HEIGHT), "white")
+    board.paste(Image.new("RGB", (CHARACTER_PANEL_WIDTH, CHARACTER_PANEL_HEIGHT), "red"), (0, 0))
+    board.paste(Image.new("RGB", (CHARACTER_PANEL_WIDTH, CHARACTER_PANEL_HEIGHT), "yellow"), (3 * CHARACTER_PANEL_WIDTH, 0))
+    board.save(path, format="PNG")
+    generated = GeneratedImage(
+        storage_relpath=relpath,
+        sha256=asset_images_module._file_sha(path),
+        width=CHARACTER_WIDTH,
+        height=CHARACTER_HEIGHT,
+        mime_type="image/png",
+        remote_url="",
+        remote_job_id="remote-1",
+    )
+
+    media = _character_identity_reference_media(
+        project_id="project-1",
+        asset_id="asset:character-1",
+        generated=generated,
+        provider_job_id="provider-job-1",
+    )
+
+    assert [item.role.value for item in media] == ["FULL_BODY", "FACE"]
+    assert all(item.provider_job_id == "provider-job-1" for item in media)
+    assert all(item.storage_relpath and (root / item.storage_relpath).is_file() for item in media)
+    with Image.open(root / media[0].storage_relpath) as front:
+        assert front.size == (CHARACTER_PANEL_WIDTH, CHARACTER_PANEL_HEIGHT)
+        assert front.getpixel((100, 700)) == (255, 0, 0)
+    with Image.open(root / media[1].storage_relpath) as face:
+        assert face.size == (CHARACTER_PANEL_WIDTH, CHARACTER_PANEL_HEIGHT)
+        assert face.getpixel((100, 400)) == (255, 255, 0)
+
+
 def test_explicit_asset_regeneration_gets_a_new_business_fingerprint(monkeypatch) -> None:
     captured = []
     project = SimpleNamespace(project_type=ProjectType.REPLICA, visual_style="写实电影感")
@@ -271,3 +322,107 @@ def test_explicit_asset_regeneration_gets_a_new_business_fingerprint(monkeypatch
     assert captured[0][0].input_fingerprint != captured[1][0].input_fingerprint
     assert captured[0][0].task_name == "重新提取并生成资产图"
     assert captured[0][1] == "regen-1"
+
+
+def test_generated_asset_candidate_can_be_auto_published_without_user_confirmation(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        project = Project(
+            name="Asset auto publish",
+            project_type=ProjectType.REPLICA,
+            source_language="zh-CN",
+            target_language="en-US",
+            target_region="US",
+            scene_strategy=SceneStrategy.LOCALIZE,
+            audio_policy=AudioPolicy.REGENERATE_AUDIO,
+            visual_style="写实电影感",
+            root_skill_id="replica",
+            root_skill_version="1.0.0",
+        )
+        db.add(project)
+        db.flush()
+        project_id = project.id
+        storyboard = ArtifactNode(
+            project_id=project_id,
+            artifact_type=ArtifactType.TARGET_STORYBOARD.value,
+            namespace=ArtifactNamespace.PRODUCTION,
+            label="本土化分镜表",
+            revision=1,
+            input_fingerprint="a" * 64,
+            skill_id="storyboard-localization",
+            skill_version="1.0.0",
+            validity=ArtifactValidity.CURRENT,
+            is_current=True,
+            metadata_json={},
+        )
+        db.add(storyboard)
+        db.flush()
+        candidate = ReplicaAssetImageCandidate(
+            project_id=project_id,
+            target_storyboard_artifact_id=storyboard.id,
+            generated_by_task_id=None,
+            generation_sequence=1,
+            input_fingerprint="c" * 64,
+            schema_version=ASSET_IMAGES_SCHEMA_VERSION,
+            content_json={
+                "schema_version": ASSET_IMAGES_SCHEMA_VERSION,
+                "title": "目标资产图",
+                "target_storyboard_artifact_id": storyboard.id,
+                "target_language": "en-US",
+                "target_region": "US",
+                "visual_style": "写实电影感",
+                "assets": [{
+                    "target_asset_id": "asset:scene-1",
+                    "target_asset_revision": 1,
+                    "asset_type": "SCENE",
+                    "target_entity_id": "scene-1",
+                    "display_name": "客厅",
+                    "review_description_zh": "现代客厅，无人物。",
+                    "image_prompt": "modern living room",
+                    "negative_prompt": "people, text",
+                    "prompt_review_zh": "保持无人场景。",
+                    "image_model_id": "Z-Image-Turbo",
+                    "prompt_skill_id": "z-image-turbo-asset-prompting",
+                    "prompt_skill_version": "1.2.0",
+                    "prompt_contract": "z-image-turbo-replica-assets-v2",
+                    "reference_media": [{
+                        "reference_id": "ref:scene-1",
+                        "role": "LAYOUT",
+                        "uri": "/media/scene-1.png",
+                        "mime_type": "image/png",
+                        "sha256": "b" * 64,
+                        "width": 1280,
+                        "height": 736,
+                        "provider_job_id": "provider-job-1",
+                        "storage_relpath": "target_asset_images/test/scene-1.png",
+                    }],
+                }],
+            },
+            provenance_json={},
+            review_status=CandidateStatus.NEEDS_REVIEW.value,
+        )
+        db.add(candidate)
+        db.flush()
+
+        artifact, _, provenance = _promote_asset_image_candidate(
+            db,
+            project_id=project_id,
+            candidate=candidate,
+            reviewed_by="SYSTEM_AUTO_PUBLISH",
+            review_reason="自动采用",
+        )
+        db.commit()
+        db.refresh(candidate)
+        db.refresh(artifact)
+
+        revision = db.scalar(select(ReplicaAssetImageRevision).where(ReplicaAssetImageRevision.artifact_id == artifact.id))
+        assert artifact.artifact_type == ArtifactType.TARGET_ASSETS.value
+        assert artifact.validity == ArtifactValidity.CURRENT
+        assert artifact.is_current is True
+        assert candidate.review_status == CandidateStatus.ACCEPTED.value
+        assert candidate.reviewed_at is not None
+        assert provenance["reviewed_by"] == "SYSTEM_AUTO_PUBLISH"
+        assert revision is not None
+        assert revision.candidate_id == candidate.id
+        assert revision.provenance_json["reviewed_by"] == "SYSTEM_AUTO_PUBLISH"

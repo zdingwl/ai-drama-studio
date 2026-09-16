@@ -15,7 +15,7 @@ class VideoModelPromptSkillBinding:
 _H3_BINDING = VideoModelPromptSkillBinding(
     model_id="MiniMaxAI/MiniMax-H3",
     prompt_skill_id="minimax-h3-prompting",
-    prompt_contract="minimax-h3-multi-reference-av-v1",
+    prompt_contract="minimax-h3-multi-reference-av-v2",
 )
 
 

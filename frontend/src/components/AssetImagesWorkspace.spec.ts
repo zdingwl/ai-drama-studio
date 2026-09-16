@@ -13,6 +13,7 @@ vi.mock('@/features/projects/api', () => ({
 
 vi.mock('@/features/projects/replicaFiveStep', () => ({
   getAssetImages: vi.fn(),
+  getLocalizedStoryboard: vi.fn(),
   listAssetImageCandidates: vi.fn(),
   regenerateAssetImages: vi.fn(),
   reviewAssetImages: vi.fn(),
@@ -46,6 +47,7 @@ function mockReads(tasks: TaskRead[] = []) {
     content: null,
   })
   vi.mocked(replicaApi.listAssetImageCandidates).mockResolvedValue([])
+  vi.mocked(replicaApi.getLocalizedStoryboard).mockResolvedValue({ project_id: 'project-1', status: 'NOT_BUILT', artifact_id: null, revision: null, content: null })
   vi.mocked(projectApi.listProjectTasks).mockResolvedValue(tasks)
 }
 
@@ -176,6 +178,56 @@ describe('AssetImagesWorkspace task progress', () => {
     expect(wrapper.text()).toContain('没有创建新的资产图任务')
     expect(wrapper.text()).not.toContain('出图任务已启动')
     expect(replicaApi.regenerateAssetImages).toHaveBeenCalledWith('project-1')
+
+    wrapper.unmount()
+  })
+
+  it('does not require a separate batch confirmation after assets become current', async () => {
+    mockReads([])
+    vi.mocked(replicaApi.getAssetImages).mockResolvedValue({
+      project_id: 'project-1',
+      status: 'CURRENT',
+      artifact_id: 'assets-1',
+      revision: 1,
+      content: {
+        target_storyboard_artifact_id: 'storyboard-1',
+        target_language: 'en-US',
+        target_region: 'US',
+        visual_style: '写实电影感',
+        assets: [{
+          target_asset_id: 'asset-1',
+          target_asset_revision: 1,
+          asset_type: 'SCENE',
+          target_entity_id: 'scene-1',
+          display_name: '客厅',
+          review_description_zh: '现代客厅',
+          image_prompt: 'modern living room',
+          negative_prompt: '',
+          prompt_review_zh: '保持无人场景',
+          image_model_id: 'Z-Image-Turbo',
+          prompt_skill_id: 'z-image-turbo-asset-prompting',
+          prompt_skill_version: '1.2.0',
+          prompt_contract: 'z-image-turbo-replica-assets-v2',
+          reference_media: [{
+            reference_id: 'ref-1',
+            role: 'LAYOUT',
+            uri: '/ref.png',
+            mime_type: 'image/png',
+            sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            width: 1280,
+            height: 736,
+            storage_relpath: 'ref.png',
+          }],
+        }],
+      },
+    })
+
+    const wrapper = await mountWorkspace()
+
+    expect(wrapper.text()).toContain('当前可用')
+    expect(wrapper.text()).not.toContain('确认资产图')
+    expect(wrapper.text()).not.toContain('拒绝重做')
+    expect(wrapper.findAll('button').some(button => button.text() === '重新生成资产图')).toBe(true)
 
     wrapper.unmount()
   })

@@ -53,14 +53,14 @@ Task 成功只产生 NEEDS_REVIEW candidate；显式 ACCEPT 才发布 `TARGET_ST
 当前视频模型为 MiniMax H3，因此固定使用：
 
 ```text
-minimax-h3-prompting@1.0.0
+minimax-h3-prompting@1.1.0
 TARGET_STORYBOARD + TARGET_ASSETS
 → GENERATION_SEGMENTS v2
 ```
 
 Skill 负责：
 - `<Picture 1>...<Picture N>` 参考图槽位；
-- 场景、说话角色、可见角色、道具的确定性优先级；
+- 人物身份优先：每个可见人物先绑定 FACE + 正面 FULL_BODY，同一人物两张图强制 identity lock；画外音人物不因为对白而占视觉参考槽；场景、道具只使用剩余槽位；
 - 目标语言原样对白；
 - 中文审核翻译分离；
 - 镜头、动作、环境音、SFX；
@@ -71,7 +71,7 @@ Runtime 只执行，禁止自行润色 Prompt、猜资产或改变对白。
 
 ## Step 5 MiniMax H3 生成
 
-有 `reference_conditions` 的正式 Segment 必须走 H3 Ref2VA，多参考图片由 Prompt Skill 已经确定。ComfyUI Runtime 上传受管资产图，按同一 slot 顺序连接 `ref_image_1..N`，生成原生音画 MP4，保存到 Studio 后做 SHA256 + ffprobe Technical QC。
+有 `reference_conditions` 的正式 Segment 必须走 H3 Ref2VA，多参考图片由 Prompt Skill 已经确定。人物不得把整张四栏审核参考板直接作为唯一 H3 输入：Step 3 会从参考板确定性持久化独立 FACE + 正面 FULL_BODY 媒体，Step 4 为每个可见人物优先占用这两个 Picture slots。ComfyUI Runtime 上传受管资产图，逐槽校验 target entity / role / SHA256 / storage path，并按同一 slot 顺序连接 `ref_image_1..N`，生成原生音画 MP4，保存到 Studio 后做 SHA256 + ffprobe Technical QC。
 
 Technical QC PASS 不等于语义 PASS。用户必须实际播放检查人物、场景、动作、对白、声音与连续性，并显式选片后才发布正式 `GENERATED_VIDEO + GENERATION_SELECTION`。
 

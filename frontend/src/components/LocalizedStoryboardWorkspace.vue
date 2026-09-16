@@ -16,6 +16,8 @@ import type { TaskRead, TaskStatus } from '@/features/projects/types'
 
 const route = useRoute()
 const projectId = computed(() => String(route.params.id ?? ''))
+const episodeId = computed(() => String(route.query.episode ?? ''))
+const episodeOrder = computed(() => Number(route.query.ep ?? 1) || 1)
 const current = ref<LocalizedStoryboardRead | null>(null)
 const candidates = ref<LocalizedStoryboardCandidate[]>([])
 const localizedTask = ref<TaskRead | null>(null)
@@ -23,6 +25,8 @@ const action = ref('')
 const error = ref('')
 const message = ref('')
 const reason = ref('已逐镜检查中文描述、本土语言对白和中文翻译，确认可进入资产生成')
+const query = ref('')
+const selectedShotId = ref('')
 let refreshTimer: number | undefined
 let taskTimer: number | undefined
 
@@ -32,6 +36,19 @@ const taskRunning = computed(() => localizedTask.value?.status === 'queued' || l
 const taskFailed = computed(() => localizedTask.value?.status === 'failed' || localizedTask.value?.status === 'cancelled' || localizedTask.value?.status === 'interrupted')
 const showTaskProgress = computed(() => taskRunning.value || taskFailed.value)
 const progressPercent = computed(() => Math.max(0, Math.min(100, localizedTask.value?.progress_percent ?? 0)))
+const episodeShots = computed(() => (content.value?.shots ?? []).filter(shot => !episodeId.value || shot.episode_id === episodeId.value))
+const filteredShots = computed(() => {
+  const keyword = query.value.trim().toLocaleLowerCase()
+  return episodeShots.value.filter(shot => {
+    if (!keyword) return true
+    return [String(shot.shot_number), shot.localized_visual_description_zh, shot.camera_description_zh, ...shot.dialogue.flatMap(line => [line.target_dialogue, line.target_dialogue_zh])].some(value => value.toLocaleLowerCase().includes(keyword))
+  })
+})
+const selectedShot = computed(() => (
+  filteredShots.value.find(shot => shot.storyboard_shot_id === selectedShotId.value)
+  ?? filteredShots.value[0]
+  ?? null
+))
 
 const taskStatusText: Record<TaskStatus, string> = {
   queued: '排队中',
@@ -142,7 +159,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="workspace" data-testid="localized-storyboard-workspace">
-    <header><div><p class="eyebrow">步骤 2 / 5</p><h2>本土化改写分镜表</h2><p>画面与镜头说明统一用中文审核；真正说出口的对白使用目标地区语言，并同时保留一份中文翻译供理解。</p></div><button type="button" :disabled="Boolean(action) || Boolean(pending) || taskRunning" @click="generate">{{ generateButtonText }}</button></header>
+    <header class="stage-header"><div class="stage-title"><h2>本土化分镜</h2><div v-if="content" class="header-meta"><span><b>{{ episodeShots.length }}</b> 镜</span><span>{{ content.target_language }} · {{ content.target_region }}</span><span :class="{ attention: pending }">{{ pending ? '待人工确认' : current?.status === 'CURRENT' ? '已正式确认' : '历史结果' }}</span></div></div><div class="stage-actions"><label v-if="content" class="search"><span>⌕</span><input v-model="query" type="search" placeholder="搜索镜号、画面或对白" /></label><button type="button" :disabled="Boolean(action) || Boolean(pending) || taskRunning" @click="generate">{{ generateButtonText }}</button></div></header>
     <p v-if="error" class="error">{{ error }}</p><p v-if="message" class="success">{{ message }}</p>
     <div v-if="showTaskProgress && localizedTask" class="task-progress" data-testid="localized-storyboard-progress" role="status" aria-live="polite">
       <div class="task-progress-heading">
@@ -153,23 +170,41 @@ onBeforeUnmount(() => {
         <div class="progress-value" :class="{ active: taskRunning }" :style="{ width: `${progressPercent}%` }"></div>
       </div>
     </div>
-    <label v-if="pending" class="review"><span>审核备注</span><input v-model="reason" maxlength="800" /></label>
     <div v-if="!content" class="empty">先完成步骤 1 的正式原片分镜表，再生成本土化分镜。</div>
     <template v-else>
-      <div class="metrics"><span>{{ content.shots.length }} 镜</span><span>目标语言 {{ content.target_language }}</span><span>目标地区 {{ content.target_region }}</span><span>{{ pending ? '待人工确认' : current?.status === 'CURRENT' ? '正式 CURRENT' : '历史结果' }}</span></div>
-      <div class="shots">
-        <article v-for="shot in content.shots" :key="shot.storyboard_shot_id">
-          <div class="shot-head"><strong>第 {{ shot.episode_order }} 集 · Shot {{ shot.shot_number }}</strong><small>{{ seconds(shot.duration_us) }} · {{ shot.output_ratio }}</small></div>
-          <div class="fact"><b>中文画面描述</b><p>{{ shot.localized_visual_description_zh }}</p></div>
-          <div class="fact"><b>中文镜头说明</b><p>{{ shot.camera_description_zh }}</p></div>
-          <div v-for="line in shot.dialogue" :key="line.utterance_id" class="dialogue"><div><b>本土对白</b><p lang="auto">{{ line.target_dialogue }}</p></div><div><b>中文理解</b><p>{{ line.target_dialogue_zh }}</p></div></div>
+      <div class="review-shell">
+        <aside class="shot-browser" aria-label="本土化镜头列表">
+          <div class="browser-heading"><strong>本集镜头</strong><span>{{ filteredShots.length }} / {{ episodeShots.length }}</span></div>
+          <button v-for="shot in filteredShots" :key="shot.storyboard_shot_id" type="button" class="shot-row" :class="{ active: selectedShot?.storyboard_shot_id === shot.storyboard_shot_id }" @click="selectedShotId = shot.storyboard_shot_id">
+            <span class="shot-index">{{ String(shot.shot_number).padStart(2, '0') }}</span>
+            <span class="row-copy"><strong>第 {{ shot.episode_order }} 集 · Shot {{ shot.shot_number }}</strong><small>{{ shot.dialogue[0]?.target_dialogue_zh || shot.localized_visual_description_zh }}</small><em>{{ seconds(shot.duration_us) }} · {{ shot.output_ratio }}</em></span>
+            <span v-if="shot.dialogue.length" class="line-count">{{ shot.dialogue.length }} 句</span>
+          </button>
+          <div v-if="!filteredShots.length" class="browser-empty">当前筛选没有匹配镜头</div>
+        </aside>
+
+        <article v-if="selectedShot" class="shot-inspector">
+          <div class="shot-head"><div><span>本土化镜头</span><strong>第 {{ selectedShot.episode_order }} 集 · Shot {{ selectedShot.shot_number }}</strong></div><small>{{ seconds(selectedShot.duration_us) }} · {{ selectedShot.output_ratio }}</small></div>
+          <div class="fact-grid">
+            <section class="fact"><b>中文画面描述</b><p>{{ selectedShot.localized_visual_description_zh }}</p></section>
+            <section class="fact camera"><b>中文镜头说明</b><p>{{ selectedShot.camera_description_zh }}</p></section>
+          </div>
+          <section class="dialogue-section">
+            <div class="section-title"><strong>对白审核</strong><span>{{ selectedShot.dialogue.length }} 句</span></div>
+            <div v-if="selectedShot.dialogue.length" class="dialogue-list">
+              <article v-for="line in selectedShot.dialogue" :key="line.utterance_id" class="dialogue"><div><b>本土对白</b><p lang="auto">{{ line.target_dialogue }}</p></div><div><b>中文理解</b><p>{{ line.target_dialogue_zh }}</p></div></article>
+            </div>
+            <p v-else class="no-dialogue">本镜头无对白</p>
+          </section>
+          <details class="source-reference"><summary>查看原片画面描述</summary><p>{{ selectedShot.source_visual_description }}</p></details>
         </article>
       </div>
-      <div v-if="pending" class="actions"><button type="button" :disabled="Boolean(action) || !reason.trim()" @click="review(pending, true)">确认本土化分镜</button><button type="button" class="secondary" :disabled="Boolean(action) || !reason.trim()" @click="review(pending, false)">拒绝重做</button></div>
+
+      <div v-if="pending" class="review-bar"><label class="review"><span>审核备注</span><input v-model="reason" maxlength="800" /></label><div class="actions"><button type="button" :disabled="Boolean(action) || !reason.trim()" @click="review(pending, true)">确认本土化分镜</button><button type="button" class="secondary" :disabled="Boolean(action) || !reason.trim()" @click="review(pending, false)">拒绝重做</button></div></div>
     </template>
   </section>
 </template>
 
 <style scoped>
-.workspace{display:grid;gap:16px;max-width:1360px;margin:20px auto}.workspace>header{display:flex;justify-content:space-between;gap:16px;padding:22px;border:1px solid #deded8;border-radius:18px;background:#fff}.workspace h2{margin:3px 0}.workspace header p:last-child{color:#706d67}.eyebrow{margin:0;color:#5a4ed8;font-size:11px;font-weight:850}.workspace button{min-height:38px;padding:0 15px;border:0;border-radius:9px;background:#292925;color:#fff;font-weight:750}.workspace button:disabled{opacity:.5}.task-progress{display:grid;gap:10px;padding:15px 17px;border:1px solid #dedbe9;border-radius:14px;background:#fff}.task-progress-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.task-progress-heading>div{display:grid;gap:4px}.task-progress-heading strong{font-size:13px}.task-progress-heading span{color:#706d67;font-size:12px;line-height:1.5}.task-progress-heading>b{font-size:15px;font-variant-numeric:tabular-nums}.progress-track{height:8px;overflow:hidden;border-radius:999px;background:#e7e5ee}.progress-value{height:100%;border-radius:inherit;background:#6558e8;transition:width .25s ease}.progress-value.active{position:relative;overflow:hidden}.progress-value.active::after{position:absolute;inset:0;content:"";background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);animation:progress-shimmer 1.4s linear infinite}.metrics,.actions{display:flex;gap:8px;flex-wrap:wrap}.metrics span{padding:7px 10px;border-radius:999px;background:#efeee9;font-size:12px}.shots{display:grid;gap:10px}.shots article{display:grid;gap:10px;padding:16px;border:1px solid #e2e0da;border-radius:14px;background:#fff}.shot-head{display:flex;justify-content:space-between}.shot-head small{color:#817c74}.fact{display:grid;grid-template-columns:110px 1fr;gap:12px}.fact p,.dialogue p{margin:0;line-height:1.6}.dialogue{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px;border-radius:10px;background:#f8f7ff}.dialogue>div{display:grid;gap:4px}.dialogue b,.fact b{font-size:11px;color:#68635c}.review{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center}.review input{min-height:36px;padding:0 10px;border:1px solid #d7d3cc;border-radius:8px}.secondary{background:#fff!important;color:#333!important;border:1px solid #d4d0c9!important}.empty{padding:26px;border:1px dashed #cbc7c0;border-radius:14px;color:#746f68}.error{color:#a33b32}.success{color:#2d7140}@keyframes progress-shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}@media(max-width:800px){.workspace>header,.shot-head,.task-progress-heading{flex-direction:column}.dialogue,.fact{grid-template-columns:1fr}}
+.workspace{display:grid;gap:8px;min-width:0;margin:0}.stage-header{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:46px;padding:0 2px 6px;border-bottom:1px solid #e8eaf0}.stage-title{display:flex;align-items:center;gap:10px;min-width:0}.stage-title h2{margin:0;color:#142647;font-size:20px;letter-spacing:-.015em}.header-meta{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.header-meta span{padding:4px 7px;border:1px solid #e5e2dc;border-radius:999px;background:#fff;color:#6b665f;font-size:10px}.header-meta .attention{border-color:#ead9b0;background:#fff9ec;color:#805d18}.stage-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}.stage-actions>button,.review-bar .actions>button{min-height:32px;padding:0 13px;border:0;border-radius:8px;background:linear-gradient(135deg,#704cf4,#5a38e6);color:#fff;font-size:12px;font-weight:750;cursor:pointer;box-shadow:0 5px 12px rgba(91,59,227,.14)}.stage-actions>button:disabled,.review-bar .actions>button:disabled{opacity:.5}.task-progress{display:grid;gap:10px;padding:15px 17px;border:1px solid #dedbe9;border-radius:14px;background:#fff}.task-progress-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.task-progress-heading>div{display:grid;gap:4px}.task-progress-heading strong{font-size:13px}.task-progress-heading span{color:#706d67;font-size:12px;line-height:1.5}.task-progress-heading>b{font-size:15px;font-variant-numeric:tabular-nums}.progress-track{height:8px;overflow:hidden;border-radius:999px;background:#e7e5ee}.progress-value{height:100%;border-radius:inherit;background:#6558e8;transition:width .25s ease}.progress-value.active{position:relative;overflow:hidden}.progress-value.active::after{position:absolute;inset:0;content:"";background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);animation:progress-shimmer 1.4s linear infinite}.actions{display:flex;gap:5px;flex-wrap:wrap}.search{display:flex;align-items:center;gap:6px;min-width:260px;padding:0 9px;border:1px solid #dedbd4;border-radius:8px;background:#fff;color:#918b83}.search input{width:100%;height:30px;border:0;outline:0;background:transparent;font-size:12px}.review-shell{display:grid;grid-template-columns:310px minmax(0,1fr);height:clamp(540px,calc(100dvh - 230px),860px);min-height:540px;overflow:hidden;border:1px solid #e0e3eb;border-radius:12px;background:#fff;box-shadow:0 5px 18px rgba(31,43,69,.035)}.shot-browser{min-height:0;overflow:auto;border-right:1px solid #e5e7ee;background:#fbfcfe}.browser-heading{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;padding:13px 14px;border-bottom:1px solid #ebe8e2;background:rgba(250,249,246,.96);font-size:12px;backdrop-filter:blur(8px)}.browser-heading span{color:#918c85}.shot-row{display:grid;grid-template-columns:36px minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;min-height:72px;padding:8px 11px;border:0;border-bottom:1px solid #eceef3;background:#fff;color:#33435f;text-align:left;cursor:pointer}.shot-row:hover{background:#f7f8fc}.shot-row.active{background:#f2efff;box-shadow:inset 3px 0 #674cf0}.shot-index{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:#ebe9e4;color:#69645e;font-size:11px;font-weight:850}.active .shot-index{background:#6152e8;color:#fff}.row-copy{display:grid;min-width:0;gap:2px}.row-copy strong{font-size:13px}.row-copy small,.row-copy em{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.row-copy small{color:#5d6d87;font-size:12px}.row-copy em{color:#7f899b;font-size:11px;font-style:normal}.line-count{padding:3px 5px;border-radius:6px;background:#fff;color:#6f69a7;font-size:10px}.browser-empty{padding:28px;color:#89847d;font-size:12px;text-align:center}.shot-inspector{display:grid;align-content:start;gap:12px;min-width:0;overflow:auto;padding:14px 16px 18px}.shot-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding-bottom:12px;border-bottom:1px solid #eeeae4}.shot-head>div{display:grid;gap:3px}.shot-head span{color:#7469da;font-size:10px;font-weight:850;letter-spacing:.08em}.shot-head strong{font-size:18px}.shot-head small{padding:5px 7px;border-radius:7px;background:#f2f1ed;color:#77716a;font-size:11px}.fact-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fact{display:grid;align-content:start;gap:7px;min-height:132px;padding:13px 14px;border:1px solid #e8e5df;border-radius:10px;background:#fbfaf8}.fact.camera{background:#f8f7ff}.fact b,.dialogue b{color:#675e9f;font-size:11px}.fact p,.dialogue p{margin:0;color:#45413d;font-size:14px;line-height:1.75}.dialogue-section{display:grid;gap:10px}.section-title{display:flex;justify-content:space-between}.section-title strong{font-size:14px}.section-title span{color:#7d776f;font-size:11px}.dialogue-list{display:grid;gap:8px}.dialogue{display:grid;grid-template-columns:1fr 1fr;gap:0;overflow:hidden;border:1px solid #e6e2ee;border-radius:11px;background:#fff}.dialogue>div{display:grid;align-content:start;gap:5px;padding:11px 12px}.dialogue>div+div{border-left:1px solid #e6e2ee;background:#f8f7ff}.no-dialogue{margin:0;padding:18px;border-radius:10px;background:#f7f6f2;color:#7d7871;font-size:13px}.source-reference{padding-top:10px;border-top:1px solid #eeeae4;color:#625e58;font-size:12px}.source-reference summary{cursor:pointer;font-weight:750}.source-reference p{line-height:1.65}.review-bar{position:sticky;bottom:12px;z-index:8;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:10px 12px;border:1px solid #ddd8cf;border-radius:14px;background:rgba(255,255,255,.96);box-shadow:0 12px 32px rgba(36,31,26,.12);backdrop-filter:blur(12px)}.review{display:grid;grid-template-columns:auto minmax(0,1fr);gap:9px;align-items:center}.review span{font-size:11px;font-weight:800;color:#706b64}.review input{min-height:36px;padding:0 10px;border:1px solid #d7d3cc;border-radius:8px}.secondary{background:#fff!important;color:#333!important;border:1px solid #d4d0c9!important}.empty{padding:26px;border:1px dashed #cbc7c0;border-radius:14px;color:#746f68}.error{color:#a33b32}.success{color:#2d7140}@keyframes progress-shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}@media(max-width:900px){.stage-header,.task-progress-heading{align-items:stretch;flex-direction:column}.stage-title{align-items:flex-start;flex-direction:column;gap:5px}.stage-actions{width:100%}.search{min-width:0;flex:1}.review-shell{grid-template-columns:1fr;height:auto;min-height:0;overflow:visible}.shot-browser{display:flex;max-height:none;overflow-x:auto;border-right:0;border-bottom:1px solid #ebe8e2}.browser-heading{display:none}.shot-row{flex:0 0 230px;border-right:1px solid #eeeae4;border-bottom:0}.shot-row.active{box-shadow:inset 0 -3px #6152e8}.fact-grid{grid-template-columns:1fr}.review-bar{position:static;grid-template-columns:1fr}.actions{justify-content:flex-end}}@media(max-width:620px){.shot-inspector{padding:15px}.shot-head{flex-direction:column}.dialogue{grid-template-columns:1fr}.dialogue>div+div{border-top:1px solid #e6e2ee;border-left:0}.review{grid-template-columns:1fr}.actions button{flex:1}}
 </style>

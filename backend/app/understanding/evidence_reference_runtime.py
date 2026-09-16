@@ -140,19 +140,19 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
         expected_inputs = {source.id, dialogue.id, *([shots.id] if shots else [])}
         if set(task.input_artifact_ids_json) != expected_inputs:
             raise AppError("STALE_ARTIFACT_INPUT", "P7 输入 Artifact 已变化，请重新创建任务", status_code=409)
-        episode_contexts = core._episode_contexts(
+        all_episode_contexts = core._episode_contexts(
             db,
             project_id=task.project_id,
             source=source,
             dialogue_artifact=dialogue,
             shots_artifact=shots,
         )
+        episode_contexts = core._scoped_episode_contexts(all_episode_contexts, task.episode_id)
         provider = core._provider_for_project(project)
-        previous_source_bible_artifact_id = core._latest_artifact_id(
-            db,
-            task.project_id,
-            core.ArtifactType.SOURCE_BIBLE,
-        )
+        previous_bundle = core._latest_source_bible_revision(db, task.project_id)
+        previous_source_bible_artifact_id = previous_bundle[0].id if previous_bundle is not None else None
+        if task.episode_id is not None and previous_bundle is None:
+            raise AppError("SOURCE_BIBLE_BASELINE_REQUIRED", "单集重新分析需要已有完整 SOURCE_BIBLE 基线", status_code=409)
         if task.input_fingerprint != core._fingerprint_inputs(
             source,
             dialogue,
@@ -254,7 +254,21 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
         )
 
     provider_profile = provider.profile
-    content = SourceBibleContent(schema_version=core.P7_SCHEMA_VERSION, episodes=episodes)
+    if task.episode_id is not None:
+        if len(episodes) != 1 or previous_bundle is None:
+            raise AppError("SOURCE_BIBLE_SCOPED_RESULT_INVALID", "单集 P7 没有生成唯一 Episode 结果", status_code=500)
+        content = core._merge_scoped_source_bible(
+            previous_content=previous_bundle[1],
+            replacement_episode=episodes[0],
+            all_contexts=all_episode_contexts,
+        )
+        provider_jobs = [
+            item.model_dump(mode="json")
+            for item in previous_bundle[2].provider_jobs
+            if item.episode_id != task.episode_id
+        ] + provider_jobs
+    else:
+        content = SourceBibleContent(schema_version=core.P7_SCHEMA_VERSION, episodes=episodes)
     provenance = SourceBibleProvenance(
         source_video_artifact_id=source.id,
         source_video_fingerprint=source.input_fingerprint,
@@ -268,7 +282,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Sourc
                 "source_evidence_set_id": item.evidence_set.id,
                 "evidence_fingerprint": item.evidence_set.input_fingerprint,
             }
-            for item in episode_contexts
+            for item in all_episode_contexts
         ],
         provider_jobs=provider_jobs,
         provider=provider.provider_name,

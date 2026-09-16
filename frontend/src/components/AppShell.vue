@@ -1,10 +1,14 @@
+<script setup lang="ts">
+defineProps<{ wide?: boolean }>()
+</script>
+
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ wide }">
     <header class="app-header">
       <div class="brand-lockup">
-        <span class="brand-mark" aria-hidden="true">AI</span>
+        <span class="brand-mark" aria-hidden="true">剧</span>
         <div>
-          <strong>AI Drama Studio</strong>
+          <strong>AI 短剧工坊</strong>
           <small>用 AI 让好故事走向全世界</small>
         </div>
       </div>

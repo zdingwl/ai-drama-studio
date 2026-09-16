@@ -38,13 +38,13 @@ button {
   position: sticky;
   top: 0;
   z-index: 60;
-  height: 62px;
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 36px;
-  border-bottom: 1px solid #e4e1dc;
-  background: rgba(255, 255, 255, .94);
+  padding: 0 28px;
+  border-bottom: 1px solid #e5e7ee;
+  background: rgba(255, 255, 255, .97);
   backdrop-filter: blur(14px);
 }
 
@@ -57,8 +57,8 @@ button {
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border-radius: 9px;
   background: linear-gradient(145deg, #5b7cff, #7547e8);
   color: #fff;
@@ -74,12 +74,12 @@ button {
 
 .brand-lockup strong {
   color: #18233a;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .brand-lockup small {
   color: #9aa3b4;
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .header-actions {
@@ -87,10 +87,10 @@ button {
   align-items: center;
   gap: 9px;
   color: #8992a4;
-  font-size: 11px;
+  font-size: 12px;
 }
 
-.save-state,.account-chip{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border-radius:999px;background:#f4f3ef;color:#69655f;font-size:11px;font-weight:700}.save-state i{width:6px;height:6px;border-radius:50%;background:#29a36a}.account-chip{background:#efedff;color:#5749d8}
+.save-state,.account-chip{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border-radius:999px;background:#f4f3ef;color:#69655f;font-size:12px;font-weight:700}.save-state i{width:6px;height:6px;border-radius:50%;background:#29a36a}.account-chip{background:#efedff;color:#5749d8}
 
 .header-icon {
   display: grid;
@@ -116,7 +116,17 @@ button {
   padding: 32px 0 64px;
 }
 
-html{scroll-behavior:smooth}body{background:radial-gradient(circle at 88% -10%,rgba(111,91,232,.075),transparent 32%),#f6f5f2}button{transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s ease,box-shadow .16s ease}button:not(:disabled):active{transform:translateY(1px)}:focus-visible{outline:3px solid rgba(97,82,232,.24);outline-offset:2px}
+.app-shell.wide .app-main {
+  width: min(1920px, 100%);
+  margin: 0 auto;
+  padding: 0;
+}
+
+.app-shell.wide .app-header {
+  padding: 0 18px;
+}
+
+html{scroll-behavior:smooth}body{background:#f7f8fb}button{transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s ease,box-shadow .16s ease}button:not(:disabled):active{transform:translateY(1px)}:focus-visible{outline:3px solid rgba(97,82,232,.24);outline-offset:2px}
 
 .workspace {
   display: grid;

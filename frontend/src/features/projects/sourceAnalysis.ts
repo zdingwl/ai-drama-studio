@@ -140,12 +140,19 @@ export interface StoryboardShotEditPayload {
   focal_length_dof?: string
 }
 
-export function getSourceAnalysisStatus(projectId: string): Promise<SourceAnalysisStatusRead> {
-  return apiRequest<SourceAnalysisStatusRead>(`/projects/${projectId}/source-analysis`, { cache: 'no-store' })
+function sourceAnalysisPath(projectId: string, episodeId?: string): string {
+  const base = `/projects/${projectId}/source-analysis`
+  return episodeId ? `${base}?episode_id=${encodeURIComponent(episodeId)}` : base
 }
 
-export function startSourceAnalysis(projectId: string, idempotencyKey: string): Promise<SourceAnalysisStatusRead> {
-  return apiRequest<SourceAnalysisStatusRead>(`/projects/${projectId}/commands/source-analysis`, {
+export function getSourceAnalysisStatus(projectId: string, episodeId?: string): Promise<SourceAnalysisStatusRead> {
+  return apiRequest<SourceAnalysisStatusRead>(sourceAnalysisPath(projectId, episodeId), { cache: 'no-store' })
+}
+
+export function startSourceAnalysis(projectId: string, idempotencyKey: string, episodeId?: string): Promise<SourceAnalysisStatusRead> {
+  const base = `/projects/${projectId}/commands/source-analysis`
+  const path = episodeId ? `${base}?episode_id=${encodeURIComponent(episodeId)}` : base
+  return apiRequest<SourceAnalysisStatusRead>(path, {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },
   })

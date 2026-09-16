@@ -112,6 +112,12 @@ _KIND_LABEL = {
     SourceResolutionKind.SCENE: "场景最终归一",
     SourceResolutionKind.PROP: "关键道具最终归一",
 }
+_KIND_CONTENT_MODEL = {
+    SourceResolutionKind.CHARACTER: CharacterResolutionContent,
+    SourceResolutionKind.SPEAKER: SpeakerResolutionContent,
+    SourceResolutionKind.SCENE: SceneResolutionContent,
+    SourceResolutionKind.PROP: PropResolutionContent,
+}
 
 
 @dataclass(frozen=True)
@@ -251,6 +257,29 @@ def _load_inputs(db: Session, project_id: str) -> P9Inputs:
     )
 
 
+def _scope_inputs(inputs: P9Inputs, episode_id: str | None) -> P9Inputs:
+    if episode_id is None:
+        return inputs
+    contexts = tuple(item for item in inputs.contexts if item.episode.id == episode_id)
+    bible_episodes = [
+        item for item in inputs.bible_content.episodes
+        if item.material_baseline.episode_id == episode_id
+    ]
+    fact_episodes = [item for item in inputs.facts_content.episodes if item.episode_id == episode_id]
+    if len(contexts) != 1 or len(bible_episodes) != 1 or len(fact_episodes) != 1:
+        raise AppError("EPISODE_NOT_FOUND", "P9 目标 Episode 不存在或上游聚合内容不完整", status_code=404)
+    return P9Inputs(
+        source=inputs.source,
+        dialogue=inputs.dialogue,
+        bible=inputs.bible,
+        bible_content=inputs.bible_content.model_copy(update={"episodes": bible_episodes}),
+        shots=inputs.shots,
+        facts=inputs.facts,
+        facts_content=inputs.facts_content.model_copy(update={"episodes": fact_episodes}),
+        contexts=contexts,
+    )
+
+
 def _provider_for_project(project) -> SourceResolutionProvider:
     return build_source_resolution_provider(get_settings(), project.source_understanding_provider)
 
@@ -306,11 +335,26 @@ def _fingerprint_inputs(db: Session, inputs: P9Inputs, provider: SourceResolutio
     )
 
 
-def create_source_resolution_task(db: Session, *, project_id: str, idempotency_key: str) -> Task:
+def create_source_resolution_task(
+    db: Session,
+    *,
+    project_id: str,
+    idempotency_key: str,
+    episode_id: str | None = None,
+) -> Task:
     _assert_p9_storage_ready(db)
-    inputs = _load_inputs(db, project_id)
+    all_inputs = _load_inputs(db, project_id)
+    inputs = _scope_inputs(all_inputs, episode_id)
     project = get_project(db, project_id)
     provider = _provider_for_project(project)
+    if episode_id is not None:
+        for kind in SourceResolutionKind:
+            if _latest_artifact(db, project_id, _KIND_ARTIFACT[kind]) is None:
+                raise AppError(
+                    "SOURCE_RESOLUTION_BASELINE_REQUIRED",
+                    "单集重新分析需要已有完整 P9 最终归一基线",
+                    status_code=409,
+                )
     fingerprint = _fingerprint_inputs(db, inputs, provider)
     return create_task_from_command(
         db,
@@ -318,7 +362,11 @@ def create_source_resolution_task(db: Session, *, project_id: str, idempotency_k
         idempotency_key=idempotency_key,
         payload=TaskCommandCreate(
             task_type=P9_TASK_TYPE,
-            task_name="Speaker / Character / Scene / Prop 最终归一",
+            task_name=(
+                f"第 {inputs.contexts[0].episode.episode_order} 集：人物 / 说话人 / 场景 / 道具归一"
+                if episode_id is not None
+                else "Speaker / Character / Scene / Prop 最终归一"
+            ),
             input_fingerprint=fingerprint,
             input_artifact_ids=[
                 inputs.source.id,
@@ -327,6 +375,7 @@ def create_source_resolution_task(db: Session, *, project_id: str, idempotency_k
                 inputs.shots.id,
                 inputs.dialogue.id,
             ],
+            episode_id=episode_id,
             max_attempts=3,
         ),
     )
@@ -345,7 +394,8 @@ def _assert_task_snapshot(db: Session, task: TaskWorkerRead | Task, inputs: P9In
     expected_ids = {inputs.source.id, inputs.bible.id, inputs.facts.id, inputs.shots.id, inputs.dialogue.id}
     if set(task.input_artifact_ids_json) != expected_ids:
         raise AppError("STALE_ARTIFACT_INPUT", "P9 输入 Artifact 已变化，请重新创建任务", status_code=409)
-    if task.input_fingerprint != _fingerprint_inputs(db, inputs, provider):
+    scoped_inputs = _scope_inputs(inputs, task.episode_id)
+    if task.input_fingerprint != _fingerprint_inputs(db, scoped_inputs, provider):
         raise AppError("STALE_ARTIFACT_INPUT", "P9 输入 fingerprint、Professional Skill 或 Provider profile 已变化", status_code=409)
 
 
@@ -674,6 +724,267 @@ def _compose_props(inputs: P9Inputs, semantic: PropResolutionSemantic) -> PropRe
     return PropResolutionContent(entities=list(entity_by_group.values()), observations=observations)
 
 
+def _latest_resolution_revision(
+    db: Session,
+    project_id: str,
+    kind: SourceResolutionKind,
+) -> tuple[ArtifactNode, Any, SourceResolutionProvenance] | None:
+    artifact = _latest_artifact(db, project_id, _KIND_ARTIFACT[kind])
+    if artifact is None:
+        return None
+    row = db.scalar(select(SourceResolutionRevision).where(SourceResolutionRevision.artifact_id == artifact.id))
+    if row is None or row.resolution_kind != kind.value:
+        raise AppError("SOURCE_RESOLUTION_CONTENT_MISSING", "上一版 P9 最终归一缺少正式 revision 内容", status_code=409)
+    return (
+        artifact,
+        _KIND_CONTENT_MODEL[kind].model_validate(row.content_json),
+        SourceResolutionProvenance.model_validate(row.provenance_json),
+    )
+
+
+def _filter_evidence_refs(
+    refs: list[EvidenceRef],
+    *,
+    episode_id: str,
+    target_shot_ids: set[str],
+    target_utterance_ids: set[str],
+) -> list[EvidenceRef]:
+    return [
+        ref for ref in refs
+        if ref.episode_id != episode_id
+        and ref.shot_anchor_id not in target_shot_ids
+        and ref.utterance_id not in target_utterance_ids
+    ]
+
+
+def _merge_character_content(
+    inputs: P9Inputs,
+    episode_id: str,
+    previous: CharacterResolutionContent,
+    replacement: CharacterResolutionContent,
+    historical_target_shots: set[str],
+) -> CharacterResolutionContent:
+    shot_episode = {
+        shot.id: context.episode.id
+        for context in inputs.contexts
+        for shot in context.shot_anchors
+    }
+    target_shots = {shot_id for shot_id, owner in shot_episode.items() if owner == episode_id} | historical_target_shots
+    previous_observations = [item for item in previous.observations if item.shot_anchor_id not in target_shots]
+    previous_by_id = {item.character_id: item for item in previous.entities}
+    live_ids = {item.character_id for item in previous_observations if item.character_id is not None}
+    entities: list[CharacterEntity] = []
+    for character_id in sorted(live_ids):
+        entity = previous_by_id.get(character_id)
+        if entity is None:
+            continue
+        members = [item for item in previous_observations if item.character_id == character_id]
+        shot_ids = sorted({item.shot_anchor_id for item in members})
+        entities.append(entity.model_copy(update={
+            "episode_ids": sorted({shot_episode[item] for item in shot_ids if item in shot_episode}),
+            "shot_anchor_ids": shot_ids,
+            "source_candidate_ids": sorted({item.source_candidate_id for item in members}),
+            "evidence_refs": _filter_evidence_refs(
+                entity.evidence_refs,
+                episode_id=episode_id,
+                target_shot_ids=target_shots,
+                target_utterance_ids=set(),
+            ),
+        }))
+    return CharacterResolutionContent(
+        entities=[*entities, *replacement.entities],
+        observations=[*previous_observations, *replacement.observations],
+    )
+
+
+def _merge_scene_content(
+    inputs: P9Inputs,
+    episode_id: str,
+    previous: SceneResolutionContent,
+    replacement: SceneResolutionContent,
+    historical_target_shots: set[str],
+) -> SceneResolutionContent:
+    shot_episode = {
+        shot.id: context.episode.id
+        for context in inputs.contexts
+        for shot in context.shot_anchors
+    }
+    target_shots = {shot_id for shot_id, owner in shot_episode.items() if owner == episode_id} | historical_target_shots
+    previous_assignments = [item for item in previous.assignments if item.episode_id != episode_id and item.shot_anchor_id not in target_shots]
+    previous_by_id = {item.scene_id: item for item in previous.entities}
+    live_ids = {item.scene_id for item in previous_assignments if item.scene_id is not None}
+    entities: list[SceneEntity] = []
+    for scene_id in sorted(live_ids):
+        entity = previous_by_id.get(scene_id)
+        if entity is None:
+            continue
+        members = [item for item in previous_assignments if item.scene_id == scene_id]
+        shot_ids = sorted({item.shot_anchor_id for item in members})
+        entities.append(entity.model_copy(update={
+            "episode_ids": sorted({item.episode_id for item in members}),
+            "shot_anchor_ids": shot_ids,
+            "source_candidate_ids": sorted({candidate for item in members for candidate in item.source_candidate_ids}),
+            "evidence_refs": _filter_evidence_refs(
+                entity.evidence_refs,
+                episode_id=episode_id,
+                target_shot_ids=target_shots,
+                target_utterance_ids=set(),
+            ),
+        }))
+    return SceneResolutionContent(
+        entities=[*entities, *replacement.entities],
+        assignments=[*previous_assignments, *replacement.assignments],
+    )
+
+
+def _merge_prop_content(
+    inputs: P9Inputs,
+    episode_id: str,
+    previous: PropResolutionContent,
+    replacement: PropResolutionContent,
+    historical_target_shots: set[str],
+) -> PropResolutionContent:
+    shot_episode = {
+        shot.id: context.episode.id
+        for context in inputs.contexts
+        for shot in context.shot_anchors
+    }
+    target_shots = {shot_id for shot_id, owner in shot_episode.items() if owner == episode_id} | historical_target_shots
+    previous_observations = [item for item in previous.observations if item.shot_anchor_id not in target_shots]
+    previous_by_id = {item.prop_id: item for item in previous.entities}
+    live_ids = {item.prop_id for item in previous_observations if item.prop_id is not None}
+    entities: list[PropEntity] = []
+    for prop_id in sorted(live_ids):
+        entity = previous_by_id.get(prop_id)
+        if entity is None:
+            continue
+        members = [item for item in previous_observations if item.prop_id == prop_id]
+        shot_ids = sorted({item.shot_anchor_id for item in members})
+        entities.append(entity.model_copy(update={
+            "episode_ids": sorted({shot_episode[item] for item in shot_ids if item in shot_episode}),
+            "shot_anchor_ids": shot_ids,
+            "source_candidate_ids": sorted({item.source_candidate_id for item in members}),
+            "evidence_refs": _filter_evidence_refs(
+                entity.evidence_refs,
+                episode_id=episode_id,
+                target_shot_ids=target_shots,
+                target_utterance_ids=set(),
+            ),
+        }))
+    return PropResolutionContent(
+        entities=[*entities, *replacement.entities],
+        observations=[*previous_observations, *replacement.observations],
+    )
+
+
+def _merge_speaker_content(
+    inputs: P9Inputs,
+    episode_id: str,
+    previous: SpeakerResolutionContent,
+    replacement: SpeakerResolutionContent,
+    characters: CharacterResolutionContent,
+    historical_target_shots: set[str],
+) -> SpeakerResolutionContent:
+    target_utterance_ids = {
+        utterance.id
+        for context in inputs.contexts
+        if context.episode.id == episode_id
+        for utterance in context.dialogue
+    }
+    target_shots = {
+        shot.id
+        for context in inputs.contexts
+        if context.episode.id == episode_id
+        for shot in context.shot_anchors
+    } | historical_target_shots
+    previous_attributions = [
+        item for item in previous.attributions
+        if item.episode_id != episode_id and item.utterance_id not in target_utterance_ids
+    ]
+    previous_by_id = {item.speaker_id: item for item in previous.entities}
+    live_ids = {item.speaker_id for item in previous_attributions if item.speaker_id is not None}
+    valid_character_ids = {item.character_id for item in characters.entities}
+    entities: list[SpeakerEntity] = []
+    for speaker_id in sorted(live_ids):
+        entity = previous_by_id.get(speaker_id)
+        if entity is None:
+            continue
+        members = [item for item in previous_attributions if item.speaker_id == speaker_id]
+        utterance_ids = sorted({item.utterance_id for item in members})
+        entities.append(entity.model_copy(update={
+            "episode_ids": sorted({item.episode_id for item in members}),
+            "utterance_ids": utterance_ids,
+            "shot_anchor_ids": sorted(set(entity.shot_anchor_ids) - target_shots),
+            "character_id": entity.character_id if entity.character_id in valid_character_ids else None,
+            "evidence_refs": _filter_evidence_refs(
+                entity.evidence_refs,
+                episode_id=episode_id,
+                target_shot_ids=target_shots,
+                target_utterance_ids=target_utterance_ids,
+            ),
+        }))
+    return SpeakerResolutionContent(
+        entities=[*entities, *replacement.entities],
+        attributions=[*previous_attributions, *replacement.attributions],
+    )
+
+
+def _merge_scoped_execution_result(
+    *,
+    inputs: P9Inputs,
+    episode_id: str,
+    replacement: P9ExecutionResult,
+    previous: dict[SourceResolutionKind, tuple[ArtifactNode, Any, SourceResolutionProvenance]],
+) -> P9ExecutionResult:
+    previous_scenes = previous[SourceResolutionKind.SCENE][1]
+    historical_target_shots = {
+        item.shot_anchor_id
+        for item in previous_scenes.assignments
+        if item.episode_id == episode_id
+    }
+    characters = _merge_character_content(
+        inputs,
+        episode_id,
+        previous[SourceResolutionKind.CHARACTER][1],
+        replacement.characters,
+        historical_target_shots,
+    )
+    speakers = _merge_speaker_content(
+        inputs,
+        episode_id,
+        previous[SourceResolutionKind.SPEAKER][1],
+        replacement.speakers,
+        characters,
+        historical_target_shots,
+    )
+    scenes = _merge_scene_content(
+        inputs,
+        episode_id,
+        previous[SourceResolutionKind.SCENE][1],
+        replacement.scenes,
+        historical_target_shots,
+    )
+    props = _merge_prop_content(
+        inputs,
+        episode_id,
+        previous[SourceResolutionKind.PROP][1],
+        replacement.props,
+        historical_target_shots,
+    )
+    provider_jobs = {
+        kind: tuple(previous[kind][2].provider_jobs) + tuple(replacement.provider_jobs[kind])
+        for kind in SourceResolutionKind
+    }
+    return P9ExecutionResult(
+        characters=characters,
+        speakers=speakers,
+        scenes=scenes,
+        props=props,
+        provider_jobs=provider_jobs,
+        provider_profiles=replacement.provider_profiles,
+    )
+
+
 def _canonical_dialogue(inputs: P9Inputs) -> list[dict]:
     p8_speakers: dict[str, set[tuple[str, str]]] = {}
     for episode in inputs.facts_content.episodes:
@@ -776,6 +1087,7 @@ def _run_provider_skill(
             model=provider.model_name,
             capability=_KIND_CAPABILITY[kind],
             payload=job_payload,
+            episode_id=task.episode_id,
             artifact_id=inputs.facts.id,
             remote_call=lambda _job: _dispatch(provider, skill_id, payload),
         )
@@ -793,15 +1105,28 @@ def _run_provider_skill(
 
 def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P9ExecutionResult:
     with context.session_factory() as db:
-        inputs = _load_inputs(db, task.project_id)
+        all_inputs = _load_inputs(db, task.project_id)
         project = get_project(db, task.project_id)
         provider = _provider_for_project(project)
-        _assert_task_snapshot(db, task, inputs, provider)
+        _assert_task_snapshot(db, task, all_inputs, provider)
+        inputs = _scope_inputs(all_inputs, task.episode_id)
+        previous: dict[SourceResolutionKind, tuple[ArtifactNode, Any, SourceResolutionProvenance]] = {}
+        if task.episode_id is not None:
+            for kind in SourceResolutionKind:
+                bundle = _latest_resolution_revision(db, task.project_id, kind)
+                if bundle is None:
+                    raise AppError(
+                        "SOURCE_RESOLUTION_BASELINE_REQUIRED",
+                        "单集重新分析需要已有完整 P9 最终归一基线",
+                        status_code=409,
+                    )
+                previous[kind] = bundle
 
     jobs: dict[SourceResolutionKind, tuple[ResolutionProviderJobProvenance, ...]] = {}
     profiles: dict[SourceResolutionKind, dict] = {}
+    scope_label = task.episode_id or "ALL_FULL_EPISODES"
 
-    context.checkpoint({"stage": "character_resolution", "scope": "ALL_FULL_EPISODES"}, progress_percent=8)
+    context.checkpoint({"stage": "character_resolution", "scope": scope_label}, progress_percent=8)
     raw, job, profile = _run_provider_skill(
         context, task, inputs, provider, kind=SourceResolutionKind.CHARACTER, payload=_provider_input(inputs)
     )
@@ -810,7 +1135,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P9Execution
     jobs[SourceResolutionKind.CHARACTER] = (job,)
     profiles[SourceResolutionKind.CHARACTER] = profile
 
-    context.checkpoint({"stage": "speaker_attribution", "scope": "ALL_FULL_EPISODES"}, progress_percent=32)
+    context.checkpoint({"stage": "speaker_attribution", "scope": scope_label}, progress_percent=32)
     staged_character_fingerprint = _sha(characters.model_dump(mode="json"))
     raw, job, profile = _run_provider_skill(
         context,
@@ -826,7 +1151,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P9Execution
     jobs[SourceResolutionKind.SPEAKER] = (job,)
     profiles[SourceResolutionKind.SPEAKER] = profile
 
-    context.checkpoint({"stage": "scene_resolution", "scope": "ALL_FULL_EPISODES"}, progress_percent=54)
+    context.checkpoint({"stage": "scene_resolution", "scope": scope_label}, progress_percent=54)
     raw, job, profile = _run_provider_skill(
         context, task, inputs, provider, kind=SourceResolutionKind.SCENE, payload=_provider_input(inputs)
     )
@@ -835,7 +1160,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P9Execution
     jobs[SourceResolutionKind.SCENE] = (job,)
     profiles[SourceResolutionKind.SCENE] = profile
 
-    context.checkpoint({"stage": "prop_resolution", "scope": "ALL_FULL_EPISODES"}, progress_percent=76)
+    context.checkpoint({"stage": "prop_resolution", "scope": scope_label}, progress_percent=76)
     raw, job, profile = _run_provider_skill(
         context, task, inputs, provider, kind=SourceResolutionKind.PROP, payload=_provider_input(inputs)
     )
@@ -845,7 +1170,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P9Execution
     profiles[SourceResolutionKind.PROP] = profile
 
     context.checkpoint({"stage": "validate_p9_resolution_set"}, progress_percent=94)
-    return P9ExecutionResult(
+    result = P9ExecutionResult(
         characters=characters,
         speakers=speakers,
         scenes=scenes,
@@ -853,6 +1178,14 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> P9Execution
         provider_jobs=jobs,
         provider_profiles=profiles,
     )
+    if task.episode_id is not None:
+        result = _merge_scoped_execution_result(
+            inputs=all_inputs,
+            episode_id=task.episode_id,
+            replacement=result,
+            previous=previous,
+        )
+    return result
 
 
 def _episode_provenance(inputs: P9Inputs) -> list[ResolutionEpisodeInputProvenance]:
