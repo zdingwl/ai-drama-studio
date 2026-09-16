@@ -46,7 +46,7 @@ Task 成功只产生 NEEDS_REVIEW candidate；显式 ACCEPT 才发布 `TARGET_ST
 
 人物资产固定是一张横向生产参考板：**正面全身 + 侧面全身 + 背面全身 + 面部特写**。结构不能交给模型一次自由排版：Runtime 分别生成正面/侧面/背面单人全身图，使用同一身份 Prompt 与同一 base seed，再从正面图确定性裁出面部特写并固定合成四格参考板。人物关系等叙事事实不得自动变成额外人物。
 
-正式资产必须有真实 `reference_media`、受管存储路径、SHA256、宽高和 ProviderJob。`reference_media=[]` 不算完成。显式 ACCEPT 后发布 `TARGET_ASSETS v2`。
+正式资产必须有真实 `reference_media`、受管存储路径、SHA256、宽高和 ProviderJob。`reference_media=[]` 不算完成。生成完成后由服务端校验 `reference_media` 完整性与 CURRENT `TARGET_STORYBOARD` lineage；校验通过即自动发布 `TARGET_ASSETS v2`，普通用户不再执行整批“确认资产图”。用户直接检查结果，发现问题时显式重新生成或使用后续单资产重做能力纠正。
 
 ## Step 4 模型专属 Prompt Skill
 

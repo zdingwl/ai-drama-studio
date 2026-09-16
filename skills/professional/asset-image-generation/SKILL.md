@@ -24,7 +24,7 @@ Current Windows default:
 
 ```text
 Z-Image Turbo
-→ z-image-turbo-asset-prompting@1.1.0
+→ z-image-turbo-asset-prompting@1.2.0
 → local ComfyUI
 → z_image_turbo_bf16.safetensors
 ```
@@ -51,4 +51,4 @@ It is **three full-body views plus a face close-up**, not four full-body directi
 
 Text-only packets or `reference_media=[]` do not satisfy this skill. Generated media must be persisted in Studio storage and exposed as `TargetReferenceMedia` with SHA256 and dimensions.
 
-Human ACCEPT is required before publishing CURRENT TARGET_ASSETS v2.
+After generation, the server must validate managed `reference_media` completeness and CURRENT `TARGET_STORYBOARD` lineage. Validation success auto-publishes CURRENT `TARGET_ASSETS v2`; the ordinary asset workspace does not require a separate batch confirmation. Users inspect the published images directly and explicitly regenerate when correction is needed.

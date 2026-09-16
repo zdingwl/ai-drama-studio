@@ -154,7 +154,7 @@ def _references(
     if missing:
         raise AppError(
             "H3_PROMPT_ASSET_MISSING",
-            "本镜头引用的目标实体缺少已确认资产图",
+            "本镜头引用的目标实体缺少 CURRENT 正式资产图",
             status_code=409,
             details={"target_entity_ids": missing},
         )

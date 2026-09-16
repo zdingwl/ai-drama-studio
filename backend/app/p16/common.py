@@ -107,7 +107,7 @@ def load_inputs(db: Session, project) -> P16Inputs:
     if h3_prompt_row is None or storyboard_row is None or assets_row is None:
         raise AppError(
             "P16_FIVE_STEP_INPUT_REQUIRED",
-            "视频生成只接受五步主链结果：本土化分镜 + 已确认资产图 + 对应模型 Prompt Skill 输出",
+            "视频生成只接受五步主链结果：本土化分镜 + CURRENT 正式资产图 + 对应模型 Prompt Skill 输出",
             status_code=409,
         )
     storyboard = ReplicaLocalizedStoryboardContent.model_validate(storyboard_row.content_json)
