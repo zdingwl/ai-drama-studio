@@ -912,6 +912,18 @@ def run_h3_prompt_task(session_factory: sessionmaker[Session], task_id: str) -> 
             mark_task_failed(db, task.id, safe_error=f"H3 提示词生成失败（{type(exc).__name__}）", worker_id=worker_id)
 
 
+def _read_h3_prompt_provenance(raw: dict, artifact: ArtifactNode) -> H3PromptProvenance:
+    payload = dict(raw or {})
+    if "generation_sequence" not in payload:
+        metadata = artifact.metadata_json or {}
+        metadata_sequence = metadata.get("generation_sequence")
+        if isinstance(metadata_sequence, int) and not isinstance(metadata_sequence, bool) and metadata_sequence >= 1:
+            payload["generation_sequence"] = metadata_sequence
+        else:
+            payload["generation_sequence"] = max(1, artifact.revision)
+    return H3PromptProvenance.model_validate(payload)
+
+
 def get_h3_prompts(db: Session, project_id: str) -> H3PromptsRead:
     get_project(db, project_id)
     current = db.scalar(select(ArtifactNode).where(
@@ -933,5 +945,5 @@ def get_h3_prompts(db: Session, project_id: str) -> H3PromptsRead:
         revision=latest.revision,
         input_fingerprint=latest.input_fingerprint,
         content=ReplicaGenerationSegmentsContent.model_validate(row.content_json).model_dump(mode="json"),
-        provenance=H3PromptProvenance.model_validate(row.provenance_json),
+        provenance=_read_h3_prompt_provenance(row.provenance_json, latest),
     )

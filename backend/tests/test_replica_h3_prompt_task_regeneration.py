@@ -105,3 +105,48 @@ def test_explicit_h3_prompt_regeneration_creates_new_task_generation(
         assert second.checkpoint_json["h3_prompt_generation_sequence"] == 2
         assert repeated_second.id == second.id
         assert repeated_second.checkpoint_json["h3_prompt_generation_sequence"] == 2
+
+
+def _legacy_h3_provenance() -> dict:
+    return {
+        "target_storyboard_artifact_id": "storyboard-artifact",
+        "target_storyboard_revision": 1,
+        "target_storyboard_fingerprint": "a" * 64,
+        "target_assets_artifact_id": "assets-artifact",
+        "target_assets_revision": 1,
+        "target_assets_fingerprint": "b" * 64,
+        "professional_skill_id": "minimax-h3-prompting",
+        "professional_skill_version": "1.0.0",
+        "model_id": "MiniMaxAI/MiniMax-H3",
+        "prompt_contract": "minimax-h3-ref2va-v1",
+        "prompt_provider": "legacy-provider",
+        "prompt_model": "legacy-model",
+        "provider_jobs": [
+            {
+                "provider_job_id": "provider-job-1",
+                "provider": "legacy-provider",
+                "model": "legacy-model",
+                "payload_fingerprint": "c" * 64,
+            }
+        ],
+        "generated_by_task_id": "legacy-task",
+    }
+
+
+def test_read_legacy_h3_prompt_provenance_falls_back_to_artifact_revision() -> None:
+    raw = _legacy_h3_provenance()
+    artifact = SimpleNamespace(metadata_json={}, revision=3)
+
+    provenance = h3_prompting_module._read_h3_prompt_provenance(raw, artifact)
+
+    assert provenance.generation_sequence == 3
+    assert "generation_sequence" not in raw
+
+
+def test_read_legacy_h3_prompt_provenance_prefers_metadata_generation_sequence() -> None:
+    raw = _legacy_h3_provenance()
+    artifact = SimpleNamespace(metadata_json={"generation_sequence": 7}, revision=3)
+
+    provenance = h3_prompting_module._read_h3_prompt_provenance(raw, artifact)
+
+    assert provenance.generation_sequence == 7
