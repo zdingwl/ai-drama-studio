@@ -39,6 +39,23 @@ def _assert_supported_project(db: Session, project_id: str) -> None:
         )
 
 
+def _require_episode_id(episode_id: str | None) -> str:
+    """Enforce the episode-first contract at the HTTP boundary.
+
+    The legacy service still contains a project-wide execution branch. It must
+    not be reachable from the normal product API, otherwise a project with many
+    episodes can trigger an unnecessary whole-project analysis and exceed model
+    context limits.
+    """
+    if not episode_id or not episode_id.strip():
+        raise AppError(
+            "EPISODE_REQUIRED",
+            "原片分析必须指定单个 Episode，禁止执行全集分析",
+            status_code=422,
+        )
+    return episode_id
+
+
 @router.get("/projects/{project_id}/source-analysis", response_model=SourceAnalysisStatusRead)
 def get_source_analysis_route(
     project_id: str,
@@ -46,7 +63,8 @@ def get_source_analysis_route(
     db: Session = Depends(get_db),
 ) -> SourceAnalysisStatusRead:
     _assert_supported_project(db, project_id)
-    return get_source_analysis_status(db, project_id, episode_id=episode_id)
+    scoped_episode_id = _require_episode_id(episode_id)
+    return get_source_analysis_status(db, project_id, episode_id=scoped_episode_id)
 
 
 @router.post(
@@ -62,15 +80,16 @@ def start_source_analysis_route(
     db: Session = Depends(get_db),
 ) -> SourceAnalysisStatusRead:
     _assert_supported_project(db, project_id)
+    scoped_episode_id = _require_episode_id(episode_id)
     task = create_source_analysis_task(
         db,
         project_id=project_id,
         idempotency_key=idempotency_key,
-        episode_id=episode_id,
+        episode_id=scoped_episode_id,
     )
     if task is not None and task.status.value == "queued":
         background_tasks.add_task(run_source_analysis_task, _request_session_factory(db), task.id)
-    return get_source_analysis_status(db, project_id, episode_id=episode_id)
+    return get_source_analysis_status(db, project_id, episode_id=scoped_episode_id)
 
 
 @router.get("/projects/{project_id}/source-script", response_model=SourceScriptRead)
