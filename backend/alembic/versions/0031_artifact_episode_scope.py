@@ -15,22 +15,28 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "artifact_nodes",
-        sa.Column("episode_id", sa.String(36), nullable=True),
-    )
-    op.create_foreign_key(
-        "fk_artifact_nodes_episode_id",
-        "artifact_nodes",
-        "episodes",
-        ["episode_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
+    # SQLite does not support ALTER TABLE ADD CONSTRAINT. Use batch mode so
+    # Alembic can rebuild the table while preserving SQLite compatibility.
+    with op.batch_alter_table("artifact_nodes") as batch_op:
+        batch_op.add_column(
+            sa.Column("episode_id", sa.String(36), nullable=True),
+        )
+        batch_op.create_foreign_key(
+            "fk_artifact_nodes_episode_id",
+            "episodes",
+            ["episode_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
+
     op.create_index("ix_artifact_nodes_episode_id", "artifact_nodes", ["episode_id"])
 
 
 def downgrade() -> None:
     op.drop_index("ix_artifact_nodes_episode_id", table_name="artifact_nodes")
-    op.drop_constraint("fk_artifact_nodes_episode_id", "artifact_nodes", type_="foreignkey")
-    op.drop_column("artifact_nodes", "episode_id")
+    with op.batch_alter_table("artifact_nodes") as batch_op:
+        batch_op.drop_constraint(
+            "fk_artifact_nodes_episode_id",
+            type_="foreignkey",
+        )
+        batch_op.drop_column("episode_id")
