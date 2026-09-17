@@ -20,7 +20,7 @@ const query=ref('')
 const selectedSegmentId=ref('')
 let timer:number|undefined
 
-const task=computed(()=>tasks.value.find(item=>item.task_type===TASK_TYPE)??null)
+const task=computed(()=>[...tasks.value.filter(item=>item.task_type===TASK_TYPE)].sort((a,b)=>+new Date(b.created_at)-+new Date(a.created_at))[0]??null)
 const busy=computed(()=>action.value||task.value?.status==='queued'||task.value?.status==='running')
 const allSegments=computed(()=>prompts.value?.content?.segments??[])
 const segments=computed(()=>allSegments.value.filter(segment=>!episodeId.value||segment.episode_id===episodeId.value))
@@ -40,7 +40,7 @@ onBeforeUnmount(()=>{if(timer!==undefined)window.clearInterval(timer)})
 
 <template>
   <section class="workspace" data-testid="h3-prompt-workspace">
-    <header class="stage-header"><div class="stage-title"><h2>H3 提示词</h2><div v-if="prompts?.status==='CURRENT'&&prompts.content" class="header-meta"><span><b>{{ segments.length }}</b> 个生成段</span><span>{{ prompts.provenance?.model_id }}</span><span>{{ prompts.provenance?.professional_skill_id }}@{{ prompts.provenance?.professional_skill_version }}</span></div></div><div class="stage-actions"><label v-if="prompts?.status==='CURRENT'&&prompts.content" class="search"><span>⌕</span><input v-model="query" type="search" placeholder="搜索 Segment、对白或提示词" /></label><button type="button" :disabled="busy" @click="generate">{{ task?.status==='running'?`Skill 执行中 ${task.progress_percent}%`:prompts?.status==='CURRENT'?'重新生成 H3 提示词':'生成 H3 提示词' }}</button></div></header>
+    <header class="stage-header"><div class="stage-title"><h2>H3 提示词</h2><div v-if="prompts?.status==='CURRENT'&&prompts.content" class="header-meta"><span><b>{{ segments.length }}</b> 个生成段</span><span v-if="prompts.provenance?.generation_sequence">第 {{ prompts.provenance.generation_sequence }} 版</span><span>{{ prompts.provenance?.model_id }}</span><span>{{ prompts.provenance?.professional_skill_id }}@{{ prompts.provenance?.professional_skill_version }}</span></div></div><div class="stage-actions"><label v-if="prompts?.status==='CURRENT'&&prompts.content" class="search"><span>⌕</span><input v-model="query" type="search" placeholder="搜索 Segment、对白或提示词" /></label><button type="button" :disabled="busy" @click="generate">{{ task?.status==='running'?`Skill 执行中 ${task.progress_percent}%`:prompts?.status==='CURRENT'?'重新生成 H3 提示词':'生成 H3 提示词' }}</button></div></header>
     <p v-if="error" class="error">{{ error }}</p><p v-if="message" class="success">{{ message }}</p>
     <div v-if="prompts?.status!=='CURRENT'||!prompts.content" class="empty"><strong>{{ task?.last_error || '还没有正式 H3 提示词' }}</strong><span>必须先确认步骤 3 的真实资产图。</span></div>
     <template v-else>

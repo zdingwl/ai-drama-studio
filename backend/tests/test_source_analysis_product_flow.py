@@ -138,23 +138,26 @@ def test_source_analysis_get_is_read_only_and_one_command_creates_one_master_tas
 ) -> None:
     project = _project(client)
     source = _seed_source(session_factory, project)
+    with session_factory() as db:
+        episode = db.scalar(select(Episode).where(Episode.project_id == project["id"], Episode.episode_order == 1))
+        assert episode is not None
 
-    response = client.get(f'/api/v3/projects/{project["id"]}/source-analysis')
+    response = client.get(f'/api/v3/projects/{project["id"]}/source-analysis?episode_id={episode.id}')
     assert response.status_code == 200, response.text
     assert response.json()["state"] == "NOT_READY"
 
     with session_factory() as db:
         assert db.scalar(select(func.count(Task.id))) == 0
-        first = create_source_analysis_task(db, project_id=project["id"], idempotency_key="one-click-1")
+        first = create_source_analysis_task(db, project_id=project["id"], idempotency_key="one-click-1", episode_id=episode.id)
         assert first is not None
         assert first.task_type == SOURCE_ANALYSIS_TASK_TYPE
-        assert first.task_name == "解析原片"
+        assert first.task_name == "第 1 集：分析原片"
         assert first.status == TaskStatus.QUEUED
         assert first.input_artifact_ids_json == [source.id]
         first_id = first.id
 
     with session_factory() as db:
-        second = create_source_analysis_task(db, project_id=project["id"], idempotency_key="one-click-2")
+        second = create_source_analysis_task(db, project_id=project["id"], idempotency_key="one-click-2", episode_id=episode.id)
         assert second is not None
         assert second.id == first_id
         assert db.scalar(select(func.count(Task.id))) == 1

@@ -9,7 +9,7 @@ from uuid import uuid4
 import httpx
 from arkruntime import Ark
 from pydantic import SecretStr
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.artifacts.enums import ArtifactNamespace, ArtifactRelationType, ArtifactValidity
@@ -28,6 +28,7 @@ from app.p15.schemas import (
 from app.projects.enums import ProjectType, SourceUnderstandingProvider
 from app.projects.service import get_project
 from app.replica_pipeline.models import ReplicaAssetImageRevision, ReplicaH3PromptRevision, ReplicaLocalizedStoryboardRevision
+from app.replica_pipeline.character_visual_design import character_visual_design_skill
 from app.replica_pipeline.image_model_skills import selected_image_model_prompt_skill
 from app.replica_pipeline.schemas import (
     H3_PROMPT_SCHEMA_VERSION,
@@ -116,6 +117,7 @@ def _load_inputs(db: Session, project_id: str) -> tuple[ArtifactNode, ReplicaLoc
 def _asset_lookup(assets: ReplicaAssetImagesContent) -> dict[str, object]:
     lookup = {item.target_entity_id: item for item in assets.assets}
     binding, prompt_skill = selected_image_model_prompt_skill()
+    visual_skill = character_visual_design_skill()
     for entity_id, asset in lookup.items():
         if (
             asset.image_model_id != binding.model_id
@@ -137,6 +139,25 @@ def _asset_lookup(assets: ReplicaAssetImagesContent) -> dict[str, object]:
             )
         if not asset.reference_media:
             raise AppError("H3_PROMPT_REFERENCE_MISSING", "H3 Prompt 需要每个目标资产都有正式参考图", status_code=409, details={"target_entity_id": entity_id})
+        if asset.asset_type == TargetAssetType.CHARACTER and (
+            asset.character_visual_design is None
+            or asset.character_visual_skill_id != visual_skill.id
+            or asset.character_visual_skill_version != visual_skill.version
+        ):
+            raise AppError(
+                "H3_PROMPT_CHARACTER_VISUAL_CONTRACT_STALE",
+                "当前人物资产缺少最新 Character Visual Design 身份合同，请先在步骤 3 重新生成该人物资产",
+                status_code=409,
+                details={
+                    "target_entity_id": entity_id,
+                    "required_character_visual_skill": f"{visual_skill.id}@{visual_skill.version}",
+                    "actual_character_visual_skill": (
+                        f"{asset.character_visual_skill_id}@{asset.character_visual_skill_version}"
+                        if asset.character_visual_skill_id and asset.character_visual_skill_version
+                        else None
+                    ),
+                },
+            )
         if any(not media.storage_relpath for media in asset.reference_media):
             raise AppError("H3_PROMPT_REFERENCE_PATH_MISSING", "H3 Prompt 参考图缺少受管存储路径", status_code=409, details={"target_entity_id": entity_id})
     return lookup
@@ -666,14 +687,22 @@ def create_h3_prompt_task(db: Session, *, project_id: str, idempotency_key: str)
         "prompt_skill": [skill.id, skill.version],
         "prompt_contract": binding.prompt_contract,
         "prompt_provider": provider.profile(),
+        "generation_request": idempotency_key.strip(),
     })
-    return create_task_from_command(db, project_id=project_id, idempotency_key=idempotency_key, payload=TaskCommandCreate(
+    task = create_task_from_command(db, project_id=project_id, idempotency_key=idempotency_key, payload=TaskCommandCreate(
         task_type=TASK_TYPE,
         task_name="用 MiniMax H3 Prompt Skill 生成多参考音画提示词",
         input_fingerprint=fingerprint,
         input_artifact_ids=[storyboard_artifact.id, assets_artifact.id],
         max_attempts=3,
     ))
+    if task.status == TaskStatus.QUEUED and not (task.checkpoint_json or {}).get("h3_prompt_generation_sequence"):
+        sequence = int(db.scalar(select(func.count(Task.id)).where(Task.project_id == project_id, Task.task_type == TASK_TYPE)) or 0)
+        task.checkpoint_json = {**(task.checkpoint_json or {}), "h3_prompt_generation_sequence": max(1, sequence)}
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+    return task
 
 
 def _claim(db: Session, task_id: str, worker_id: str) -> Task | None:
@@ -723,6 +752,7 @@ def _publish(
         ArtifactNode.validity == ArtifactValidity.CURRENT,
     ))
     latest = _latest(db, task.project_id, ArtifactType.GENERATION_SEGMENTS)
+    generation_sequence = int((task.checkpoint_json or {}).get("h3_prompt_generation_sequence") or 1)
     if previous is not None:
         _mark_stale_with_downstream(db, [previous])
     artifact = ArtifactNode(
@@ -746,6 +776,7 @@ def _publish(
             "reference_count": sum(len(item.reference_conditions) for item in content.segments),
             "prompt_provider": provider.provider_name,
             "prompt_model": provider.model_name,
+            "generation_sequence": generation_sequence,
         },
     )
     db.add(artifact)
@@ -757,6 +788,7 @@ def _publish(
         target_assets_artifact_id=assets_artifact.id,
         target_assets_revision=assets_artifact.revision,
         target_assets_fingerprint=assets_artifact.input_fingerprint,
+        generation_sequence=generation_sequence,
         professional_skill_id=skill.id,
         professional_skill_version=skill.version,
         model_id=binding.model_id,

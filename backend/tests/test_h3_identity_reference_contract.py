@@ -35,6 +35,9 @@ def _asset(entity_id: str, asset_type: TargetAssetType, media: list):
         prompt_skill_id="z-image-turbo-asset-prompting",
         prompt_skill_version="1.5.0",
         prompt_contract="replica-assets-zimage-clean-positive-v5",
+        character_visual_design=SimpleNamespace(character_id=entity_id) if asset_type == TargetAssetType.CHARACTER else None,
+        character_visual_skill_id="character-visual-design" if asset_type == TargetAssetType.CHARACTER else None,
+        character_visual_skill_version="1.1.0" if asset_type == TargetAssetType.CHARACTER else None,
         reference_media=media,
     )
 
@@ -53,6 +56,12 @@ def test_old_character_asset_contract_is_stale_and_blocked_before_h3_prompting()
     with pytest.raises(AppError) as captured:
         _asset_lookup(SimpleNamespace(assets=[legacy]))
     assert captured.value.code == "H3_PROMPT_ASSET_CONTRACT_STALE"
+
+    missing_visual_design = SimpleNamespace(**{**current.__dict__, "character_visual_design": None})
+    assert _content_matches_current_asset_contract(SimpleNamespace(assets=[missing_visual_design])) is False
+    with pytest.raises(AppError) as missing_design_error:
+        _asset_lookup(SimpleNamespace(assets=[missing_visual_design]))
+    assert missing_design_error.value.code == "H3_PROMPT_CHARACTER_VISUAL_CONTRACT_STALE"
 
     missing_face = _asset("char-no-face", TargetAssetType.CHARACTER, [
         _media(ReferenceMediaRole.OTHER, "board-only"),

@@ -129,17 +129,24 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     assets = client.get("/api/v3/skills/professional/asset-image-generation")
     assert assets.status_code == 200
     assets_detail = assets.json()
-    assert assets_detail["version"] == "1.4.0"
+    assert assets_detail["version"] == "1.6.0"
     assert assets_detail["required_inputs"] == ["TARGET_STORYBOARD"]
     assert assets_detail["output_contracts"] == ["TARGET_ASSETS"]
     asset_rules = "\n".join(assets_detail["provider_rules"])
-    assert "Professional Prompt Skill" in asset_rules
-    assert "hybrid front-master identity strategy" in asset_rules
-    assert "Qwen Image Edit 2511" in asset_rules
+    assert "Character visual design must happen before model prompt compilation" in asset_rules
+    assert "cannot invent identity facts" in asset_rules
     assert "three full-body views plus a face close-up" in assets_detail["manual"]
     assert "identity master" in assets_detail["manual"]
     assert "Image 1" in assets_detail["manual"]
     assert "Z-Image Turbo" in assets_detail["manual"]
+
+    character_visual = client.get("/api/v3/skills/professional/character-visual-design")
+    assert character_visual.status_code == 200
+    character_visual_detail = character_visual.json()
+    assert character_visual_detail["version"] == "1.1.0"
+    assert character_visual_detail["required_inputs"] == ["TARGET_STORYBOARD"]
+    assert character_visual_detail["optional_inputs"] == ["TARGET_BIBLE"]
+    assert "CharacterVisualDesignPacket" in character_visual_detail["manual"]
 
     zimage = client.get("/api/v3/skills/professional/z-image-turbo-asset-prompting")
     assert zimage.status_code == 200

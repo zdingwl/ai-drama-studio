@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
 from app.p16.runtime import P16_SEGMENT_TASK_TYPE, P16_TASK_TYPE, replace_generation_task_for_retry_if_needed
+from app.replica_pipeline.asset_images import reconcile_asset_workspace_task_state
 from app.workflow.dispatcher import _runner_for_task
 from app.workflow.p4_acceptance import P4AcceptanceScenario, build_p4_acceptance_payload
 from app.workflow.schemas import TaskCommandCreate, TaskRead
@@ -96,7 +97,10 @@ def get_task_route(project_id: str, task_id: str, db: Session = Depends(get_db))
 
 @router.post("/projects/{project_id}/tasks/{task_id}/commands/cancel", response_model=TaskRead)
 def cancel_task_route(project_id: str, task_id: str, db: Session = Depends(get_db)) -> TaskRead:
-    return task_to_read(cancel_task(db, project_id, task_id))
+    task = cancel_task(db, project_id, task_id)
+    reconcile_asset_workspace_task_state(db, task)
+    db.commit()
+    return task_to_read(task)
 
 
 @router.post("/projects/{project_id}/tasks/{task_id}/commands/retry", response_model=TaskRead)
@@ -111,6 +115,8 @@ def retry_task_route(
         if replacement is not None:
             return task_to_read(replacement)
     task = retry_task(db, project_id, task_id)
+    reconcile_asset_workspace_task_state(db, task)
+    db.commit()
     return task_to_read(task)
 
 
@@ -126,4 +132,6 @@ def resume_task_route(
         if replacement is not None:
             return task_to_read(replacement)
     task = resume_task(db, project_id, task_id)
+    reconcile_asset_workspace_task_state(db, task)
+    db.commit()
     return task_to_read(task)

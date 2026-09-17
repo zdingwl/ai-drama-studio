@@ -67,13 +67,16 @@ Provider 不拥有 Artifact ID、target entity ID、时间轴或 source identity
 ```text
 CURRENT TARGET_STORYBOARD v2
 → 提取实际使用的 Character / Scene / Prop
-→ 当前图片模型对应 Professional Skill 分析该资产的本土化分镜证据
+→ Character 先执行 character-visual-design，将正式人物语义与分镜外观证据冻结为 CharacterVisualDesignPacket
+→ 当前图片模型对应 Professional Skill 只消费上游视觉合同并编译模型专属 Prompt
 → 编译 image_prompt / negative_prompt
 → Image Runtime 严格执行已编译提示词
 → 真实 reference_media
 ```
 
 禁止把人物卡长描述、人物关系、整段剧情说明直接拼进图片模型 Prompt。人物的“某人的丈夫 / 妻子 / 同事”等叙事关系只能作为上游语义事实存在；除非资产合同本身要求多人，否则不得因此在单人物资产图里生成第二个人。
+
+Character 的稳定脸型、五官、发型、肤色、体态、服装和识别点必须先由 `character-visual-design@1.1.0` 形成可审计 `CharacterVisualDesignPacket`。图片模型 Prompt Skill 不得绕过该包重新从人物关系、姓名或常识猜测身份细节。Step 3 的硬输入仍只有 CURRENT `TARGET_STORYBOARD v2`；如果存在 CURRENT `TARGET_BIBLE`，仅允许作为附加稳定身份约束，缺失时不得阻断五步主链。
 
 正式 `TARGET_ASSETS v2` 必须：
 
@@ -173,7 +176,7 @@ QC_SELECTION             = PLANNED
 → 用户点击“提取资产”
 → 展示本土化分镜实际引用的人物 / 场景 / 道具
 → 用户单选或多选资产
-→ Professional Skill + 模型专属 Prompt Skill 生成所选资产提示词
+→ Character Visual Design Skill（人物）+ 模型专属 Prompt Skill 生成所选资产提示词
 → 用户单选或多选已有提示词的资产
 → 图片任务进入持久化队列，严格逐个调用本地图片 Runtime
 → 每个资产完成后立即显示并自动采用最新结果

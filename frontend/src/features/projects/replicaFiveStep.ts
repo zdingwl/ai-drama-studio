@@ -81,6 +81,20 @@ export interface ReferenceMedia {
   storage_relpath: string | null
 }
 
+export interface CharacterVisualDesignPacket {
+  character_id: string
+  identity_summary: string
+  face_design: string
+  hair_design: string
+  body_design: string
+  wardrobe_design: string
+  style_direction: string
+  signature_features: string[]
+  positive_guidance: string[]
+  negative_constraints: string[]
+  continuity_rules: string[]
+}
+
 export interface AssetImageEntity {
   target_asset_id: string
   target_asset_revision: number
@@ -95,6 +109,10 @@ export interface AssetImageEntity {
   prompt_skill_id: string | null
   prompt_skill_version: string | null
   prompt_contract: string | null
+  character_visual_design?: CharacterVisualDesignPacket | null
+  character_visual_skill_id?: string | null
+  character_visual_skill_version?: string | null
+  character_visual_provider_job_id?: string | null
   reference_media: ReferenceMedia[]
 }
 
@@ -136,6 +154,10 @@ export interface AssetWorkspaceEntity {
   prompt_skill_id: string | null
   prompt_skill_version: string | null
   prompt_contract: string | null
+  character_visual_design?: CharacterVisualDesignPacket | null
+  character_visual_skill_id?: string | null
+  character_visual_skill_version?: string | null
+  character_visual_provider_job_id?: string | null
   prompt_status: 'NOT_STARTED' | 'QUEUED' | 'GENERATING' | 'READY' | 'FAILED'
   image_status: 'NOT_STARTED' | 'QUEUED' | 'GENERATING' | 'READY' | 'FAILED'
   last_error: string | null
@@ -198,7 +220,7 @@ export interface H3PromptsRead {
   artifact_id: string | null
   revision: number | null
   content: { target_storyboard_artifact_id: string; target_assets_artifact_id: string; segments: H3PromptSegment[] } | null
-  provenance: { professional_skill_id: string; professional_skill_version: string; model_id: string; prompt_contract: string; prompt_provider: string; prompt_model: string } | null
+  provenance: { generation_sequence?: number; professional_skill_id: string; professional_skill_version: string; model_id: string; prompt_contract: string; prompt_provider: string; prompt_model: string } | null
 }
 
 function key(prefix: string): string {

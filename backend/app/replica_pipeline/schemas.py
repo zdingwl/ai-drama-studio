@@ -250,6 +250,24 @@ class PipelineReviewCommand(BaseModel):
         return value
 
 
+class CharacterVisualDesignPacket(_StrictProvider):
+    character_id: str = Field(min_length=1, max_length=240)
+    identity_summary: str = Field(min_length=1, max_length=2400)
+    face_design: str = Field(min_length=1, max_length=2400)
+    hair_design: str = Field(min_length=1, max_length=1600)
+    body_design: str = Field(min_length=1, max_length=1600)
+    wardrobe_design: str = Field(min_length=1, max_length=2400)
+    style_direction: str = Field(min_length=1, max_length=1600)
+    signature_features: list[str] = Field(default_factory=list, max_length=24)
+    positive_guidance: list[str] = Field(default_factory=list, max_length=32)
+    negative_constraints: list[str] = Field(default_factory=list, max_length=32)
+    continuity_rules: list[str] = Field(default_factory=list, max_length=40)
+
+
+class CharacterVisualDesignAuthoringResult(_StrictProvider):
+    characters: list[CharacterVisualDesignPacket] = Field(min_length=1, max_length=24)
+
+
 class AssetImageEntity(BaseModel):
     target_asset_id: str
     target_asset_revision: int = Field(ge=1)
@@ -264,6 +282,10 @@ class AssetImageEntity(BaseModel):
     prompt_skill_id: str | None = None
     prompt_skill_version: str | None = None
     prompt_contract: str | None = None
+    character_visual_design: CharacterVisualDesignPacket | None = None
+    character_visual_skill_id: str | None = None
+    character_visual_skill_version: str | None = None
+    character_visual_provider_job_id: str | None = None
     reference_media: list[TargetReferenceMedia] = Field(min_length=1)
 
 
@@ -291,6 +313,9 @@ class AssetImageProvenance(BaseModel):
     prompt_provider: str | None = None
     prompt_model: str | None = None
     prompt_provider_job_ids: list[str] = Field(default_factory=list)
+    character_visual_skill_id: str | None = None
+    character_visual_skill_version: str | None = None
+    character_visual_provider_job_ids: list[str] = Field(default_factory=list)
     provider_job_ids: list[str] = Field(default_factory=list)
     image_runtime: str
     image_model: str
@@ -352,6 +377,10 @@ class AssetWorkspaceEntity(BaseModel):
     prompt_skill_id: str | None = None
     prompt_skill_version: str | None = None
     prompt_contract: str | None = None
+    character_visual_design: CharacterVisualDesignPacket | None = None
+    character_visual_skill_id: str | None = None
+    character_visual_skill_version: str | None = None
+    character_visual_provider_job_id: str | None = None
     prompt_status: str = "NOT_STARTED"
     image_status: str = "NOT_STARTED"
     last_error: str | None = None
@@ -404,6 +433,7 @@ class H3PromptProvenance(BaseModel):
     target_assets_artifact_id: str
     target_assets_revision: int
     target_assets_fingerprint: str
+    generation_sequence: int = Field(ge=1)
     professional_skill_id: str = "minimax-h3-prompting"
     professional_skill_version: str
     model_id: str = "MiniMaxAI/MiniMax-H3"

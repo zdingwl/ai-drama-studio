@@ -2,21 +2,24 @@
 
 ## Purpose
 
-The localized storyboard is the semantic source. Step 3 is explicitly a three-part pipeline:
+The localized storyboard is the semantic source. Step 3 is explicitly a four-part pipeline:
 
 ```text
 extract used assets
-→ execute the selected image model's Professional Prompt Skill against localized storyboard evidence
+→ CHARACTER only: execute character-visual-design to freeze a CharacterVisualDesignPacket
+→ execute the selected image model's Professional Prompt Skill against the visual packet / localized asset evidence
 → render the compiled prompt with the image Runtime
 ```
 
-The orchestration Skill must never skip the middle step by directly concatenating entity prose into a generic image prompt.
+The orchestration Skill must never skip Character Visual Design for a character and must never bypass the model-specific Prompt Skill by directly concatenating entity prose into a generic image prompt.
 
 ## Hard input
 
 Only CURRENT `TARGET_STORYBOARD v2` plus project visual style. Extract only Character / Scene / Prop entities actually referenced by shots or canonical target dialogue speaker bindings.
 
-For every extracted asset, gather the target entity definition and the localized visual descriptions of the shots that actually reference it. This is the evidence supplied to the model-specific image Prompt Skill.
+For every extracted asset, gather the target entity definition and localized visual descriptions of the shots that actually reference it. For Character assets this evidence first goes to `character-visual-design`; the resulting `CharacterVisualDesignPacket` is the only authoritative face / hair / body / wardrobe identity input supplied to the image-model Prompt Skill. Scene and Prop assets continue to pass their localized entity/evidence context directly to the image-model Prompt Skill.
+
+If a CURRENT `TARGET_BIBLE` exists, matching character identity / appearance / continuity fields may be added as optional stable identity evidence for Character Visual Design. Its absence must not block the five-step Step 3 flow.
 
 ## Current image model binding
 

@@ -118,11 +118,12 @@ def _authoring_prompt(payload: AssetPromptAuthorInput) -> str:
 Prompt Skill：{payload.skill.id}@{payload.skill.version}
 Prompt Contract：{payload.binding.prompt_contract}
 
-你收到的不是要原样塞进图片模型的人物小传，而是正式本土化分镜中已经提取好的资产和它实际出现的镜头视觉证据。你的职责是分析这些证据，只保留可观察的稳定视觉信息，然后编译成图片模型可以直接执行的最终提示词。
+你收到的是 Step 3 已经准备好的模型输入。CHARACTER 的稳定身份已经由 character-visual-design Skill 编译成 CharacterVisualDesignPacket；SCENE / PROP 仍然来自正式本土化分镜实体和镜头证据。你的职责只是把这些上游视觉合同翻译成图片模型可以直接执行的最终提示词。
 
 硬规则：
 - 必须逐项精确覆盖输入 target_entity_id，不得漏项、重复、增加、合并或拆分资产。
 - image_prompt 以具体清晰的英文为主，直接服务 {payload.binding.model_id}；review_prompt_zh 使用简体中文解释出图目标。
+- CHARACTER 输入必须包含 character_visual_design；它是脸型、五官、发型、肤色、体态、服装和稳定识别点的唯一权威视觉身份合同。不得从 display_name、人物关系、本土化分镜文字或常识自行增加、替换或修正身份细节。
 - 人物关系、婚姻、亲属、同事等叙事关系不能导致单人物资产图出现第二个人。
 - CHARACTER 的 image_prompt 只描述一个人物的稳定视觉身份：脸型五官、年龄感、发型发色、肤色、体态、基础服装轮廓/材质/颜色和标志性可见特征。不要要求模型自己排版三视图、四视图、reference sheet、contact sheet 或 face close-up。
 - CHARACTER 的 image_prompt 与 negative_prompt 都不要出现 multi-panel、turnaround、reference sheet、contact sheet、collage、split screen、front/side/back view、face close-up 等版式词，即使是否定句也不要写；这些词会激活 Z-Image Turbo 的角色设定表先验。Runtime 会自己加入单人朝向约束并负责最终四栏合成。
@@ -131,7 +132,7 @@ Prompt Contract：{payload.binding.prompt_contract}
 - PROP 只表现稳定物体身份、形态、尺度、材质、颜色和标志性细节，不加入无关人物/场景。
 - image_prompt 必须只写希望模型画出的正向视觉身份与构图，不得出现 `Do not`、`Avoid`、`Hard exclusions`，不得复制或改写 negative_prompt 列表。需要隔离时用正向构图语言，例如 one subject、empty hands、clean seamless studio background、typography-free image。
 - negative_prompt 必须独立返回，只用于审计和未来支持独立负向 conditioning 的 Adapter；当前 Runtime 不会把它拼回正向提示词。
-- CHARACTER 必须用有证据的具体词覆盖：脸型与五官结构、年龄可见特征、发型发色、肤色、体态比例、服装版型、材质、颜色以及至少一个稳定识别点。`natural facial features`、`average build` 等空泛词不能替代具体细节；证据不足时不得编造人物经历。
+- CHARACTER 必须完整翻译 character_visual_design 已明确的脸型与五官结构、年龄可见特征、发型发色、肤色、体态比例、服装版型、材质、颜色和稳定识别点；不得用 `natural facial features`、`average build` 等空泛词弱化上游设计，也不得补写上游没有定义的身份事实。
 - 不修改 target entity identity，不创造 Artifact/media/id，不生成视频提示词。
 - 只输出符合 JSON Schema 的 JSON object，不输出 Markdown 或额外解释。
 
@@ -141,7 +142,7 @@ Professional Skill rules：
 Professional Skill manual：
 {payload.skill.manual}
 
-待编译资产及本土化分镜证据：
+待编译模型输入（CHARACTER 为 CharacterVisualDesignPacket；SCENE / PROP 为本土化分镜实体与证据）：
 {json.dumps(payload.assets, ensure_ascii=False, separators=(",", ":"))}
 
 输出 JSON Schema：

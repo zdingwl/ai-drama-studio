@@ -30,6 +30,14 @@ from app.replica_pipeline.asset_prompting import (
     asset_prompt_author_provider,
     validate_authored_asset_batch,
 )
+from app.replica_pipeline.character_visual_design import (
+    MAX_CHARACTER_VISUAL_BATCH_SIZE,
+    CharacterVisualDesignInput,
+    CharacterVisualDesignResult,
+    character_visual_design_provider,
+    character_visual_design_skill,
+    validate_character_visual_design_batch,
+)
 from app.replica_pipeline.image_model_skills import selected_character_edit_prompt_skill, selected_image_model_prompt_skill
 from app.replica_pipeline.models import ReplicaAssetImageCandidate, ReplicaAssetImageRevision, ReplicaAssetWorkspace, ReplicaLocalizedStoryboardRevision
 from app.replica_pipeline.schemas import (
@@ -44,6 +52,7 @@ from app.replica_pipeline.schemas import (
     AssetWorkspaceRead,
     AssetImagesRead,
     CandidateStatus,
+    CharacterVisualDesignPacket,
     PipelineReviewCommand,
     ReplicaAssetImagesContent,
     ReplicaLocalizedStoryboardContent,
@@ -52,6 +61,8 @@ from app.replica_pipeline.schemas import (
 from app.skills.models import ArtifactType, Capability
 from app.skills.professional import get_professional_skill
 from app.target_assets.schemas import ReferenceMediaRole, TargetAssetType, TargetReferenceMedia
+from app.target_bible.models import ReplicaTargetRevision
+from app.target_bible.schemas import ReplicaTargetBibleContent, TargetBibleArtifactKind
 from app.workflow.models import ProviderJob, ProviderJobStatus, Task, TaskStatus
 from app.workflow.provider_service import ProviderDispatchResult, dispatch_provider_call, provider_payload_fingerprint
 from app.workflow.schemas import TaskCommandCreate, TaskWorkerRead
@@ -635,7 +646,33 @@ def _load_storyboard(db: Session, project_id: str) -> tuple[ArtifactNode, Replic
     return artifact, ReplicaLocalizedStoryboardContent.model_validate(row.content_json)
 
 
-def _entity_specs(content: ReplicaLocalizedStoryboardContent, visual_style: str) -> list[dict]:
+def _optional_target_bible_characters(db: Session, project_id: str) -> dict[str, dict]:
+    """Return optional stable character identity evidence without making legacy P11 a Step 3 gate."""
+    artifact = _current_artifact(db, project_id, ArtifactType.TARGET_BIBLE)
+    if artifact is None:
+        return {}
+    row = db.scalar(select(ReplicaTargetRevision).where(ReplicaTargetRevision.artifact_id == artifact.id))
+    if row is None or row.artifact_kind != TargetBibleArtifactKind.TARGET_BIBLE.value:
+        raise AppError("ASSET_IMAGES_TARGET_BIBLE_CONTENT_INVALID", "CURRENT TARGET_BIBLE 缺少有效 typed revision", status_code=500)
+    content = ReplicaTargetBibleContent.model_validate(row.content_json)
+    return {
+        item.target_character_id: {
+            "target_bible_artifact_id": artifact.id,
+            "display_name": item.display_name,
+            "localized_identity": item.localized_identity,
+            "appearance_direction": item.appearance_direction,
+            "continuity_rules": list(item.continuity_rules),
+        }
+        for item in content.characters
+    }
+
+
+def _entity_specs(
+    content: ReplicaLocalizedStoryboardContent,
+    visual_style: str,
+    target_bible_characters: dict[str, dict] | None = None,
+) -> list[dict]:
+    target_bible_characters = target_bible_characters or {}
     referenced_characters = {
         entity_id
         for shot in content.shots
@@ -703,15 +740,14 @@ def _entity_specs(content: ReplicaLocalizedStoryboardContent, visual_style: str)
             "review_zh": review_zh,
             "width": CHARACTER_WIDTH,
             "height": CHARACTER_HEIGHT,
-            "prompt_context": {
-                "target_entity_id": item.target_character_id,
-                "asset_type": TargetAssetType.CHARACTER.value,
+            "character_design_context": {
+                "character_id": item.target_character_id,
                 "display_name": item.display_name,
-                "review_definition_zh": review_zh,
-                "identity_description_zh": item.identity_description_zh,
-                "appearance_description_zh": item.appearance_description_zh,
+                "localized_storyboard_identity": item.identity_description_zh,
+                "localized_storyboard_appearance": item.appearance_description_zh,
                 "visual_style": visual_style,
                 "storyboard_evidence": _evidence(item.target_character_id, TargetAssetType.CHARACTER),
+                "optional_target_bible": target_bible_characters.get(item.target_character_id),
             },
         })
     for item in content.scenes:
@@ -761,6 +797,25 @@ def _entity_specs(content: ReplicaLocalizedStoryboardContent, visual_style: str)
     return specs
 
 
+def _model_prompt_context(spec: dict, character_visual_design: CharacterVisualDesignPacket | None = None) -> dict:
+    if spec["asset_type"] != TargetAssetType.CHARACTER:
+        return dict(spec["prompt_context"])
+    if character_visual_design is None:
+        raise AppError(
+            "ASSET_IMAGE_CHARACTER_VISUAL_DESIGN_REQUIRED",
+            "人物资产必须先完成 Character Visual Design，再编译图片模型 Prompt",
+            status_code=409,
+            details={"target_entity_id": spec["entity_id"]},
+        )
+    return {
+        "target_entity_id": spec["entity_id"],
+        "asset_type": TargetAssetType.CHARACTER.value,
+        "display_name": spec["display_name"],
+        "visual_style": spec["character_design_context"]["visual_style"],
+        "character_visual_design": character_visual_design.model_dump(mode="json"),
+    }
+
+
 def get_asset_workspace(db: Session, project_id: str) -> AssetWorkspaceRead:
     get_project(db, project_id)
     storyboard = _current_artifact(db, project_id, ArtifactType.TARGET_STORYBOARD)
@@ -777,7 +832,7 @@ def extract_asset_workspace(db: Session, project_id: str) -> AssetWorkspaceRead:
         raise AppError("ASSET_IMAGES_PROJECT_UNSUPPORTED", "当前五步主生产链只正式支持 REPLICA", status_code=422)
     storyboard_artifact, storyboard = _load_storyboard(db, project_id)
     visual_style = project.visual_style or "写实电影感"
-    specs = _entity_specs(storyboard, visual_style)
+    specs = _entity_specs(storyboard, visual_style, _optional_target_bible_characters(db, project_id))
     if not specs:
         raise AppError("ASSET_IMAGES_EMPTY", "本土化分镜没有可提取的人物、场景或道具", status_code=409)
     existing = db.scalar(select(ReplicaAssetWorkspace).where(ReplicaAssetWorkspace.project_id == project_id))
@@ -826,8 +881,25 @@ def create_asset_workspace_task(db: Session, *, project_id: str, idempotency_key
         ComfyUIZImageTurboRuntime().assert_ready()
         if any(not by_id[asset_id].image_prompt for asset_id in target_asset_ids):
             raise AppError("ASSET_WORKSPACE_PROMPT_MISSING", "请先为所选资产生成提示词", status_code=409)
+        visual_skill = character_visual_design_skill()
+        stale_characters = [
+            asset_id for asset_id in target_asset_ids
+            if by_id[asset_id].asset_type == TargetAssetType.CHARACTER and (
+                by_id[asset_id].character_visual_design is None
+                or by_id[asset_id].character_visual_skill_id != visual_skill.id
+                or by_id[asset_id].character_visual_skill_version != visual_skill.version
+            )
+        ]
+        if stale_characters:
+            raise AppError(
+                "ASSET_WORKSPACE_CHARACTER_VISUAL_DESIGN_MISSING",
+                "人物资产缺少当前版本角色视觉设计，请先重新生成所选人物提示词",
+                status_code=409,
+                details={"asset_ids": stale_characters},
+            )
     task_type = ASSET_PROMPT_TASK_TYPE if operation == "prompts" else TASK_TYPE
-    fingerprint = _sha({"storyboard": storyboard_artifact.input_fingerprint, "workspace_revision": workspace.revision, "operation": operation, "asset_ids": target_asset_ids, "request": idempotency_key})
+    visual_skill = character_visual_design_skill()
+    fingerprint = _sha({"storyboard": storyboard_artifact.input_fingerprint, "workspace_revision": workspace.revision, "operation": operation, "asset_ids": target_asset_ids, "character_visual_skill": [visual_skill.id, visual_skill.version], "request": idempotency_key})
     task = create_task_from_command(db, project_id=project_id, idempotency_key=idempotency_key, payload=TaskCommandCreate(task_type=task_type, task_name="生成资产提示词" if operation == "prompts" else "顺序生成资产图片", input_fingerprint=fingerprint, input_artifact_ids=[storyboard_artifact.id], max_attempts=3))
     if task.status == TaskStatus.QUEUED:
         task.checkpoint_json = {"operation": operation, "target_asset_ids": target_asset_ids, "workspace_revision": workspace.revision}
@@ -848,11 +920,15 @@ def create_asset_images_task(db: Session, *, project_id: str, idempotency_key: s
     runtime = ComfyUIZImageTurboRuntime(); runtime.assert_ready()
     binding, prompt_skill = selected_image_model_prompt_skill()
     prompt_provider = asset_prompt_author_provider()
+    visual_skill = character_visual_design_skill()
+    visual_provider = character_visual_design_provider()
     fingerprint_payload = {
         "storyboard": storyboard_artifact.input_fingerprint,
         "visual_style": project.visual_style,
         "runtime": runtime.profile(),
         "orchestration_skill": get_professional_skill(SKILL_ID).version,
+        "character_visual_skill": [visual_skill.id, visual_skill.version],
+        "character_visual_provider": visual_provider.profile(),
         "prompt_skill": [prompt_skill.id, prompt_skill.version, binding.prompt_contract],
         "prompt_provider": prompt_provider.profile(),
     }
@@ -866,6 +942,79 @@ def create_asset_images_task(db: Session, *, project_id: str, idempotency_key: s
 def _generation_sequence(db: Session, project_id: str, storyboard_artifact_id: str) -> int:
     latest = db.scalar(select(func.max(ReplicaAssetImageCandidate.generation_sequence)).where(ReplicaAssetImageCandidate.project_id == project_id, ReplicaAssetImageCandidate.target_storyboard_artifact_id == storyboard_artifact_id))
     return int(latest or 0) + 1
+
+
+def _author_character_visual_designs(
+    context: TaskExecutionContext,
+    task: TaskWorkerRead,
+    storyboard_artifact: ArtifactNode,
+    specs: list[dict],
+    *,
+    progress_start: int = 4,
+    progress_end: int = 24,
+) -> tuple[dict[str, tuple[CharacterVisualDesignPacket, str]], list[str]]:
+    character_specs = [spec for spec in specs if spec["asset_type"] == TargetAssetType.CHARACTER]
+    if not character_specs:
+        return {}, []
+    skill = character_visual_design_skill()
+    provider = character_visual_design_provider()
+    authored: dict[str, tuple[CharacterVisualDesignPacket, str]] = {}
+    provider_job_ids: list[str] = []
+    batches = [
+        character_specs[index:index + MAX_CHARACTER_VISUAL_BATCH_SIZE]
+        for index in range(0, len(character_specs), MAX_CHARACTER_VISUAL_BATCH_SIZE)
+    ]
+    for batch_index, batch in enumerate(batches, 1):
+        payload = CharacterVisualDesignInput(
+            skill=skill,
+            characters=tuple(spec["character_design_context"] for spec in batch),
+        )
+        provider_payload = {
+            "target_storyboard_artifact_id": storyboard_artifact.id,
+            "character_visual_skill": [skill.id, skill.version],
+            "batch_index": batch_index,
+            "batch_count": len(batches),
+            "character_ids": [spec["entity_id"] for spec in batch],
+            "semantic_payload_fingerprint": _sha(payload.characters),
+            "provider_profile": provider.profile(),
+        }
+
+        def _remote(_, current_payload=payload):
+            result = provider.design(current_payload)
+            return ProviderDispatchResult(value=result, remote_job_id=result.remote_job_id)
+
+        with context.session_factory() as db:
+            job, dispatched = dispatch_provider_call(
+                db,
+                task_id=task.id,
+                provider=provider.provider_name,
+                model=provider.model_name,
+                capability=Capability.MODEL_PROMPTING,
+                payload=provider_payload,
+                artifact_id=storyboard_artifact.id,
+                remote_call=_remote,
+            )
+        result: CharacterVisualDesignResult = dispatched.value
+        batch_authored = validate_character_visual_design_batch(
+            [spec["character_design_context"] for spec in batch],
+            result.content,
+        )
+        for character_id, packet in batch_authored.items():
+            authored[character_id] = (packet, job.id)
+        provider_job_ids.append(job.id)
+        progress = progress_start + math.floor(batch_index / len(batches) * max(1, progress_end - progress_start))
+        context.checkpoint(
+            {
+                **(task.checkpoint_json or {}),
+                "stage": "character-visual-design",
+                "character_visual_skill": f"{skill.id}@{skill.version}",
+                "character_visual_provider_job_ids": provider_job_ids,
+                "completed_character_visual_batches": batch_index,
+                "character_visual_batch_count": len(batches),
+            },
+            progress_percent=min(progress_end, progress),
+        )
+    return authored, provider_job_ids
 
 
 def _reusable_generated_image(
@@ -910,8 +1059,23 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
         project = get_project(db, task.project_id)
         storyboard_artifact, storyboard = _load_storyboard(db, task.project_id)
         sequence = _generation_sequence(db, task.project_id, storyboard_artifact.id)
-    specs = _entity_specs(storyboard, project.visual_style or "写实电影感")
+        target_bible_characters = _optional_target_bible_characters(db, task.project_id)
+    specs = _entity_specs(storyboard, project.visual_style or "写实电影感", target_bible_characters)
     if not specs: raise AppError("ASSET_IMAGES_EMPTY", "本土化分镜没有可提取的人物、场景或道具", status_code=409)
+    visual_skill = character_visual_design_skill()
+    visual_designs, character_visual_provider_job_ids = _author_character_visual_designs(
+        context,
+        task,
+        storyboard_artifact,
+        specs,
+    )
+    model_prompt_contexts = {
+        spec["entity_id"]: _model_prompt_context(
+            spec,
+            visual_designs.get(spec["entity_id"], (None, ""))[0],
+        )
+        for spec in specs
+    }
     binding, prompt_skill = selected_image_model_prompt_skill()
     prompt_provider = asset_prompt_author_provider()
     authored_by_id = {}
@@ -921,7 +1085,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
         prompt_input = AssetPromptAuthorInput(
             binding=binding,
             skill=prompt_skill,
-            assets=tuple(spec["prompt_context"] for spec in batch),
+            assets=tuple(model_prompt_contexts[spec["entity_id"]] for spec in batch),
         )
         prompt_job_payload = {
             "target_storyboard_artifact_id": storyboard_artifact.id,
@@ -951,7 +1115,7 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
                 remote_call=_prompt_remote,
             )
         prompt_result: AssetPromptAuthorResult = prompt_dispatched.value
-        authored_by_id.update(validate_authored_asset_batch([spec["prompt_context"] for spec in batch], prompt_result.content))
+        authored_by_id.update(validate_authored_asset_batch([model_prompt_contexts[spec["entity_id"]] for spec in batch], prompt_result.content))
         prompt_provider_job_ids.append(prompt_job.id)
         context.checkpoint(
             {
@@ -962,13 +1126,14 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
                 "prompt_batch_count": len(prompt_batches),
                 "total_assets": len(specs),
             },
-            progress_percent=min(28, 5 + math.floor(batch_index / len(prompt_batches) * 23)),
+            progress_percent=min(44, 24 + math.floor(batch_index / len(prompt_batches) * 20)),
         )
     assets: list[AssetImageEntity] = []
     provider_job_ids: list[str] = []
     for index, spec in enumerate(specs, 1):
         asset_id = _asset_id(task.project_id, spec["entity_id"])
         authored = authored_by_id[spec["entity_id"]]
+        visual_design, visual_provider_job_id = visual_designs.get(spec["entity_id"], (None, None))
         with context.session_factory() as db:
             job_payload = {
                 "target_storyboard_artifact_id": storyboard_artifact.id,
@@ -1036,9 +1201,13 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
             prompt_skill_id=prompt_skill.id,
             prompt_skill_version=prompt_skill.version,
             prompt_contract=binding.prompt_contract,
+            character_visual_design=visual_design,
+            character_visual_skill_id=visual_skill.id if visual_design is not None else None,
+            character_visual_skill_version=visual_skill.version if visual_design is not None else None,
+            character_visual_provider_job_id=visual_provider_job_id,
             reference_media=reference_media,
         ))
-        context.checkpoint({"stage": "image-runtime", "generation_sequence": sequence, "generated_assets": index, "total_assets": len(specs), "prompt_provider_job_ids": prompt_provider_job_ids, "provider_job_ids": provider_job_ids}, progress_percent=min(95, 30 + math.floor(index / len(specs) * 65)))
+        context.checkpoint({"stage": "image-runtime", "generation_sequence": sequence, "generated_assets": index, "total_assets": len(specs), "character_visual_provider_job_ids": character_visual_provider_job_ids, "prompt_provider_job_ids": prompt_provider_job_ids, "provider_job_ids": provider_job_ids}, progress_percent=min(95, 44 + math.floor(index / len(specs) * 51)))
     content = ReplicaAssetImagesContent(target_storyboard_artifact_id=storyboard_artifact.id, target_language=storyboard.target_language, target_region=storyboard.target_region, visual_style=project.visual_style or "写实电影感", assets=assets)
     skill = get_professional_skill(SKILL_ID)
     provenance = AssetImageProvenance(
@@ -1054,6 +1223,9 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
         prompt_provider=prompt_provider.provider_name,
         prompt_model=prompt_provider.model_name,
         prompt_provider_job_ids=prompt_provider_job_ids,
+        character_visual_skill_id=visual_skill.id,
+        character_visual_skill_version=visual_skill.version,
+        character_visual_provider_job_ids=character_visual_provider_job_ids,
         provider_job_ids=provider_job_ids,
         image_runtime=runtime.provider_name,
         image_model=runtime.pipeline_model_name,
@@ -1080,7 +1252,7 @@ def _workspace_inputs(db: Session, task: TaskWorkerRead) -> tuple[ReplicaAssetWo
     assets = {asset.target_asset_id: asset for asset in content.assets}
     if not selected_ids or any(asset_id not in assets for asset_id in selected_ids):
         raise AppError("ASSET_WORKSPACE_SELECTION_INVALID", "资产任务选择已经失效", status_code=409)
-    all_specs = _entity_specs(storyboard, content.visual_style)
+    all_specs = _entity_specs(storyboard, content.visual_style, _optional_target_bible_characters(db, task.project_id))
     spec_by_asset_id = {_asset_id(task.project_id, spec["entity_id"]): spec for spec in all_specs}
     return workspace, content, storyboard_artifact, storyboard, [spec_by_asset_id[asset_id] for asset_id in selected_ids]
 
@@ -1088,6 +1260,40 @@ def _workspace_inputs(db: Session, task: TaskWorkerRead) -> tuple[ReplicaAssetWo
 def _run_workspace_prompts(context: TaskExecutionContext, task: TaskWorkerRead) -> None:
     with context.session_factory() as db:
         workspace, content, storyboard_artifact, _, specs = _workspace_inputs(db, task)
+    visual_skill = character_visual_design_skill()
+    visual_designs, _ = _author_character_visual_designs(
+        context,
+        task,
+        storyboard_artifact,
+        specs,
+        progress_start=4,
+        progress_end=28,
+    )
+    if visual_designs:
+        with context.session_factory() as db:
+            workspace, latest, _, _, _ = _workspace_inputs(db, task)
+            for asset in latest.assets:
+                authored = visual_designs.get(asset.target_entity_id)
+                if authored is None:
+                    continue
+                packet, provider_job_id = authored
+                asset.character_visual_design = packet
+                asset.character_visual_skill_id = visual_skill.id
+                asset.character_visual_skill_version = visual_skill.version
+                asset.character_visual_provider_job_id = provider_job_id
+            workspace.revision += 1
+            workspace.content_json = latest.model_dump(mode="json")
+            workspace.updated_at = utc_now()
+            db.add(workspace)
+            db.commit()
+            content = latest
+    model_prompt_contexts = {
+        spec["entity_id"]: _model_prompt_context(
+            spec,
+            visual_designs.get(spec["entity_id"], (None, ""))[0],
+        )
+        for spec in specs
+    }
     binding, prompt_skill = selected_image_model_prompt_skill()
     provider = asset_prompt_author_provider()
     authored_by_id: dict[str, AssetImagePromptAuthoredEntity] = {}
@@ -1102,7 +1308,7 @@ def _run_workspace_prompts(context: TaskExecutionContext, task: TaskWorkerRead) 
         # Provider calls do not stream token progress. Persist a visible dispatch
         # milestone before the blocking request so the page never sits at a
         # misleading 0% while Ark is actively processing the batch.
-        dispatch_progress = min(90, max(5, math.floor((batch_index - 1) / len(batches) * 90) + 5))
+        dispatch_progress = min(90, max(30, math.floor((batch_index - 1) / len(batches) * 60) + 30))
         context.checkpoint(
             {
                 **task.checkpoint_json,
@@ -1111,7 +1317,7 @@ def _run_workspace_prompts(context: TaskExecutionContext, task: TaskWorkerRead) 
             },
             progress_percent=dispatch_progress,
         )
-        prompt_input = AssetPromptAuthorInput(binding=binding, skill=prompt_skill, assets=tuple(spec["prompt_context"] for spec in batch))
+        prompt_input = AssetPromptAuthorInput(binding=binding, skill=prompt_skill, assets=tuple(model_prompt_contexts[spec["entity_id"]] for spec in batch))
         payload = {"target_storyboard_artifact_id": storyboard_artifact.id, "image_model": binding.model_id, "prompt_skill": [prompt_skill.id, prompt_skill.version], "prompt_contract": binding.prompt_contract, "batch_index": batch_index, "batch_count": len(batches), "target_entity_ids": [spec["entity_id"] for spec in batch], "semantic_payload_fingerprint": _sha(prompt_input.assets), "provider_profile": provider.profile()}
         def _remote(_, current_input=prompt_input):
             result = provider.author(current_input)
@@ -1119,7 +1325,7 @@ def _run_workspace_prompts(context: TaskExecutionContext, task: TaskWorkerRead) 
         with context.session_factory() as db:
             _, dispatched = dispatch_provider_call(db, task_id=task.id, provider=provider.provider_name, model=provider.model_name, capability=Capability.ASSET_IMAGE_GENERATION, payload=payload, artifact_id=storyboard_artifact.id, remote_call=_remote)
         result: AssetPromptAuthorResult = dispatched.value
-        batch_authored = validate_authored_asset_batch([spec["prompt_context"] for spec in batch], result.content)
+        batch_authored = validate_authored_asset_batch([model_prompt_contexts[spec["entity_id"]] for spec in batch], result.content)
         authored_by_id.update(batch_authored)
         with context.session_factory() as db:
             workspace, latest, _, _, _ = _workspace_inputs(db, task)
@@ -1135,7 +1341,7 @@ def _run_workspace_prompts(context: TaskExecutionContext, task: TaskWorkerRead) 
                 current_assets = _current_artifact(db, task.project_id, ArtifactType.TARGET_ASSETS)
                 if current_assets is not None: _mark_stale_with_downstream(db, [current_assets])
             workspace.revision += 1; workspace.content_json = latest.model_dump(mode="json"); workspace.updated_at = utc_now(); db.add(workspace); db.commit()
-        context.checkpoint({**task.checkpoint_json, "completed_prompt_batches": batch_index, "prompt_batch_count": len(batches)}, progress_percent=math.floor(batch_index / len(batches) * 95))
+        context.checkpoint({**task.checkpoint_json, "completed_prompt_batches": batch_index, "prompt_batch_count": len(batches)}, progress_percent=28 + math.floor(batch_index / len(batches) * 67))
     with context.session_factory() as db:
         workspace, content, _, _, _ = _workspace_inputs(db, task)
         prompt_changed = False
@@ -1168,13 +1374,81 @@ def _publish_workspace_if_complete(db: Session, *, task: TaskWorkerRead, workspa
     if any(not _active_media(asset) for asset in content.assets):
         return
     binding, prompt_skill = selected_image_model_prompt_skill()
+    visual_skill = character_visual_design_skill()
+    prompt_provider = asset_prompt_author_provider()
+    for asset in content.assets:
+        if (
+            asset.image_model_id != binding.model_id
+            or asset.prompt_skill_id != prompt_skill.id
+            or asset.prompt_skill_version != prompt_skill.version
+            or asset.prompt_contract != binding.prompt_contract
+        ):
+            return
+        if asset.asset_type == TargetAssetType.CHARACTER and (
+            asset.character_visual_design is None
+            or asset.character_visual_skill_id != visual_skill.id
+            or asset.character_visual_skill_version != visual_skill.version
+        ):
+            return
     storyboard = db.get(ArtifactNode, content.target_storyboard_artifact_id)
     if storyboard is None:
         raise AppError("ASSET_WORKSPACE_STALE", "本土化分镜已经失效", status_code=409)
-    assets = [AssetImageEntity(target_asset_id=asset.target_asset_id, target_asset_revision=max(1, len(asset.generations)), asset_type=asset.asset_type, target_entity_id=asset.target_entity_id, display_name=asset.display_name, review_description_zh=asset.review_description_zh, image_prompt=asset.image_prompt or "", negative_prompt=asset.negative_prompt, prompt_review_zh=asset.prompt_review_zh, image_model_id=asset.image_model_id, prompt_skill_id=asset.prompt_skill_id, prompt_skill_version=asset.prompt_skill_version, prompt_contract=asset.prompt_contract, reference_media=_active_media(asset)) for asset in content.assets]
+    assets = [
+        AssetImageEntity(
+            target_asset_id=asset.target_asset_id,
+            target_asset_revision=max(1, len(asset.generations)),
+            asset_type=asset.asset_type,
+            target_entity_id=asset.target_entity_id,
+            display_name=asset.display_name,
+            review_description_zh=asset.review_description_zh,
+            image_prompt=asset.image_prompt or "",
+            negative_prompt=asset.negative_prompt,
+            prompt_review_zh=asset.prompt_review_zh,
+            image_model_id=asset.image_model_id,
+            prompt_skill_id=asset.prompt_skill_id,
+            prompt_skill_version=asset.prompt_skill_version,
+            prompt_contract=asset.prompt_contract,
+            character_visual_design=asset.character_visual_design,
+            character_visual_skill_id=asset.character_visual_skill_id,
+            character_visual_skill_version=asset.character_visual_skill_version,
+            character_visual_provider_job_id=asset.character_visual_provider_job_id,
+            reference_media=_active_media(asset),
+        )
+        for asset in content.assets
+    ]
     formal = ReplicaAssetImagesContent(target_storyboard_artifact_id=storyboard.id, target_language=content.target_language, target_region=content.target_region, visual_style=content.visual_style, assets=assets)
     sequence = _generation_sequence(db, task.project_id, storyboard.id)
-    provenance = AssetImageProvenance(target_storyboard_artifact_id=storyboard.id, target_storyboard_revision=storyboard.revision, target_storyboard_fingerprint=storyboard.input_fingerprint, generation_sequence=sequence, professional_skill_version=get_professional_skill(SKILL_ID).version, image_model_id=binding.model_id, prompt_skill_id=prompt_skill.id, prompt_skill_version=prompt_skill.version, prompt_contract=binding.prompt_contract, prompt_provider=asset_prompt_author_provider().provider_name, prompt_model=asset_prompt_author_provider().model_name, provider_job_ids=provider_job_ids, image_runtime=runtime.provider_name, image_model=runtime.pipeline_model_name, generated_by_task_id=task.id)
+    character_visual_provider_job_ids = list(dict.fromkeys(
+        asset.character_visual_provider_job_id
+        for asset in content.assets
+        if asset.character_visual_provider_job_id
+    ))
+    active_image_provider_job_ids = list(dict.fromkeys(
+        media.provider_job_id
+        for asset in content.assets
+        for media in _active_media(asset)
+        if media.provider_job_id
+    ))
+    provenance = AssetImageProvenance(
+        target_storyboard_artifact_id=storyboard.id,
+        target_storyboard_revision=storyboard.revision,
+        target_storyboard_fingerprint=storyboard.input_fingerprint,
+        generation_sequence=sequence,
+        professional_skill_version=get_professional_skill(SKILL_ID).version,
+        image_model_id=binding.model_id,
+        prompt_skill_id=prompt_skill.id,
+        prompt_skill_version=prompt_skill.version,
+        prompt_contract=binding.prompt_contract,
+        prompt_provider=prompt_provider.provider_name,
+        prompt_model=prompt_provider.model_name,
+        character_visual_skill_id=visual_skill.id,
+        character_visual_skill_version=visual_skill.version,
+        character_visual_provider_job_ids=character_visual_provider_job_ids,
+        provider_job_ids=active_image_provider_job_ids or provider_job_ids,
+        image_runtime=runtime.provider_name,
+        image_model=runtime.pipeline_model_name,
+        generated_by_task_id=task.id,
+    )
     candidate = ReplicaAssetImageCandidate(project_id=task.project_id, target_storyboard_artifact_id=storyboard.id, generated_by_task_id=task.id, generation_sequence=sequence, input_fingerprint=_sha({"workspace": workspace.id, "revision": workspace.revision, "content": formal.model_dump(mode="json")}), schema_version=ASSET_IMAGES_SCHEMA_VERSION, content_json=formal.model_dump(mode="json"), provenance_json=provenance.model_dump(mode="json"), review_status=CandidateStatus.NEEDS_REVIEW.value)
     db.add(candidate); db.flush()
     _promote_asset_image_candidate(db, project_id=task.project_id, candidate=candidate, reviewed_by="SYSTEM_AUTO_PUBLISH", review_reason="所选图片生成完成后自动采用；全部资产齐备后发布完整资产集。")
@@ -1188,8 +1462,20 @@ def _run_workspace_images(context: TaskExecutionContext, task: TaskWorkerRead) -
         selected_ids = list(task.checkpoint_json.get("target_asset_ids") or [])
         assets = {asset.target_asset_id: asset for asset in content.assets}
     binding, prompt_skill = selected_image_model_prompt_skill()
+    visual_skill = character_visual_design_skill()
     for index, (asset_id, spec) in enumerate(zip(selected_ids, specs, strict=True), 1):
         asset = assets[asset_id]
+        if asset.asset_type == TargetAssetType.CHARACTER and (
+            asset.character_visual_design is None
+            or asset.character_visual_skill_id != visual_skill.id
+            or asset.character_visual_skill_version != visual_skill.version
+        ):
+            raise AppError(
+                "ASSET_IMAGE_CHARACTER_VISUAL_DESIGN_REQUIRED",
+                "人物图片生成必须使用当前版本 Character Visual Design，请先重新生成提示词",
+                status_code=409,
+                details={"target_asset_id": asset_id},
+            )
         with context.session_factory() as db:
             workspace, latest, _, _, _ = _workspace_inputs(db, task)
             current_asset = next(item for item in latest.assets if item.target_asset_id == asset_id)
@@ -1239,11 +1525,22 @@ def run_asset_images_task(session_factory: sessionmaker[Session], task_id: str) 
             if operation == "prompts": _run_workspace_prompts(context, snapshot)
             else: _run_workspace_images(context, snapshot)
             with session_factory() as db: mark_task_succeeded(db, snapshot.id, worker_id=worker_id)
-        except TaskCancelled: pass
+        except TaskCancelled:
+            with session_factory() as db:
+                task = db.get(Task, snapshot.id)
+                if task is not None:
+                    reconcile_asset_workspace_task_state(db, task)
+                    db.commit()
         except AppError as exc:
-            with session_factory() as db: mark_task_failed(db, snapshot.id, safe_error=f"视觉资产任务失败（{exc.code}）：{exc.message}", worker_id=worker_id)
+            with session_factory() as db:
+                failed = mark_task_failed(db, snapshot.id, safe_error=f"视觉资产任务失败（{exc.code}）：{exc.message}", worker_id=worker_id)
+                reconcile_asset_workspace_task_state(db, failed)
+                db.commit()
         except Exception as exc:
-            with session_factory() as db: mark_task_failed(db, snapshot.id, safe_error=f"视觉资产任务失败（{type(exc).__name__}）", worker_id=worker_id)
+            with session_factory() as db:
+                failed = mark_task_failed(db, snapshot.id, safe_error=f"视觉资产任务失败（{type(exc).__name__}）", worker_id=worker_id)
+                reconcile_asset_workspace_task_state(db, failed)
+                db.commit()
         return
     try: content, provenance = _execute(context, snapshot)
     except TaskCancelled: return
@@ -1297,42 +1594,58 @@ def run_asset_images_task(session_factory: sessionmaker[Session], task_id: str) 
                 mark_task_failed(db, snapshot.id, safe_error=f"资产图发布失败（{type(exc).__name__}）", worker_id=worker_id)
 
 
+def reconcile_asset_workspace_task_state(db: Session, task: Task) -> None:
+    """Keep Task terminal/requeue state and per-asset workspace state consistent."""
+    if task.task_type not in {ASSET_PROMPT_TASK_TYPE, TASK_TYPE}:
+        return
+    operation = str((task.checkpoint_json or {}).get("operation") or "")
+    if operation not in {"prompts", "images"}:
+        return
+    selected_ids = set((task.checkpoint_json or {}).get("target_asset_ids") or [])
+    if not selected_ids:
+        return
+    workspace = db.scalar(select(ReplicaAssetWorkspace).where(ReplicaAssetWorkspace.project_id == task.project_id))
+    if workspace is None:
+        return
+    content = AssetWorkspaceContent.model_validate(workspace.content_json)
+    if task.status == TaskStatus.FAILED:
+        next_status = "FAILED"
+        error = task.last_error or "视觉资产任务失败，请重新生成"
+        mutable_statuses = {"QUEUED", "GENERATING", "FAILED"}
+    elif task.status in {TaskStatus.CANCELLED, TaskStatus.INTERRUPTED}:
+        next_status = "NOT_STARTED"
+        error = "已停止生成，请重新发起" if task.status == TaskStatus.CANCELLED else "后端工作进程中断，请重新生成"
+        mutable_statuses = {"QUEUED", "GENERATING"}
+    elif task.status == TaskStatus.QUEUED:
+        next_status = "QUEUED"
+        error = None
+        mutable_statuses = {"FAILED", "NOT_STARTED", "QUEUED"}
+    else:
+        return
+    changed = False
+    for asset in content.assets:
+        if asset.target_asset_id not in selected_ids:
+            continue
+        current_status = asset.prompt_status if operation == "prompts" else asset.image_status
+        if current_status not in mutable_statuses:
+            continue
+        if operation == "prompts":
+            asset.prompt_status = next_status
+        else:
+            asset.image_status = next_status
+        asset.last_error = error
+        changed = True
+    if changed:
+        workspace.revision += 1
+        workspace.content_json = content.model_dump(mode="json")
+        workspace.updated_at = utc_now()
+        db.add(workspace)
+
+
 def reconcile_interrupted_asset_workspace_tasks(db: Session, tasks: list[Task]) -> None:
-    """Remove persisted busy flags left behind when the backend process exits mid-task."""
-    now = utc_now()
+    """Reconcile persisted asset flags for tasks interrupted during backend restart."""
     for task in tasks:
-        if task.task_type not in {ASSET_PROMPT_TASK_TYPE, TASK_TYPE}:
-            continue
-        operation = str((task.checkpoint_json or {}).get("operation") or "")
-        if operation not in {"prompts", "images"}:
-            continue
-        selected_ids = set((task.checkpoint_json or {}).get("target_asset_ids") or [])
-        if not selected_ids:
-            continue
-        workspace = db.scalar(
-            select(ReplicaAssetWorkspace).where(ReplicaAssetWorkspace.project_id == task.project_id)
-        )
-        if workspace is None:
-            continue
-        content = AssetWorkspaceContent.model_validate(workspace.content_json)
-        changed = False
-        for asset in content.assets:
-            if asset.target_asset_id not in selected_ids:
-                continue
-            asset_changed = False
-            if operation == "prompts" and asset.prompt_status in {"QUEUED", "GENERATING"}:
-                asset.prompt_status = "NOT_STARTED"
-                asset_changed = True
-            elif operation == "images" and asset.image_status in {"QUEUED", "GENERATING"}:
-                asset.image_status = "NOT_STARTED"
-                asset_changed = True
-            if asset_changed:
-                asset.last_error = "后端工作进程中断，请重新生成"
-                changed = True
-        if changed:
-            workspace.content_json = content.model_dump(mode="json")
-            workspace.updated_at = now
-            db.add(workspace)
+        reconcile_asset_workspace_task_state(db, task)
     db.commit()
 
 
@@ -1352,6 +1665,7 @@ def _content_matches_current_asset_contract(content: ReplicaAssetImagesContent) 
     FULL_BODY media means the revision cannot satisfy the current Ref2VA production chain.
     """
     binding, prompt_skill = selected_image_model_prompt_skill()
+    visual_skill = character_visual_design_skill()
     if not content.assets:
         return False
     for asset in content.assets:
@@ -1363,6 +1677,12 @@ def _content_matches_current_asset_contract(content: ReplicaAssetImagesContent) 
         ):
             return False
         if asset.asset_type == TargetAssetType.CHARACTER:
+            if (
+                asset.character_visual_design is None
+                or asset.character_visual_skill_id != visual_skill.id
+                or asset.character_visual_skill_version != visual_skill.version
+            ):
+                return False
             roles = {media.role for media in asset.reference_media}
             if not {ReferenceMediaRole.FACE, ReferenceMediaRole.FULL_BODY}.issubset(roles):
                 return False

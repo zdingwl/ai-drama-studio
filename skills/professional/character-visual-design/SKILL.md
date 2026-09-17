@@ -9,9 +9,10 @@ It does not generate images. It does not replace the image model Prompt Skill. I
 Pipeline:
 
 ```text
-TARGET_BIBLE Character
+CURRENT TARGET_STORYBOARD Character
+        + optional CURRENT TARGET_BIBLE identity constraints
         ↓
-character-visual-design@1.0.0
+character-visual-design@1.1.0
         ↓
 character visual identity specification
         ↓
@@ -27,17 +28,18 @@ character reference asset
 Required:
 
 ```text
-CURRENT TARGET_BIBLE
+CURRENT TARGET_STORYBOARD
 ```
 
 Optional evidence:
 
 ```text
-localized storyboard character appearances
-canonical target character descriptions
+CURRENT TARGET_BIBLE
 ```
 
-The Skill must preserve Target Bible identity. It may enrich visual implementation details but cannot invent a new character identity.
+The five-step production chain must not be blocked by the historical P11 Target Bible. The localized storyboard is the required semantic source. When a CURRENT TARGET_BIBLE exists, matching target character identity/appearance/continuity fields are additional stable constraints and must not be contradicted.
+
+The Skill may convert existing appearance evidence into concrete production-ready visual implementation details, but it cannot invent a new character identity, relationship, occupation, ethnicity, scar, tattoo, accessory, or signature prop that is not supported upstream.
 
 ## Design procedure
 

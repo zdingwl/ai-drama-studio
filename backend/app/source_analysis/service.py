@@ -266,12 +266,6 @@ def create_source_analysis_task(
     snapshot = get_source_video_snapshot(db, project_id)
     if episode_id is None and _status_value(snapshot.status) == "CURRENT":
         return None
-    if episode_id is not None and _status_value(snapshot.status) != "CURRENT":
-        raise AppError(
-            "SOURCE_ANALYSIS_EPISODE_REANALYSIS_REQUIRES_BASELINE",
-            "单集重新分析需要先完成一次完整原片解析",
-            status_code=409,
-        )
 
     active = _active_pipeline_task(db, project_id)
     if active is not None:
@@ -290,9 +284,16 @@ def create_source_analysis_task(
     if latest is not None and latest.status == TaskStatus.INTERRUPTED and latest.attempt < latest.max_attempts:
         return resume_task(db, project_id, latest.id)
 
+    episode_task_name = None
+    if episode is not None:
+        episode_task_name = (
+            f"第 {episode.episode_order} 集：重新分析原片"
+            if _status_value(snapshot.status) == "CURRENT"
+            else f"第 {episode.episode_order} 集：分析原片"
+        )
     payload = TaskCommandCreate(
         task_type=SOURCE_ANALYSIS_TASK_TYPE,
-        task_name=f"第 {episode.episode_order} 集：重新分析原片" if episode is not None else "解析原片",
+        task_name=episode_task_name or "解析原片",
         input_fingerprint=_pipeline_input_fingerprint(db, project_id, source, episode_id=episode_id),
         input_artifact_ids=[source.id],
         episode_id=episode_id,

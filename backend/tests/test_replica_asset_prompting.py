@@ -26,16 +26,19 @@ from app.replica_pipeline.asset_images import (
     GeneratedImage,
     _character_identity_reference_media,
     _entity_specs,
+    _model_prompt_context,
     _promote_asset_image_candidate,
     create_asset_images_task,
+    reconcile_asset_workspace_task_state,
 )
 from app.replica_pipeline.asset_prompting import validate_authored_asset_batch
-from app.replica_pipeline.models import ReplicaAssetImageCandidate, ReplicaAssetImageRevision
-from app.replica_pipeline.schemas import ASSET_IMAGES_SCHEMA_VERSION, CandidateStatus
+from app.replica_pipeline.models import ReplicaAssetImageCandidate, ReplicaAssetImageRevision, ReplicaAssetWorkspace
+from app.replica_pipeline.schemas import ASSET_IMAGES_SCHEMA_VERSION, AssetWorkspaceContent, CandidateStatus, CharacterVisualDesignPacket
 from app.replica_pipeline.image_model_skills import selected_character_edit_prompt_skill, selected_image_model_prompt_skill
 from app.replica_pipeline.schemas import AssetImagePromptAuthoringResult, ReplicaLocalizedStoryboardContent
 from app.skills.professional import get_professional_skill
 from app.skills.models import ArtifactType
+from app.workflow.models import Task, TaskStatus
 
 
 def _storyboard() -> ReplicaLocalizedStoryboardContent:
@@ -85,14 +88,32 @@ def _storyboard() -> ReplicaLocalizedStoryboardContent:
 
 
 def _character_context() -> dict:
-    return _entity_specs(_storyboard(), "写实电影感")[0]["prompt_context"]
+    spec = _entity_specs(_storyboard(), "写实电影感")[0]
+    return _model_prompt_context(spec, _visual_packet())
+
+
+def _visual_packet() -> CharacterVisualDesignPacket:
+    return CharacterVisualDesignPacket(
+        character_id="target-char-1",
+        identity_summary="20多岁华裔男性，单人物稳定视觉身份。",
+        face_design="Angular oval face, defined jaw, straight nose, brown almond-shaped eyes, thick level brows, fair warm skin.",
+        hair_design="Short neatly tapered black hair with a clean natural hairline.",
+        body_design="Lean medium-height frame with squared shoulders and balanced proportions.",
+        wardrobe_design="Light gray cotton hoodie, blue straight-leg denim jeans, simple neutral sneakers.",
+        style_direction="写实电影感，干净自然材质与克制色彩。",
+        signature_features=["defined jaw", "short tapered black hair"],
+        positive_guidance=["single subject", "stable facial identity"],
+        negative_constraints=["no extra person", "no identity drift"],
+        continuity_rules=["保持脸型五官不变", "保持发型和服装拓扑不变"],
+    )
 
 
 def test_asset_orchestration_skill_requires_model_prompt_compilation() -> None:
     skill = get_professional_skill("asset-image-generation")
-    assert skill.version == "1.4.0"
+    assert skill.version == "1.6.0"
     assert [step.id for step in skill.steps] == [
         "extract_entities",
+        "design_character_visual_identity",
         "compile_model_prompt",
         "render_reference_images",
     ]
@@ -117,13 +138,30 @@ def test_character_asset_extraction_preserves_storyboard_evidence_without_direct
     assert spec["width"] == CHARACTER_WIDTH
     assert spec["height"] == CHARACTER_HEIGHT
     assert "prompt" not in spec
-    assert spec["prompt_context"]["target_entity_id"] == "target-char-1"
-    assert "Rachel 的丈夫" in spec["prompt_context"]["identity_description_zh"]
-    assert spec["prompt_context"]["storyboard_evidence"] == [{
+    design_context = spec["character_design_context"]
+    assert design_context["character_id"] == "target-char-1"
+    assert "Rachel 的丈夫" in design_context["localized_storyboard_identity"]
+    assert design_context["storyboard_evidence"] == [{
         "storyboard_shot_id": "localized:ep1:shot1",
         "shot_number": 1,
         "localized_visual_description_zh": "Jake 独自在客厅里低头看手机，穿浅灰色连帽卫衣和蓝色牛仔裤。",
     }]
+
+
+def test_character_model_prompt_context_only_consumes_visual_design_packet() -> None:
+    spec = _entity_specs(_storyboard(), "写实电影感")[0]
+    context = _model_prompt_context(spec, _visual_packet())
+
+    assert context["target_entity_id"] == "target-char-1"
+    assert context["character_visual_design"]["character_id"] == "target-char-1"
+    assert context["character_visual_design"]["face_design"].startswith("Angular oval face")
+    assert "identity_description_zh" not in context
+    assert "appearance_description_zh" not in context
+    assert "storyboard_evidence" not in context
+
+    with pytest.raises(AppError) as captured:
+        _model_prompt_context(spec)
+    assert captured.value.code == "ASSET_IMAGE_CHARACTER_VISUAL_DESIGN_REQUIRED"
 
 
 def test_character_prompt_contract_keeps_layout_out_of_model_authored_identity_prompt() -> None:
@@ -463,3 +501,107 @@ def test_generated_asset_candidate_can_be_auto_published_without_user_confirmati
         assert revision is not None
         assert revision.candidate_id == candidate.id
         assert revision.provenance_json["reviewed_by"] == "SYSTEM_AUTO_PUBLISH"
+
+
+def test_asset_workspace_task_failure_and_retry_reconcile_card_status(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        project = Project(
+            name="Asset state reconcile",
+            project_type=ProjectType.REPLICA,
+            source_language="zh-CN",
+            target_language="en-US",
+            target_region="US",
+            scene_strategy=SceneStrategy.LOCALIZE,
+            audio_policy=AudioPolicy.REGENERATE_AUDIO,
+            visual_style="写实电影感",
+            root_skill_id="replica",
+            root_skill_version="1.0.0",
+        )
+        db.add(project)
+        db.flush()
+        storyboard = ArtifactNode(
+            project_id=project.id,
+            artifact_type=ArtifactType.TARGET_STORYBOARD.value,
+            namespace=ArtifactNamespace.PRODUCTION,
+            label="本土化分镜表",
+            revision=1,
+            input_fingerprint="d" * 64,
+            skill_id="storyboard-localization",
+            skill_version="1.0.0",
+            validity=ArtifactValidity.CURRENT,
+            is_current=True,
+            metadata_json={},
+        )
+        db.add(storyboard)
+        db.flush()
+        content = AssetWorkspaceContent.model_validate({
+            "target_storyboard_artifact_id": storyboard.id,
+            "target_language": "en-US",
+            "target_region": "US",
+            "visual_style": "写实电影感",
+            "assets": [{
+                "target_asset_id": "asset:character-1",
+                "asset_type": "CHARACTER",
+                "target_entity_id": "character-1",
+                "display_name": "Jake",
+                "review_description_zh": "年轻男性角色",
+                "width": CHARACTER_WIDTH,
+                "height": CHARACTER_HEIGHT,
+                "image_prompt": None,
+                "negative_prompt": "",
+                "prompt_review_zh": None,
+                "image_model_id": None,
+                "prompt_skill_id": None,
+                "prompt_skill_version": None,
+                "prompt_contract": None,
+                "prompt_status": "GENERATING",
+                "image_status": "NOT_STARTED",
+                "last_error": None,
+                "active_generation_id": None,
+                "generations": [],
+            }],
+        })
+        workspace = ReplicaAssetWorkspace(
+            project_id=project.id,
+            target_storyboard_artifact_id=storyboard.id,
+            revision=1,
+            content_json=content.model_dump(mode="json"),
+        )
+        task = Task(
+            project_id=project.id,
+            task_type=asset_images_module.ASSET_PROMPT_TASK_TYPE,
+            task_name="生成资产提示词",
+            idempotency_key="asset-status-failed",
+            business_key="e" * 64,
+            input_fingerprint="f" * 64,
+            input_artifact_ids_json=[storyboard.id],
+            status=TaskStatus.FAILED,
+            progress_percent=42,
+            max_attempts=3,
+            checkpoint_json={
+                "operation": "prompts",
+                "target_asset_ids": ["asset:character-1"],
+            },
+            last_error="Prompt Provider 失败",
+        )
+        db.add_all([workspace, task])
+        db.commit()
+
+        reconcile_asset_workspace_task_state(db, task)
+        db.commit()
+        db.refresh(workspace)
+        failed = AssetWorkspaceContent.model_validate(workspace.content_json).assets[0]
+        assert failed.prompt_status == "FAILED"
+        assert failed.last_error == "Prompt Provider 失败"
+
+        task.status = TaskStatus.QUEUED
+        task.last_error = None
+        db.add(task)
+        reconcile_asset_workspace_task_state(db, task)
+        db.commit()
+        db.refresh(workspace)
+        retried = AssetWorkspaceContent.model_validate(workspace.content_json).assets[0]
+        assert retried.prompt_status == "QUEUED"
+        assert retried.last_error is None
