@@ -15,6 +15,9 @@ class ArtifactNode(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    episode_id: Mapped[str | None] = mapped_column(
+        ForeignKey("episodes.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     artifact_type: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
     namespace: Mapped[ArtifactNamespace] = mapped_column(
         Enum(ArtifactNamespace, native_enum=False, length=16), nullable=False, index=True
