@@ -12,7 +12,13 @@ const router = createRouter({
       component: ProjectListView,
     },
     {
-      path: '/projects/:id/:workspace(overview|episodes|source|localize|assets|prompts|generation|script|storyboard|final)?',
+      path: '/projects/:id',
+      redirect: (to) => ({
+        path: `/projects/${String(to.params.id)}/overview`,
+      }),
+    },
+    {
+      path: '/projects/:id/:workspace(overview|episodes|source|localize|assets|prompts|generation|script|storyboard|final)',
       name: 'project-workspace',
       component: ProjectWorkspaceView,
     },
