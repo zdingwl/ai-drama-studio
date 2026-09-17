@@ -1,18 +1,21 @@
 {
   "id": "asset-image-generation",
   "name": "Replica Asset Image Generation",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "category": "target-assets",
   "description": "Extract target entities, design stable character visual identity, invoke model-specific image Prompt Skills, then render reference media.",
+  "when_to_use": ["Generate target character, scene, and prop reference assets from localized storyboard."],
+  "when_not_to_use": ["Do not use for source video understanding or video generation."],
   "required_inputs": ["TARGET_STORYBOARD"],
   "optional_inputs": ["TARGET_BIBLE"],
   "readable_artifacts": ["TARGET_STORYBOARD", "TARGET_BIBLE"],
+  "required_capabilities": ["TARGET_ASSETS", "ASSET_IMAGE_GENERATION", "MODEL_PROMPTING"],
   "manual_path": "asset-image-generation/SKILL.md",
   "steps": [
-    {"id":"extract_entities","phase":"资产图","title":"提取目标资产","description":"Collect referenced target characters, scenes and props."},
-    {"id":"design_character_visual_identity","phase":"资产图","title":"角色视觉设计","description":"Execute character-visual-design before image model prompting to establish stable character identity."},
-    {"id":"compile_model_prompt","phase":"资产图","title":"生成图片模型专属提示词","description":"Route visual packets through selected image model Professional Prompt Skill."},
-    {"id":"render_reference_images","phase":"资产图","title":"生成真实资产图","produces":["TARGET_ASSETS"]}
+    {"id":"extract_entities","phase":"资产图","title":"提取目标资产","description":"Collect referenced target characters, scenes and props.","capabilities":["TARGET_ASSETS"]},
+    {"id":"design_character_visual_identity","phase":"资产图","title":"角色视觉设计","description":"Execute character-visual-design before image model prompting to establish stable character identity.","capabilities":["TARGET_ASSETS"]},
+    {"id":"compile_model_prompt","phase":"资产图","title":"生成图片模型专属提示词","description":"Route visual packets through selected image model Professional Prompt Skill.","capabilities":["MODEL_PROMPTING"]},
+    {"id":"render_reference_images","phase":"资产图","title":"生成真实资产图","description":"Render reference media from validated model prompts.","capabilities":["ASSET_IMAGE_GENERATION"]}
   ],
   "skill_chain": ["character-visual-design@1.0.0", "z-image-turbo-asset-prompting", "qwen-image-edit-character-asset-prompting"],
   "provider_rules": [
