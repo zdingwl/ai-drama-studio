@@ -1,0 +1,27 @@
+{
+  "id": "character-visual-design",
+  "name": "角色视觉设计",
+  "version": "1.0.0",
+  "category": "target-assets",
+  "description": "将 TARGET_BIBLE 中的角色语义身份转换为稳定可执行的视觉设计包，供模型专属图片 Prompt Skill 使用。",
+  "when_to_use": ["需要生成角色资产图，需要先建立角色视觉身份设计时"],
+  "when_not_to_use": ["需要修改 TARGET_BIBLE", "需要直接生成图片", "需要生成视频 Prompt"],
+  "required_inputs": ["TARGET_BIBLE"],
+  "optional_inputs": ["TARGET_STORYBOARD"],
+  "readable_artifacts": ["TARGET_BIBLE", "TARGET_STORYBOARD"],
+  "required_capabilities": ["ASSET_IMAGE_GENERATION"],
+  "manual_path": "character-visual-design/SKILL.md",
+  "steps": [
+    {"id":"extract_character_identity","title":"提取角色身份","requires":["TARGET_BIBLE"]},
+    {"id":"design_character_visual_identity","title":"设计角色视觉身份","requires":["TARGET_BIBLE"]},
+    {"id":"compile_visual_packet","title":"输出角色视觉设计包","produces":["CHARACTER_VISUAL_DESIGN_PACKET"]}
+  ],
+  "output_contracts": ["CHARACTER_VISUAL_DESIGN_PACKET"],
+  "provider_rules": [
+    "不得改变 TARGET_BIBLE 中角色身份",
+    "不得把剧情动作当成固定外观",
+    "不得生成图片或替代模型 Prompt Skill",
+    "必须提供脸型、发型、体态、服装基线和一致性约束"
+  ],
+  "completion_criteria": ["角色视觉设计包完整", "可以被图片模型 Prompt Skill 消费", "身份一致性约束明确"]
+}
