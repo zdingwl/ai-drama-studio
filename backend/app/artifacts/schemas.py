@@ -11,6 +11,7 @@ class ArtifactNodeRead(BaseModel):
 
     id: str
     project_id: str
+    episode_id: str | None
     artifact_type: str
     namespace: ArtifactNamespace
     label: str
