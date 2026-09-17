@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { listProjectTasks, resumeProjectTask, retryProjectTask } from '@/features/projects/api'
+import { cancelProjectTask, listProjectTasks, resumeProjectTask, retryProjectTask } from '@/features/projects/api'
 import {
   getGenerationSelection,
   getVideoGenerationRuntimeReadiness,
@@ -59,7 +59,7 @@ const selectedDurationDelta=computed(()=>selectedClip.value?selectedClip.value.a
 
 function seconds(us:number){return `${(us/1_000_000).toFixed(2)}s`}
 async function refresh(silent=false){try{const [p,r,t,a,c,s]=await Promise.all([getH3Prompts(projectId.value),getVideoGenerationRuntimeReadiness(projectId.value),listProjectTasks(projectId.value),listGenerationAttempts(projectId.value),listGenerationCandidates(projectId.value),getGenerationSelection(projectId.value)]);prompts.value=p;runtime.value=r;tasks.value=t;attempts.value=a;candidates.value=c;selection.value=s}catch(exc){if(!silent)error.value=exc instanceof Error?exc.message:'读取视频生成状态失败'}}
-async function generate(){if(!canGenerate.value&&!(task.value?.status==='failed'&&task.value.can_retry)&&!(task.value?.status==='interrupted'&&task.value.can_resume))return;action.value=true;error.value='';message.value='';try{const current=task.value;if(current?.status==='failed'&&current.can_retry)await retryProjectTask(projectId.value,current.id);else if(current?.status==='interrupted'&&current.can_resume)await resumeProjectTask(projectId.value,current.id);else await startVideoGeneration(projectId.value);message.value='MiniMax H3 多参考音画生成任务已启动。';await refresh()}catch(exc){error.value=exc instanceof Error?exc.message:'启动视频生成失败'}finally{action.value=false}}
+async function generate(){if(!canGenerate.value&&!(task.value?.status==='failed'&&task.value.can_retry)&&!(task.value?.status==='interrupted'&&task.value.can_resume))return;action.value=true;error.value='';message.value='';try{const current=task.value;if(current?.status==='failed'&&current.can_retry)await retryProjectTask(projectId.value,current.id);else if(current?.status==='interrupted'&&current.can_resume)await resumeProjectTask(projectId.value,current.id);else await startVideoGeneration(projectId.value);message.value='MiniMax H3 多参考音画生成任务已启动。';await refresh()}catch(exc){error.value=exc instanceof Error?exc.message:'启动视频生成失败'}finally{action.value=false}}async function cancelGeneration(){if(!task.value||!['queued','running'].includes(task.value.status))return;action.value=true;error.value='';message.value='';try{await cancelProjectTask(projectId.value,task.value.id);message.value='已请求停止当前 MiniMax H3 生成任务。';await refresh()}catch(exc){error.value=exc instanceof Error?exc.message:'停止视频生成失败'}finally{action.value=false}}
 async function review(candidate:GenerationCandidate,accept:boolean){
   action.value=true;error.value='';message.value=''
   try{
@@ -79,7 +79,7 @@ onBeforeUnmount(()=>{if(timer!==undefined)window.clearInterval(timer)})
 
 <template>
   <section class="workspace" data-testid="h3-generation-workspace">
-    <header class="stage-header"><div class="stage-title"><h2>视频生成</h2><div class="header-meta"><span :class="runtime?.ready?'ready':'blocked'">Runtime {{ runtime?.ready?'就绪':'未就绪' }}</span><span :class="prompts?.status==='CURRENT'?'ready':'blocked'">Prompt {{ prompts?.status==='CURRENT'?'就绪':'未就绪' }}</span><span :class="selection?.status==='CURRENT'?'ready':'neutral'">正式选片 {{ selection?.status==='CURRENT'?'已确认':'未确认' }}</span></div></div><button type="button" :disabled="!canGenerate && !(task?.status==='failed'&&task.can_retry) && !(task?.status==='interrupted'&&task.can_resume)" @click="generate">{{ buttonText }}</button></header>
+    <header class="stage-header"><div class="stage-title"><h2>视频生成</h2><div class="header-meta"><span :class="runtime?.ready?'ready':'blocked'">Runtime {{ runtime?.ready?'就绪':'未就绪' }}</span><span :class="prompts?.status==='CURRENT'?'ready':'blocked'">Prompt {{ prompts?.status==='CURRENT'?'就绪':'未就绪' }}</span><span :class="selection?.status==='CURRENT'?'ready':'neutral'">正式选片 {{ selection?.status==='CURRENT'?'已确认':'未确认' }}</span></div></div><div class="generation-actions"><button type="button" :disabled="!canGenerate && !(task?.status==='failed'&&task.can_retry) && !(task?.status==='interrupted'&&task.can_resume)" @click="generate">{{ buttonText }}</button><button v-if="task?.status==='queued'||task?.status==='running'" type="button" class="cancel-button" @click="cancelGeneration">停止生成</button></div></header>
     <p v-if="error" class="error">{{ error }}</p><p v-if="message" class="success">{{ message }}</p>
     <p v-if="stalePending.length" class="stale-note">检测到 {{ stalePending.length }} 个旧生成候选：其资产图或 H3 Prompt 已被更新。这些旧候选不会阻塞当前重新生成，也不能被确认成正式选片。</p>
     <p v-if="task?.last_error && task.status==='failed'" class="error-box">{{ task.last_error }}</p>
