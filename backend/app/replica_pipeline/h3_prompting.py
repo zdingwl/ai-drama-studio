@@ -180,6 +180,29 @@ def _media_for_role(asset, role: ReferenceMediaRole):
     return next((media for media in asset.reference_media if media.role == role), None)
 
 
+
+
+def _character_identity_media_priority(asset) -> list[object]:
+    """根据 H3 9 reference 限制选择人物身份参考。
+
+    主角身份优先保留脸和正面锚点；视图数量不足时按优先级降级，
+    不能静默随机丢弃参考图。
+    """
+    priority_roles = (
+        ReferenceMediaRole.FACE,
+        ReferenceMediaRole.FULL_BODY_FRONT,
+        ReferenceMediaRole.FULL_BODY_SIDE,
+        ReferenceMediaRole.FULL_BODY_BACK,
+        ReferenceMediaRole.FULL_BODY,
+    )
+    result = []
+    for role in priority_roles:
+        media = _media_for_role(asset, role)
+        if media is not None:
+            result.append(media)
+    return result
+
+
 def _references(
     shot,
     overlapping_dialogue: list[StoryboardDialogueRef],
@@ -233,31 +256,34 @@ def _references(
         ))
         return True
 
-    # Character identity owns the highest-priority Ref2VA slots.  Every visually present
-    # character receives a canonical FACE + front FULL_BODY pair before scene/prop refs.
+    # Character identity owns the highest-priority Ref2VA slots. Every visually present
+    # character receives the complete identity set (front/side/back/face) when available.
+    # This prevents H3 from treating side/back views as unrelated people.
     for entity_id in visible_character_ids:
         asset = asset_by_entity[entity_id]
         if asset.asset_type != TargetAssetType.CHARACTER:
             raise AppError("H3_PROMPT_CHARACTER_ASSET_TYPE_INVALID", "人物引用没有绑定 CHARACTER 资产", status_code=409, details={"target_entity_id": entity_id})
-        face = _media_for_role(asset, ReferenceMediaRole.FACE)
-        full_body = _media_for_role(asset, ReferenceMediaRole.FULL_BODY)
-        if face is None or full_body is None:
+        identity_media = _character_identity_media_priority(asset)
+        if not identity_media:
+            identity_media = [_media_for_role(asset, ReferenceMediaRole.FULL_BODY), _media_for_role(asset, ReferenceMediaRole.FACE)]
+            identity_media = [media for media in identity_media if media is not None]
+        if len(identity_media) < 2:
             raise AppError(
                 "H3_PROMPT_CHARACTER_IDENTITY_REFERENCES_REQUIRED",
-                "人物 H3 Ref2VA 必须同时使用 FACE + 正面 FULL_BODY 身份参考；请重新生成步骤 3 资产图",
+                "人物 H3 Ref2VA 缺少完整身份参考，请重新生成步骤 3 资产图",
                 status_code=409,
                 details={"target_entity_id": entity_id, "available_roles": [media.role.value for media in asset.reference_media]},
             )
-        if len(conditions) + 2 > 9:
+        if len(conditions) + len(identity_media) > 9:
             raise AppError(
                 "H3_PROMPT_CHARACTER_REFERENCE_CAPACITY_EXCEEDED",
-                "本镜头可见人物过多，9 个 H3 reference slots 无法完整容纳每人的 FACE + FULL_BODY 身份参考",
+                "本镜头可见人物过多，9 个 H3 reference slots 无法完整容纳人物身份参考",
                 status_code=409,
                 details={"target_character_ids": visible_character_ids},
             )
         add_ref(asset)
-        add_condition(asset, face)
-        add_condition(asset, full_body)
+        for media in identity_media:
+            add_condition(asset, media)
 
     # Scene and prop identity use only the slots left after all character identity pairs.
     for entity_id, preferred_role in [
@@ -321,16 +347,24 @@ class H3SegmentDraft:
                 "target_entity_id": item.target_entity_id,
                 "display_name": character_names.get(item.target_entity_id),
                 "face_picture_tag": None,
-                "full_body_picture_tag": None,
+                "front_picture_tag": None,
+                "side_picture_tag": None,
+                "back_picture_tag": None,
             })
             if item.reference_role == ReferenceMediaRole.FACE.value:
                 group["face_picture_tag"] = f"<Picture {item.picture_index}>"
+            elif item.reference_role == ReferenceMediaRole.FULL_BODY_FRONT.value:
+                group["front_picture_tag"] = f"<Picture {item.picture_index}>"
+            elif item.reference_role == ReferenceMediaRole.FULL_BODY_SIDE.value:
+                group["side_picture_tag"] = f"<Picture {item.picture_index}>"
+            elif item.reference_role == ReferenceMediaRole.FULL_BODY_BACK.value:
+                group["back_picture_tag"] = f"<Picture {item.picture_index}>"
             elif item.reference_role == ReferenceMediaRole.FULL_BODY.value:
-                group["full_body_picture_tag"] = f"<Picture {item.picture_index}>"
+                group["front_picture_tag"] = f"<Picture {item.picture_index}>"
         for group in identity_groups.values():
             group["identity_lock"] = (
-                "FACE and FULL_BODY pictures are the same exact person. Preserve facial geometry, apparent age, "
-                "hair, skin tone, body proportions and wardrobe identity across every frame; never mix this identity with another character."
+                "FACE, FRONT, SIDE and BACK pictures are the same exact person. The FRONT view is the immutable identity anchor. "
+                "Preserve facial geometry, skull shape, hairstyle silhouette, hair length, skin tone, body proportions and wardrobe identity across every frame; never redesign or mix this identity with another character."
             )
         return {
             "generation_segment_id": self.generation_segment_id,

@@ -218,6 +218,79 @@ def asset_prompt_author_provider(settings: Settings | None = None) -> AssetPromp
     return DoubaoAssetPromptAuthor(settings or get_settings())
 
 
+def _assert_character_visual_design_consumed(
+    context: dict,
+    prompt: str,
+    *,
+    target_entity_id: str,
+) -> None:
+    """Ensure CHARACTER prompts actually consume the visual identity contract.
+
+    A valid CharacterVisualDesignPacket must not disappear between the design Skill
+    and the image model Skill.  We keep this deterministic instead of relying on
+    the LLM to decide whether it remembered the upstream identity contract.
+    """
+    design = context.get("character_visual_design") or {}
+    required_values = [
+        design.get("face_design"),
+        design.get("hair_design"),
+        design.get("body_design"),
+        design.get("wardrobe_design"),
+    ]
+    if not all(isinstance(value, str) and value.strip() for value in required_values):
+        raise AppError(
+            "ASSET_IMAGE_CHARACTER_VISUAL_DESIGN_INCOMPLETE",
+            "人物资产缺少完整 CharacterVisualDesignPacket，禁止生成图片 Prompt",
+            status_code=502,
+            details={"target_entity_id": target_entity_id},
+        )
+
+    normalized = prompt.lower()
+    design_fragments = [
+        str(design.get("face_design", "")),
+        str(design.get("hair_design", "")),
+        str(design.get("wardrobe_design", "")),
+        " ".join(design.get("signature_features", []) or []),
+    ]
+    # The visual-design provider writes the human-review contract in Chinese,
+    # while this Prompt Skill deliberately compiles an English model prompt.
+    # Literal token matching across those two languages rejects a faithful
+    # translation (as happened for Riley and Jake), so validate the translated
+    # contract through its required visual dimensions instead.
+    if any(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", fragment) for fragment in design_fragments):
+        execution_dimensions = {
+            "face": ("face", "facial", "jaw", "cheek", "chin", "nose", "eyes", "brow", "lips"),
+            "hair": ("hair", "bald", "shaved"),
+            "body": ("build", "frame", "body", "shoulder", "height", "stature", "proportion", "physique"),
+            "wardrobe": ("wearing", "shirt", "top", "hoodie", "jacket", "dress", "trousers", "pants", "jeans", "skirt", "sweater", "fabric", "cotton", "denim", "linen", "knit"),
+        }
+        missing_dimensions = [
+            name for name, tokens in execution_dimensions.items()
+            if not any(token in normalized for token in tokens)
+        ]
+        if not missing_dimensions:
+            return
+        raise AppError(
+            "ASSET_IMAGE_CHARACTER_VISUAL_DESIGN_NOT_CONSUMED",
+            "人物 Prompt 未完整翻译角色视觉设计内容，禁止退化为通用人物描述",
+            status_code=502,
+            details={"target_entity_id": target_entity_id, "missing_dimensions": missing_dimensions},
+        )
+
+    matched = sum(
+        1
+        for fragment in design_fragments
+        if fragment.strip() and any(token.lower() in normalized for token in fragment.split() if len(token) > 3)
+    )
+    if matched < 2:
+        raise AppError(
+            "ASSET_IMAGE_CHARACTER_VISUAL_DESIGN_NOT_CONSUMED",
+            "人物 Prompt 未有效消费角色视觉设计内容，禁止退化为通用人物描述",
+            status_code=502,
+            details={"target_entity_id": target_entity_id},
+        )
+
+
 def validate_authored_asset_batch(
     expected_assets: list[dict],
     authored: AssetImagePromptAuthoringResult,
@@ -265,6 +338,11 @@ def validate_authored_asset_batch(
                 name for name, tokens in detail_groups.items()
                 if not any(token in lowered_prompt for token in tokens)
             ]
+            _assert_character_visual_design_consumed(
+                next((asset for asset in expected_assets if str(asset["target_entity_id"]) == entity_id), {}),
+                item.image_prompt,
+                target_entity_id=entity_id,
+            )
             if missing_groups or len(item.image_prompt.strip()) < 220:
                 raise AppError(
                     "ASSET_IMAGE_CHARACTER_DETAIL_INSUFFICIENT",

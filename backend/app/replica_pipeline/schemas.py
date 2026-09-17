@@ -16,6 +16,7 @@ class CandidateStatus(StrEnum):
     NEEDS_REVIEW = "NEEDS_REVIEW"
     ACCEPTED = "ACCEPTED"
     REJECTED = "REJECTED"
+    FAILED_CONSISTENCY = "FAILED_CONSISTENCY"
     SUPERSEDED = "SUPERSEDED"
 
 
@@ -287,6 +288,8 @@ class AssetImageEntity(BaseModel):
     character_visual_skill_version: str | None = None
     character_visual_provider_job_id: str | None = None
     reference_media: list[TargetReferenceMedia] = Field(min_length=1)
+    consistency_status: str | None = None
+    consistency_report: dict[str, object] = Field(default_factory=dict)
 
 
 class ReplicaAssetImagesContent(BaseModel):

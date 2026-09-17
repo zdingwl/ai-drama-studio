@@ -215,6 +215,33 @@ def test_character_prompt_contract_keeps_layout_out_of_model_authored_identity_p
     assert exc_info.value.code == "ASSET_IMAGE_CHARACTER_PROMPT_SCOPE_INVALID"
 
 
+def test_character_prompt_accepts_english_translation_of_chinese_visual_design() -> None:
+    context = _character_context()
+    context["character_visual_design"] = {
+        **context["character_visual_design"],
+        "face_design": "暖肤色的椭圆脸，清晰下颌线和棕色杏眼。",
+        "hair_design": "整洁的黑色短发。",
+        "body_design": "中等身高、肩膀平直的匀称体态。",
+        "wardrobe_design": "浅灰色棉质连帽衫、蓝色直筒牛仔裤和简洁运动鞋。",
+        "signature_features": ["清晰下颌线", "整洁黑色短发"],
+    }
+    authored = AssetImagePromptAuthoringResult.model_validate({
+        "assets": [{
+            "target_entity_id": "target-char-1",
+            "image_prompt": (
+                "One young East Asian man in his twenties with an oval face, defined jaw, brown almond-shaped eyes, "
+                "warm fair skin, neat short black hair, a lean medium-height frame and squared shoulders. "
+                "He wears a light gray cotton hoodie, blue straight-leg denim jeans and simple neutral sneakers. "
+                "Natural relaxed expression, centered solitary subject, clean seamless studio styling, typography-free image."
+            ),
+            "negative_prompt": "extra people, text, watermark",
+            "review_prompt_zh": "稳定呈现角色的脸型、短发、体态和浅灰连帽衫牛仔裤。",
+        }],
+    })
+
+    assert validate_authored_asset_batch([context], authored)["target-char-1"].image_prompt.startswith("One young East Asian man")
+
+
 def test_z_image_runtime_matches_verified_local_comfyui_workflow() -> None:
     runtime = ComfyUIZImageTurboRuntime()
     payload = runtime._workflow(

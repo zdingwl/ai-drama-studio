@@ -34,6 +34,9 @@ class CandidateReviewStatus(StrEnum):
 class ReferenceMediaRole(StrEnum):
     FACE = "FACE"
     FULL_BODY = "FULL_BODY"
+    FULL_BODY_FRONT = "FULL_BODY_FRONT"
+    FULL_BODY_SIDE = "FULL_BODY_SIDE"
+    FULL_BODY_BACK = "FULL_BODY_BACK"
     WARDROBE = "WARDROBE"
     LAYOUT = "LAYOUT"
     LANDMARK = "LANDMARK"
