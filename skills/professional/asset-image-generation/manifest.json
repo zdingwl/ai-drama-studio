@@ -1,24 +1,27 @@
 {
   "id": "asset-image-generation",
   "name": "Replica Asset Image Generation",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "category": "target-assets",
-  "description": "Extract used target entities from the localized storyboard, invoke the selected image model's Professional Prompt Skill against storyboard evidence, then render real managed reference images for characters, scenes and props.",
-  "when_to_use": ["CURRENT TARGET_STORYBOARD v2 exists and downstream video generation needs visual references"],
-  "when_not_to_use": ["Localized storyboard is missing or stale"],
+  "description": "Extract target entities, design stable character visual identity, invoke model-specific image Prompt Skills, then render reference media.",
   "required_inputs": ["TARGET_STORYBOARD"],
-  "optional_inputs": [],
-  "readable_artifacts": ["TARGET_STORYBOARD"],
-  "required_capabilities": ["ASSET_IMAGE_GENERATION"],
+  "optional_inputs": ["TARGET_BIBLE"],
+  "readable_artifacts": ["TARGET_STORYBOARD", "TARGET_BIBLE"],
   "manual_path": "asset-image-generation/SKILL.md",
   "steps": [
-    {"id":"extract_entities","phase":"资产图","title":"提取目标资产","description":"Collect only target characters/scenes/props actually referenced by the localized storyboard.","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]},
-    {"id":"compile_model_prompt","phase":"资产图","title":"生成图片模型专属提示词","description":"Route each extracted asset and its localized storyboard evidence through the selected image model's Professional Prompt Skill; generic direct string concatenation is forbidden.","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]},
-    {"id":"render_reference_images","phase":"资产图","title":"生成真实资产图","description":"Render managed image files, persist SHA/dimensions and bind them to stable target assets.","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":["TARGET_ASSETS"]}
+    {"id":"extract_entities","phase":"资产图","title":"提取目标资产","description":"Collect referenced target characters, scenes and props."},
+    {"id":"design_character_visual_identity","phase":"资产图","title":"角色视觉设计","description":"Execute character-visual-design before image model prompting to establish stable character identity."},
+    {"id":"compile_model_prompt","phase":"资产图","title":"生成图片模型专属提示词","description":"Route visual packets through selected image model Professional Prompt Skill."},
+    {"id":"render_reference_images","phase":"资产图","title":"生成真实资产图","produces":["TARGET_ASSETS"]}
   ],
-  "fact_levels": ["TARGET_LOCALIZED_ENTITY", "IMAGE_MODEL_PROMPT", "REAL_REFERENCE_MEDIA"],
-  "provider_rules": ["No text-only asset may satisfy the image contract", "Every referenced target entity must receive at least one real reference image", "Every image execution prompt must be authored by the selected image model Professional Prompt Skill from the extracted asset plus its localized storyboard evidence; do not concatenate raw biography/story prose directly into the Runtime prompt", "Character assets must use a hybrid front-master identity strategy: render one authoritative front full-body master with Z-Image Turbo, feed that exact image to Qwen Image Edit 2511 for side/back orientation-only derivatives under qwen-image-edit-character-asset-prompting, and crop the face close-up from the front master before deterministic composition", "Narrative relationships must not create extra people in a single-character asset", "Reference media must be persisted by Studio with SHA256 and dimensions", "Do not generate video prompts"],
+  "skill_chain": ["character-visual-design@1.0.0", "z-image-turbo-asset-prompting", "qwen-image-edit-character-asset-prompting"],
+  "provider_rules": [
+    "Character visual design must happen before model prompt compilation.",
+    "Model-specific Prompt Skills cannot invent identity facts.",
+    "Character generation keeps front master identity strategy and reference editing constraints.",
+    "Runtime cannot bypass Skill-authored prompts with raw entity text concatenation."
+  ],
   "output_contracts": ["TARGET_ASSETS"],
-  "completion_criteria": ["Every referenced target entity has a model-specific Skill-authored image prompt", "Character output structurally contains deterministic front/side/back full-body panels plus a front-derived facial close-up", "Every referenced target entity has real reference media", "All media is managed and technically readable", "Managed reference media and CURRENT TARGET_STORYBOARD lineage validation pass and TARGET_ASSETS is auto-published without a separate batch confirmation"],
-  "failure_policy": ["Any required entity without a generated image blocks publication", "Runtime failure does not replace an existing CURRENT asset revision"]
+  "completion_criteria": ["Character visual design packet exists", "Model-specific prompt exists", "Reference media is persisted and bound"],
+  "failure_policy": ["Missing character visual design packet blocks character generation"]
 }
