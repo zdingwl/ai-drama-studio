@@ -67,13 +67,7 @@ async function review(candidate:GenerationCandidate,accept:boolean){
     if(accept){
       message.value='正式生成视频已确认。'
     }else{
-      message.value='已拒绝当前生成结果，正在启动新一轮生成。'
-      try{
-        await startVideoGeneration(projectId.value)
-        message.value='已拒绝当前生成结果，新一轮 MiniMax H3 生成任务已启动。'
-      }catch(startExc){
-        error.value=`当前结果已拒绝，但重新生成启动失败：${startExc instanceof Error?startExc.message:'未知错误'}`
-      }
+      message.value='已拒绝当前生成结果，等待重新发起生成。'
     }
     await refresh()
   }catch(exc){error.value=exc instanceof Error?exc.message:'审核生成结果失败'}finally{action.value=false}
