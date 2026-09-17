@@ -6,21 +6,21 @@ import H3GenerationWorkspace from './H3GenerationWorkspace.vue'
 import * as projectApi from '@/features/projects/api'
 import * as productionApi from '@/features/projects/production'
 import * as replicaApi from '@/features/projects/replicaFiveStep'
-import type { GenerationCandidate } from '@/features/projects/production'
+import type { GeneratedVideoRead } from '@/features/projects/production'
 import type { TaskRead } from '@/features/projects/types'
 
 vi.mock('@/features/projects/api', () => ({
+  cancelProjectTask: vi.fn(),
   listProjectTasks: vi.fn(),
   resumeProjectTask: vi.fn(),
   retryProjectTask: vi.fn(),
 }))
 
 vi.mock('@/features/projects/production', () => ({
-  getGenerationSelection: vi.fn(),
+  getGeneratedVideo: vi.fn(),
   getVideoGenerationRuntimeReadiness: vi.fn(),
   listGenerationAttempts: vi.fn(),
-  listGenerationCandidates: vi.fn(),
-  reviewGeneration: vi.fn(),
+  regenerateVideoSegment: vi.fn(),
   startVideoGeneration: vi.fn(),
 }))
 
@@ -36,19 +36,45 @@ const currentPrompts = {
   content: {
     target_storyboard_artifact_id: 'storyboard-3',
     target_assets_artifact_id: 'assets-5',
-    segments: [],
+    segments: [{
+      generation_segment_id: 'segment-1',
+      episode_id: 'episode-1',
+      episode_order: 1,
+      segment_number: 1,
+      storyboard_shot_ids: ['shot-1'],
+      start_us: 0,
+      end_us: 4_000_000,
+      duration_us: 4_000_000,
+      output_ratio: '9:16',
+      continuation_index: 1,
+      continuation_count: 1,
+      generation_prompt: 'H3 prompt',
+      negative_prompt: '',
+      prompt_skill_id: 'minimax-h3-prompting',
+      prompt_skill_version: '1.1.0',
+      prompt_contract: 'h3',
+      model_id: 'MiniMax-H3',
+      review_prompt_zh: '中文审核',
+      reference_conditions: [],
+      target_asset_refs: [],
+      audio_generation_mode: 'NATIVE_AUDIO_VIDEO',
+      dialogue_refs: [],
+      sound_effects: [],
+      ambience: [],
+      requires_lip_sync: false,
+    }],
   },
   provenance: null,
 }
 
-const oldCandidate: GenerationCandidate = {
-  id: 'candidate-old',
-  generation_sequence: 1,
-  review_status: 'NEEDS_REVIEW',
+const currentVideo: GeneratedVideoRead = {
+  status: 'CURRENT',
+  artifact_id: 'video-2',
+  revision: 2,
   content: {
     target_storyboard_artifact_id: 'storyboard-3',
-    generation_segments_artifact_id: 'segments-4',
-    target_assets_artifact_id: 'assets-4',
+    generation_segments_artifact_id: 'segments-5',
+    target_assets_artifact_id: 'assets-5',
     clips: [{
       generation_segment_id: 'segment-1',
       episode_id: 'episode-1',
@@ -58,23 +84,12 @@ const oldCandidate: GenerationCandidate = {
       planned_end_us: 4_000_000,
       planned_duration_us: 4_000_000,
       requires_lip_sync: false,
-      selected_attempt_id: 'attempt-old',
-      media_url: '/old.mp4',
+      selected_attempt_id: 'attempt-current',
+      media_url: '/current.mp4',
       actual_duration_us: 4_000_000,
       width: 768,
       height: 1360,
     }],
-  },
-}
-
-const currentCandidate: GenerationCandidate = {
-  ...oldCandidate,
-  id: 'candidate-current',
-  generation_sequence: 2,
-  content: {
-    ...oldCandidate.content,
-    generation_segments_artifact_id: 'segments-5',
-    target_assets_artifact_id: 'assets-5',
   },
 }
 
@@ -91,12 +106,12 @@ const queuedTask: TaskRead = {
   can_retry: false,
   can_cancel: true,
   can_resume: false,
-  created_at: '2026-09-15T12:00:00Z',
+  created_at: '2026-09-17T12:00:00Z',
   started_at: null,
   finished_at: null,
 }
 
-function mockReads(candidates: GenerationCandidate[]) {
+function mockReads(video: GeneratedVideoRead) {
   vi.mocked(replicaApi.getH3Prompts).mockResolvedValue(currentPrompts)
   vi.mocked(productionApi.getVideoGenerationRuntimeReadiness).mockResolvedValue({
     runtime_mode: 'LOCAL_COMFYUI',
@@ -109,10 +124,14 @@ function mockReads(candidates: GenerationCandidate[]) {
   })
   vi.mocked(projectApi.listProjectTasks).mockResolvedValue([])
   vi.mocked(productionApi.listGenerationAttempts).mockResolvedValue([])
-  vi.mocked(productionApi.listGenerationCandidates).mockResolvedValue(candidates)
-  vi.mocked(productionApi.getGenerationSelection).mockResolvedValue({ status: 'NOT_BUILT', artifact_id: null, content: null })
+  vi.mocked(productionApi.getGeneratedVideo).mockResolvedValue(video)
   vi.mocked(productionApi.startVideoGeneration).mockResolvedValue(queuedTask)
-  vi.mocked(productionApi.reviewGeneration).mockResolvedValue({})
+  vi.mocked(productionApi.regenerateVideoSegment).mockResolvedValue({
+    ...queuedTask,
+    id: 'segment-redo',
+    task_type: 'P16_MINIMAX_H3_SEGMENT_REGENERATE',
+    task_name: '重做视频分镜 · Segment 1',
+  })
 }
 
 async function mountWorkspace() {
@@ -120,7 +139,7 @@ async function mountWorkspace() {
     history: createMemoryHistory(),
     routes: [{ path: '/projects/:id', component: { template: '<main />' } }],
   })
-  await router.push('/projects/project-1')
+  await router.push('/projects/project-1?episode=episode-1&ep=1')
   await router.isReady()
   const wrapper = mount(H3GenerationWorkspace, { global: { plugins: [router] } })
   await flushPromises()
@@ -129,49 +148,39 @@ async function mountWorkspace() {
 
 afterEach(() => vi.clearAllMocks())
 
-describe('H3GenerationWorkspace stale candidate handling', () => {
-  it('does not let an old NEEDS_REVIEW candidate block regeneration from current assets/prompts', async () => {
-    mockReads([oldCandidate])
+describe('H3GenerationWorkspace current-version workflow', () => {
+  it('uses generated video as the current version and only exposes per-segment redo', async () => {
+    mockReads(currentVideo)
     const wrapper = await mountWorkspace()
 
-    expect(wrapper.text()).toContain('检测到 1 个旧生成候选')
-    expect(wrapper.text()).toContain('不会阻塞当前重新生成')
+    expect(wrapper.text()).toContain('生成成功即作为当前版本')
+    expect(wrapper.text()).toContain('重做该分镜')
     expect(wrapper.text()).not.toContain('确认正式视频')
-    const regenerate = wrapper.findAll('button').find(button => button.text() === '重新生成视频')
-    expect(regenerate).toBeTruthy()
-    expect(regenerate?.attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).not.toContain('拒绝并重新生成')
 
-    await regenerate!.trigger('click')
+    const redo = wrapper.findAll('button').find(button => button.text() === '重做该分镜')
+    expect(redo).toBeTruthy()
+    await redo!.trigger('click')
     await flushPromises()
 
-    expect(productionApi.startVideoGeneration).toHaveBeenCalledWith('project-1')
-    expect(productionApi.reviewGeneration).not.toHaveBeenCalled()
+    expect(productionApi.regenerateVideoSegment).toHaveBeenCalledWith('project-1', 'segment-1')
+    expect(productionApi.startVideoGeneration).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
-  it('keeps a current candidate reviewable and reject-and-regenerate actually starts a new task', async () => {
-    mockReads([currentCandidate])
+  it('starts a full generation only when there is no current generated video', async () => {
+    mockReads({ status: 'NOT_BUILT', artifact_id: null, content: null })
     const wrapper = await mountWorkspace()
 
-    expect(wrapper.text()).toContain('确认正式视频')
-    expect(wrapper.text()).toContain('媒体技术 PASS · 人物待审')
-    expect(wrapper.text()).toContain('不代表人物一致性已经通过')
-    expect(wrapper.text()).toContain('H3 原始输出')
-    expect(wrapper.text()).not.toContain('旧生成候选')
-    const reject = wrapper.findAll('button').find(button => button.text() === '拒绝并重新生成')
-    expect(reject).toBeTruthy()
+    const generate = wrapper.findAll('button').find(button => button.text() === '用 MiniMax H3 生成视频')
+    expect(generate).toBeTruthy()
+    expect(generate?.attributes('disabled')).toBeUndefined()
 
-    await reject!.trigger('click')
+    await generate!.trigger('click')
     await flushPromises()
 
-    expect(productionApi.reviewGeneration).toHaveBeenCalledWith(
-      'project-1',
-      currentCandidate,
-      false,
-      expect.any(String),
-    )
     expect(productionApi.startVideoGeneration).toHaveBeenCalledWith('project-1')
-    expect(wrapper.text()).toContain('新一轮 MiniMax H3 生成任务已启动')
+    expect(productionApi.regenerateVideoSegment).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

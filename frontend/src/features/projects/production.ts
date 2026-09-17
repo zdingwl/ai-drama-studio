@@ -87,10 +87,26 @@ export interface SelectedClip {
   planned_duration_us: number
   requires_lip_sync: boolean
   selected_attempt_id: string
+  provider_job_id?: string
   media_url: string
+  media_sha256?: string
+  mime_type?: string
   actual_duration_us: number
   width: number
   height: number
+  codec_name?: string
+}
+
+export interface GeneratedVideoRead {
+  status: ResultStatus
+  artifact_id: string | null
+  revision?: number | null
+  content: {
+    target_storyboard_artifact_id: string
+    generation_segments_artifact_id: string
+    target_assets_artifact_id: string
+    clips: SelectedClip[]
+  } | null
 }
 
 export interface GenerationCandidate {
@@ -176,8 +192,10 @@ export const reviewStoryboard = (projectId: string, candidate: StoryboardCandida
 export const getVideoGenerationRuntimeReadiness = (projectId: string) => apiRequest<H3RuntimeReadinessRead>(`/projects/${projectId}/video-generation/runtime-readiness`, { cache: 'no-store' })
 export const listGenerationAttempts = (projectId: string) => apiRequest<GenerationAttempt[]>(`/projects/${projectId}/video-generation/attempts`, { cache: 'no-store' })
 export const listGenerationCandidates = (projectId: string) => apiRequest<GenerationCandidate[]>(`/projects/${projectId}/video-generation/candidates`, { cache: 'no-store' })
+export const getGeneratedVideo = (projectId: string) => apiRequest<GeneratedVideoRead>(`/projects/${projectId}/generated-video`, { cache: 'no-store' })
 export const getGenerationSelection = (projectId: string) => apiRequest<GenerationSelectionRead>(`/projects/${projectId}/generation-selection`, { cache: 'no-store' })
 export const startVideoGeneration = (projectId: string) => apiRequest<TaskRead>(`/projects/${projectId}/commands/video-generation`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } })
+export const regenerateVideoSegment = (projectId: string, generationSegmentId: string) => apiRequest<TaskRead>(`/projects/${projectId}/video-generation/segments/${encodeURIComponent(generationSegmentId)}/commands/regenerate`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } })
 export const reviewGeneration = (projectId: string, candidate: GenerationCandidate, accept: boolean, reason: string) => apiRequest(`/projects/${projectId}/video-generation/candidates/${candidate.id}/commands/${accept ? 'accept' : 'reject'}`, {
   method: 'POST',
   body: JSON.stringify({

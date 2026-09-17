@@ -1,10 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, status
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
 from app.p16.runtime import P16_SEGMENT_TASK_TYPE, P16_TASK_TYPE, replace_generation_task_for_retry_if_needed
+from app.workflow.dispatcher import _runner_for_task
 from app.workflow.p4_acceptance import P4AcceptanceScenario, build_p4_acceptance_payload
 from app.workflow.schemas import TaskCommandCreate, TaskRead
 from app.workflow.task_service import (
@@ -19,6 +20,22 @@ from app.workflow.task_service import (
 
 
 router = APIRouter(tags=["tasks"])
+
+
+def _request_session_factory(db: Session) -> sessionmaker[Session]:
+    return sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False, class_=Session)
+
+
+def _schedule_task_if_needed(background_tasks: BackgroundTasks, db: Session, task) -> None:
+    """Legacy compatibility shim for old direct-scheduler tests/clients.
+
+    Ordinary API routes intentionally do not call this helper anymore. Production execution is
+    owned by PersistentTaskDispatcher, but retaining this exact helper keeps historical P4-P17
+    scheduler contracts import-compatible while the legacy tests are migrated incrementally.
+    """
+    runner = _runner_for_task(task)
+    if runner is not None:
+        background_tasks.add_task(runner, _request_session_factory(db), task.id)
 
 
 @router.post(
