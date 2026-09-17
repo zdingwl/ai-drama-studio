@@ -1,7 +1,7 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, status
-from sqlalchemy.orm import Session, sessionmaker
+from fastapi import APIRouter, Depends, Header, Query, status
+from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.db.session import get_db
@@ -15,18 +15,10 @@ from app.source_analysis.schemas import (
     StoryboardShotEditCommand,
 )
 from app.source_analysis.script_service import get_source_script
-from app.source_analysis.service import (
-    create_source_analysis_task,
-    get_source_analysis_status,
-    run_source_analysis_task,
-)
+from app.source_analysis.service import create_source_analysis_task, get_source_analysis_status
 
 
 router = APIRouter(tags=["source-analysis"])
-
-
-def _request_session_factory(db: Session) -> sessionmaker[Session]:
-    return sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False, class_=Session)
 
 
 def _assert_supported_project(db: Session, project_id: str) -> None:
@@ -40,13 +32,7 @@ def _assert_supported_project(db: Session, project_id: str) -> None:
 
 
 def _require_episode_id(episode_id: str | None) -> str:
-    """Enforce the episode-first contract at the HTTP boundary.
-
-    The legacy service still contains a project-wide execution branch. It must
-    not be reachable from the normal product API, otherwise a project with many
-    episodes can trigger an unnecessary whole-project analysis and exceed model
-    context limits.
-    """
+    """Enforce the episode-first contract at the HTTP boundary."""
     if not episode_id or not episode_id.strip():
         raise AppError(
             "EPISODE_REQUIRED",
@@ -74,21 +60,19 @@ def get_source_analysis_route(
 )
 def start_source_analysis_route(
     project_id: str,
-    background_tasks: BackgroundTasks,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
     episode_id: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> SourceAnalysisStatusRead:
     _assert_supported_project(db, project_id)
     scoped_episode_id = _require_episode_id(episode_id)
-    task = create_source_analysis_task(
+    create_source_analysis_task(
         db,
         project_id=project_id,
         idempotency_key=idempotency_key,
         episode_id=scoped_episode_id,
     )
-    if task is not None and task.status.value == "queued":
-        background_tasks.add_task(run_source_analysis_task, _request_session_factory(db), task.id)
+    # The persistent queue dispatcher owns execution; the HTTP request only persists the command.
     return get_source_analysis_status(db, project_id, episode_id=scoped_episode_id)
 
 

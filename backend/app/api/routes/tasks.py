@@ -1,35 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, status
-from sqlalchemy.orm import Session, sessionmaker
+from fastapi import APIRouter, Depends, Header, status
+from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.evidence.service_v4 import is_p6_source_evidence_task, run_p6_source_evidence_task
-from app.p14.audio_contract import P14_AUDIO_TASK_TYPE
-from app.p14.audio_runtime import run_target_audio_task
-from app.p14.timing_service import P14_TIMING_TASK_TYPE, run_timing_plan_task
-from app.p15.service import P15_TASK_TYPE, run_storyboard_task
-from app.p16.runtime import (
-    P16_TASK_TYPE,
-    replace_generation_task_for_retry_if_needed,
-    run_generation_task,
-)
-from app.p17.runtime import P17_TASK_TYPE, run_post_task
-from app.replica_pipeline.asset_images import ASSET_PROMPT_TASK_TYPE, TASK_TYPE as ASSET_IMAGES_TASK_TYPE, run_asset_images_task
-from app.replica_pipeline.h3_prompting import TASK_TYPE as H3_PROMPT_TASK_TYPE, run_h3_prompt_task
-from app.replica_pipeline.localized_storyboard import TASK_TYPE as LOCALIZED_STORYBOARD_TASK_TYPE, run_localized_storyboard_task
-from app.preprocessing.service import is_p5_shot_boundary_task, run_p5_shot_boundary_task
-from app.shot_breakdown.service_v2 import P8_TASK_TYPE, run_p8_shot_breakdown_task
-from app.source_analysis.service import SOURCE_ANALYSIS_TASK_TYPE, run_source_analysis_task
-from app.source_resolution.service_v2 import P9_TASK_TYPE, run_p9_source_resolution_task
-from app.understanding.evidence_reference_runtime import run_p7_source_bible_task
-from app.understanding.service import P7_TASK_TYPE
-from app.workflow.p4_acceptance import (
-    P4AcceptanceScenario,
-    build_p4_acceptance_payload,
-    is_p4_acceptance_task,
-    run_p4_acceptance_task,
-)
+from app.p16.runtime import P16_SEGMENT_TASK_TYPE, P16_TASK_TYPE, replace_generation_task_for_retry_if_needed
+from app.workflow.p4_acceptance import P4AcceptanceScenario, build_p4_acceptance_payload
 from app.workflow.schemas import TaskCommandCreate, TaskRead
 from app.workflow.task_service import (
     cancel_task,
@@ -41,54 +17,8 @@ from app.workflow.task_service import (
     task_to_read,
 )
 
+
 router = APIRouter(tags=["tasks"])
-
-
-def _request_session_factory(db: Session) -> sessionmaker[Session]:
-    return sessionmaker(
-        bind=db.get_bind(),
-        autoflush=False,
-        expire_on_commit=False,
-        class_=Session,
-    )
-
-
-def _schedule_task_if_needed(
-    background_tasks: BackgroundTasks,
-    db: Session,
-    task,
-) -> None:
-    session_factory = _request_session_factory(db)
-    if is_p4_acceptance_task(task):
-        background_tasks.add_task(run_p4_acceptance_task, session_factory, task.id)
-    elif is_p5_shot_boundary_task(task):
-        background_tasks.add_task(run_p5_shot_boundary_task, session_factory, task.id)
-    elif is_p6_source_evidence_task(task):
-        background_tasks.add_task(run_p6_source_evidence_task, session_factory, task.id)
-    elif task.task_type == P7_TASK_TYPE:
-        background_tasks.add_task(run_p7_source_bible_task, session_factory, task.id)
-    elif task.task_type == P8_TASK_TYPE:
-        background_tasks.add_task(run_p8_shot_breakdown_task, session_factory, task.id)
-    elif task.task_type == P9_TASK_TYPE:
-        background_tasks.add_task(run_p9_source_resolution_task, session_factory, task.id)
-    elif task.task_type == P14_AUDIO_TASK_TYPE:
-        background_tasks.add_task(run_target_audio_task, session_factory, task.id)
-    elif task.task_type == P14_TIMING_TASK_TYPE:
-        background_tasks.add_task(run_timing_plan_task, session_factory, task.id)
-    elif task.task_type == P15_TASK_TYPE:
-        background_tasks.add_task(run_storyboard_task, session_factory, task.id)
-    elif task.task_type == P16_TASK_TYPE:
-        background_tasks.add_task(run_generation_task, session_factory, task.id)
-    elif task.task_type == P17_TASK_TYPE:
-        background_tasks.add_task(run_post_task, session_factory, task.id)
-    elif task.task_type == LOCALIZED_STORYBOARD_TASK_TYPE:
-        background_tasks.add_task(run_localized_storyboard_task, session_factory, task.id)
-    elif task.task_type in {ASSET_IMAGES_TASK_TYPE, ASSET_PROMPT_TASK_TYPE}:
-        background_tasks.add_task(run_asset_images_task, session_factory, task.id)
-    elif task.task_type == H3_PROMPT_TASK_TYPE:
-        background_tasks.add_task(run_h3_prompt_task, session_factory, task.id)
-    elif task.task_type == SOURCE_ANALYSIS_TASK_TYPE:
-        background_tasks.add_task(run_source_analysis_task, session_factory, task.id)
 
 
 @router.post(
@@ -119,7 +49,6 @@ def create_task_command_route(
 def create_p4_acceptance_task_route(
     project_id: str,
     scenario: P4AcceptanceScenario,
-    background_tasks: BackgroundTasks,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
     db: Session = Depends(get_db),
 ) -> TaskRead:
@@ -134,7 +63,7 @@ def create_p4_acceptance_task_route(
         payload=payload,
         idempotency_key=idempotency_key,
     )
-    _schedule_task_if_needed(background_tasks, db, task)
+    # Execution is owned by the persistent queue dispatcher started in app.main lifespan.
     return task_to_read(task)
 
 
@@ -157,17 +86,14 @@ def cancel_task_route(project_id: str, task_id: str, db: Session = Depends(get_d
 def retry_task_route(
     project_id: str,
     task_id: str,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> TaskRead:
     existing = get_task(db, project_id, task_id)
-    if existing.task_type == P16_TASK_TYPE:
+    if existing.task_type in {P16_TASK_TYPE, P16_SEGMENT_TASK_TYPE}:
         replacement = replace_generation_task_for_retry_if_needed(db, project_id=project_id, task=existing)
         if replacement is not None:
-            _schedule_task_if_needed(background_tasks, db, replacement)
             return task_to_read(replacement)
     task = retry_task(db, project_id, task_id)
-    _schedule_task_if_needed(background_tasks, db, task)
     return task_to_read(task)
 
 
@@ -175,15 +101,12 @@ def retry_task_route(
 def resume_task_route(
     project_id: str,
     task_id: str,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> TaskRead:
     existing = get_task(db, project_id, task_id)
-    if existing.task_type == P16_TASK_TYPE:
+    if existing.task_type in {P16_TASK_TYPE, P16_SEGMENT_TASK_TYPE}:
         replacement = replace_generation_task_for_retry_if_needed(db, project_id=project_id, task=existing)
         if replacement is not None:
-            _schedule_task_if_needed(background_tasks, db, replacement)
             return task_to_read(replacement)
     task = resume_task(db, project_id, task_id)
-    _schedule_task_if_needed(background_tasks, db, task)
     return task_to_read(task)

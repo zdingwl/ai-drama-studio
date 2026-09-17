@@ -4,13 +4,15 @@ from uuid import uuid4
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.artifacts.enums import ArtifactValidity
+from app.artifacts.models import ArtifactNode
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.time import utc_now
 from app.p15.schemas import GenerationSegment
 from app.p16.common import attempt_to_read, input_artifact_ids, load_inputs, sha, storage_dir
 from app.p16.media import duration_tolerance_us, probe_video, sha256_file
-from app.p16.models import ReplicaGenerationAttempt, ReplicaGenerationSelectionCandidate
+from app.p16.models import ReplicaGeneratedVideoRevision, ReplicaGenerationAttempt, ReplicaGenerationSelectionCandidate
 from app.p16.provider import H3GenerationProvider, build_h3_generation_provider
 from app.p16.schemas import (
     H3RuntimeReadinessRead,
@@ -20,21 +22,25 @@ from app.p16.schemas import (
     P16SelectionCandidateRead,
     P16_CONTRACT,
     P16_SCHEMA_VERSION,
+    ReplicaGeneratedVideoContent,
     SelectedGenerationClip,
     SelectionReviewStatus,
     TechnicalQcStatus,
 )
 from app.projects.enums import ProjectType
 from app.projects.service import get_project
-from app.skills.models import Capability
+from app.skills.models import ArtifactType, Capability
 from app.skills.professional import get_professional_skill
 from app.workflow.models import ProviderJob, Task, TaskStatus
 from app.workflow.provider_service import ProviderDispatchResult, dispatch_provider_call
 from app.workflow.schemas import TaskCommandCreate, TaskWorkerRead
-from app.workflow.task_service import create_task_from_command, mark_task_failed, mark_task_succeeded
+from app.workflow.task_service import TaskCancelled, create_task_from_command, mark_task_failed, mark_task_succeeded
+from app.workflow.worker import TaskExecutionContext
 
 
 P16_TASK_TYPE = "P16_MINIMAX_H3_GENERATION"
+P16_SEGMENT_TASK_TYPE = "P16_MINIMAX_H3_SEGMENT_REGENERATE"
+P16_TASK_TYPES = frozenset({P16_TASK_TYPE, P16_SEGMENT_TASK_TYPE})
 
 
 def _max_attempts_per_segment(settings: Settings | None = None) -> int:
@@ -50,15 +56,29 @@ def _generation_sequence(db: Session, project_id: str) -> int:
     return int(latest or 0) + 1
 
 
-def _fingerprint(inputs, sequence: int, provider: H3GenerationProvider) -> str:
+def _fingerprint(
+    inputs,
+    sequence: int,
+    provider: H3GenerationProvider,
+    *,
+    task_type: str = P16_TASK_TYPE,
+    target_segment_id: str | None = None,
+    base_generated_video: ArtifactNode | None = None,
+) -> str:
     skill = get_professional_skill("video-generation-qc")
     return sha(
         {
-            "task": P16_TASK_TYPE,
+            "task": task_type,
             "inputs": [
                 [node.id, node.revision, node.input_fingerprint]
                 for node in (inputs.storyboard_artifact, inputs.segments_artifact, inputs.assets_artifact)
             ],
+            "target_segment_id": target_segment_id,
+            "base_generated_video": (
+                [base_generated_video.id, base_generated_video.revision, base_generated_video.input_fingerprint]
+                if base_generated_video is not None
+                else None
+            ),
             "generation_sequence": sequence,
             "provider_profile": provider.profile(),
             "max_attempts_per_segment": _max_attempts_per_segment(),
@@ -67,6 +87,53 @@ def _fingerprint(inputs, sequence: int, provider: H3GenerationProvider) -> str:
             "schema_version": P16_SCHEMA_VERSION,
         }
     )
+
+
+def _find_segment(inputs, generation_segment_id: str) -> GenerationSegment:
+    segment = next(
+        (item for item in inputs.segments.segments if item.generation_segment_id == generation_segment_id),
+        None,
+    )
+    if segment is None:
+        raise AppError(
+            "P16_GENERATION_SEGMENT_NOT_FOUND",
+            "要重做的 GenerationSegment 不属于 CURRENT H3 Prompt",
+            status_code=404,
+            details={"generation_segment_id": generation_segment_id},
+        )
+    return segment
+
+
+def _load_current_generated_video_base(
+    db: Session,
+    project_id: str,
+    inputs,
+) -> tuple[ArtifactNode, ReplicaGeneratedVideoContent]:
+    artifact = db.scalar(
+        select(ArtifactNode).where(
+            ArtifactNode.project_id == project_id,
+            ArtifactNode.artifact_type == ArtifactType.GENERATED_VIDEO.value,
+            ArtifactNode.validity == ArtifactValidity.CURRENT,
+            ArtifactNode.is_current.is_(True),
+        )
+    )
+    if artifact is None:
+        raise AppError("P16_CURRENT_VIDEO_REQUIRED", "单分镜重做前必须先有 CURRENT 生成视频", status_code=409)
+    row = db.scalar(select(ReplicaGeneratedVideoRevision).where(ReplicaGeneratedVideoRevision.artifact_id == artifact.id))
+    if row is None:
+        raise AppError("P16_GENERATED_VIDEO_CONTENT_MISSING", "CURRENT GENERATED_VIDEO 缺少 typed revision", status_code=500)
+    content = ReplicaGeneratedVideoContent.model_validate(row.content_json)
+    if [
+        content.target_storyboard_artifact_id,
+        content.generation_segments_artifact_id,
+        content.target_assets_artifact_id,
+    ] != input_artifact_ids(inputs):
+        raise AppError("P16_CURRENT_VIDEO_STALE", "当前视频不属于最新五步主链输入，请先重新生成整批视频", status_code=409)
+    expected_ids = {item.generation_segment_id for item in inputs.segments.segments}
+    actual_ids = {item.generation_segment_id for item in content.clips}
+    if actual_ids != expected_ids:
+        raise AppError("P16_CURRENT_VIDEO_COVERAGE_INVALID", "CURRENT GENERATED_VIDEO 没有完整覆盖 GenerationSegment", status_code=409)
+    return artifact, content
 
 
 def get_runtime_readiness(db: Session, project_id: str) -> H3RuntimeReadinessRead:
@@ -91,11 +158,25 @@ def get_runtime_readiness(db: Session, project_id: str) -> H3RuntimeReadinessRea
     return provider.readiness()
 
 
+def _set_task_checkpoint_fields(db: Session, task: Task, values: dict) -> Task:
+    current = dict(task.checkpoint_json or {})
+    changed = False
+    for key, value in values.items():
+        if current.get(key) != value:
+            current[key] = value
+            changed = True
+    if changed:
+        task.checkpoint_json = current
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+    return task
+
+
 def create_generation_task(db: Session, *, project_id: str, idempotency_key: str) -> Task:
     project = get_project(db, project_id)
     inputs = load_inputs(db, project)
-    settings = Settings()
-    provider = build_h3_generation_provider(settings)
+    provider = build_h3_generation_provider(Settings())
     provider.assert_ready()
     sequence = _generation_sequence(db, project_id)
     task = create_task_from_command(
@@ -110,61 +191,117 @@ def create_generation_task(db: Session, *, project_id: str, idempotency_key: str
             max_attempts=3,
         ),
     )
-    if not (task.checkpoint_json or {}).get("p16_generation_sequence"):
-        task.checkpoint_json = {**(task.checkpoint_json or {}), "p16_generation_sequence": sequence}
-        db.add(task)
-        db.commit()
-        db.refresh(task)
-    return task
+    return _set_task_checkpoint_fields(db, task, {"p16_generation_sequence": sequence})
+
+
+def create_segment_regeneration_task(
+    db: Session,
+    *,
+    project_id: str,
+    generation_segment_id: str,
+    idempotency_key: str,
+) -> Task:
+    project = get_project(db, project_id)
+    inputs = load_inputs(db, project)
+    segment = _find_segment(inputs, generation_segment_id)
+    base_artifact, _base_content = _load_current_generated_video_base(db, project_id, inputs)
+    provider = build_h3_generation_provider(Settings())
+    provider.assert_ready()
+    sequence = _generation_sequence(db, project_id)
+    task = create_task_from_command(
+        db,
+        project_id=project_id,
+        idempotency_key=idempotency_key,
+        payload=TaskCommandCreate(
+            task_type=P16_SEGMENT_TASK_TYPE,
+            task_name=f"重做视频分镜 · Segment {segment.segment_number}",
+            input_fingerprint=_fingerprint(
+                inputs,
+                sequence,
+                provider,
+                task_type=P16_SEGMENT_TASK_TYPE,
+                target_segment_id=generation_segment_id,
+                base_generated_video=base_artifact,
+            ),
+            input_artifact_ids=[*input_artifact_ids(inputs), base_artifact.id],
+            episode_id=segment.episode_id,
+            max_attempts=3,
+        ),
+    )
+    return _set_task_checkpoint_fields(
+        db,
+        task,
+        {
+            "p16_generation_sequence": sequence,
+            "p16_target_segment_id": generation_segment_id,
+            "p16_base_generated_video_artifact_id": base_artifact.id,
+        },
+    )
 
 
 def replace_generation_task_for_retry_if_needed(db: Session, *, project_id: str, task: Task) -> Task | None:
-    """Create a fresh P16 task when an explicit retry/resume cannot reuse the old task.
-
-    A failed task fingerprints the selected H3 runtime profile. Re-queuing that exact task after
-    switching from SGLang to ComfyUI would fail immediately as stale. The same applies when P15 has
-    published newer CURRENT storyboard/segment Artifacts since the failed attempt. An explicit retry
-    therefore creates a replacement from the current formal P16 inputs whenever either the input
-    lineage or the runtime/profile fingerprint changed. Missing/non-CURRENT inputs still fail closed
-    through load_inputs(), and the failed task's retry limit remains authoritative.
-    """
-    if task.task_type != P16_TASK_TYPE or task.status not in {TaskStatus.FAILED, TaskStatus.INTERRUPTED}:
+    if task.task_type not in P16_TASK_TYPES or task.status not in {TaskStatus.FAILED, TaskStatus.INTERRUPTED}:
         return None
     if task.status == TaskStatus.FAILED and task.attempt >= task.max_attempts:
         return None
+
     project = get_project(db, project_id)
     inputs = load_inputs(db, project)
-    current_ids = input_artifact_ids(inputs)
-    inputs_changed = sorted(set(task.input_artifact_ids_json or [])) != sorted(set(current_ids))
     provider = build_h3_generation_provider()
     provider.assert_ready()
     sequence = int((task.checkpoint_json or {}).get("p16_generation_sequence") or 0)
     if sequence <= 0:
         return None
-    current_fingerprint = _fingerprint(inputs, sequence, provider)
+
+    target_segment_id = (task.checkpoint_json or {}).get("p16_target_segment_id")
+    if task.task_type == P16_SEGMENT_TASK_TYPE:
+        if not isinstance(target_segment_id, str) or not target_segment_id:
+            return None
+        _find_segment(inputs, target_segment_id)
+        base_artifact, _ = _load_current_generated_video_base(db, project_id, inputs)
+        current_ids = [*input_artifact_ids(inputs), base_artifact.id]
+        current_fingerprint = _fingerprint(
+            inputs,
+            sequence,
+            provider,
+            task_type=P16_SEGMENT_TASK_TYPE,
+            target_segment_id=target_segment_id,
+            base_generated_video=base_artifact,
+        )
+    else:
+        current_ids = input_artifact_ids(inputs)
+        current_fingerprint = _fingerprint(inputs, sequence, provider)
+
+    inputs_changed = sorted(set(task.input_artifact_ids_json or [])) != sorted(set(current_ids))
     if not inputs_changed and current_fingerprint == task.input_fingerprint:
         return None
-    replacement = create_generation_task(
+
+    if task.task_type == P16_SEGMENT_TASK_TYPE:
+        replacement = create_segment_regeneration_task(
+            db,
+            project_id=project_id,
+            generation_segment_id=target_segment_id,
+            idempotency_key=f"p16-segment-retry-{task.id}-{current_fingerprint[:16]}",
+        )
+    else:
+        replacement = create_generation_task(
+            db,
+            project_id=project_id,
+            idempotency_key=f"p16-runtime-retry-{task.id}-{current_fingerprint[:16]}",
+        )
+    return _set_task_checkpoint_fields(
         db,
-        project_id=project_id,
-        idempotency_key=f"p16-runtime-retry-{task.id}-{current_fingerprint[:16]}",
-    )
-    if (replacement.checkpoint_json or {}).get("p16_replaces_task_id") != task.id:
-        replacement.checkpoint_json = {
-            **(replacement.checkpoint_json or {}),
+        replacement,
+        {
             "p16_replaces_task_id": task.id,
-            # Retain the legacy checkpoint key for existing diagnostics and API clients.
             "p16_replaces_failed_task_id": task.id if task.status == TaskStatus.FAILED else None,
-        }
-        db.add(replacement)
-        db.commit()
-        db.refresh(replacement)
-    return replacement
+        },
+    )
 
 
 def _claim(db: Session, task_id: str, worker_id: str) -> Task | None:
     task = db.get(Task, task_id)
-    if task is None or task.task_type != P16_TASK_TYPE or task.status != TaskStatus.QUEUED or task.attempt >= task.max_attempts:
+    if task is None or task.task_type not in P16_TASK_TYPES or task.status != TaskStatus.QUEUED or task.attempt >= task.max_attempts:
         return None
     now = utc_now()
     result = db.execute(
@@ -329,13 +466,49 @@ def _selected_clip(segment: GenerationSegment, attempt: ReplicaGenerationAttempt
     )
 
 
-def _persist_candidate(factory: sessionmaker[Session], task: TaskWorkerRead, selected: list[SelectedGenerationClip], provider: H3GenerationProvider) -> None:
+def _validate_task_contract(db: Session, task: TaskWorkerRead, inputs, provider: H3GenerationProvider):
+    sequence = int((task.checkpoint_json or {}).get("p16_generation_sequence") or 0)
+    if sequence <= 0:
+        raise AppError("P16_TASK_CHECKPOINT_INVALID", "P16 Task 缺少 generation sequence", status_code=409)
+    target_segment_id = (task.checkpoint_json or {}).get("p16_target_segment_id")
+    base_content: ReplicaGeneratedVideoContent | None = None
+    base_artifact: ArtifactNode | None = None
+    if task.task_type == P16_SEGMENT_TASK_TYPE:
+        if not isinstance(target_segment_id, str) or not target_segment_id:
+            raise AppError("P16_TASK_CHECKPOINT_INVALID", "单分镜重做 Task 缺少 target segment", status_code=409)
+        _find_segment(inputs, target_segment_id)
+        base_artifact, base_content = _load_current_generated_video_base(db, task.project_id, inputs)
+        expected_base_id = (task.checkpoint_json or {}).get("p16_base_generated_video_artifact_id")
+        if base_artifact.id != expected_base_id:
+            raise AppError("STALE_ARTIFACT_INPUT", "单分镜重做的基线视频已经变化，请重新发起", status_code=409)
+        expected_ids = [*input_artifact_ids(inputs), base_artifact.id]
+        expected_fingerprint = _fingerprint(
+            inputs,
+            sequence,
+            provider,
+            task_type=P16_SEGMENT_TASK_TYPE,
+            target_segment_id=target_segment_id,
+            base_generated_video=base_artifact,
+        )
+    else:
+        target_segment_id = None
+        expected_ids = input_artifact_ids(inputs)
+        expected_fingerprint = _fingerprint(inputs, sequence, provider)
+    if sorted(set(task.input_artifact_ids_json or [])) != sorted(set(expected_ids)) or task.input_fingerprint != expected_fingerprint:
+        raise AppError("STALE_ARTIFACT_INPUT", "P16 输入或 Runtime 已变化，请重新创建生成任务", status_code=409)
+    return target_segment_id, base_content
+
+
+def _persist_candidate(
+    factory: sessionmaker[Session],
+    task: TaskWorkerRead,
+    selected: list[SelectedGenerationClip],
+    provider: H3GenerationProvider,
+) -> str:
     with factory() as db:
         project = get_project(db, task.project_id)
         inputs = load_inputs(db, project)
-        sequence = int((task.checkpoint_json or {}).get("p16_generation_sequence") or 0)
-        if task.input_artifact_ids_json != input_artifact_ids(inputs) or task.input_fingerprint != _fingerprint(inputs, sequence, provider):
-            raise AppError("STALE_ARTIFACT_INPUT", "P16 输入已经变化，不能发布 Selection candidate", status_code=409)
+        _validate_task_contract(db, task, inputs, provider)
         selected_ids = {item.generation_segment_id for item in selected}
         expected_ids = {item.generation_segment_id for item in inputs.segments.segments}
         if selected_ids != expected_ids:
@@ -350,13 +523,8 @@ def _persist_candidate(factory: sessionmaker[Session], task: TaskWorkerRead, sel
             row.review_reason = "A newer video generation candidate was generated."
             row.reviewed_at = utc_now()
             db.add(row)
-        attempts = list(
-            db.scalars(
-                select(ReplicaGenerationAttempt).where(ReplicaGenerationAttempt.generated_by_task_id == task.id)
-            ).all()
-        )
-        provider_job_ids = list(dict.fromkeys(item.provider_job_id for item in attempts))
         skill = get_professional_skill("video-generation-qc")
+        sequence = int((task.checkpoint_json or {}).get("p16_generation_sequence") or 0)
         provenance = P16CandidateProvenance(
             target_storyboard_artifact_id=inputs.storyboard_artifact.id,
             target_storyboard_revision=inputs.storyboard_artifact.revision,
@@ -371,45 +539,31 @@ def _persist_candidate(factory: sessionmaker[Session], task: TaskWorkerRead, sel
             professional_skill_version=skill.version,
             provider=provider.provider_name,
             model=provider.model_name,
-            provider_job_ids=provider_job_ids,
+            provider_job_ids=list(dict.fromkeys(item.provider_job_id for item in selected)),
             generated_by_task_id=task.id,
         )
-        db.add(
-            ReplicaGenerationSelectionCandidate(
-                project_id=task.project_id,
+        candidate = ReplicaGenerationSelectionCandidate(
+            project_id=task.project_id,
+            target_storyboard_artifact_id=inputs.storyboard_artifact.id,
+            generation_segments_artifact_id=inputs.segments_artifact.id,
+            target_assets_artifact_id=inputs.assets_artifact.id,
+            generated_by_task_id=task.id,
+            generation_sequence=sequence,
+            input_fingerprint=task.input_fingerprint,
+            schema_version=P16_SCHEMA_VERSION,
+            content_json=P16SelectionCandidateContent(
                 target_storyboard_artifact_id=inputs.storyboard_artifact.id,
                 generation_segments_artifact_id=inputs.segments_artifact.id,
                 target_assets_artifact_id=inputs.assets_artifact.id,
-                generated_by_task_id=task.id,
-                generation_sequence=sequence,
-                input_fingerprint=task.input_fingerprint,
-                schema_version=P16_SCHEMA_VERSION,
-                content_json=P16SelectionCandidateContent(
-                    target_storyboard_artifact_id=inputs.storyboard_artifact.id,
-                    generation_segments_artifact_id=inputs.segments_artifact.id,
-                    target_assets_artifact_id=inputs.assets_artifact.id,
-                    clips=selected,
-                ).model_dump(mode="json"),
-                provenance_json=provenance.model_dump(mode="json"),
-                review_status=SelectionReviewStatus.NEEDS_REVIEW.value,
-            )
+                clips=selected,
+            ).model_dump(mode="json"),
+            provenance_json=provenance.model_dump(mode="json"),
+            review_status=SelectionReviewStatus.NEEDS_REVIEW.value,
         )
+        db.add(candidate)
         db.commit()
-
-
-def _mark_after_success_failed(factory: sessionmaker[Session], task_id: str, message: str) -> None:
-    with factory() as db:
-        task = db.get(Task, task_id)
-        if task is None:
-            return
-        now = utc_now()
-        task.status = TaskStatus.FAILED
-        task.progress_percent = min(task.progress_percent, 99)
-        task.last_error = message[:1000]
-        task.finished_at = now
-        task.updated_at = now
-        db.add(task)
-        db.commit()
+        db.refresh(candidate)
+        return candidate.id
 
 
 def run_generation_task(factory: sessionmaker[Session], task_id: str) -> None:
@@ -419,22 +573,50 @@ def run_generation_task(factory: sessionmaker[Session], task_id: str) -> None:
         if claimed is None:
             return
         snapshot = TaskWorkerRead.model_validate(claimed)
+    context = TaskExecutionContext(session_factory=factory, task_id=snapshot.id, worker_id=worker_id)
+    base_checkpoint = dict(snapshot.checkpoint_json or {})
+    published = False
+
+    def checkpoint(stage: str, progress_percent: int, **extra) -> None:
+        context.checkpoint({**base_checkpoint, "stage": stage, **extra}, progress_percent=progress_percent)
+
     try:
         provider = build_h3_generation_provider()
         with factory() as db:
             project = get_project(db, snapshot.project_id)
             inputs = load_inputs(db, project)
-            sequence = int((snapshot.checkpoint_json or {}).get("p16_generation_sequence") or 0)
-            if snapshot.input_artifact_ids_json != input_artifact_ids(inputs) or snapshot.input_fingerprint != _fingerprint(inputs, sequence, provider):
-                raise AppError("STALE_ARTIFACT_INPUT", "P16 输入已经变化，请重新创建生成任务", status_code=409)
-            segments = list(inputs.segments.segments)
+            target_segment_id, base_content = _validate_task_contract(db, snapshot, inputs, provider)
+            all_segments = list(inputs.segments.segments)
 
-        selected: list[SelectedGenerationClip] = []
-        for index, segment in enumerate(segments):
+        if target_segment_id is None:
+            work_segments = all_segments
+            selected_by_id: dict[str, SelectedGenerationClip] = {}
+        else:
+            work_segments = [_find_segment(inputs, target_segment_id)]
+            assert base_content is not None
+            selected_by_id = {item.generation_segment_id: item for item in base_content.clips}
+
+        for index, segment in enumerate(work_segments):
             passed: ReplicaGenerationAttempt | None = None
-            for _ in range(_max_attempts_per_segment()):
+            for attempt_index in range(_max_attempts_per_segment()):
+                checkpoint(
+                    "generation",
+                    min(88, 5 + int(index / max(1, len(work_segments)) * 80)),
+                    generation_segment_id=segment.generation_segment_id,
+                    segment_index=index + 1,
+                    segment_count=len(work_segments),
+                    attempt=attempt_index + 1,
+                )
                 with factory() as db:
-                    passed_candidate = _generate_attempt(db, task=snapshot, inputs=load_inputs(db, get_project(db, snapshot.project_id)), provider=provider, segment=segment)
+                    current_inputs = load_inputs(db, get_project(db, snapshot.project_id))
+                    _validate_task_contract(db, snapshot, current_inputs, provider)
+                    passed_candidate = _generate_attempt(
+                        db,
+                        task=snapshot,
+                        inputs=current_inputs,
+                        provider=provider,
+                        segment=segment,
+                    )
                 if passed_candidate.technical_qc_status == TechnicalQcStatus.PASS.value:
                     passed = passed_candidate
                     break
@@ -445,29 +627,53 @@ def run_generation_task(factory: sessionmaker[Session], task_id: str) -> None:
                     status_code=409,
                     details={"generation_segment_id": segment.generation_segment_id},
                 )
-            selected.append(_selected_clip(segment, passed))
-            with factory() as db:
-                task = db.get(Task, snapshot.id)
-                if task is not None and task.status == TaskStatus.RUNNING and task.worker_id == worker_id:
-                    task.progress_percent = min(90, 5 + int(((index + 1) / max(1, len(segments))) * 85))
-                    task.heartbeat_at = utc_now()
-                    task.updated_at = utc_now()
-                    db.add(task)
-                    db.commit()
+            selected_by_id[segment.generation_segment_id] = _selected_clip(segment, passed)
+
+        missing = [item.generation_segment_id for item in all_segments if item.generation_segment_id not in selected_by_id]
+        if missing:
+            raise AppError(
+                "P16_SELECTION_COVERAGE_INVALID",
+                "生成结果没有完整覆盖全部 GenerationSegment",
+                status_code=500,
+                details={"missing": missing},
+            )
+        selected = [selected_by_id[item.generation_segment_id] for item in all_segments]
+
+        # Cancellation is still honored up to the publication boundary. After this checkpoint the
+        # candidate + formal current result are published as one business completion and a late
+        # cancel request must not turn an already-published result into a cancelled/failed Task.
+        checkpoint("publish", 94, selected_segment_count=len(selected))
+        candidate_id = _persist_candidate(factory, snapshot, selected, provider)
+        with factory() as db:
+            from app.p16.review import adopt_selection_candidate
+
+            adopt_selection_candidate(db, project_id=snapshot.project_id, candidate_id=candidate_id)
+        published = True
 
         with factory() as db:
-            finished = mark_task_succeeded(db, snapshot.id, worker_id=worker_id)
-        if finished.status == TaskStatus.CANCELLED:
-            return
-        _persist_candidate(factory, snapshot, selected, provider)
+            task = db.get(Task, snapshot.id)
+            if task is None:
+                return
+            if task.status == TaskStatus.RUNNING and task.worker_id == worker_id:
+                task.cancel_requested = False
+                db.add(task)
+                mark_task_succeeded(db, snapshot.id, worker_id=worker_id)
+    except TaskCancelled:
+        return
     except Exception as exc:
         message = f"P16 视频生成失败（{exc.code}）：{exc.message}" if isinstance(exc, AppError) else f"P16 视频生成失败（{type(exc).__name__}）"
         with factory() as db:
             task = db.get(Task, snapshot.id)
-            if task is not None and task.status == TaskStatus.RUNNING and task.worker_id == worker_id:
-                mark_task_failed(db, snapshot.id, safe_error=message, worker_id=worker_id)
+            if task is None or task.status != TaskStatus.RUNNING or task.worker_id != worker_id:
                 return
-        _mark_after_success_failed(factory, snapshot.id, message)
+            if published:
+                # Formal video publication already committed. Do not report a contradictory failed
+                # task merely because a final bookkeeping call raced with shutdown/cancellation.
+                task.cancel_requested = False
+                db.add(task)
+                mark_task_succeeded(db, snapshot.id, worker_id=worker_id)
+            else:
+                mark_task_failed(db, snapshot.id, safe_error=message, worker_id=worker_id)
 
 
 def list_generation_attempts(db: Session, project_id: str) -> list:

@@ -21,8 +21,8 @@ from app.p16.schemas import (
     P16CandidateProvenance,
     P16ResultStatus,
     P16ReviewCommand,
-    P16SelectionCandidateRead,
     P16SelectionCandidateContent,
+    P16SelectionCandidateRead,
     P16_SCHEMA_VERSION,
     ReplicaGeneratedVideoContent,
     ReplicaGeneratedVideoRead,
@@ -34,6 +34,10 @@ from app.p16.schemas import (
 from app.projects.service import get_project
 from app.skills.models import ArtifactType
 from app.skills.professional import get_professional_skill
+
+
+SYSTEM_DEFAULT_SELECTION = "SYSTEM_DEFAULT_SELECTION"
+USER_EXPLICIT_ACTION = "USER_EXPLICIT_ACTION"
 
 
 def _current_or_latest(db: Session, project_id: str, artifact_type: ArtifactType) -> tuple[ArtifactNode | None, ArtifactNode | None]:
@@ -95,13 +99,6 @@ def get_generation_selection(db: Session, project_id: str) -> ReplicaGenerationS
 
 
 def _candidate_review_target(db: Session, project_id: str, candidate_id: str, command: P16ReviewCommand):
-    """Resolve the exact candidate named by an explicit review command.
-
-    Rejecting a historical candidate is only a review-state mutation: it does not publish
-    production artifacts.  Therefore a candidate may still be explicitly rejected after
-    TARGET_ASSETS / GENERATION_SEGMENTS have advanced.  We still require the caller's
-    optimistic-concurrency fields to match the exact candidate being acted on.
-    """
     project = get_project(db, project_id)
     candidate = db.get(ReplicaGenerationSelectionCandidate, candidate_id)
     if candidate is None or candidate.project_id != project_id:
@@ -124,11 +121,29 @@ def _candidate_review_target(db: Session, project_id: str, candidate_id: str, co
 
 
 def _review_context(db: Session, project_id: str, candidate_id: str, command: P16ReviewCommand):
-    """Acceptance context: candidate must still belong to every CURRENT formal input."""
     project, candidate, expected = _candidate_review_target(db, project_id, candidate_id, command)
     inputs = load_inputs(db, project)
     if expected != input_artifact_ids(inputs):
         raise AppError("P16_REVIEW_INPUT_CHANGED", "P16 当前正式输入已变化，旧候选不能确认发布", status_code=409)
+    return project, inputs, candidate
+
+
+def _automatic_context(db: Session, project_id: str, candidate_id: str):
+    project = get_project(db, project_id)
+    candidate = db.get(ReplicaGenerationSelectionCandidate, candidate_id)
+    if candidate is None or candidate.project_id != project_id:
+        raise AppError("P16_SELECTION_CANDIDATE_NOT_FOUND", "视频 Selection candidate 不存在", status_code=404)
+    if candidate.review_status != SelectionReviewStatus.NEEDS_REVIEW.value:
+        raise AppError("P16_SELECTION_CANDIDATE_NOT_REVIEWABLE", "视频 Selection candidate 已审核或失效", status_code=409)
+    inputs = load_inputs(db, project)
+    current_inputs = input_artifact_ids(inputs)
+    candidate_inputs = [
+        candidate.target_storyboard_artifact_id,
+        candidate.generation_segments_artifact_id,
+        candidate.target_assets_artifact_id,
+    ]
+    if candidate_inputs != current_inputs:
+        raise AppError("P16_REVIEW_INPUT_CHANGED", "P16 当前正式输入已变化，生成结果不能自动采用", status_code=409)
     return project, inputs, candidate
 
 
@@ -153,19 +168,34 @@ def _next_revision(db: Session, project_id: str, artifact_type: ArtifactType) ->
     return int(latest or 0) + 1
 
 
-def _artifact_provenance(candidate: ReplicaGenerationSelectionCandidate, *, reviewed_at, reason: str, supersedes: str | None) -> P16ArtifactProvenance:
+def _artifact_provenance(
+    candidate: ReplicaGenerationSelectionCandidate,
+    *,
+    reviewed_at,
+    reason: str,
+    supersedes: str | None,
+    reviewed_by: str,
+) -> P16ArtifactProvenance:
     base = P16CandidateProvenance.model_validate(candidate.provenance_json)
     return P16ArtifactProvenance(
         **base.model_dump(),
         selection_candidate_id=candidate.id,
+        reviewed_by=reviewed_by,
         reviewed_at=reviewed_at,
         review_reason=reason,
         supersedes_artifact_id=supersedes,
     )
 
 
-def accept_selection_candidate(db: Session, *, project_id: str, candidate_id: str, command: P16ReviewCommand) -> ReplicaGenerationSelectionRead:
-    project, inputs, candidate = _review_context(db, project_id, candidate_id, command)
+def _publish_candidate(
+    db: Session,
+    *,
+    project,
+    inputs,
+    candidate: ReplicaGenerationSelectionCandidate,
+    reason: str,
+    reviewed_by: str,
+) -> ReplicaGenerationSelectionRead:
     candidate_content = P16SelectionCandidateContent.model_validate(candidate.content_json)
     expected_segments = {item.generation_segment_id for item in inputs.segments.segments}
     if {item.generation_segment_id for item in candidate_content.clips} != expected_segments:
@@ -173,7 +203,7 @@ def accept_selection_candidate(db: Session, *, project_id: str, candidate_id: st
 
     for clip in candidate_content.clips:
         attempt = db.get(ReplicaGenerationAttempt, clip.selected_attempt_id)
-        if attempt is None or attempt.project_id != project_id:
+        if attempt is None or attempt.project_id != project.id:
             raise AppError("P16_SELECTED_ATTEMPT_MISSING", "选中的 GenerationAttempt 不存在", status_code=409)
         if attempt.technical_qc_status != TechnicalQcStatus.PASS.value:
             raise AppError("P16_SELECTED_ATTEMPT_QC_FAILED", "只有 Technical QC PASS 的 attempt 才能正式入选", status_code=409)
@@ -183,9 +213,15 @@ def accept_selection_candidate(db: Session, *, project_id: str, candidate_id: st
         if sha256_file(path) != attempt.media_sha256:
             raise AppError("P16_SELECTED_MEDIA_HASH_MISMATCH", "选中的视频媒体 SHA256 已变化", status_code=409)
         probe = probe_video(path)
-        if probe.duration_us != attempt.actual_duration_us or probe.width != attempt.width or probe.height != attempt.height or probe.codec_name != attempt.codec_name:
+        if (
+            probe.duration_us != attempt.actual_duration_us
+            or probe.width != attempt.width
+            or probe.height != attempt.height
+            or probe.codec_name != attempt.codec_name
+        ):
             raise AppError("P16_SELECTED_MEDIA_PROBE_CHANGED", "选中的视频媒体重新 ffprobe 与 Attempt 记录不一致", status_code=409)
 
+    project_id = project.id
     previous_video_current, previous_video = _current_or_latest(db, project_id, ArtifactType.GENERATED_VIDEO)
     previous_selection_current, previous_selection = _current_or_latest(db, project_id, ArtifactType.GENERATION_SELECTION)
     skill = get_professional_skill("video-generation-qc")
@@ -207,7 +243,12 @@ def accept_selection_candidate(db: Session, *, project_id: str, candidate_id: st
         skill_version=skill.version,
         validity=ArtifactValidity.CURRENT,
         is_current=True,
-        metadata_json={"schema_version": P16_SCHEMA_VERSION, "clip_count": len(generated_content.clips), "selection_candidate_id": candidate.id},
+        metadata_json={
+            "schema_version": P16_SCHEMA_VERSION,
+            "clip_count": len(generated_content.clips),
+            "selection_candidate_id": candidate.id,
+            "selection_mode": reviewed_by,
+        },
     )
     try:
         roots = [item for item in (previous_video_current, previous_selection_current) if item is not None]
@@ -232,19 +273,36 @@ def accept_selection_candidate(db: Session, *, project_id: str, candidate_id: st
             project_id=project_id,
             artifact_type=ArtifactType.GENERATION_SELECTION.value,
             namespace=ArtifactNamespace.PRODUCTION,
-            label="视频生成正式选片",
+            label="视频生成当前采用版本",
             revision=_next_revision(db, project_id, ArtifactType.GENERATION_SELECTION),
             input_fingerprint=sha({"generated_video_artifact_id": video_artifact.id, "content": selection_content.model_dump(mode="json")}),
             skill_id=skill.id,
             skill_version=skill.version,
             validity=ArtifactValidity.CURRENT,
             is_current=True,
-            metadata_json={"schema_version": P16_SCHEMA_VERSION, "selection_count": len(selection_content.selections), "selection_candidate_id": candidate.id},
+            metadata_json={
+                "schema_version": P16_SCHEMA_VERSION,
+                "selection_count": len(selection_content.selections),
+                "selection_candidate_id": candidate.id,
+                "selection_mode": reviewed_by,
+            },
         )
         db.add(selection_artifact)
         db.flush()
-        video_prov = _artifact_provenance(candidate, reviewed_at=reviewed_at, reason=command.reason, supersedes=previous_video.id if previous_video else None)
-        selection_prov = _artifact_provenance(candidate, reviewed_at=reviewed_at, reason=command.reason, supersedes=previous_selection.id if previous_selection else None)
+        video_prov = _artifact_provenance(
+            candidate,
+            reviewed_at=reviewed_at,
+            reason=reason,
+            supersedes=previous_video.id if previous_video else None,
+            reviewed_by=reviewed_by,
+        )
+        selection_prov = _artifact_provenance(
+            candidate,
+            reviewed_at=reviewed_at,
+            reason=reason,
+            supersedes=previous_selection.id if previous_selection else None,
+            reviewed_by=reviewed_by,
+        )
         db.add(
             ReplicaGeneratedVideoRevision(
                 project_id=project_id,
@@ -279,7 +337,7 @@ def accept_selection_candidate(db: Session, *, project_id: str, candidate_id: st
         if previous_selection is not None:
             db.add(ArtifactEdge(project_id=project_id, source_node_id=selection_artifact.id, target_node_id=previous_selection.id, relation_type=ArtifactRelationType.SUPERSEDES))
         candidate.review_status = SelectionReviewStatus.ACCEPTED.value
-        candidate.review_reason = command.reason
+        candidate.review_reason = reason
         candidate.reviewed_at = reviewed_at
         db.add(candidate)
         for other in db.scalars(
@@ -290,7 +348,7 @@ def accept_selection_candidate(db: Session, *, project_id: str, candidate_id: st
             )
         ).all():
             other.review_status = SelectionReviewStatus.SUPERSEDED.value
-            other.review_reason = "Another selection candidate was accepted."
+            other.review_reason = "A newer generated version became current."
             other.reviewed_at = reviewed_at
             db.add(other)
         _invalidate_project_plan(db, project)
@@ -299,3 +357,45 @@ def accept_selection_candidate(db: Session, *, project_id: str, candidate_id: st
         db.rollback()
         raise
     return get_generation_selection(db, project_id)
+
+
+def accept_selection_candidate(
+    db: Session,
+    *,
+    project_id: str,
+    candidate_id: str,
+    command: P16ReviewCommand,
+) -> ReplicaGenerationSelectionRead:
+    project, inputs, candidate = _review_context(db, project_id, candidate_id, command)
+    return _publish_candidate(
+        db,
+        project=project,
+        inputs=inputs,
+        candidate=candidate,
+        reason=command.reason,
+        reviewed_by=USER_EXPLICIT_ACTION,
+    )
+
+
+def adopt_selection_candidate(
+    db: Session,
+    *,
+    project_id: str,
+    candidate_id: str,
+    reason: str = "MiniMax H3 生成与技术 QC 成功后自动采用；如不满意可单独重做对应分镜。",
+) -> ReplicaGenerationSelectionRead:
+    """Publish a technically valid five-step result without an extra batch confirmation click.
+
+    The candidate row remains as immutable audit history. Ordinary Replica production treats the
+    newest successfully generated version as current and lets the user correct exceptions through
+    explicit per-segment regeneration.
+    """
+    project, inputs, candidate = _automatic_context(db, project_id, candidate_id)
+    return _publish_candidate(
+        db,
+        project=project,
+        inputs=inputs,
+        candidate=candidate,
+        reason=reason,
+        reviewed_by=SYSTEM_DEFAULT_SELECTION,
+    )

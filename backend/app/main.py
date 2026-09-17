@@ -8,6 +8,7 @@ from app.core.errors import install_exception_handlers
 from app.core.time import utc_now
 from app.db.session import SessionLocal
 from app.replica_pipeline.asset_images import reconcile_interrupted_asset_workspace_tasks
+from app.workflow.dispatcher import PersistentTaskDispatcher
 from app.workflow.task_service import mark_interrupted_tasks
 
 
@@ -15,13 +16,18 @@ from app.workflow.task_service import mark_interrupted_tasks
 async def lifespan(_: FastAPI):
     settings = get_settings()
     settings.ensure_runtime_directories()
-    # A process restart means no in-process background worker from the previous
-    # process can still own a RUNNING task. Reconcile those rows immediately so
-    # the UI cannot remain at a false 0% forever.
+    # A process restart means no in-process worker from the previous process can still own a
+    # RUNNING task. Reconcile those rows before the persistent dispatcher starts consuming QUEUED
+    # work so the UI never keeps a false "generating" state after a backend restart.
     with SessionLocal() as db:
         interrupted = mark_interrupted_tasks(db, stale_before=utc_now())
         reconcile_interrupted_asset_workspace_tasks(db, interrupted)
-    yield
+    dispatcher = PersistentTaskDispatcher(SessionLocal)
+    dispatcher.start()
+    try:
+        yield
+    finally:
+        dispatcher.stop()
 
 
 def create_app() -> FastAPI:
