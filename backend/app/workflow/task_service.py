@@ -16,7 +16,7 @@ from app.projects.service import get_project
 from app.skills.models import ArtifactType
 from app.skills.plan_models import ProjectExecutionPlanRecord, ProjectExecutionPlanStepRecord
 from app.sources.models import Episode
-from app.workflow.models import Task, TaskStatus
+from app.workflow.models import ProviderJob, ProviderJobStatus, Task, TaskStatus
 from app.workflow.schemas import TaskCommandCreate, TaskRead
 
 
@@ -453,6 +453,7 @@ def mark_interrupted_tasks(db: Session, *, stale_before: datetime) -> list[Task]
         ).all()
     )
     now = utc_now()
+    task_ids = [task.id for task in rows]
     for task in rows:
         if task.attempt >= task.max_attempts:
             task.status = TaskStatus.FAILED
@@ -466,6 +467,21 @@ def mark_interrupted_tasks(db: Session, *, stale_before: datetime) -> list[Task]
         task.heartbeat_at = None
         task.updated_at = now
         db.add(task)
+    if task_ids:
+        provider_jobs = list(
+            db.scalars(
+                select(ProviderJob).where(
+                    ProviderJob.task_id.in_(task_ids),
+                    ProviderJob.status.in_([ProviderJobStatus.RUNNING, ProviderJobStatus.SUBMITTED]),
+                )
+            ).all()
+        )
+        for job in provider_jobs:
+            job.status = ProviderJobStatus.FAILED
+            job.safe_error = "后端工作进程中断，Provider 请求结果未知，请重新执行任务"
+            job.finished_at = now
+            job.updated_at = now
+            db.add(job)
     if rows:
         db.commit()
         for task in rows:

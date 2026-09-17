@@ -110,9 +110,27 @@ def _start_backend(python: Path) -> tuple[subprocess.Popen | None, bool]:
     print("[Studio] applying database migrations...")
     _run([str(python), "-m", "alembic", "upgrade", "head"], cwd=BACKEND_DIR)
     return _popen(
-        [str(python), "-m", "uvicorn", "app.main:app", "--reload", "--host", "127.0.0.1", "--port", "8000"],
+        [
+            str(python), "-m", "uvicorn", "app.main:app",
+            "--reload", "--reload-dir", "app", "--reload-delay", "0.5",
+            "--host", "127.0.0.1", "--port", "8000",
+        ],
         cwd=BACKEND_DIR,
     ), True
+
+
+def _restart_backend(python: Path) -> subprocess.Popen:
+    """Recover the development backend without tearing down Vite or the launcher.
+
+    Uvicorn normally keeps its reload supervisor alive while replacing only the
+    application worker. If that supervisor itself exits on Windows, keep the
+    development session alive and recreate it after applying pending migrations.
+    """
+    print("[Studio] backend reload supervisor exited; restarting backend only...")
+    process, owned = _start_backend(python)
+    if process is None or not owned:
+        raise RuntimeError("Backend restart did not create a managed process.")
+    return process
 
 
 def _start_frontend(npm: str) -> tuple[subprocess.Popen | None, bool]:
@@ -203,10 +221,22 @@ def main() -> int:
         if os.getenv("AI_DRAMA_NO_BROWSER", "0") != "1":
             webbrowser.open(FRONTEND_URL)
 
+        backend_restart_times: list[float] = []
         while True:
-            for name, proc, owned in processes:
-                if owned and proc is not None and proc.poll() is not None:
-                    raise RuntimeError(f"{name} exited unexpectedly with code {proc.returncode}")
+            for index, (name, proc, owned) in enumerate(processes):
+                if not owned or proc is None or proc.poll() is None:
+                    continue
+                if name == "backend":
+                    now = time.monotonic()
+                    backend_restart_times = [value for value in backend_restart_times if now - value < 60]
+                    if len(backend_restart_times) >= 5:
+                        raise RuntimeError("backend exited more than 5 times within 60 seconds; fix the startup error before retrying")
+                    backend_restart_times.append(now)
+                    time.sleep(0.75)
+                    replacement = _restart_backend(python)
+                    processes[index] = ("backend", replacement, True)
+                    continue
+                raise RuntimeError(f"{name} exited unexpectedly with code {proc.returncode}")
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n[Studio] stopping managed processes...")

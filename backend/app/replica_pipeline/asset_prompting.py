@@ -129,7 +129,9 @@ Prompt Contract：{payload.binding.prompt_contract}
 - CHARACTER 禁止把人物关系、剧情动作、手机等临时道具写成资产身份；除非稳定身份绝对需要，不要加入剧情道具。Runtime 先用 Z-Image 生成唯一正面主身份图，再把正面图作为 Image 1 交给 Qwen Image Edit 2511，按其 Professional Skill 只编辑朝向生成侧面和背面；面部特写直接来自正面主图；Prompt 不负责多面板排版。
 - SCENE 只表现稳定环境身份、空间布局、材质、landmarks、光照和色彩，不把剧情中的人物带进环境资产图。
 - PROP 只表现稳定物体身份、形态、尺度、材质、颜色和标志性细节，不加入无关人物/场景。
-- 当前 Turbo Runtime 使用 zeroed negative conditioning，因此人物/场景/道具的语义排除项（其他人物、临时道具、文字、水印、剧情场景等）必须同时作为 `Do not ...` 约束写进 image_prompt；negative_prompt 也必须返回用于审计。CHARACTER 的版式排除词是唯一例外：不要在 Skill 输出中重复，由 Runtime 自己控制。
+- image_prompt 必须只写希望模型画出的正向视觉身份与构图，不得出现 `Do not`、`Avoid`、`Hard exclusions`，不得复制或改写 negative_prompt 列表。需要隔离时用正向构图语言，例如 one subject、empty hands、clean seamless studio background、typography-free image。
+- negative_prompt 必须独立返回，只用于审计和未来支持独立负向 conditioning 的 Adapter；当前 Runtime 不会把它拼回正向提示词。
+- CHARACTER 必须用有证据的具体词覆盖：脸型与五官结构、年龄可见特征、发型发色、肤色、体态比例、服装版型、材质、颜色以及至少一个稳定识别点。`natural facial features`、`average build` 等空泛词不能替代具体细节；证据不足时不得编造人物经历。
 - 不修改 target entity identity，不创造 Artifact/media/id，不生成视频提示词。
 - 只输出符合 JSON Schema 的 JSON object，不输出 Markdown 或额外解释。
 
@@ -161,7 +163,7 @@ class DoubaoAssetPromptAuthor:
             "provider": self.provider_name,
             "model": self.model_name,
             "mode": "CLOUD_TEXT_SKILL_EXECUTOR",
-            "prompt_contract": "replica-assets-zimage-front-qwen-edit-v4",
+            "prompt_contract": "replica-assets-zimage-clean-positive-v5",
             "response_contract": "STRICT_JSON_SCHEMA",
         }
 
@@ -231,6 +233,15 @@ def validate_authored_asset_batch(
     by_id = {item.target_entity_id: item for item in authored.assets}
     asset_type_by_id = {str(item["target_entity_id"]): str(item["asset_type"]) for item in expected_assets}
     for entity_id, item in by_id.items():
+        lowered_prompt = item.image_prompt.lower()
+        forbidden_positive_phrases = [phrase for phrase in ("do not", "avoid ", "hard exclusions") if phrase in lowered_prompt]
+        if forbidden_positive_phrases:
+            raise AppError(
+                "ASSET_IMAGE_POSITIVE_NEGATIVE_MIXED",
+                "正向提示词不得混入反向提示词或排除指令",
+                status_code=502,
+                details={"target_entity_id": entity_id, "phrases": forbidden_positive_phrases},
+            )
         if asset_type_by_id[entity_id] == TargetAssetType.CHARACTER.value:
             leaked_layout = _positive_character_layout_tokens(item.image_prompt)
             if leaked_layout:
@@ -239,6 +250,26 @@ def validate_authored_asset_batch(
                     "人物 Prompt Skill 只能编译稳定人物身份；三视图和面部特写版式由 Runtime 确定性生成",
                     status_code=502,
                     details={"target_entity_id": entity_id, "runtime_layout_tokens": leaked_layout},
+                )
+            detail_groups = {
+                "face": ("face", "facial", "jaw", "cheek", "chin", "nose", "eyes", "brow", "lips"),
+                "age": ("teen", "twenties", "thirties", "forties", "fifties", "sixties", "seventies", "young", "middle-aged", "senior", "wrinkle"),
+                "hair": ("hair", "bald", "shaved"),
+                "skin": ("skin", "complexion", "freckle"),
+                "body": ("build", "frame", "body", "shoulder", "height", "stature", "proportion"),
+                "wardrobe": ("wearing", "shirt", "top", "hoodie", "jacket", "dress", "trousers", "pants", "jeans", "skirt", "sweater", "fabric", "cotton", "denim", "linen", "knit"),
+                "color": ("black", "white", "gray", "grey", "blue", "red", "orange", "green", "brown", "beige", "yellow", "purple", "pink"),
+            }
+            missing_groups = [
+                name for name, tokens in detail_groups.items()
+                if not any(token in lowered_prompt for token in tokens)
+            ]
+            if missing_groups or len(item.image_prompt.strip()) < 220:
+                raise AppError(
+                    "ASSET_IMAGE_CHARACTER_DETAIL_INSUFFICIENT",
+                    "人物正向提示词缺少足够的稳定视觉身份细节",
+                    status_code=502,
+                    details={"target_entity_id": entity_id, "missing_detail_groups": missing_groups},
                 )
         _assert_execution_english("image_prompt", item.image_prompt, target_entity_id=entity_id)
         if item.negative_prompt.strip():

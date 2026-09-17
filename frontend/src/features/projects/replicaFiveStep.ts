@@ -136,6 +136,9 @@ export interface AssetWorkspaceEntity {
   prompt_skill_id: string | null
   prompt_skill_version: string | null
   prompt_contract: string | null
+  prompt_status: 'NOT_STARTED' | 'QUEUED' | 'GENERATING' | 'READY' | 'FAILED'
+  image_status: 'NOT_STARTED' | 'QUEUED' | 'GENERATING' | 'READY' | 'FAILED'
+  last_error: string | null
   active_generation_id: string | null
   generations: AssetWorkspaceGeneration[]
 }

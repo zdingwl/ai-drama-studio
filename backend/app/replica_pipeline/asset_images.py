@@ -301,8 +301,6 @@ class ComfyUIZImageTurboRuntime:
 
     def _workflow(self, prompt: str, negative_prompt: str, *, prefix: str, seed: int, width: int, height: int) -> dict:
         execution_prompt = prompt.strip()
-        if negative_prompt.strip():
-            execution_prompt += f"\n\nHard exclusions — do not include any of the following: {negative_prompt.strip()}"
         graph = {
             "1": {"class_type": "UNETLoader", "inputs": {"unet_name": self.model_name, "weight_dtype": "default"}},
             "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": self.clip_name, "type": "lumina2", "device": "default"}},
@@ -334,6 +332,9 @@ class ComfyUIZImageTurboRuntime:
         chunks = [chunk.strip() for chunk in identity_prompt.replace("\n", " ").split(".") if chunk.strip()]
         kept: list[str] = []
         for chunk in chunks:
+            lowered_chunk = chunk.lower()
+            if "do not" in lowered_chunk or lowered_chunk.startswith("avoid ") or "hard exclusions" in lowered_chunk:
+                continue
             if cls._contains_character_layout_language(chunk):
                 comma_parts = [part.strip() for part in chunk.split(",") if part.strip()]
                 clean_parts = [part for part in comma_parts if not cls._contains_character_layout_language(part)]
@@ -399,10 +400,7 @@ class ComfyUIZImageTurboRuntime:
             "3": {"class_type": "VAELoader", "inputs": {"vae_name": self.vae_name}},
             "4": {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 3.0, "model": ["1", 0]}},
         }
-        runtime_negative = self._character_negative_for_runtime(negative_prompt)
         front_prompt = self._character_front_prompt(identity_prompt)
-        if runtime_negative:
-            front_prompt += f"\n\nHard exclusions — do not include any of the following: {runtime_negative}"
         graph["10"] = {"class_type": "CLIPTextEncode", "inputs": {"text": front_prompt, "clip": ["2", 0]}}
         graph["11"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["10", 0]}}
         graph["12"] = {"class_type": "EmptySD3LatentImage", "inputs": {"width": CHARACTER_RENDER_WIDTH, "height": CHARACTER_RENDER_HEIGHT, "batch_size": 1}}
@@ -833,7 +831,13 @@ def create_asset_workspace_task(db: Session, *, project_id: str, idempotency_key
     task = create_task_from_command(db, project_id=project_id, idempotency_key=idempotency_key, payload=TaskCommandCreate(task_type=task_type, task_name="生成资产提示词" if operation == "prompts" else "顺序生成资产图片", input_fingerprint=fingerprint, input_artifact_ids=[storyboard_artifact.id], max_attempts=3))
     if task.status == TaskStatus.QUEUED:
         task.checkpoint_json = {"operation": operation, "target_asset_ids": target_asset_ids, "workspace_revision": workspace.revision}
-        db.add(task); db.commit(); db.refresh(task)
+        for asset in content.assets:
+            if asset.target_asset_id in target_asset_ids:
+                if operation == "prompts": asset.prompt_status = "QUEUED"
+                else: asset.image_status = "QUEUED"
+                asset.last_error = None
+        workspace.revision += 1; workspace.content_json = content.model_dump(mode="json"); workspace.updated_at = utc_now()
+        db.add(workspace); db.add(task); db.commit(); db.refresh(task)
     return task
 
 
@@ -1089,6 +1093,24 @@ def _run_workspace_prompts(context: TaskExecutionContext, task: TaskWorkerRead) 
     authored_by_id: dict[str, AssetImagePromptAuthoredEntity] = {}
     batches = [specs[index:index + MAX_ASSET_PROMPT_BATCH_SIZE] for index in range(0, len(specs), MAX_ASSET_PROMPT_BATCH_SIZE)]
     for batch_index, batch in enumerate(batches, 1):
+        batch_asset_ids = [_asset_id(task.project_id, spec["entity_id"]) for spec in batch]
+        with context.session_factory() as db:
+            workspace, latest, _, _, _ = _workspace_inputs(db, task)
+            for asset in latest.assets:
+                if asset.target_asset_id in batch_asset_ids: asset.prompt_status = "GENERATING"
+            workspace.content_json = latest.model_dump(mode="json"); workspace.updated_at = utc_now(); db.add(workspace); db.commit()
+        # Provider calls do not stream token progress. Persist a visible dispatch
+        # milestone before the blocking request so the page never sits at a
+        # misleading 0% while Ark is actively processing the batch.
+        dispatch_progress = min(90, max(5, math.floor((batch_index - 1) / len(batches) * 90) + 5))
+        context.checkpoint(
+            {
+                **task.checkpoint_json,
+                "active_prompt_batch": batch_index,
+                "prompt_batch_count": len(batches),
+            },
+            progress_percent=dispatch_progress,
+        )
         prompt_input = AssetPromptAuthorInput(binding=binding, skill=prompt_skill, assets=tuple(spec["prompt_context"] for spec in batch))
         payload = {"target_storyboard_artifact_id": storyboard_artifact.id, "image_model": binding.model_id, "prompt_skill": [prompt_skill.id, prompt_skill.version], "prompt_contract": binding.prompt_contract, "batch_index": batch_index, "batch_count": len(batches), "target_entity_ids": [spec["entity_id"] for spec in batch], "semantic_payload_fingerprint": _sha(prompt_input.assets), "provider_profile": provider.profile()}
         def _remote(_, current_input=prompt_input):
@@ -1097,7 +1119,22 @@ def _run_workspace_prompts(context: TaskExecutionContext, task: TaskWorkerRead) 
         with context.session_factory() as db:
             _, dispatched = dispatch_provider_call(db, task_id=task.id, provider=provider.provider_name, model=provider.model_name, capability=Capability.ASSET_IMAGE_GENERATION, payload=payload, artifact_id=storyboard_artifact.id, remote_call=_remote)
         result: AssetPromptAuthorResult = dispatched.value
-        authored_by_id.update(validate_authored_asset_batch([spec["prompt_context"] for spec in batch], result.content))
+        batch_authored = validate_authored_asset_batch([spec["prompt_context"] for spec in batch], result.content)
+        authored_by_id.update(batch_authored)
+        with context.session_factory() as db:
+            workspace, latest, _, _, _ = _workspace_inputs(db, task)
+            prompt_changed = False
+            for asset in latest.assets:
+                authored = batch_authored.get(asset.target_entity_id)
+                if authored is None: continue
+                if asset.image_prompt and (asset.image_prompt != authored.image_prompt or asset.negative_prompt != authored.negative_prompt): asset.active_generation_id = None; prompt_changed = True
+                asset.image_prompt = authored.image_prompt; asset.negative_prompt = authored.negative_prompt; asset.prompt_review_zh = authored.review_prompt_zh
+                asset.image_model_id = binding.model_id; asset.prompt_skill_id = prompt_skill.id; asset.prompt_skill_version = prompt_skill.version; asset.prompt_contract = binding.prompt_contract
+                asset.prompt_status = "READY"; asset.last_error = None
+            if prompt_changed:
+                current_assets = _current_artifact(db, task.project_id, ArtifactType.TARGET_ASSETS)
+                if current_assets is not None: _mark_stale_with_downstream(db, [current_assets])
+            workspace.revision += 1; workspace.content_json = latest.model_dump(mode="json"); workspace.updated_at = utc_now(); db.add(workspace); db.commit()
         context.checkpoint({**task.checkpoint_json, "completed_prompt_batches": batch_index, "prompt_batch_count": len(batches)}, progress_percent=math.floor(batch_index / len(batches) * 95))
     with context.session_factory() as db:
         workspace, content, _, _, _ = _workspace_inputs(db, task)
@@ -1153,6 +1190,11 @@ def _run_workspace_images(context: TaskExecutionContext, task: TaskWorkerRead) -
     binding, prompt_skill = selected_image_model_prompt_skill()
     for index, (asset_id, spec) in enumerate(zip(selected_ids, specs, strict=True), 1):
         asset = assets[asset_id]
+        with context.session_factory() as db:
+            workspace, latest, _, _, _ = _workspace_inputs(db, task)
+            current_asset = next(item for item in latest.assets if item.target_asset_id == asset_id)
+            current_asset.image_status = "GENERATING"; current_asset.last_error = None
+            workspace.content_json = latest.model_dump(mode="json"); workspace.updated_at = utc_now(); db.add(workspace); db.commit()
         payload = {"target_storyboard_artifact_id": storyboard_artifact.id, "asset_id": asset_id, "target_entity_id": asset.target_entity_id, "asset_type": asset.asset_type.value, "prompt_skill": [prompt_skill.id, prompt_skill.version, binding.prompt_contract], "prompt_sha256": _sha(asset.image_prompt), "negative_prompt_sha256": _sha(asset.negative_prompt), "width": asset.width, "height": asset.height, "runtime": runtime.profile(), "queue_position": index, "queue_size": len(selected_ids)}
         def _remote(job):
             if asset.asset_type == TargetAssetType.CHARACTER:
@@ -1175,7 +1217,7 @@ def _run_workspace_images(context: TaskExecutionContext, task: TaskWorkerRead) -
         with context.session_factory() as db:
             workspace, latest, _, _, _ = _workspace_inputs(db, task)
             latest_asset = next(item for item in latest.assets if item.target_asset_id == asset_id)
-            latest_asset.generations.append(generation); latest_asset.active_generation_id = generation.generation_id
+            latest_asset.generations.append(generation); latest_asset.active_generation_id = generation.generation_id; latest_asset.image_status = "READY"; latest_asset.last_error = None
             workspace.revision += 1; workspace.content_json = latest.model_dump(mode="json"); workspace.updated_at = utc_now(); db.add(workspace); db.commit()
         context.checkpoint({**task.checkpoint_json, "completed_assets": index, "total_assets": len(selected_ids), "provider_job_ids": provider_job_ids}, progress_percent=math.floor(index / len(selected_ids) * 95))
     with context.session_factory() as db:
@@ -1253,6 +1295,45 @@ def run_asset_images_task(session_factory: sessionmaker[Session], task_id: str) 
             task = db.get(Task, snapshot.id)
             if task is not None and task.status == TaskStatus.RUNNING and task.worker_id == worker_id:
                 mark_task_failed(db, snapshot.id, safe_error=f"资产图发布失败（{type(exc).__name__}）", worker_id=worker_id)
+
+
+def reconcile_interrupted_asset_workspace_tasks(db: Session, tasks: list[Task]) -> None:
+    """Remove persisted busy flags left behind when the backend process exits mid-task."""
+    now = utc_now()
+    for task in tasks:
+        if task.task_type not in {ASSET_PROMPT_TASK_TYPE, TASK_TYPE}:
+            continue
+        operation = str((task.checkpoint_json or {}).get("operation") or "")
+        if operation not in {"prompts", "images"}:
+            continue
+        selected_ids = set((task.checkpoint_json or {}).get("target_asset_ids") or [])
+        if not selected_ids:
+            continue
+        workspace = db.scalar(
+            select(ReplicaAssetWorkspace).where(ReplicaAssetWorkspace.project_id == task.project_id)
+        )
+        if workspace is None:
+            continue
+        content = AssetWorkspaceContent.model_validate(workspace.content_json)
+        changed = False
+        for asset in content.assets:
+            if asset.target_asset_id not in selected_ids:
+                continue
+            asset_changed = False
+            if operation == "prompts" and asset.prompt_status in {"QUEUED", "GENERATING"}:
+                asset.prompt_status = "NOT_STARTED"
+                asset_changed = True
+            elif operation == "images" and asset.image_status in {"QUEUED", "GENERATING"}:
+                asset.image_status = "NOT_STARTED"
+                asset_changed = True
+            if asset_changed:
+                asset.last_error = "后端工作进程中断，请重新生成"
+                changed = True
+        if changed:
+            workspace.content_json = content.model_dump(mode="json")
+            workspace.updated_at = now
+            db.add(workspace)
+    db.commit()
 
 
 def _candidate_read(row: ReplicaAssetImageCandidate) -> AssetImageCandidateRead:

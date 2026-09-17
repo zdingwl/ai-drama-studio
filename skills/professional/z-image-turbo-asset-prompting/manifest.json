@@ -1,7 +1,7 @@
 {
   "id": "z-image-turbo-asset-prompting",
   "name": "Z-Image Turbo 资产图提示词编译",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "category": "target-assets",
   "description": "把从 CURRENT TARGET_STORYBOARD v2 提取出的单个人物/场景/道具及其实际分镜证据编译成 Z-Image Turbo 专属资产图执行提示词；人物 Prompt 只描述稳定身份，三视图加面部特写由 Runtime 确定性生成与合成。",
   "when_to_use": ["Replica 第 3 步已从本土化分镜提取目标资产，并选择本机 Z-Image Turbo 生成真实资产图"],
@@ -24,7 +24,8 @@
     "Scene prompts isolate stable environment identity and must not add story characters.",
     "Prop prompts isolate the object identity and must not add unrelated people or scenery.",
     "Final execution prompts are concrete English for Z-Image Turbo; review_prompt_zh is Simplified Chinese for the operator.",
-    "Semantic exclusions must be explicit in image_prompt as Do not constraints as well as negative_prompt because the current Turbo runtime uses zeroed negative conditioning; character layout exclusions are the exception and are owned only by Runtime.",
+    "Keep image_prompt affirmative and identity-focused. Never copy negative_prompt into image_prompt and never emit Do not, Avoid or Hard exclusions clauses in image_prompt. Express isolation positively (one subject, empty hands, clean studio background, typography-free image). Persist exclusions only in negative_prompt for audit and future adapters.",
+    "Character image_prompt must describe concrete evidence-backed facial structure, apparent-age markers, hairstyle and hair color, skin tone, body proportions, wardrobe silhouette, garment material, garment colors and at least one stable recognition anchor. Generic phrases such as natural facial features or average build do not satisfy the contract by themselves.",
     "Do not generate Artifact ids, stable target ids, media paths, image bytes or video prompts."
   ],
   "output_contracts": [],

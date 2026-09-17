@@ -14,7 +14,7 @@ class ImageModelPromptSkillBinding:
 _Z_IMAGE_TURBO_BINDING = ImageModelPromptSkillBinding(
     model_id="Z-Image-Turbo",
     prompt_skill_id="z-image-turbo-asset-prompting",
-    prompt_contract="replica-assets-zimage-front-qwen-edit-v4",
+    prompt_contract="replica-assets-zimage-clean-positive-v5",
 )
 
 _QWEN_IMAGE_EDIT_CHARACTER_BINDING = ImageModelPromptSkillBinding(

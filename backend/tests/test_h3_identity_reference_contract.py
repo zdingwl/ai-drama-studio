@@ -33,8 +33,8 @@ def _asset(entity_id: str, asset_type: TargetAssetType, media: list):
         target_entity_id=entity_id,
         image_model_id="Z-Image-Turbo",
         prompt_skill_id="z-image-turbo-asset-prompting",
-        prompt_skill_version="1.4.0",
-        prompt_contract="replica-assets-zimage-front-qwen-edit-v4",
+        prompt_skill_version="1.5.0",
+        prompt_contract="replica-assets-zimage-clean-positive-v5",
         reference_media=media,
     )
 

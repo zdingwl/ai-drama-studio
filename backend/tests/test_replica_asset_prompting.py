@@ -99,9 +99,9 @@ def test_asset_orchestration_skill_requires_model_prompt_compilation() -> None:
 
     binding, prompt_skill = selected_image_model_prompt_skill()
     assert binding.model_id == "Z-Image-Turbo"
-    assert binding.prompt_contract == "replica-assets-zimage-front-qwen-edit-v4"
+    assert binding.prompt_contract == "replica-assets-zimage-clean-positive-v5"
     assert prompt_skill.id == "z-image-turbo-asset-prompting"
-    assert prompt_skill.version == "1.4.0"
+    assert prompt_skill.version == "1.5.0"
 
     edit_binding, edit_skill = selected_character_edit_prompt_skill()
     assert edit_binding.model_id == "Qwen-Image-Edit-2511"
@@ -132,18 +132,19 @@ def test_character_prompt_contract_keeps_layout_out_of_model_authored_identity_p
         "assets": [{
             "target_entity_id": "target-char-1",
             "image_prompt": (
-                "Single young Chinese man in his twenties, short black hair, brown eyes, fair skin, average build, "
-                "light gray hoodie, blue jeans, neutral expression, stable realistic character identity, clean studio styling. "
-                "Do not add another person, romantic partner, phone, text or watermark."
+                "One young Chinese man in his twenties with an angular oval face, defined jaw, straight nose, brown almond-shaped eyes, "
+                "thick level brows, fair warm skin, short neatly tapered black hair, lean medium-height frame and squared shoulders. "
+                "He wears a light gray cotton hoodie with a relaxed silhouette and blue straight-leg denim jeans. "
+                "Neutral attentive expression, empty hands, centered solitary subject, clean seamless studio styling, typography-free image."
             ),
             "negative_prompt": "extra people, couple, phone, text, watermark",
             "review_prompt_zh": "稳定单人物视觉身份，版式由运行时生成。",
         }],
     })
     authored = validate_authored_asset_batch([context], valid)
-    assert "short black hair" in authored["target-char-1"].image_prompt
+    assert "short neatly tapered black hair" in authored["target-char-1"].image_prompt
 
-    valid_with_layout_exclusions = AssetImagePromptAuthoringResult.model_validate({
+    mixed_positive_negative = AssetImagePromptAuthoringResult.model_validate({
         "assets": [{
             "target_entity_id": "target-char-1",
             "image_prompt": (
@@ -156,8 +157,9 @@ def test_character_prompt_contract_keeps_layout_out_of_model_authored_identity_p
             "review_prompt_zh": "稳定单人物身份，并明确排除由模型自由排版多视图。",
         }],
     })
-    authored_with_exclusions = validate_authored_asset_batch([context], valid_with_layout_exclusions)
-    assert authored_with_exclusions["target-char-1"].target_entity_id == "target-char-1"
+    with pytest.raises(AppError) as mixed_exc:
+        validate_authored_asset_batch([context], mixed_positive_negative)
+    assert mixed_exc.value.code == "ASSET_IMAGE_POSITIVE_NEGATIVE_MIXED"
 
     invalid = AssetImagePromptAuthoringResult.model_validate({
         "assets": [{
@@ -195,7 +197,8 @@ def test_z_image_runtime_matches_verified_local_comfyui_workflow() -> None:
     assert graph["8"]["inputs"]["steps"] == 8
     assert graph["8"]["inputs"]["sampler_name"] == "res_multistep"
     assert graph["8"]["inputs"]["scheduler"] == "simple"
-    assert "Hard exclusions" in graph["4"]["inputs"]["text"]
+    assert "Hard exclusions" not in graph["4"]["inputs"]["text"]
+    assert "people, text" not in graph["4"]["inputs"]["text"]
 
 
 def test_character_runtime_uses_zimage_front_master_and_qwen_reference_edit_identity_lock() -> None:
@@ -212,7 +215,8 @@ def test_character_runtime_uses_zimage_front_master_and_qwen_reference_edit_iden
     assert front["13"]["inputs"]["seed"] == 777
     assert "body and face square to the camera" in front["10"]["inputs"]["text"]
     assert "canonical MASTER identity image" in front["10"]["inputs"]["text"]
-    assert "Hard exclusions" in front["10"]["inputs"]["text"]
+    assert "Hard exclusions" not in front["10"]["inputs"]["text"]
+    assert "extra people, text" not in front["10"]["inputs"]["text"]
     assert front["15"]["inputs"]["filename_prefix"].endswith("/front")
 
     edit_payload = runtime._character_edit_workflow(
@@ -261,9 +265,8 @@ def test_character_runtime_strips_legacy_layout_language_before_z_image_executio
     text = payload["prompt"]["10"]["inputs"]["text"].lower()
     assert "senior east asian woman" in text
     assert "gray striped knit sweater" in text
-    assert "other people" in text
-    assert "text" in text
-    assert "watermarks" in text
+    assert "other people" not in text
+    assert "watermarks" not in text
     assert "multi-panel" not in text
     assert "reference sheet" not in text
     assert "turnaround" not in text
@@ -418,8 +421,8 @@ def test_generated_asset_candidate_can_be_auto_published_without_user_confirmati
                     "prompt_review_zh": "保持无人场景。",
                     "image_model_id": "Z-Image-Turbo",
                     "prompt_skill_id": "z-image-turbo-asset-prompting",
-                    "prompt_skill_version": "1.4.0",
-                    "prompt_contract": "replica-assets-zimage-front-qwen-edit-v4",
+                    "prompt_skill_version": "1.5.0",
+                    "prompt_contract": "replica-assets-zimage-clean-positive-v5",
                     "reference_media": [{
                         "reference_id": "ref:scene-1",
                         "role": "LAYOUT",

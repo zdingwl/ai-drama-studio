@@ -38,7 +38,7 @@ Task 成功只产生 NEEDS_REVIEW candidate；显式 ACCEPT 才发布 `TARGET_ST
 
 ```text
 提取资产 + 本土化分镜证据
-→ z-image-turbo-asset-prompting@1.4.0
+→ z-image-turbo-asset-prompting@1.5.0
 → image_prompt / negative_prompt
 → 本机 ComfyUI + z_image_turbo_bf16.safetensors → 正面 canonical master
 → qwen-image-edit-character-asset-prompting@1.0.0

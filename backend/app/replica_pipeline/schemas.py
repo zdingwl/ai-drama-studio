@@ -352,6 +352,9 @@ class AssetWorkspaceEntity(BaseModel):
     prompt_skill_id: str | None = None
     prompt_skill_version: str | None = None
     prompt_contract: str | None = None
+    prompt_status: str = "NOT_STARTED"
+    image_status: str = "NOT_STARTED"
+    last_error: str | None = None
     active_generation_id: str | None = None
     generations: list[AssetWorkspaceGeneration] = Field(default_factory=list)
 

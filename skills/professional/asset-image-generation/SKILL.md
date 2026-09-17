@@ -24,7 +24,7 @@ Current Windows default:
 
 ```text
 Z-Image Turbo
-→ z-image-turbo-asset-prompting@1.4.0
+→ z-image-turbo-asset-prompting@1.5.0
 → z_image_turbo_bf16.safetensors → canonical FRONT master
 → qwen-image-edit-character-asset-prompting@1.0.0
 → qwen_image_edit_2511_fp8mixed.safetensors → SIDE / BACK

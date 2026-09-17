@@ -56,9 +56,13 @@ Generate a clean environment identity reference image. Show the stable spatial l
 
 Generate an isolated prop identity reference on a clean neutral background. Clearly show form, scale, material, color and signature details. Do not add hands or people unless they are indispensable to understanding scale; prefer a clean product/concept reference.
 
-## Negative constraints
+## Positive and negative separation
 
-Z-Image Turbo's current local workflow uses zeroed negative conditioning. Therefore semantic exclusions (extra people, temporary props, text/watermarks, scene-specific backgrounds) must also be written directly into `image_prompt` as explicit `Do not ...` constraints. `negative_prompt` is still returned and persisted for audit/future adapters, but the Runtime may inline it as hard exclusions rather than using a separate negative conditioning encoder. Character layout vocabulary is the exception: do not put it in either prompt field; Runtime owns orientation and composition.
+Z-Image Turbo's current local workflow uses zeroed negative conditioning, but this must not be worked around by pasting a negative list into `image_prompt`. The positive prompt stays affirmative and describes only the desired visible result. Isolation is expressed as positive composition, for example one subject, empty hands, a clean seamless studio background and a typography-free image. `image_prompt` must not contain `Do not`, `Avoid`, `Hard exclusions` or a copied negative list.
+
+`negative_prompt` remains a separate typed field for audit and future adapters. The current Z-Image Runtime does not inject it into the positive encoder. Character layout vocabulary remains Runtime-owned and must not appear in either prompt field.
+
+Character identity is not complete unless the positive prompt contains concrete, evidence-backed detail for facial structure, apparent-age markers, hairstyle/hair color, skin tone, body proportions, wardrobe silhouette, garment material/colors and at least one stable recognition anchor. Generic wording such as “natural facial features” or “average build” cannot replace those details. When evidence is genuinely absent, describe only supported visible traits rather than inventing biography or identity facts.
 
 ## Separation
 

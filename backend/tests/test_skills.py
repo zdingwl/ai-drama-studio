@@ -35,7 +35,7 @@ def test_skill_detail_contains_replica_five_step_contract(client: TestClient) ->
     assert detail["version"] == "1.7.0"
     assert "唯一普通主流程" in detail["manual"]
     assert "minimax-h3-prompting@1.1.0" in detail["manual"]
-    assert "z-image-turbo-asset-prompting@1.4.0" in detail["manual"]
+    assert "z-image-turbo-asset-prompting@1.5.0" in detail["manual"]
     assert "qwen-image-edit-character-asset-prompting@1.0.0" in detail["manual"]
     assert "z-image-turbo-asset-prompting" in detail["subskills"]
     assert "qwen-image-edit-character-asset-prompting" in detail["subskills"]
@@ -144,7 +144,7 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     zimage = client.get("/api/v3/skills/professional/z-image-turbo-asset-prompting")
     assert zimage.status_code == 200
     zimage_detail = zimage.json()
-    assert zimage_detail["version"] == "1.4.0"
+    assert zimage_detail["version"] == "1.5.0"
     assert zimage_detail["required_inputs"] == ["TARGET_STORYBOARD"]
     assert zimage_detail["output_contracts"] == []
     zimage_rules = "\n".join(zimage_detail["provider_rules"])
