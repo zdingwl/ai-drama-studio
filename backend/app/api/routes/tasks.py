@@ -67,6 +67,7 @@ def create_task_command_route(
 def create_p4_acceptance_task_route(
     project_id: str,
     scenario: P4AcceptanceScenario,
+    background_tasks: BackgroundTasks,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
     db: Session = Depends(get_db),
 ) -> TaskRead:
@@ -81,7 +82,10 @@ def create_p4_acceptance_task_route(
         payload=payload,
         idempotency_key=idempotency_key,
     )
-    # Execution is owned by the persistent queue dispatcher started in app.main lifespan.
+    # The persistent dispatcher owns production execution.  Keep the request-scoped runner as a
+    # compatibility consumer too: it uses the same atomic claim as the dispatcher, so only one
+    # can execute the task, and isolated application/database deployments do not strand it queued.
+    _schedule_task_if_needed(background_tasks, db, task)
     return task_to_read(task)
 
 
@@ -107,6 +111,7 @@ def cancel_task_route(project_id: str, task_id: str, db: Session = Depends(get_d
 def retry_task_route(
     project_id: str,
     task_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> TaskRead:
     existing = get_task(db, project_id, task_id)
@@ -117,6 +122,7 @@ def retry_task_route(
     task = retry_task(db, project_id, task_id)
     reconcile_asset_workspace_task_state(db, task)
     db.commit()
+    _schedule_task_if_needed(background_tasks, db, task)
     return task_to_read(task)
 
 
@@ -124,6 +130,7 @@ def retry_task_route(
 def resume_task_route(
     project_id: str,
     task_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> TaskRead:
     existing = get_task(db, project_id, task_id)
@@ -134,4 +141,5 @@ def resume_task_route(
     task = resume_task(db, project_id, task_id)
     reconcile_asset_workspace_task_state(db, task)
     db.commit()
+    _schedule_task_if_needed(background_tasks, db, task)
     return task_to_read(task)

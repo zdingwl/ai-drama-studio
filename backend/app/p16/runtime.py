@@ -162,7 +162,7 @@ def _set_task_checkpoint_fields(db: Session, task: Task, values: dict) -> Task:
     current = dict(task.checkpoint_json or {})
     changed = False
     for key, value in values.items():
-        if current.get(key) != value:
+        if key not in current or current[key] != value:
             current[key] = value
             changed = True
     if changed:
