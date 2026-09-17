@@ -28,6 +28,7 @@ from app.replica_pipeline.schemas import (
     LocalizedStoryboardDialogue,
     LocalizedStoryboardProvenance,
     LocalizedStoryboardRead,
+    LocalizedStoryboardShotEditCommand,
     LocalizedStoryboardSemantic,
     LocalizedStoryboardShot,
     LocalizedTargetCharacter,
@@ -581,6 +582,88 @@ def get_localized_storyboard(db: Session, project_id: str) -> LocalizedStoryboar
         # A historical P15 storyboard is not a v2 localized storyboard.
         return LocalizedStoryboardRead(project_id=project_id, status=ResultStatus.NOT_BUILT)
     return LocalizedStoryboardRead(project_id=project_id, status=ResultStatus.CURRENT if current is not None else ResultStatus.STALE, artifact_id=latest.id, revision=latest.revision, input_fingerprint=latest.input_fingerprint, content=ReplicaLocalizedStoryboardContent.model_validate(row.content_json), provenance=row.provenance_json)
+
+
+def update_localized_storyboard_shot(
+    db: Session,
+    *,
+    project_id: str,
+    command: LocalizedStoryboardShotEditCommand,
+) -> LocalizedStoryboardCandidateRead:
+    get_project(db, project_id)
+    source = _current_artifact(db, project_id, ArtifactType.SOURCE_VIDEO_SNAPSHOT)
+    if source is None or source.id != command.expected_source_snapshot_artifact_id:
+        raise AppError("LOCALIZED_STORYBOARD_EDIT_STALE", "正式原片分镜已经更新，请重新本土化", status_code=409)
+
+    candidate: ReplicaLocalizedStoryboardCandidate | None = None
+    if command.candidate_id:
+        candidate = db.get(ReplicaLocalizedStoryboardCandidate, command.candidate_id)
+        if candidate is None or candidate.project_id != project_id:
+            raise AppError("LOCALIZED_STORYBOARD_CANDIDATE_NOT_FOUND", "本土化分镜候选不存在", status_code=404)
+        if candidate.review_status != CandidateStatus.NEEDS_REVIEW.value:
+            raise AppError("LOCALIZED_STORYBOARD_CANDIDATE_NOT_EDITABLE", "候选当前不可修改", status_code=409)
+        if candidate.source_snapshot_artifact_id != source.id:
+            raise AppError("LOCALIZED_STORYBOARD_EDIT_STALE", "候选依赖的原片分镜已经变化", status_code=409)
+        content = ReplicaLocalizedStoryboardContent.model_validate(candidate.content_json)
+    else:
+        current = _current_artifact(db, project_id, ArtifactType.TARGET_STORYBOARD)
+        if current is None or current.id != command.expected_current_artifact_id:
+            raise AppError("LOCALIZED_STORYBOARD_EDIT_STALE", "当前本土化分镜已经变化，请刷新后重试", status_code=409)
+        revision = db.scalar(select(ReplicaLocalizedStoryboardRevision).where(ReplicaLocalizedStoryboardRevision.artifact_id == current.id))
+        if revision is None:
+            raise AppError("LOCALIZED_STORYBOARD_NOT_EDITABLE", "当前结果不是可编辑的本土化分镜", status_code=409)
+        content = ReplicaLocalizedStoryboardContent.model_validate(revision.content_json)
+        latest_sequence = db.scalar(select(func.max(ReplicaLocalizedStoryboardCandidate.generation_sequence)).where(ReplicaLocalizedStoryboardCandidate.project_id == project_id)) or 0
+        provenance = dict(revision.provenance_json)
+        provenance.update({"generation_sequence": latest_sequence + 1, "edited_from_artifact_id": current.id, "edited_by": "USER_EXPLICIT_ACTION"})
+        candidate = ReplicaLocalizedStoryboardCandidate(
+            project_id=project_id,
+            source_snapshot_artifact_id=source.id,
+            generated_by_task_id=None,
+            generation_sequence=latest_sequence + 1,
+            input_fingerprint=_sha({"source": source.id, "base": current.id, "sequence": latest_sequence + 1}),
+            schema_version=LOCALIZED_STORYBOARD_SCHEMA_VERSION,
+            content_json=content.model_dump(mode="json"),
+            provenance_json=provenance,
+            review_status=CandidateStatus.NEEDS_REVIEW.value,
+        )
+        db.add(candidate)
+        db.flush()
+
+    shot = next((item for item in content.shots if item.storyboard_shot_id == command.storyboard_shot_id), None)
+    if shot is None:
+        raise AppError("LOCALIZED_STORYBOARD_SHOT_NOT_FOUND", "要修改的本土化镜头不存在", status_code=404)
+    expected_utterance_ids = [item.utterance_id for item in shot.dialogue]
+    edited_utterance_ids = [item.utterance_id for item in command.dialogue]
+    if len(edited_utterance_ids) != len(set(edited_utterance_ids)) or set(edited_utterance_ids) != set(expected_utterance_ids):
+        raise AppError("LOCALIZED_STORYBOARD_DIALOGUE_SET_INVALID", "只能修改本镜头已有对白，不能增删或替换原片对白", status_code=422)
+
+    shot.localized_visual_description_zh = command.localized_visual_description_zh
+    shot.camera_description_zh = command.camera_description_zh
+    edits = {item.utterance_id: item for item in command.dialogue}
+    for item in content.dialogue:
+        edit = edits.get(item.utterance_id)
+        if edit is not None:
+            item.target_dialogue = edit.target_dialogue
+            item.target_dialogue_zh = edit.target_dialogue_zh
+    for storyboard_shot in content.shots:
+        for dialogue in storyboard_shot.dialogue:
+            edit = edits.get(dialogue.utterance_id)
+            if edit is not None:
+                dialogue.target_dialogue = edit.target_dialogue
+                dialogue.target_dialogue_zh = edit.target_dialogue_zh
+
+    validated = ReplicaLocalizedStoryboardContent.model_validate(content.model_dump(mode="json"))
+    candidate.content_json = validated.model_dump(mode="json")
+    provenance = dict(candidate.provenance_json)
+    provenance["last_edited_at"] = utc_now().isoformat()
+    provenance["last_edited_storyboard_shot_id"] = shot.storyboard_shot_id
+    candidate.provenance_json = provenance
+    candidate.input_fingerprint = _sha({"source": source.id, "content": candidate.content_json})
+    db.add(candidate)
+    db.commit()
+    db.refresh(candidate)
+    return _candidate_read(candidate)
 
 
 def accept_localized_storyboard_candidate(db: Session, *, project_id: str, candidate_id: str, command: PipelineReviewCommand) -> LocalizedStoryboardRead:

@@ -16,6 +16,7 @@ vi.mock('@/features/projects/replicaFiveStep', () => ({
   listLocalizedStoryboardCandidates: vi.fn(),
   reviewLocalizedStoryboard: vi.fn(),
   startLocalizedStoryboard: vi.fn(),
+  updateLocalizedStoryboardShot: vi.fn(),
 }))
 
 const runningTask: TaskRead = {
@@ -100,6 +101,42 @@ describe('LocalizedStoryboardWorkspace task progress', () => {
     expect(progress.text()).toContain('0%')
     expect(wrapper.text()).toContain('可在下方查看实时进度')
 
+    wrapper.unmount()
+  })
+})
+
+describe('LocalizedStoryboardWorkspace editing', () => {
+  it('edits a confirmed shot and saves it as a review candidate', async () => {
+    const content = {
+      source_snapshot_artifact_id: 'snapshot-1', target_language: 'en-US', target_region: 'US', characters: [], scenes: [], props: [], dialogue: [],
+      shots: [{
+        storyboard_shot_id: 'shot-1', episode_id: 'episode-1', episode_order: 1, source_shot_anchor_id: 'anchor-1', shot_number: 1,
+        start_us: 0, end_us: 2_000_000, duration_us: 2_000_000, output_ratio: '9:16', source_visual_description: '原片画面',
+        localized_visual_description_zh: '原本的本土化画面', camera_description_zh: '原本的镜头说明', target_character_ids: [], target_scene_ids: [], target_prop_ids: [], dialogue: [], sound_effects: [], ambience: [],
+      }],
+    }
+    vi.mocked(replicaApi.getLocalizedStoryboard).mockResolvedValue({ project_id: 'project-1', status: 'CURRENT', artifact_id: 'storyboard-1', revision: 1, content })
+    vi.mocked(replicaApi.listLocalizedStoryboardCandidates).mockResolvedValue([])
+    vi.mocked(projectApi.listProjectTasks).mockResolvedValue([])
+    vi.mocked(replicaApi.updateLocalizedStoryboardShot).mockResolvedValue({ id: 'candidate-edit-1', project_id: 'project-1', generation_sequence: 2, review_status: 'NEEDS_REVIEW', review_reason: null, content })
+
+    const wrapper = await mountWorkspace()
+    const fields = wrapper.findAll('textarea')
+    expect(fields).toHaveLength(2)
+    await fields[0].setValue('修改后的本土化画面内容')
+    await fields[1].setValue('修改后的镜头说明内容')
+    await fields[1].trigger('blur')
+    await flushPromises()
+
+    expect(replicaApi.updateLocalizedStoryboardShot).toHaveBeenCalledWith('project-1', expect.objectContaining({
+      candidate_id: null,
+      expected_current_artifact_id: 'storyboard-1',
+      expected_source_snapshot_artifact_id: 'snapshot-1',
+      storyboard_shot_id: 'shot-1',
+      localized_visual_description_zh: '修改后的本土化画面内容',
+      camera_description_zh: '修改后的镜头说明内容',
+    }))
+    expect(wrapper.text()).toContain('已自动保存为待确认版本')
     wrapper.unmount()
   })
 })

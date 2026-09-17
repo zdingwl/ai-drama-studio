@@ -204,6 +204,38 @@ class LocalizedStoryboardRead(BaseModel):
     provenance: dict | None = None
 
 
+class LocalizedStoryboardDialogueEdit(_StrictProvider):
+    utterance_id: str = Field(min_length=1)
+    target_dialogue: str = Field(min_length=1, max_length=2000)
+    target_dialogue_zh: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("target_dialogue", "target_dialogue_zh")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("dialogue text cannot be blank")
+        return value
+
+
+class LocalizedStoryboardShotEditCommand(_StrictProvider):
+    candidate_id: str | None = None
+    expected_current_artifact_id: str | None = None
+    expected_source_snapshot_artifact_id: str
+    storyboard_shot_id: str
+    localized_visual_description_zh: str = Field(min_length=1, max_length=8000)
+    camera_description_zh: str = Field(min_length=1, max_length=4000)
+    dialogue: list[LocalizedStoryboardDialogueEdit] = Field(default_factory=list)
+
+    @field_validator("localized_visual_description_zh", "camera_description_zh")
+    @classmethod
+    def normalize_description(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("storyboard description cannot be blank")
+        return value
+
+
 class PipelineReviewCommand(BaseModel):
     expected_upstream_artifact_id: str
     expected_generation_sequence: int = Field(ge=1)
@@ -296,6 +328,59 @@ class AssetImagesRead(BaseModel):
     input_fingerprint: str | None = None
     content: ReplicaAssetImagesContent | None = None
     provenance: dict | None = None
+
+
+class AssetWorkspaceGeneration(BaseModel):
+    generation_id: str
+    task_id: str
+    created_at: datetime
+    reference_media: list[TargetReferenceMedia] = Field(min_length=1)
+
+
+class AssetWorkspaceEntity(BaseModel):
+    target_asset_id: str
+    asset_type: TargetAssetType
+    target_entity_id: str
+    display_name: str
+    review_description_zh: str
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    image_prompt: str | None = None
+    negative_prompt: str = ""
+    prompt_review_zh: str | None = None
+    image_model_id: str | None = None
+    prompt_skill_id: str | None = None
+    prompt_skill_version: str | None = None
+    prompt_contract: str | None = None
+    active_generation_id: str | None = None
+    generations: list[AssetWorkspaceGeneration] = Field(default_factory=list)
+
+
+class AssetWorkspaceContent(BaseModel):
+    target_storyboard_artifact_id: str
+    target_language: str
+    target_region: str
+    visual_style: str
+    assets: list[AssetWorkspaceEntity] = Field(min_length=1)
+
+
+class AssetWorkspaceRead(BaseModel):
+    project_id: str
+    status: str
+    revision: int | None = None
+    content: AssetWorkspaceContent | None = None
+
+
+class AssetWorkspaceSelectionCommand(_StrictProvider):
+    target_asset_ids: list[str] = Field(min_length=1, max_length=256)
+
+    @field_validator("target_asset_ids")
+    @classmethod
+    def unique_asset_ids(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value if item.strip()]
+        if not normalized or len(normalized) != len(set(normalized)):
+            raise ValueError("target_asset_ids must be non-empty and unique")
+        return normalized
 
 
 class H3PromptAuthoredSegment(_StrictProvider):

@@ -33,6 +33,7 @@ from app.projects.models import Project
 from app.replica_pipeline.models import (
     ReplicaAssetImageCandidate,
     ReplicaAssetImageRevision,
+    ReplicaAssetWorkspace,
     ReplicaH3PromptRevision,
     ReplicaLocalizedStoryboardCandidate,
     ReplicaLocalizedStoryboardRevision,
@@ -64,6 +65,7 @@ __all__ = [
     "ReplicaFinalOutputRevision",
     "ReplicaAssetImageCandidate",
     "ReplicaAssetImageRevision",
+    "ReplicaAssetWorkspace",
     "ReplicaGeneratedVideoRevision",
     "ReplicaGenerationAttempt",
     "ReplicaGenerationSelectionCandidate",

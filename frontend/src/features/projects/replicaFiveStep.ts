@@ -114,6 +114,39 @@ export interface AssetImagesRead {
   content: AssetImagesContent | null
 }
 
+export interface AssetWorkspaceGeneration {
+  generation_id: string
+  task_id: string
+  created_at: string
+  reference_media: ReferenceMedia[]
+}
+
+export interface AssetWorkspaceEntity {
+  target_asset_id: string
+  asset_type: 'CHARACTER' | 'SCENE' | 'PROP'
+  target_entity_id: string
+  display_name: string
+  review_description_zh: string
+  width: number
+  height: number
+  image_prompt: string | null
+  negative_prompt: string
+  prompt_review_zh: string | null
+  image_model_id: string | null
+  prompt_skill_id: string | null
+  prompt_skill_version: string | null
+  prompt_contract: string | null
+  active_generation_id: string | null
+  generations: AssetWorkspaceGeneration[]
+}
+
+export interface AssetWorkspaceRead {
+  project_id: string
+  status: 'EMPTY' | 'READY'
+  revision: number | null
+  content: { target_storyboard_artifact_id: string; target_language: string; target_region: string; visual_style: string; assets: AssetWorkspaceEntity[] } | null
+}
+
 export interface AssetImageCandidate {
   id: string
   project_id: string
@@ -177,8 +210,24 @@ export const reviewLocalizedStoryboard = (projectId: string, candidate: Localize
   method: 'POST',
   body: JSON.stringify({ expected_upstream_artifact_id: candidate.content.source_snapshot_artifact_id, expected_generation_sequence: candidate.generation_sequence, reason }),
 })
+export const updateLocalizedStoryboardShot = (projectId: string, payload: {
+  candidate_id: string | null
+  expected_current_artifact_id: string | null
+  expected_source_snapshot_artifact_id: string
+  storyboard_shot_id: string
+  localized_visual_description_zh: string
+  camera_description_zh: string
+  dialogue: Array<{ utterance_id: string; target_dialogue: string; target_dialogue_zh: string }>
+}) => apiRequest<LocalizedStoryboardCandidate>(`/projects/${projectId}/localized-storyboard/commands/update-shot`, {
+  method: 'POST',
+  body: JSON.stringify(payload),
+})
 
 export const getAssetImages = (projectId: string) => apiRequest<AssetImagesRead>(`/projects/${projectId}/asset-images`, { cache: 'no-store' })
+export const getAssetWorkspace = (projectId: string) => apiRequest<AssetWorkspaceRead>(`/projects/${projectId}/asset-workspace`, { cache: 'no-store' })
+export const extractAssetWorkspace = (projectId: string) => apiRequest<AssetWorkspaceRead>(`/projects/${projectId}/asset-workspace/commands/extract`, { method: 'POST' })
+export const generateAssetPrompts = (projectId: string, targetAssetIds: string[]) => apiRequest<TaskRead>(`/projects/${projectId}/asset-workspace/commands/prompts`, { method: 'POST', headers: { 'Idempotency-Key': key('asset-prompts') }, body: JSON.stringify({ target_asset_ids: targetAssetIds }) })
+export const generateAssetImages = (projectId: string, targetAssetIds: string[]) => apiRequest<TaskRead>(`/projects/${projectId}/asset-workspace/commands/images`, { method: 'POST', headers: { 'Idempotency-Key': key('asset-images-queue') }, body: JSON.stringify({ target_asset_ids: targetAssetIds }) })
 export const listAssetImageCandidates = (projectId: string) => apiRequest<AssetImageCandidate[]>(`/projects/${projectId}/asset-images/candidates`, { cache: 'no-store' })
 export const startAssetImages = (projectId: string) => apiRequest<TaskRead>(`/projects/${projectId}/commands/asset-images`, { method: 'POST', headers: { 'Idempotency-Key': key('asset-images') } })
 export const regenerateAssetImages = (projectId: string) => apiRequest<TaskRead>(`/projects/${projectId}/commands/asset-images/regenerate`, { method: 'POST', headers: { 'Idempotency-Key': key('asset-images-regenerate') } })

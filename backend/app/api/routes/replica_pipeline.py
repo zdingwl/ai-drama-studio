@@ -6,9 +6,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import get_db
 from app.replica_pipeline.asset_images import (
+    ASSET_PROMPT_TASK_TYPE,
     accept_asset_image_candidate,
     asset_image_media_path,
+    create_asset_workspace_task,
     create_asset_images_task,
+    extract_asset_workspace,
+    get_asset_workspace,
     get_asset_images,
     list_asset_image_candidates,
     reject_asset_image_candidate,
@@ -22,13 +26,17 @@ from app.replica_pipeline.localized_storyboard import (
     list_localized_storyboard_candidates,
     reject_localized_storyboard_candidate,
     run_localized_storyboard_task,
+    update_localized_storyboard_shot,
 )
 from app.replica_pipeline.schemas import (
     AssetImageCandidateRead,
     AssetImagesRead,
+    AssetWorkspaceRead,
+    AssetWorkspaceSelectionCommand,
     H3PromptsRead,
     LocalizedStoryboardCandidateRead,
     LocalizedStoryboardRead,
+    LocalizedStoryboardShotEditCommand,
     PipelineReviewCommand,
 )
 from app.workflow.schemas import TaskRead
@@ -70,6 +78,11 @@ def localized_storyboard_reject(project_id: str, candidate_id: str, command: Pip
     return reject_localized_storyboard_candidate(db, project_id=project_id, candidate_id=candidate_id, command=command)
 
 
+@router.post("/projects/{project_id}/localized-storyboard/commands/update-shot", response_model=LocalizedStoryboardCandidateRead)
+def localized_storyboard_update_shot(project_id: str, command: LocalizedStoryboardShotEditCommand, db: Session = Depends(get_db)) -> LocalizedStoryboardCandidateRead:
+    return update_localized_storyboard_shot(db, project_id=project_id, command=command)
+
+
 @router.post("/projects/{project_id}/commands/asset-images", response_model=TaskRead, status_code=status.HTTP_202_ACCEPTED)
 def asset_images_command(project_id: str, background_tasks: BackgroundTasks, idempotency_key: Annotated[str, Header(alias="Idempotency-Key")], db: Session = Depends(get_db)) -> TaskRead:
     task = create_asset_images_task(db, project_id=project_id, idempotency_key=idempotency_key, regenerate=False)
@@ -83,6 +96,30 @@ def asset_images_regenerate_command(project_id: str, background_tasks: Backgroun
     task = create_asset_images_task(db, project_id=project_id, idempotency_key=idempotency_key, regenerate=True)
     if task.status.value == "queued":
         background_tasks.add_task(run_asset_images_task, _session_factory(db), task.id)
+    return task_to_read(task)
+
+
+@router.get("/projects/{project_id}/asset-workspace", response_model=AssetWorkspaceRead)
+def asset_workspace_read(project_id: str, db: Session = Depends(get_db)) -> AssetWorkspaceRead:
+    return get_asset_workspace(db, project_id)
+
+
+@router.post("/projects/{project_id}/asset-workspace/commands/extract", response_model=AssetWorkspaceRead)
+def asset_workspace_extract(project_id: str, db: Session = Depends(get_db)) -> AssetWorkspaceRead:
+    return extract_asset_workspace(db, project_id)
+
+
+@router.post("/projects/{project_id}/asset-workspace/commands/prompts", response_model=TaskRead, status_code=status.HTTP_202_ACCEPTED)
+def asset_workspace_prompts(project_id: str, command: AssetWorkspaceSelectionCommand, background_tasks: BackgroundTasks, idempotency_key: Annotated[str, Header(alias="Idempotency-Key")], db: Session = Depends(get_db)) -> TaskRead:
+    task = create_asset_workspace_task(db, project_id=project_id, idempotency_key=idempotency_key, operation="prompts", target_asset_ids=command.target_asset_ids)
+    if task.status.value == "queued": background_tasks.add_task(run_asset_images_task, _session_factory(db), task.id)
+    return task_to_read(task)
+
+
+@router.post("/projects/{project_id}/asset-workspace/commands/images", response_model=TaskRead, status_code=status.HTTP_202_ACCEPTED)
+def asset_workspace_images(project_id: str, command: AssetWorkspaceSelectionCommand, background_tasks: BackgroundTasks, idempotency_key: Annotated[str, Header(alias="Idempotency-Key")], db: Session = Depends(get_db)) -> TaskRead:
+    task = create_asset_workspace_task(db, project_id=project_id, idempotency_key=idempotency_key, operation="images", target_asset_ids=command.target_asset_ids)
+    if task.status.value == "queued": background_tasks.add_task(run_asset_images_task, _session_factory(db), task.id)
     return task_to_read(task)
 
 
