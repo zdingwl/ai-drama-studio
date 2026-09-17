@@ -1,7 +1,7 @@
 {
   "id": "character-visual-design",
   "name": "角色视觉设计",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "category": "target-assets",
   "description": "将 TARGET_BIBLE 中的角色语义身份转换为稳定可执行的视觉设计包，供模型专属图片 Prompt Skill 使用。",
   "when_to_use": ["需要生成角色资产图，需要先建立角色视觉身份设计时"],
@@ -12,16 +12,38 @@
   "required_capabilities": ["ASSET_IMAGE_GENERATION"],
   "manual_path": "character-visual-design/SKILL.md",
   "steps": [
-    {"id":"extract_character_identity","title":"提取角色身份","requires":["TARGET_BIBLE"]},
-    {"id":"design_character_visual_identity","title":"设计角色视觉身份","requires":["TARGET_BIBLE"]},
-    {"id":"compile_visual_packet","title":"输出角色视觉设计包","produces":["CHARACTER_VISUAL_DESIGN_PACKET"]}
+    {
+      "id": "extract_character_identity",
+      "phase": "资产图",
+      "title": "提取角色身份",
+      "description": "从 TARGET_BIBLE 提取角色稳定身份信息，不包含临时剧情动作。",
+      "capabilities": ["ASSET_IMAGE_GENERATION"],
+      "requires": ["TARGET_BIBLE"]
+    },
+    {
+      "id": "design_character_visual_identity",
+      "phase": "资产图",
+      "title": "设计角色视觉身份",
+      "description": "生成角色脸型、发型、体态、服装基线和一致性约束。",
+      "capabilities": ["ASSET_IMAGE_GENERATION"],
+      "requires": ["TARGET_BIBLE"]
+    },
+    {
+      "id": "compile_visual_packet",
+      "phase": "资产图",
+      "title": "输出角色视觉设计包",
+      "description": "输出供图片模型 Prompt Skill 消费的角色视觉身份约束。",
+      "capabilities": ["ASSET_IMAGE_GENERATION"],
+      "produces": ["TARGET_ASSETS"]
+    }
   ],
-  "output_contracts": ["CHARACTER_VISUAL_DESIGN_PACKET"],
+  "output_contracts": ["TARGET_ASSETS"],
   "provider_rules": [
     "不得改变 TARGET_BIBLE 中角色身份",
     "不得把剧情动作当成固定外观",
     "不得生成图片或替代模型 Prompt Skill",
     "必须提供脸型、发型、体态、服装基线和一致性约束"
   ],
-  "completion_criteria": ["角色视觉设计包完整", "可以被图片模型 Prompt Skill 消费", "身份一致性约束明确"]
+  "completion_criteria": ["角色视觉设计包完整", "可以被图片模型 Prompt Skill 消费", "身份一致性约束明确"],
+  "failure_policy": ["缺少角色视觉设计信息时禁止继续生成角色资产"]
 }
