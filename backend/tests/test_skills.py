@@ -78,6 +78,7 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     assert "replica-target-assets" in ids
     assert "storyboard-localization" in ids
     assert "asset-image-generation" in ids
+    assert "seedream-5-asset-prompting" in ids
     assert "qwen-image-edit-character-asset-prompting" in ids
     assert "minimax-h3-prompting" in ids
 
@@ -129,7 +130,7 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     assets = client.get("/api/v3/skills/professional/asset-image-generation")
     assert assets.status_code == 200
     assets_detail = assets.json()
-    assert assets_detail["version"] == "1.6.0"
+    assert assets_detail["version"] == "1.7.0"
     assert assets_detail["required_inputs"] == ["TARGET_STORYBOARD"]
     assert assets_detail["output_contracts"] == ["TARGET_ASSETS"]
     asset_rules = "\n".join(assets_detail["provider_rules"])

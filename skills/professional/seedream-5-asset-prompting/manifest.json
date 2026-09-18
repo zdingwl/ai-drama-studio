@@ -1,0 +1,31 @@
+{
+  "id": "seedream-5-asset-prompting",
+  "name": "Seedream 5.0 资产图提示词编译",
+  "version": "1.0.0",
+  "category": "target-assets",
+  "description": "把 CURRENT TARGET_STORYBOARD 中的单个人物、场景或道具及其视觉身份合同编译为 Seedream 5.0 专属执行提示词；人物身份由 Pro 参考图链保持，场景和道具由 Lite 生成。",
+  "when_to_use": ["Replica 第 3 步使用火山方舟 Seedream 5.0 Pro 与 Lite 生成真实资产图"],
+  "when_not_to_use": ["TARGET_STORYBOARD 缺失或 STALE", "需要生成视频提示词", "需要修改本土化分镜语义"],
+  "required_inputs": ["TARGET_STORYBOARD"],
+  "optional_inputs": [],
+  "readable_artifacts": ["TARGET_STORYBOARD"],
+  "required_capabilities": ["ASSET_IMAGE_GENERATION"],
+  "manual_path": "seedream-5-asset-prompting/SKILL.md",
+  "steps": [
+    {"id":"analyze_asset_evidence","phase":"资产图","title":"分析资产视觉证据","description":"只读取当前资产的视觉身份合同与实际分镜证据，过滤不可直接绘制的叙事关系。","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]},
+    {"id":"compile_seedream_prompt","phase":"资产图","title":"编译 Seedream 5.0 提示词","description":"为 Pro 人物参考图链或 Lite 场景道具生成具体英文执行提示词。","capabilities":["ASSET_IMAGE_GENERATION"],"requires":["TARGET_STORYBOARD"],"produces":[]}
+  ],
+  "fact_levels": ["TARGET_LOCALIZED_ENTITY", "STORYBOARD_VISUAL_EVIDENCE", "SEEDREAM_EXECUTION_PROMPT"],
+  "provider_rules": [
+    "Return exactly one prompt result for every requested target_entity_id.",
+    "Character prompts contain one stable visible identity and never turn relationships or dialogue into additional people.",
+    "Character layout and orientation instructions belong to the Runtime; the authored identity prompt must not request a collage, contact sheet or turnaround.",
+    "Scene prompts isolate stable spatial identity without adding story characters.",
+    "Prop prompts isolate form, scale, material, color and signature details without unrelated people.",
+    "Execution prompts are concrete English; review_prompt_zh is Simplified Chinese.",
+    "Do not generate ids, media paths, image bytes or video prompts."
+  ],
+  "output_contracts": [],
+  "completion_criteria": ["每个资产都有 Seedream 5.0 专属提示词", "人物提示词保持单人物稳定身份", "Runtime 尚未执行且未伪造 reference_media"],
+  "failure_policy": ["Provider coverage 不完整时整批失败", "人物提示词泄漏多面板布局指令时 fail closed", "不得回退到通用字符串拼接器"]
+}

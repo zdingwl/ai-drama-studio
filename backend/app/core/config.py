@@ -120,6 +120,13 @@ class Settings(BaseSettings):
     p7_doubao_request_timeout_seconds: float = 1800.0
     p7_doubao_video_fps: float = 1.0
 
+    # Step 3 closed image runtime. Credentials reuse the server-side Ark key;
+    # model ids stay configurable because Ark publishes dated revisions.
+    asset_image_runtime: str = "ARK_SEEDREAM"
+    asset_seedream_pro_model: str = "doubao-seedream-5-0-pro-260628"
+    asset_seedream_lite_model: str = "doubao-seedream-5-0-lite-260128"
+    asset_seedream_timeout_seconds: float = 1800.0
+
     # P7 model B: Qwen3.8-27B on a user-operated local/shared vLLM service.
     p7_qwen38_local_base_url: str = "http://127.0.0.1:8000/v1"
     p7_qwen38_local_api_key: SecretStr | None = None
@@ -189,6 +196,13 @@ class Settings(BaseSettings):
             raise ValueError("p6_ocr_min_confidence must be between 0 and 1")
         if self.p7_doubao_request_timeout_seconds <= 0:
             raise ValueError("p7_doubao_request_timeout_seconds must be positive")
+        self.asset_image_runtime = self.asset_image_runtime.strip().upper()
+        if self.asset_image_runtime not in {"ARK_SEEDREAM", "LOCAL_COMFYUI"}:
+            raise ValueError("asset_image_runtime must be ARK_SEEDREAM or LOCAL_COMFYUI")
+        if not self.asset_seedream_pro_model.strip() or not self.asset_seedream_lite_model.strip():
+            raise ValueError("Seedream model ids must not be empty")
+        if self.asset_seedream_timeout_seconds <= 0:
+            raise ValueError("asset_seedream_timeout_seconds must be positive")
         if not 0.1 <= self.p7_doubao_video_fps <= 10:
             raise ValueError("p7_doubao_video_fps must be between 0.1 and 10")
         if self.p7_qwen_local_request_timeout_seconds <= 0:

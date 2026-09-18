@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.skills.professional import ProfessionalSkillDetail, get_professional_skill_detail
 
@@ -23,12 +24,19 @@ _QWEN_IMAGE_EDIT_CHARACTER_BINDING = ImageModelPromptSkillBinding(
     prompt_contract="qwen-image-edit-2511-character-orientation-v1",
 )
 
+_SEEDREAM_5_BINDING = ImageModelPromptSkillBinding(
+    model_id="Doubao-Seedream-5.0",
+    prompt_skill_id="seedream-5-asset-prompting",
+    prompt_contract="replica-assets-seedream5-clean-positive-v1",
+)
+
 
 IMAGE_MODEL_PROMPT_SKILLS: dict[str, ImageModelPromptSkillBinding] = {
     "Z-Image-Turbo": _Z_IMAGE_TURBO_BINDING,
     "z_image_turbo_bf16.safetensors": _Z_IMAGE_TURBO_BINDING,
     "Qwen-Image-Edit-2511": _QWEN_IMAGE_EDIT_CHARACTER_BINDING,
     "qwen_image_edit_2511_fp8mixed.safetensors": _QWEN_IMAGE_EDIT_CHARACTER_BINDING,
+    "Doubao-Seedream-5.0": _SEEDREAM_5_BINDING,
 }
 
 
@@ -57,6 +65,8 @@ def resolve_image_model_prompt_skill(
 
 
 def selected_image_model_prompt_skill() -> tuple[ImageModelPromptSkillBinding, ProfessionalSkillDetail]:
+    if get_settings().asset_image_runtime == "ARK_SEEDREAM":
+        return resolve_image_model_prompt_skill("Doubao-Seedream-5.0")
     return resolve_image_model_prompt_skill("Z-Image-Turbo")
 
 

@@ -217,7 +217,7 @@ def create_task_from_command(
         progress_percent=0,
         attempt=0,
         max_attempts=payload.max_attempts,
-        checkpoint_json={},
+        checkpoint_json=payload.initial_checkpoint_json,
         cancel_requested=False,
         created_at=now,
         updated_at=now,

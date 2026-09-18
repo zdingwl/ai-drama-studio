@@ -8,6 +8,7 @@ from app.core.errors import AppError
 from app.p16.common import _validate_reference_contract
 from app.replica_pipeline.asset_images import _content_matches_current_asset_contract
 from app.replica_pipeline.h3_prompting import _asset_lookup, _references
+from app.replica_pipeline.image_model_skills import selected_image_model_prompt_skill
 from app.target_assets.schemas import ReferenceMediaRole, TargetAssetRef, TargetAssetType
 
 
@@ -26,15 +27,16 @@ def _media(role: ReferenceMediaRole, name: str):
 
 
 def _asset(entity_id: str, asset_type: TargetAssetType, media: list):
+    binding, prompt_skill = selected_image_model_prompt_skill()
     return SimpleNamespace(
         target_asset_id=f"asset:{entity_id}",
         target_asset_revision=1,
         asset_type=asset_type,
         target_entity_id=entity_id,
-        image_model_id="Z-Image-Turbo",
-        prompt_skill_id="z-image-turbo-asset-prompting",
-        prompt_skill_version="1.5.0",
-        prompt_contract="replica-assets-zimage-clean-positive-v5",
+        image_model_id=binding.model_id,
+        prompt_skill_id=prompt_skill.id,
+        prompt_skill_version=prompt_skill.version,
+        prompt_contract=binding.prompt_contract,
         character_visual_design=SimpleNamespace(character_id=entity_id) if asset_type == TargetAssetType.CHARACTER else None,
         character_visual_skill_id="character-visual-design" if asset_type == TargetAssetType.CHARACTER else None,
         character_visual_skill_version="1.1.0" if asset_type == TargetAssetType.CHARACTER else None,

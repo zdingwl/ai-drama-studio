@@ -1,7 +1,7 @@
 {
   "id": "asset-image-generation",
   "name": "Replica Asset Image Generation",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "category": "target-assets",
   "description": "Extract target entities, design stable character visual identity, invoke model-specific image Prompt Skills, then render reference media.",
   "when_to_use": ["Generate target character, scene, and prop reference assets from localized storyboard."],
@@ -17,7 +17,7 @@
     {"id":"compile_model_prompt","phase":"资产图","title":"生成图片模型专属提示词","description":"Route visual packets through selected image model Professional Prompt Skill.","capabilities":["MODEL_PROMPTING"]},
     {"id":"render_reference_images","phase":"资产图","title":"生成真实资产图","description":"Render reference media from validated model prompts.","capabilities":["ASSET_IMAGE_GENERATION"]}
   ],
-  "skill_chain": ["character-visual-design@1.1.0", "z-image-turbo-asset-prompting", "qwen-image-edit-character-asset-prompting"],
+  "skill_chain": ["character-visual-design@1.1.0", "seedream-5-asset-prompting", "z-image-turbo-asset-prompting", "qwen-image-edit-character-asset-prompting"],
   "provider_rules": [
     "Character visual design must happen before model prompt compilation.",
     "Model-specific Prompt Skills cannot invent identity facts.",

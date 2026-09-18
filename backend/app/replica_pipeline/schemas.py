@@ -389,6 +389,8 @@ class AssetWorkspaceEntity(BaseModel):
     last_error: str | None = None
     active_generation_id: str | None = None
     generations: list[AssetWorkspaceGeneration] = Field(default_factory=list)
+    consistency_status: str | None = None
+    consistency_report: dict[str, object] = Field(default_factory=dict)
 
 
 class AssetWorkspaceContent(BaseModel):

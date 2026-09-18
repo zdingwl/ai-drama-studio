@@ -41,8 +41,20 @@ def validate_character_reference_set(reference_paths: dict[str, str]) -> Charact
     当前阶段先完成统一门禁接口和确定性图片校验；
     face embedding / CLIP / InsightFace 相似度模型将在此处接入。
     """
-    required_views = ("front", "face")
-    missing = [view for view in required_views if view not in reference_paths]
+    # New character boards persist explicit orientation roles.  Keep accepting
+    # legacy names so historical candidates remain inspectable, but treat the
+    # deterministic FULL_BODY_FRONT crop as the current front identity anchor.
+    front_path = (
+        reference_paths.get("FULL_BODY_FRONT")
+        or reference_paths.get("FULL_BODY")
+        or reference_paths.get("front")
+    )
+    face_path = reference_paths.get("FACE") or reference_paths.get("face")
+    missing = [
+        name
+        for name, path in (("front", front_path), ("face", face_path))
+        if not path
+    ]
     if missing:
         return CharacterConsistencyResult(
             False,

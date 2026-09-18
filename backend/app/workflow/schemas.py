@@ -13,6 +13,7 @@ class TaskCommandCreate(BaseModel):
     task_name: str = Field(min_length=1, max_length=160)
     input_fingerprint: str = Field(pattern=_SHA256_PATTERN)
     input_artifact_ids: list[str] = Field(default_factory=list, max_length=256)
+    initial_checkpoint_json: dict = Field(default_factory=dict)
     plan_id: str | None = Field(default=None, max_length=36)
     plan_step_key: str | None = Field(default=None, max_length=96)
     episode_id: str | None = Field(default=None, max_length=36)

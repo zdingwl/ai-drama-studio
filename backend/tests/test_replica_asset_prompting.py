@@ -22,6 +22,7 @@ from app.replica_pipeline.asset_images import (
     QWEN_CHARACTER_EDIT_STEPS,
     QWEN_CHARACTER_EDIT_UNET,
     QWEN_CHARACTER_EDIT_VAE,
+    ArkSeedreamRuntime,
     ComfyUIZImageTurboRuntime,
     GeneratedImage,
     _character_identity_reference_media,
@@ -32,6 +33,7 @@ from app.replica_pipeline.asset_images import (
     reconcile_asset_workspace_task_state,
 )
 from app.replica_pipeline.asset_prompting import validate_authored_asset_batch
+from app.replica_pipeline.character_consistency import validate_character_reference_set
 from app.replica_pipeline.models import ReplicaAssetImageCandidate, ReplicaAssetImageRevision, ReplicaAssetWorkspace
 from app.replica_pipeline.schemas import ASSET_IMAGES_SCHEMA_VERSION, AssetWorkspaceContent, CandidateStatus, CharacterVisualDesignPacket
 from app.replica_pipeline.image_model_skills import selected_character_edit_prompt_skill, selected_image_model_prompt_skill
@@ -110,7 +112,7 @@ def _visual_packet() -> CharacterVisualDesignPacket:
 
 def test_asset_orchestration_skill_requires_model_prompt_compilation() -> None:
     skill = get_professional_skill("asset-image-generation")
-    assert skill.version == "1.6.0"
+    assert skill.version == "1.7.0"
     assert [step.id for step in skill.steps] == [
         "extract_entities",
         "design_character_visual_identity",
@@ -119,16 +121,98 @@ def test_asset_orchestration_skill_requires_model_prompt_compilation() -> None:
     ]
 
     binding, prompt_skill = selected_image_model_prompt_skill()
-    assert binding.model_id == "Z-Image-Turbo"
-    assert binding.prompt_contract == "replica-assets-zimage-clean-positive-v5"
-    assert prompt_skill.id == "z-image-turbo-asset-prompting"
-    assert prompt_skill.version == "1.5.0"
+    assert binding.model_id == "Doubao-Seedream-5.0"
+    assert binding.prompt_contract == "replica-assets-seedream5-clean-positive-v1"
+    assert prompt_skill.id == "seedream-5-asset-prompting"
+    assert prompt_skill.version == "1.0.0"
 
     edit_binding, edit_skill = selected_character_edit_prompt_skill()
     assert edit_binding.model_id == "Qwen-Image-Edit-2511"
     assert edit_binding.prompt_contract == "qwen-image-edit-2511-character-orientation-v1"
     assert edit_skill.id == "qwen-image-edit-character-asset-prompting"
     assert edit_skill.version == "1.0.0"
+
+
+def test_seedream_runtime_routes_character_reference_chain_to_pro(monkeypatch, tmp_path) -> None:
+    runtime = ArkSeedreamRuntime()
+    runtime.settings.artifact_root = tmp_path
+    calls = []
+
+    def fake_generate(*, model, prompt, width, height, reference=None):
+        calls.append((model, prompt, width, height, reference))
+        color = (20 * len(calls), 40, 60)
+        return Image.new("RGB", (width, height), color), f"remote-{len(calls)}"
+
+    monkeypatch.setattr(runtime, "_generate", fake_generate)
+    generated = runtime.generate_character_sheet(
+        project_id="project-1",
+        task_id="task-1",
+        asset_id="asset:character-1",
+        prompt="one adult character with stable facial identity",
+        negative_prompt="extra people, text",
+    )
+
+    assert [call[0] for call in calls] == [runtime.character_pipeline_model_name] * 3
+    assert calls[0][4] is None
+    assert calls[1][4] is calls[2][4]
+    assert calls[1][4] is not None
+    assert "90-degree left-facing" in calls[1][1]
+    assert "rear full-body view" in calls[2][1]
+    assert generated.remote_job_id == "remote-1;remote-2;remote-3"
+    assert (tmp_path / generated.storage_relpath).is_file()
+
+
+def test_seedream_runtime_routes_scene_and_prop_to_lite(monkeypatch, tmp_path) -> None:
+    runtime = ArkSeedreamRuntime()
+    runtime.settings.artifact_root = tmp_path
+    calls = []
+
+    def fake_generate(**kwargs):
+        calls.append(kwargs)
+        return Image.new("RGB", (kwargs["width"], kwargs["height"]), (1, 2, 3)), "remote-lite"
+
+    monkeypatch.setattr(runtime, "_generate", fake_generate)
+    generated = runtime.generate(
+        project_id="project-1",
+        task_id="task-1",
+        asset_id="asset:scene-1",
+        prompt="an empty modern living room",
+        negative_prompt="people, text",
+        width=1280,
+        height=736,
+    )
+
+    assert calls[0]["model"] == runtime.model_name
+    assert calls[0].get("reference") is None
+    assert (tmp_path / generated.storage_relpath).is_file()
+
+
+def test_seedream_runtime_uses_standard_ark_render_tier_not_ui_card_dimensions() -> None:
+    assert ArkSeedreamRuntime._request_size(512, 1024) == "2K"
+    assert ArkSeedreamRuntime._request_size(1280, 736) == "2K"
+    assert ArkSeedreamRuntime._request_size(1024, 1024) == "2K"
+
+
+def test_seedream_runtime_does_not_send_unsupported_series_parameter(monkeypatch) -> None:
+    runtime = ArkSeedreamRuntime()
+    captured = {}
+
+    class FakeImages:
+        def generate(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(data=[])
+
+    monkeypatch.setattr(runtime, "_client", lambda: SimpleNamespace(images=FakeImages()))
+    monkeypatch.setattr(runtime, "_response_image", lambda _: (Image.new("RGB", (1, 1)), "remote-1"))
+    runtime._generate(
+        model="doubao-seedream-5-0-pro-260628",
+        prompt="one person",
+        width=512,
+        height=1024,
+    )
+
+    assert captured["size"] == "2K"
+    assert "sequential_image_generation" not in captured
 
 
 def test_character_asset_extraction_preserves_storyboard_evidence_without_direct_prompt() -> None:
@@ -240,6 +324,26 @@ def test_character_prompt_accepts_english_translation_of_chinese_visual_design()
     })
 
     assert validate_authored_asset_batch([context], authored)["target-char-1"].image_prompt.startswith("One young East Asian man")
+
+
+def test_character_prompt_accepts_common_elderly_body_and_clothing_synonyms() -> None:
+    context = _character_context()
+    authored = AssetImagePromptAuthoringResult.model_validate({
+        "assets": [{
+            "target_entity_id": "target-char-1",
+            "image_prompt": (
+                "One elderly East Asian woman with a softly rounded face, gently defined jaw, warm beige complexion, "
+                "fine wrinkles around her brown eyes and lips, and short salt-and-pepper hair in a practical natural style. "
+                "Her average mature physique has a relaxed upright silhouette and naturally proportioned shoulders. "
+                "She is wearing an orange floral cotton blouse with taupe slacks and simple brown walking shoes. "
+                "Natural realistic skin and garment texture, centered solitary subject, clean seamless studio styling, typography-free image."
+            ),
+            "negative_prompt": "extra people, text, watermark, youthful face, fashion styling",
+            "review_prompt_zh": "稳定呈现年长东亚女性的面部、花白短发、自然体态和橙色印花上衣。",
+        }],
+    })
+
+    assert validate_authored_asset_batch([context], authored)["target-char-1"].image_prompt.startswith("One elderly East Asian woman")
 
 
 def test_z_image_runtime_matches_verified_local_comfyui_workflow() -> None:
@@ -385,13 +489,14 @@ def test_character_board_persists_dedicated_h3_front_and_face_identity_media() -
         provider_job_id="provider-job-1",
     )
 
-    assert [item.role.value for item in media] == ["FULL_BODY", "FACE"]
+    assert [item.role.value for item in media] == ["FULL_BODY_FRONT", "FULL_BODY_SIDE", "FULL_BODY_BACK", "FACE"]
     assert all(item.provider_job_id == "provider-job-1" for item in media)
     assert all(item.storage_relpath and (root / item.storage_relpath).is_file() for item in media)
+    assert validate_character_reference_set({item.role.value: str(root / item.storage_relpath) for item in media}).passed is True
     with Image.open(root / media[0].storage_relpath) as front:
         assert front.size == (CHARACTER_PANEL_WIDTH, CHARACTER_PANEL_HEIGHT)
         assert front.getpixel((100, 700)) == (255, 0, 0)
-    with Image.open(root / media[1].storage_relpath) as face:
+    with Image.open(root / media[3].storage_relpath) as face:
         assert face.size == (CHARACTER_PANEL_WIDTH, CHARACTER_PANEL_HEIGHT)
         assert face.getpixel((100, 400)) == (255, 255, 0)
 
@@ -632,3 +737,16 @@ def test_asset_workspace_task_failure_and_retry_reconcile_card_status(
         retried = AssetWorkspaceContent.model_validate(workspace.content_json).assets[0]
         assert retried.prompt_status == "QUEUED"
         assert retried.last_error is None
+
+        retried.image_prompt = "Existing committed character identity prompt"
+        workspace.content_json = AssetWorkspaceContent.model_validate({
+            **workspace.content_json,
+            "assets": [retried.model_dump(mode="json")],
+        }).model_dump(mode="json")
+        task.status = TaskStatus.CANCELLED
+        db.add_all([workspace, task])
+        reconcile_asset_workspace_task_state(db, task)
+        db.commit()
+        db.refresh(workspace)
+        recovered = AssetWorkspaceContent.model_validate(workspace.content_json).assets[0]
+        assert recovered.prompt_status == "READY"

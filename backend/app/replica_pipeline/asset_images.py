@@ -1,4 +1,5 @@
 import hashlib
+import base64
 import json
 import math
 import secrets
@@ -10,6 +11,8 @@ from urllib.parse import urlencode
 from uuid import uuid4
 
 import httpx
+from arkruntime import Ark
+from arkruntime._exceptions import ArkBadRequestError
 from PIL import Image, ImageOps
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
@@ -633,6 +636,134 @@ class ComfyUIZImageTurboRuntime:
 ComfyUIFluxRuntime = ComfyUIZImageTurboRuntime
 
 
+class ArkSeedreamRuntime:
+    provider_name = "volcengine-ark-seedream"
+
+    def __init__(self):
+        self.settings = get_settings()
+        self.model_name = self.settings.asset_seedream_lite_model
+        self.character_pipeline_model_name = self.settings.asset_seedream_pro_model
+        self.pipeline_model_name = (
+            f"character={self.character_pipeline_model_name};"
+            f"scene-prop={self.model_name}"
+        )
+
+    def assert_ready(self, *, require_character_edit: bool = False) -> None:
+        if self.settings.p7_doubao_api_key is None or not self.settings.p7_doubao_api_key.get_secret_value().strip():
+            raise AppError("ASSET_IMAGE_SEEDREAM_NOT_CONFIGURED", "Seedream 图片 Provider 尚未配置火山方舟 API Key", status_code=409)
+
+    def profile(self) -> dict:
+        return {
+            "provider": self.provider_name,
+            "character_model": self.character_pipeline_model_name,
+            "scene_prop_model": self.model_name,
+            "workflow": "seedream5-pro-reference-identity-lite-assets-v1",
+            "watermark": False,
+        }
+
+    def _client(self) -> Ark:
+        self.assert_ready()
+        assert self.settings.p7_doubao_api_key is not None
+        return Ark(
+            api_key=self.settings.p7_doubao_api_key.get_secret_value(),
+            base_url=self.settings.p7_doubao_base_url,
+            timeout=self.settings.asset_seedream_timeout_seconds,
+            max_retries=2,
+        )
+
+    @staticmethod
+    def _data_uri(image: Image.Image) -> str:
+        buffer = BytesIO()
+        image.convert("RGB").save(buffer, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+    @staticmethod
+    def _response_image(response) -> tuple[Image.Image, str]:
+        data = list(getattr(response, "data", None) or [])
+        if not data:
+            raise AppError("ASSET_IMAGE_SEEDREAM_EMPTY", "Seedream 未返回图片", status_code=502)
+        item = data[0]
+        encoded = getattr(item, "b64_json", None)
+        if encoded:
+            raw = base64.b64decode(encoded)
+        else:
+            url = str(getattr(item, "url", "") or "")
+            if not url:
+                raise AppError("ASSET_IMAGE_SEEDREAM_EMPTY", "Seedream 返回结果缺少图片内容", status_code=502)
+            response_image = httpx.get(url, timeout=300.0, follow_redirects=True)
+            response_image.raise_for_status()
+            raw = response_image.content
+        with Image.open(BytesIO(raw)) as source:
+            image = source.convert("RGB").copy()
+        return image, str(getattr(response, "id", "") or "")
+
+    @staticmethod
+    def _request_size(width: int, height: int) -> str:
+        # Seedream 5.0 accepts its documented quality tiers.  The old ComfyUI
+        # card sizes (for example 512x1024) are UI/output sizes, not valid Ark
+        # render sizes.  We resize/crop the returned image only after generation.
+        return "2K"
+
+    def _generate(self, *, model: str, prompt: str, width: int, height: int, reference: Image.Image | None = None) -> tuple[Image.Image, str]:
+        try:
+            response = self._client().images.generate(
+                model=model,
+                prompt=prompt,
+                image=[self._data_uri(reference)] if reference is not None else None,
+                response_format="url",
+                size=self._request_size(width, height),
+                watermark=False,
+            )
+        except ArkBadRequestError as exc:
+            # The SDK's public message/body contains Ark's parameter or model
+            # diagnosis, but never request credentials. Keep it bounded before
+            # it enters the ProviderJob/UI error path.
+            detail = str(getattr(exc, "body", None) or str(exc)).replace("\n", " ").strip()
+            raise AppError(
+                "ASSET_IMAGE_SEEDREAM_REQUEST_INVALID",
+                f"Seedream 请求参数无效：{detail[:480] or '请检查模型配置'}",
+                status_code=502,
+            ) from exc
+        return self._response_image(response)
+
+    def generate_character_sheet(self, *, project_id: str, task_id: str, asset_id: str, prompt: str, negative_prompt: str) -> GeneratedImage:
+        front_prompt = ComfyUIZImageTurboRuntime._character_front_prompt(prompt)
+        runtime_negative = ComfyUIZImageTurboRuntime._character_negative_for_runtime(negative_prompt)
+        if runtime_negative:
+            front_prompt += f" Exclude these visual defects or additions: {runtime_negative}."
+        front, front_id = self._generate(model=self.character_pipeline_model_name, prompt=front_prompt, width=CHARACTER_RENDER_WIDTH, height=CHARACTER_RENDER_HEIGHT)
+        side, side_id = self._generate(model=self.character_pipeline_model_name, prompt=ComfyUIZImageTurboRuntime._qwen_character_edit_prompt(negative_prompt, "side"), width=CHARACTER_RENDER_WIDTH, height=CHARACTER_RENDER_HEIGHT, reference=front)
+        back, back_id = self._generate(model=self.character_pipeline_model_name, prompt=ComfyUIZImageTurboRuntime._qwen_character_edit_prompt(negative_prompt, "back"), width=CHARACTER_RENDER_WIDTH, height=CHARACTER_RENDER_HEIGHT, reference=front)
+        sheet = ComfyUIZImageTurboRuntime._compose_character_sheet(front, side, back)
+        return self._persist(project_id, task_id, asset_id, sheet, ";".join(filter(None, (front_id, side_id, back_id))))
+
+    def generate(self, *, project_id: str, task_id: str, asset_id: str, prompt: str, negative_prompt: str, width: int, height: int) -> GeneratedImage:
+        execution_prompt = prompt
+        if negative_prompt.strip():
+            execution_prompt += f" Exclude these visual defects or additions: {negative_prompt.strip()}."
+        image, remote_id = self._generate(model=self.model_name, prompt=execution_prompt, width=width, height=height)
+        image = ImageOps.fit(image, (width, height), method=Image.Resampling.LANCZOS)
+        return self._persist(project_id, task_id, asset_id, image, remote_id)
+
+    def _persist(self, project_id: str, task_id: str, asset_id: str, image: Image.Image, remote_id: str) -> GeneratedImage:
+        storage_relpath = f"target_asset_images/{project_id}/{task_id}/{asset_id.replace(':', '_')}.png"
+        output = (self.settings.artifact_root / storage_relpath).resolve()
+        root = self.settings.artifact_root.resolve()
+        if root not in output.parents:
+            raise AppError("ASSET_IMAGE_STORAGE_INVALID", "资产图存储路径越界", status_code=500)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        image.save(output, format="PNG")
+        width, height = image.size
+        return GeneratedImage(storage_relpath, _file_sha(output), width, height, "image/png", "", remote_id or None)
+
+
+def asset_image_runtime() -> ArkSeedreamRuntime | ComfyUIZImageTurboRuntime:
+    settings = get_settings()
+    if settings.asset_image_runtime == "ARK_SEEDREAM":
+        return ArkSeedreamRuntime()
+    return ComfyUIZImageTurboRuntime()
+
+
 def _current_artifact(db: Session, project_id: str, artifact_type: ArtifactType) -> ArtifactNode | None:
     return db.scalar(select(ArtifactNode).where(ArtifactNode.project_id == project_id, ArtifactNode.artifact_type == artifact_type.value, ArtifactNode.is_current.is_(True), ArtifactNode.validity == ArtifactValidity.CURRENT))
 
@@ -881,7 +1012,7 @@ def create_asset_workspace_task(db: Session, *, project_id: str, idempotency_key
     if any(asset_id not in by_id for asset_id in target_asset_ids):
         raise AppError("ASSET_WORKSPACE_SELECTION_INVALID", "所选资产不存在或已经失效", status_code=422)
     if operation == "images":
-        ComfyUIZImageTurboRuntime().assert_ready()
+        asset_image_runtime().assert_ready()
         if any(not by_id[asset_id].image_prompt for asset_id in target_asset_ids):
             raise AppError("ASSET_WORKSPACE_PROMPT_MISSING", "请先为所选资产生成提示词", status_code=409)
         visual_skill = character_visual_design_skill()
@@ -903,9 +1034,8 @@ def create_asset_workspace_task(db: Session, *, project_id: str, idempotency_key
     task_type = ASSET_PROMPT_TASK_TYPE if operation == "prompts" else TASK_TYPE
     visual_skill = character_visual_design_skill()
     fingerprint = _sha({"storyboard": storyboard_artifact.input_fingerprint, "workspace_revision": workspace.revision, "operation": operation, "asset_ids": target_asset_ids, "character_visual_skill": [visual_skill.id, visual_skill.version], "request": idempotency_key})
-    task = create_task_from_command(db, project_id=project_id, idempotency_key=idempotency_key, payload=TaskCommandCreate(task_type=task_type, task_name="生成资产提示词" if operation == "prompts" else "顺序生成资产图片", input_fingerprint=fingerprint, input_artifact_ids=[storyboard_artifact.id], max_attempts=3))
+    task = create_task_from_command(db, project_id=project_id, idempotency_key=idempotency_key, payload=TaskCommandCreate(task_type=task_type, task_name="生成资产提示词" if operation == "prompts" else "顺序生成资产图片", input_fingerprint=fingerprint, input_artifact_ids=[storyboard_artifact.id], max_attempts=3, initial_checkpoint_json={"operation": operation, "target_asset_ids": target_asset_ids, "workspace_revision": workspace.revision}))
     if task.status == TaskStatus.QUEUED:
-        task.checkpoint_json = {"operation": operation, "target_asset_ids": target_asset_ids, "workspace_revision": workspace.revision}
         for asset in content.assets:
             if asset.target_asset_id in target_asset_ids:
                 if operation == "prompts": asset.prompt_status = "QUEUED"
@@ -920,7 +1050,7 @@ def create_asset_images_task(db: Session, *, project_id: str, idempotency_key: s
     project = get_project(db, project_id)
     if project.project_type != ProjectType.REPLICA: raise AppError("ASSET_IMAGES_PROJECT_UNSUPPORTED", "当前五步主生产链只正式支持 REPLICA", status_code=422)
     storyboard_artifact, content = _load_storyboard(db, project_id)
-    runtime = ComfyUIZImageTurboRuntime(); runtime.assert_ready()
+    runtime = asset_image_runtime(); runtime.assert_ready()
     binding, prompt_skill = selected_image_model_prompt_skill()
     prompt_provider = asset_prompt_author_provider()
     visual_skill = character_visual_design_skill()
@@ -1057,7 +1187,7 @@ def _reusable_generated_image(
 
 
 def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[ReplicaAssetImagesContent, AssetImageProvenance]:
-    runtime = ComfyUIZImageTurboRuntime()
+    runtime = asset_image_runtime()
     with context.session_factory() as db:
         project = get_project(db, task.project_id)
         storyboard_artifact, storyboard = _load_storyboard(db, task.project_id)
@@ -1268,41 +1398,8 @@ def _workspace_inputs(db: Session, task: TaskWorkerRead) -> tuple[ReplicaAssetWo
 
 def _run_workspace_prompts(context: TaskExecutionContext, task: TaskWorkerRead) -> None:
     with context.session_factory() as db:
-        workspace, content, storyboard_artifact, _, specs = _workspace_inputs(db, task)
+        _, _, storyboard_artifact, _, specs = _workspace_inputs(db, task)
     visual_skill = character_visual_design_skill()
-    visual_designs, _ = _author_character_visual_designs(
-        context,
-        task,
-        storyboard_artifact,
-        specs,
-        progress_start=4,
-        progress_end=28,
-    )
-    if visual_designs:
-        with context.session_factory() as db:
-            workspace, latest, _, _, _ = _workspace_inputs(db, task)
-            for asset in latest.assets:
-                authored = visual_designs.get(asset.target_entity_id)
-                if authored is None:
-                    continue
-                packet, provider_job_id = authored
-                asset.character_visual_design = packet
-                asset.character_visual_skill_id = visual_skill.id
-                asset.character_visual_skill_version = visual_skill.version
-                asset.character_visual_provider_job_id = provider_job_id
-            workspace.revision += 1
-            workspace.content_json = latest.model_dump(mode="json")
-            workspace.updated_at = utc_now()
-            db.add(workspace)
-            db.commit()
-            content = latest
-    model_prompt_contexts = {
-        spec["entity_id"]: _model_prompt_context(
-            spec,
-            visual_designs.get(spec["entity_id"], (None, ""))[0],
-        )
-        for spec in specs
-    }
     binding, prompt_skill = selected_image_model_prompt_skill()
     provider = asset_prompt_author_provider()
     for index, spec in enumerate(specs, 1):
@@ -1314,6 +1411,27 @@ def _run_workspace_prompts(context: TaskExecutionContext, task: TaskWorkerRead) 
                     asset.prompt_status = "GENERATING"
                     asset.last_error = None
             workspace.content_json = latest.model_dump(mode="json"); workspace.updated_at = utc_now(); db.add(workspace); db.commit()
+        visual_design: CharacterVisualDesignPacket | None = None
+        if spec["asset_type"] == TargetAssetType.CHARACTER:
+            # Persist each character's visual packet before compiling its prompt.
+            progress_base = max(4, math.floor((index - 1) / len(specs) * 95))
+            visual_designs, _ = _author_character_visual_designs(
+                context,
+                task,
+                storyboard_artifact,
+                [spec],
+                progress_start=progress_base,
+                progress_end=min(94, progress_base + 4),
+            )
+            visual_design, visual_provider_job_id = visual_designs[spec["entity_id"]]
+            with context.session_factory() as db:
+                workspace, latest, _, _, _ = _workspace_inputs(db, task)
+                current_asset = next(item for item in latest.assets if item.target_asset_id == asset_id)
+                current_asset.character_visual_design = visual_design
+                current_asset.character_visual_skill_id = visual_skill.id
+                current_asset.character_visual_skill_version = visual_skill.version
+                current_asset.character_visual_provider_job_id = visual_provider_job_id
+                workspace.revision += 1; workspace.content_json = latest.model_dump(mode="json"); workspace.updated_at = utc_now(); db.add(workspace); db.commit()
         # Prompt authoring is deliberately serial.  Each completed asset is
         # committed immediately so the workspace remains useful after an
         # interrupted task, just like sequential image generation.
@@ -1326,7 +1444,8 @@ def _run_workspace_prompts(context: TaskExecutionContext, task: TaskWorkerRead) 
             },
             progress_percent=dispatch_progress,
         )
-        prompt_input = AssetPromptAuthorInput(binding=binding, skill=prompt_skill, assets=(model_prompt_contexts[spec["entity_id"]],))
+        model_prompt_context = _model_prompt_context(spec, visual_design)
+        prompt_input = AssetPromptAuthorInput(binding=binding, skill=prompt_skill, assets=(model_prompt_context,))
         payload = {"target_storyboard_artifact_id": storyboard_artifact.id, "asset_id": asset_id, "image_model": binding.model_id, "prompt_skill": [prompt_skill.id, prompt_skill.version], "prompt_contract": binding.prompt_contract, "queue_position": index, "queue_size": len(specs), "target_entity_ids": [spec["entity_id"]], "semantic_payload_fingerprint": _sha(prompt_input.assets), "provider_profile": provider.profile()}
         def _remote(_, current_input=prompt_input):
             result = provider.author(current_input)
@@ -1334,7 +1453,7 @@ def _run_workspace_prompts(context: TaskExecutionContext, task: TaskWorkerRead) 
         with context.session_factory() as db:
             _, dispatched = dispatch_provider_call(db, task_id=task.id, provider=provider.provider_name, model=provider.model_name, capability=Capability.ASSET_IMAGE_GENERATION, payload=payload, artifact_id=storyboard_artifact.id, remote_call=_remote)
         result: AssetPromptAuthorResult = dispatched.value
-        authored = validate_authored_asset_batch([model_prompt_contexts[spec["entity_id"]]], result.content)[spec["entity_id"]]
+        authored = validate_authored_asset_batch([model_prompt_context], result.content)[spec["entity_id"]]
         with context.session_factory() as db:
             workspace, latest, _, _, _ = _workspace_inputs(db, task)
             prompt_changed = False
@@ -1357,7 +1476,7 @@ def _active_media(asset: AssetWorkspaceEntity) -> list[TargetReferenceMedia]:
     return generation.reference_media if generation is not None else []
 
 
-def _publish_workspace_if_complete(db: Session, *, task: TaskWorkerRead, workspace: ReplicaAssetWorkspace, content: AssetWorkspaceContent, provider_job_ids: list[str], runtime: ComfyUIZImageTurboRuntime) -> None:
+def _publish_workspace_if_complete(db: Session, *, task: TaskWorkerRead, workspace: ReplicaAssetWorkspace, content: AssetWorkspaceContent, provider_job_ids: list[str], runtime: ArkSeedreamRuntime | ComfyUIZImageTurboRuntime) -> None:
     if any(not _active_media(asset) for asset in content.assets):
         return
     binding, prompt_skill = selected_image_model_prompt_skill()
@@ -1449,7 +1568,7 @@ def _publish_workspace_if_complete(db: Session, *, task: TaskWorkerRead, workspa
 
 
 def _run_workspace_images(context: TaskExecutionContext, task: TaskWorkerRead) -> None:
-    runtime = ComfyUIZImageTurboRuntime()
+    runtime = asset_image_runtime()
     provider_job_ids: list[str] = []
     with context.session_factory() as db:
         _, content, storyboard_artifact, _, specs = _workspace_inputs(db, task)
@@ -1476,20 +1595,26 @@ def _run_workspace_images(context: TaskExecutionContext, task: TaskWorkerRead) -
             current_asset.image_status = "GENERATING"; current_asset.last_error = None
             workspace.content_json = latest.model_dump(mode="json"); workspace.updated_at = utc_now(); db.add(workspace); db.commit()
         payload = {"target_storyboard_artifact_id": storyboard_artifact.id, "asset_id": asset_id, "target_entity_id": asset.target_entity_id, "asset_type": asset.asset_type.value, "prompt_skill": [prompt_skill.id, prompt_skill.version, binding.prompt_contract], "prompt_sha256": _sha(asset.image_prompt), "negative_prompt_sha256": _sha(asset.negative_prompt), "width": asset.width, "height": asset.height, "runtime": runtime.profile(), "queue_position": index, "queue_size": len(selected_ids)}
-        def _remote(job):
-            if asset.asset_type == TargetAssetType.CHARACTER:
-                generated = runtime.generate_character_sheet(project_id=task.project_id, task_id=task.id, asset_id=asset_id, prompt=asset.image_prompt or "", negative_prompt=asset.negative_prompt)
-            else:
-                generated = runtime.generate(project_id=task.project_id, task_id=task.id, asset_id=asset_id, prompt=asset.image_prompt or "", negative_prompt=asset.negative_prompt, width=asset.width, height=asset.height)
-            return ProviderDispatchResult(value=generated, remote_job_id=generated.remote_job_id)
         with context.session_factory() as db:
             model = runtime.character_pipeline_model_name if asset.asset_type == TargetAssetType.CHARACTER else runtime.model_name
-            job, dispatched = dispatch_provider_call(db, task_id=task.id, provider=runtime.provider_name, model=model, capability=Capability.ASSET_IMAGE_GENERATION, payload=payload, artifact_id=storyboard_artifact.id, remote_call=_remote)
-        generated: GeneratedImage = dispatched.value
+            reused = _reusable_generated_image(db, task=task, asset_id=asset_id, job_payload=payload)
+            if reused is not None:
+                job, generated = reused
+            else:
+                def _remote(job):
+                    if asset.asset_type == TargetAssetType.CHARACTER:
+                        generated = runtime.generate_character_sheet(project_id=task.project_id, task_id=task.id, asset_id=asset_id, prompt=asset.image_prompt or "", negative_prompt=asset.negative_prompt)
+                    else:
+                        generated = runtime.generate(project_id=task.project_id, task_id=task.id, asset_id=asset_id, prompt=asset.image_prompt or "", negative_prompt=asset.negative_prompt, width=asset.width, height=asset.height)
+                    return ProviderDispatchResult(value=generated, remote_job_id=generated.remote_job_id)
+                job, dispatched = dispatch_provider_call(db, task_id=task.id, provider=runtime.provider_name, model=model, capability=Capability.ASSET_IMAGE_GENERATION, payload=payload, artifact_id=storyboard_artifact.id, remote_call=_remote)
+                generated = dispatched.value
         consistency_report: dict[str, object] = {}
         consistency_status: str | None = None
         if asset.asset_type == TargetAssetType.CHARACTER:
-            consistency = validate_character_asset_identity(generated.storage_relpath)
+            consistency = validate_character_asset_identity(
+                str(get_settings().artifact_root / generated.storage_relpath)
+            )
             consistency_report = dict(consistency.checks)
             consistency_report["reason"] = consistency.reason
             consistency_status = "PASS" if consistency.passed else "FAIL"
@@ -1616,6 +1741,36 @@ def reconcile_asset_workspace_task_state(db: Session, task: Task) -> None:
         return
     operation = str((task.checkpoint_json or {}).get("operation") or "")
     if operation not in {"prompts", "images"}:
+        # Compatibility recovery for workspace tasks created before their
+        # operation checkpoint was made atomic. They can only be terminal here;
+        # clear unfinished card states without touching any READY backfill.
+        if task.status not in {TaskStatus.CANCELLED, TaskStatus.INTERRUPTED}:
+            return
+        workspace = db.scalar(select(ReplicaAssetWorkspace).where(ReplicaAssetWorkspace.project_id == task.project_id))
+        if workspace is None:
+            return
+        content = AssetWorkspaceContent.model_validate(workspace.content_json)
+        status_field = "prompt_status" if task.task_type == ASSET_PROMPT_TASK_TYPE else "image_status"
+        changed = False
+        for asset in content.assets:
+            if getattr(asset, status_field) not in {"QUEUED", "GENERATING"}:
+                continue
+            # A legacy all-in-one task may have queued regeneration for an asset that already
+            # owns a valid prompt/image.  Cancelling or interrupting that task must reveal the
+            # last committed result instead of falsely downgrading it to NOT_STARTED.
+            if status_field == "prompt_status" and asset.image_prompt:
+                asset.prompt_status = "READY"
+            elif status_field == "image_status" and _active_media(asset):
+                asset.image_status = "READY"
+            else:
+                setattr(asset, status_field, "NOT_STARTED")
+            asset.last_error = "旧任务已中断，请重新发起"
+            changed = True
+        if changed:
+            workspace.revision += 1
+            workspace.content_json = content.model_dump(mode="json")
+            workspace.updated_at = utc_now()
+            db.add(workspace)
         return
     selected_ids = set((task.checkpoint_json or {}).get("target_asset_ids") or [])
     if not selected_ids:
@@ -1646,9 +1801,9 @@ def reconcile_asset_workspace_task_state(db: Session, task: Task) -> None:
         if current_status not in mutable_statuses:
             continue
         if operation == "prompts":
-            asset.prompt_status = next_status
+            asset.prompt_status = "READY" if next_status == "NOT_STARTED" and asset.image_prompt else next_status
         else:
-            asset.image_status = next_status
+            asset.image_status = "READY" if next_status == "NOT_STARTED" and _active_media(asset) else next_status
         asset.last_error = error
         changed = True
     if changed:
@@ -1700,7 +1855,10 @@ def _content_matches_current_asset_contract(content: ReplicaAssetImagesContent) 
             ):
                 return False
             roles = {media.role for media in asset.reference_media}
-            if not {ReferenceMediaRole.FACE, ReferenceMediaRole.FULL_BODY}.issubset(roles):
+            if ReferenceMediaRole.FACE not in roles or not {
+                ReferenceMediaRole.FULL_BODY,
+                ReferenceMediaRole.FULL_BODY_FRONT,
+            }.intersection(roles):
                 return False
     return True
 

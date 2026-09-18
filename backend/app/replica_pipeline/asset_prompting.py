@@ -7,7 +7,7 @@ from arkruntime import Ark
 
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
-from app.replica_pipeline.image_model_skills import ImageModelPromptSkillBinding
+from app.replica_pipeline.image_model_skills import ImageModelPromptSkillBinding, selected_image_model_prompt_skill
 from app.replica_pipeline.schemas import AssetImagePromptAuthoringResult, AssetImagePromptAuthoredEntity
 from app.skills.professional import ProfessionalSkillDetail
 from app.target_assets.schemas import TargetAssetType
@@ -71,7 +71,7 @@ def _assert_execution_english(label: str, value: str, *, target_entity_id: str) 
     if latin < 20 or (cjk > 8 and latin < cjk * 2):
         raise AppError(
             "ASSET_IMAGE_PROMPT_EXECUTION_LANGUAGE_INVALID",
-            f"{label} 必须是可直接交给 Z-Image Turbo 的英文视觉提示内容",
+            f"{label} 必须是可直接交给当前图片模型的英文视觉提示内容",
             status_code=502,
             details={"target_entity_id": target_entity_id},
         )
@@ -126,8 +126,8 @@ Prompt Contract：{payload.binding.prompt_contract}
 - CHARACTER 输入必须包含 character_visual_design；它是脸型、五官、发型、肤色、体态、服装和稳定识别点的唯一权威视觉身份合同。不得从 display_name、人物关系、本土化分镜文字或常识自行增加、替换或修正身份细节。
 - 人物关系、婚姻、亲属、同事等叙事关系不能导致单人物资产图出现第二个人。
 - CHARACTER 的 image_prompt 只描述一个人物的稳定视觉身份：脸型五官、年龄感、发型发色、肤色、体态、基础服装轮廓/材质/颜色和标志性可见特征。不要要求模型自己排版三视图、四视图、reference sheet、contact sheet 或 face close-up。
-- CHARACTER 的 image_prompt 与 negative_prompt 都不要出现 multi-panel、turnaround、reference sheet、contact sheet、collage、split screen、front/side/back view、face close-up 等版式词，即使是否定句也不要写；这些词会激活 Z-Image Turbo 的角色设定表先验。Runtime 会自己加入单人朝向约束并负责最终四栏合成。
-- CHARACTER 禁止把人物关系、剧情动作、手机等临时道具写成资产身份；除非稳定身份绝对需要，不要加入剧情道具。Runtime 先用 Z-Image 生成唯一正面主身份图，再把正面图作为 Image 1 交给 Qwen Image Edit 2511，按其 Professional Skill 只编辑朝向生成侧面和背面；面部特写直接来自正面主图；Prompt 不负责多面板排版。
+- CHARACTER 的 image_prompt 与 negative_prompt 都不要出现 multi-panel、turnaround、reference sheet、contact sheet、collage、split screen、front/side/back view、face close-up 等版式词。Runtime 会自己加入单人朝向约束并负责最终四栏合成。
+- CHARACTER 禁止把人物关系、剧情动作、手机等临时道具写成资产身份；除非稳定身份绝对需要，不要加入剧情道具。Runtime 先生成唯一正面主身份图，再把正面图作为权威参考分别生成侧面和背面；面部特写直接来自正面主图；Prompt 不负责多面板排版。
 - SCENE 只表现稳定环境身份、空间布局、材质、landmarks、光照和色彩，不把剧情中的人物带进环境资产图。
 - PROP 只表现稳定物体身份、形态、尺度、材质、颜色和标志性细节，不加入无关人物/场景。
 - image_prompt 必须只写希望模型画出的正向视觉身份与构图，不得出现 `Do not`、`Avoid`、`Hard exclusions`，不得复制或改写 negative_prompt 列表。需要隔离时用正向构图语言，例如 one subject、empty hands、clean seamless studio background、typography-free image。
@@ -164,7 +164,7 @@ class DoubaoAssetPromptAuthor:
             "provider": self.provider_name,
             "model": self.model_name,
             "mode": "CLOUD_TEXT_SKILL_EXECUTOR",
-            "prompt_contract": "replica-assets-zimage-clean-positive-v5",
+            "prompt_contract": selected_image_model_prompt_skill()[0].prompt_contract,
             "response_contract": "STRICT_JSON_SCHEMA",
         }
 
@@ -327,11 +327,11 @@ def validate_authored_asset_batch(
                 )
             detail_groups = {
                 "face": ("face", "facial", "jaw", "cheek", "chin", "nose", "eyes", "brow", "lips"),
-                "age": ("teen", "twenties", "thirties", "forties", "fifties", "sixties", "seventies", "young", "middle-aged", "senior", "wrinkle"),
+                "age": ("teen", "twenties", "thirties", "forties", "fifties", "sixties", "seventies", "young", "middle-aged", "senior", "elderly", "older", "mature", "wrinkle"),
                 "hair": ("hair", "bald", "shaved"),
                 "skin": ("skin", "complexion", "freckle"),
-                "body": ("build", "frame", "body", "shoulder", "height", "stature", "proportion"),
-                "wardrobe": ("wearing", "shirt", "top", "hoodie", "jacket", "dress", "trousers", "pants", "jeans", "skirt", "sweater", "fabric", "cotton", "denim", "linen", "knit"),
+                "body": ("build", "frame", "body", "physique", "figure", "silhouette", "shoulder", "height", "stature", "proportion"),
+                "wardrobe": ("wearing", "clothing", "garment", "apparel", "shirt", "blouse", "top", "hoodie", "jacket", "dress", "trousers", "slacks", "pants", "jeans", "skirt", "sweater", "fabric", "cotton", "denim", "linen", "knit"),
                 "color": ("black", "white", "gray", "grey", "blue", "red", "orange", "green", "brown", "beige", "yellow", "purple", "pink"),
             }
             missing_groups = [
