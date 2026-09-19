@@ -17,6 +17,7 @@ from app.preprocessing.service import is_p5_shot_boundary_task, run_p5_shot_boun
 from app.replica_pipeline.asset_images import ASSET_PROMPT_TASK_TYPE, TASK_TYPE as ASSET_IMAGES_TASK_TYPE, run_asset_images_task
 from app.replica_pipeline.h3_prompting import TASK_TYPE as H3_PROMPT_TASK_TYPE, run_h3_prompt_task
 from app.replica_pipeline.localized_storyboard import TASK_TYPE as LOCALIZED_STORYBOARD_TASK_TYPE, run_localized_storyboard_task
+from app.script_localization.long_pipeline import TASK_TYPE as LONG_SCRIPT_LOCALIZATION_TASK_TYPE, run_long_stage_task
 from app.script_localization.service import TASK_TYPE as SCRIPT_LOCALIZATION_TASK_TYPE, run_stage_task
 from app.shot_breakdown.service_v2 import P8_TASK_TYPE, run_p8_shot_breakdown_task
 from app.source_analysis.service import SOURCE_ANALYSIS_TASK_TYPE, run_source_analysis_task
@@ -64,6 +65,8 @@ def _runner_for_task(task: Task) -> TaskRunner | None:
         return run_source_analysis_task
     if task.task_type == SCRIPT_LOCALIZATION_TASK_TYPE:
         return run_stage_task
+    if task.task_type == LONG_SCRIPT_LOCALIZATION_TASK_TYPE:
+        return run_long_stage_task
     return None
 
 
@@ -84,7 +87,12 @@ def _next_dispatchable(factory: sessionmaker[Session]) -> tuple[str, TaskRunner]
     return None
 
 
-def _reconcile_unhandled_runner_exception(factory: sessionmaker[Session], task_id: str, exc: Exception) -> None:
+def _reconcile_unhandled_runner_exception(
+    factory: sessionmaker[Session],
+    task_id: str,
+    exc: Exception,
+) -> None:
+    """Keep a buggy runner from leaving a Task permanently RUNNING/QUEUED."""
     with factory() as db:
         task = db.get(Task, task_id)
         if task is None or task.status not in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
