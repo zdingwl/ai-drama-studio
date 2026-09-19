@@ -59,6 +59,8 @@ TASK_TYPE = "replica.localized-storyboard"
 SKILL_ID = "storyboard-localization"
 MAX_OUTPUT_TOKENS = 65536
 LOCALIZATION_BATCH_SHOTS = 8
+TARGET_DIALOGUE_BASE_SLACK_MS = 300
+TARGET_DIALOGUE_INTERLINE_GAP_MS = 120
 
 
 def _sha(value: object) -> str:
@@ -166,7 +168,7 @@ def _provider_prompt(payload: LocalizationProviderInput, correction_issues: list
 - localized_visual_description_zh / camera_description_zh / entity description / target_dialogue_zh 必须使用简体中文，供中国用户理解和审核。
 - target_dialogue 必须是 {payload.target_language} 的本土自然对白；target_dialogue_zh 是它的中文意思，不是第二句要说出的对白。
 - source start/end/duration 仅是不可改写的 Source provenance；每个 shot 必须输出 target_duration_ms，由目标对白、动作、反应、理解停顿与镜头节奏独立规划。
-- 每条 dialogue 必须在其唯一 owner target shot 的目标语音窗内自然说完；可缩短冗余表达或合理增加 owner shot 的 target_duration_ms，不得把问题留给 H3 Prompt 或视频生成阶段。
+- 每条 dialogue 必须在其唯一 owner target shot 的目标语音窗内自然说完；Provider 应主动给足 target_duration_ms，服务端会在最终对白确定后按语速与基本呼吸/换句余量计算确定性最小时长并仅向上兜底扩展，不得把问题留给 H3 Prompt 或视频生成阶段。
 - 不改变 source shot 顺序、shot anchor、source start/end/duration 或结构化 camera facts；target timeline 由服务端按 target_duration_ms 连续排布。
 - 必须按目标地区重新规划人物姓名、外形服装、社会身份、地点装修、文化物件和自然表达，但不得改写故事事件顺序、核心关系或动作逻辑。
 - 不生成资产图片、H3 prompt、音频、视频或 Artifact/target entity ID。
@@ -196,6 +198,72 @@ Professional Skill rules:
 输出 JSON Schema：
 {json.dumps(schema, ensure_ascii=False, separators=(",", ":"))}
 """
+
+
+def _ensure_target_dialogue_capacity(
+    payload: LocalizationProviderInput,
+    semantic: LocalizedStoryboardSemantic,
+) -> LocalizedStoryboardSemantic:
+    """Deterministically raise target shot duration when finalized dialogue needs more room.
+
+    Provider-authored target_duration_ms remains the creative pacing proposal. The server owns
+    the executable target timeline, so an undersized proposal is normalized upward instead of
+    burning correction attempts or failing a structurally valid localization.
+    """
+    if payload.operation != "LOCALIZE_SHOTS" or not semantic.dialogue:
+        return semantic
+
+    owner_windows = dialogue_owner_windows(payload.source_view["shots"])
+    owner_by_utterance = {
+        utterance_id: (shot_id, start_us, end_us)
+        for (_, utterance_id), (shot_id, start_us, end_us) in owner_windows.items()
+    }
+    target_shots = {item.shot_anchor_id: item for item in semantic.shots}
+    required_by_owner: dict[str, float] = {}
+    dialogue_count_by_owner: dict[str, int] = {}
+    unresolved: list[dict] = []
+
+    for item in semantic.dialogue:
+        owner = owner_by_utterance.get(item.utterance_id)
+        owner_shot_id = owner[0] if owner else None
+        if owner_shot_id is None or owner_shot_id not in target_shots:
+            unresolved.append({
+                "utterance_id": item.utterance_id,
+                "owner_target_shot_id": owner_shot_id,
+                "repair": "恢复该 utterance 的唯一 owner shot；这属于结构错误，不能通过延长时长修复",
+            })
+            continue
+        required_seconds = max(
+            0.1,
+            estimate_spoken_seconds(item.target_dialogue) - SPEECH_ESTIMATE_TOLERANCE_SECONDS,
+        )
+        required_by_owner[owner_shot_id] = required_by_owner.get(owner_shot_id, 0.0) + required_seconds
+        dialogue_count_by_owner[owner_shot_id] = dialogue_count_by_owner.get(owner_shot_id, 0) + 1
+
+    if unresolved:
+        raise AppError(
+            "LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID",
+            "目标对白缺少可执行的唯一 owner 镜头",
+            status_code=502,
+            details={"issues": unresolved},
+        )
+
+    minimum_duration_ms: dict[str, int] = {}
+    for shot_id, required_seconds in required_by_owner.items():
+        dialogue_count = dialogue_count_by_owner[shot_id]
+        cadence_slack_ms = TARGET_DIALOGUE_BASE_SLACK_MS + TARGET_DIALOGUE_INTERLINE_GAP_MS * max(0, dialogue_count - 1)
+        minimum_duration_ms[shot_id] = math.ceil(required_seconds * 1000) + cadence_slack_ms
+
+    changed = False
+    normalized_shots = []
+    for shot in semantic.shots:
+        minimum_ms = minimum_duration_ms.get(shot.shot_anchor_id)
+        if minimum_ms is not None and shot.target_duration_ms < minimum_ms:
+            normalized_shots.append(shot.model_copy(update={"target_duration_ms": minimum_ms}))
+            changed = True
+        else:
+            normalized_shots.append(shot)
+    return semantic.model_copy(update={"shots": normalized_shots}) if changed else semantic
 
 
 def _validate_semantic(payload: LocalizationProviderInput, semantic: LocalizedStoryboardSemantic) -> LocalizedStoryboardSemantic:
@@ -258,6 +326,7 @@ def _validate_semantic(payload: LocalizationProviderInput, semantic: LocalizedSt
                     }],
                 },
             )
+    semantic = _ensure_target_dialogue_capacity(payload, semantic)
     for item in semantic.characters:
         _assert_chinese("人物身份说明", item.identity_description_zh)
         _assert_chinese("人物外形说明", item.appearance_description_zh)
