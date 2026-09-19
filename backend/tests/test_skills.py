@@ -21,7 +21,8 @@ def test_skill_registry_exposes_six_versioned_root_skills(client: TestClient) ->
         "SCRIPT_LOCALIZATION",
     }
     assert by_type["REPLICA"]["version"] == "1.7.0"
-    assert {skill["version"] for project_type, skill in by_type.items() if project_type != "REPLICA"} == {"1.0.0"}
+    assert by_type["SCRIPT_TO_DRAMA"]["version"] == "1.1.0"
+    assert {skill["version"] for project_type, skill in by_type.items() if project_type not in {"REPLICA", "SCRIPT_TO_DRAMA"}} == {"1.0.0"}
     assert all(skill["required_capabilities"] for skill in skills)
     assert all(skill["completion_criteria"] for skill in skills)
 
