@@ -13,6 +13,7 @@ from app.core.errors import AppError
 from app.db.session import get_db
 from app.projects.enums import ProjectType
 from app.projects.service import get_project
+from app.script_localization.long_pipeline import is_long_document, start_long_stage
 from app.script_localization.schemas import ScriptLocalizationStateRead, StageRead, TargetScriptEditCommand
 from app.script_localization.service import (
     export_current_script, get_state, save_target_edit, start_stage,
@@ -55,8 +56,7 @@ def _require_script_localization(db: Session, project_id: str) -> None:
 def get_script_source(project_id: str, db: Session = Depends(get_db)) -> ScriptSourceRead:
     _require_script_localization(db, project_id)
     document = db.scalar(select(SourceDocument).where(
-        SourceDocument.project_id == project_id,
-        SourceDocument.is_current.is_(True),
+        SourceDocument.project_id == project_id, SourceDocument.is_current.is_(True),
     ))
     if document is None:
         return ScriptSourceRead(project_id=project_id)
@@ -99,6 +99,8 @@ def run_script_localization_stage(
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
     db: Session = Depends(get_db),
 ) -> TaskRead:
+    if is_long_document(db, project_id):
+        return task_to_read(start_long_stage(db, project_id, stage.value, idempotency_key))
     return task_to_read(start_stage(db, project_id, stage.value, idempotency_key))
 
 
