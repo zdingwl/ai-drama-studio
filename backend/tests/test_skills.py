@@ -120,13 +120,14 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     localized = client.get("/api/v3/skills/professional/storyboard-localization")
     assert localized.status_code == 200
     localized_detail = localized.json()
-    assert localized_detail["version"] == "1.5.0"
-    assert "4 words per second" in "\n".join(localized_detail["provider_rules"])
+    assert localized_detail["version"] == "1.7.1"
     assert localized_detail["required_inputs"] == ["SOURCE_VIDEO_SNAPSHOT"]
     assert localized_detail["output_contracts"] == ["TARGET_STORYBOARD"]
     localized_rules = "\n".join(localized_detail["provider_rules"])
-    assert "Simplified Chinese" in localized_rules
-    assert "review translation" in localized_rules
+    assert "4 words/s" in localized_rules
+    assert "简体中文" in localized_rules
+    assert "target_dialogue_zh" in localized_rules
+    assert "确定性最小时长" in localized_rules
 
     assets = client.get("/api/v3/skills/professional/asset-image-generation")
     assert assets.status_code == 200
