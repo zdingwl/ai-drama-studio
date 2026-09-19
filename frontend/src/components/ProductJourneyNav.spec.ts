@@ -29,12 +29,11 @@ describe('ProductJourneyNav', () => {
     for (const label of ['原片分镜', '本土化分镜', '视觉资产', 'H3 提示词', '视频生成']) {
       expect(wrapper.text()).toContain(label)
     }
-    for (const legacy of ['目标设定', '配音', '成片']) {
-      expect(wrapper.text()).not.toContain(legacy)
-    }
+    for (const legacy of ['目标设定', '配音', '成片']) expect(wrapper.text()).not.toContain(legacy)
+    wrapper.unmount()
   })
 
-  it('opens real project overview and episode management pages', async () => {
+  it('opens existing Replica overview and episode pages', async () => {
     const { wrapper, router } = await mountNavigation()
     const utilityLinks = wrapper.findAll('.utility-link')
     await utilityLinks[0].trigger('click')
@@ -43,33 +42,45 @@ describe('ProductJourneyNav', () => {
     await utilityLinks[1].trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe('/projects/project-1/episodes')
+    wrapper.unmount()
   })
 
-  it('navigates through the real five-step workspace routes', async () => {
+  it('navigates through the Replica five-step routes', async () => {
     const { wrapper, router } = await mountNavigation()
     await wrapper.findAll('button')[1].trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe('/projects/project-1/localize')
-
     await wrapper.findAll('button')[2].trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe('/projects/project-1/assets')
-
     await wrapper.findAll('button')[3].trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe('/projects/project-1/prompts')
+    wrapper.unmount()
   })
 
-  it('redirects historical Replica routes to the new five-step equivalents', async () => {
-    const { router } = await mountNavigation('REPLICA', '/projects/project-1/storyboard')
+  it('redirects legacy Replica storyboard to prompts', async () => {
+    const { router, wrapper } = await mountNavigation('REPLICA', '/projects/project-1/storyboard')
     expect(router.currentRoute.value.fullPath).toBe('/projects/project-1/prompts')
+    wrapper.unmount()
   })
 
-  it('keeps the limited legacy navigation for script localization projects', async () => {
-    const { wrapper } = await mountNavigation('SCRIPT_LOCALIZATION')
+  it('shows script-localization-only navigation without episode manager', async () => {
+    const { wrapper, router } = await mountNavigation('SCRIPT_LOCALIZATION')
     expect(wrapper.findAll('button')).toHaveLength(2)
-    expect(wrapper.text()).toContain('原作')
-    expect(wrapper.text()).toContain('剧本')
-    expect(wrapper.text()).not.toContain('资产')
+    expect(wrapper.text()).toContain('原剧本')
+    expect(wrapper.text()).toContain('本土化剧本')
+    expect(wrapper.text()).not.toContain('剧集管理')
+    expect(wrapper.text()).not.toContain('视觉资产')
+    await wrapper.findAll('button')[1].trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.fullPath).toBe('/projects/project-1/script')
+    wrapper.unmount()
+  })
+
+  it('keeps script-localization overview but redirects video-only routes', async () => {
+    const { wrapper, router } = await mountNavigation('SCRIPT_LOCALIZATION', '/projects/project-1/episodes')
+    expect(router.currentRoute.value.fullPath).toBe('/projects/project-1/source')
+    wrapper.unmount()
   })
 })
