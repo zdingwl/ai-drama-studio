@@ -1091,10 +1091,13 @@ def get_h3_prompts(db: Session, project_id: str, *, episode_id: str | None = Non
         if not content.segments:
             return H3PromptsRead(project_id=project_id, status=ResultStatus.NOT_BUILT)
     raw_provenance = row.provenance_json.get("episode_provenance", {}).get(episode_id, row.provenance_json)
+    is_current = current is not None
     return H3PromptsRead(
         project_id=project_id,
-        validation_issues=audit_segments(content.segments),
-        status=ResultStatus.CURRENT if current is not None else ResultStatus.STALE,
+        # A stale H3 artifact belongs to superseded storyboard/assets. Its old audit
+        # findings must never block rebuilding against the new CURRENT upstreams.
+        validation_issues=audit_segments(content.segments) if is_current else [],
+        status=ResultStatus.CURRENT if is_current else ResultStatus.STALE,
         artifact_id=latest.id,
         revision=latest.revision,
         input_fingerprint=latest.input_fingerprint,
