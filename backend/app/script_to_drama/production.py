@@ -379,7 +379,8 @@ def _run_asset_images(context: TaskExecutionContext, task: TaskWorkerRead) -> tu
         runtime.assert_ready()
 
     authored: dict[str, object] = {}
-    provider_job_ids: list[str] = []
+    provider_job_ids: list[str] = list(task.checkpoint_json.get("provider_job_ids") or [])
+    resumable_results = list(task.checkpoint_json.get("results") or [])
     for start in range(0, len(specs), MAX_PROMPT_BATCH):
         batch = specs[start:start + MAX_PROMPT_BATCH]
         prompt = (
@@ -424,12 +425,12 @@ def _run_asset_images(context: TaskExecutionContext, task: TaskWorkerRead) -> tu
         provider_job_ids.append(job.id)
         context.checkpoint(
             {"stage": "asset_images", "phase": "prompting", "completed": min(len(specs), start + len(batch)),
-             "results": [], "provider_job_ids": provider_job_ids},
+             "results": resumable_results, "provider_job_ids": provider_job_ids},
             progress_percent=10 + int(min(len(specs), start + len(batch)) / len(specs) * 20),
         )
 
     generated_assets: list[dict] = []
-    completed = list(task.checkpoint_json.get("results") or [])
+    completed = list(resumable_results)
     if completed:
         # A retry may resume image generation only when every stored file still exists and hashes match.
         root = get_settings().artifact_root.resolve()
