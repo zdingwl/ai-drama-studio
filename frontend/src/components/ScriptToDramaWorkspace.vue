@@ -214,8 +214,8 @@ onBeforeUnmount(() => { if (timer !== undefined) window.clearInterval(timer) })
         </template>
         <hr />
         <h3>第四步 · 正式资产图 <small>{{ label(state?.asset_images.status) }}</small></h3>
-        <p>消费导演分镜和资产定义，使用当前图片模型 Prompt Skill + 图片 Runtime；不会写入 Replica 的资产表。</p>
-        <button type="button" :disabled="processing || !storyboardReady || unresolved.length > 0" @click="executeProduction('asset_images')">生成正式资产图</button>
+        <p>消费当前资产定义，使用图片模型专属 Prompt Skill + 图片 Runtime；不会写入 Replica 的资产表。导演分镜随后引用这些稳定资产 ID。</p>
+        <button type="button" :disabled="processing || !worldReady || unresolved.length > 0" @click="executeProduction('asset_images')">生成正式资产图</button>
         <div v-if="assetImagesReady" class="media-grid">
           <article v-for="(item, i) in objects(state?.asset_images.content?.assets)" :key="i" class="asset-card">
             <strong>{{ item.display_name }}</strong>
