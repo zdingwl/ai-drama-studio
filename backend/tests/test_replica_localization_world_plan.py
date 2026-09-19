@@ -43,7 +43,7 @@ def payload():
 def shot_result(batch):
     return LocalizedStoryboardSemantic.model_validate({
         "dialogue": [{"utterance_id": item, "target_dialogue": "Hi!", "target_dialogue_zh": "你好"} for item in batch.expected_dialogue_ids],
-        "shots": [{"shot_anchor_id": item, "localized_visual_description_zh": "Alex身穿蓝色衬衫站在米色布艺沙发旁，向邻居问好。", "camera_description_zh": "固定平视镜头保持原片构图"} for item in batch.expected_shot_ids],
+        "shots": [{"shot_anchor_id": item, "target_duration_ms": 2_000, "localized_visual_description_zh": "Alex身穿蓝色衬衫站在米色布艺沙发旁，向邻居问好。", "camera_description_zh": "固定平视镜头保持原片构图"} for item in batch.expected_shot_ids],
     })
 
 
@@ -76,7 +76,7 @@ def test_execute_retries_incomplete_provider_coverage_before_failing_task(sessio
     data = payload()
     camera = CameraLanguage(shot_size="中景", composition="居中", angle_or_type="平视", movement="固定", focal_length_dof="未知")
     lines = [SimpleNamespace(**item) for item in data.source_view["dialogue"]]
-    shots = [SimpleNamespace(shot_anchor_id=f"s{i}", shot_number=i, start_us=(i-1)*2_000_000, end_us=i*2_000_000, duration_us=2_000_000, camera_language=camera, visual_description="原片画面", sound_effects=[], ambience=[], dialogue=[SimpleNamespace(utterance_id=f"d{i}", delivery=DialogueDelivery.DIALOGUE, overlap_start_us=(i-1)*2_000_000, overlap_end_us=i*2_000_000)]) for i in (1, 2)]
+    shots = [SimpleNamespace(shot_anchor_id=f"s{i}", shot_number=i, start_us=(i-1)*2_000_000, end_us=i*2_000_000, duration_us=2_000_000, camera_language=camera, visual_description="原片画面", sound_effects=[], ambience=[], dialogue=[SimpleNamespace(utterance_id=f"d{i}", utterance_number=i, delivery=DialogueDelivery.DIALOGUE, overlap_start_us=(i-1)*2_000_000, overlap_end_us=i*2_000_000)]) for i in (1, 2)]
     snapshot = SimpleNamespace(episodes=[SimpleNamespace(episode_id="e", canonical_dialogue=lines, width=1080, height=1920)], source_shot_facts=SimpleNamespace(episodes=[SimpleNamespace(episode_id="e", episode_order=1, shots=shots)]))
     monkeypatch.setattr(module, "_payload", lambda *_: data)
     monkeypatch.setattr(module, "_source_view", lambda *_: (data.source_view, {"d1": "c", "d2": "c"}))
@@ -136,7 +136,7 @@ def test_execute_plans_once_and_resumes_without_repeating_paid_plan_or_completed
     data = payload()
     camera = CameraLanguage(shot_size="中景", composition="居中", angle_or_type="平视", movement="固定", focal_length_dof="未知")
     lines = [SimpleNamespace(**item) for item in data.source_view["dialogue"]]
-    shots = [SimpleNamespace(shot_anchor_id=f"s{i}", shot_number=i, start_us=(i-1)*2_000_000, end_us=i*2_000_000, duration_us=2_000_000, camera_language=camera, visual_description="原片画面", sound_effects=[], ambience=[], dialogue=[SimpleNamespace(utterance_id=f"d{i}", delivery=DialogueDelivery.DIALOGUE, overlap_start_us=(i-1)*2_000_000, overlap_end_us=i*2_000_000)]) for i in (1, 2)]
+    shots = [SimpleNamespace(shot_anchor_id=f"s{i}", shot_number=i, start_us=(i-1)*2_000_000, end_us=i*2_000_000, duration_us=2_000_000, camera_language=camera, visual_description="原片画面", sound_effects=[], ambience=[], dialogue=[SimpleNamespace(utterance_id=f"d{i}", utterance_number=i, delivery=DialogueDelivery.DIALOGUE, overlap_start_us=(i-1)*2_000_000, overlap_end_us=i*2_000_000)]) for i in (1, 2)]
     snapshot = SimpleNamespace(episodes=[SimpleNamespace(episode_id="e", canonical_dialogue=lines, width=1080, height=1920)], source_shot_facts=SimpleNamespace(episodes=[SimpleNamespace(episode_id="e", episode_order=1, shots=shots)]))
     monkeypatch.setattr(module, "LOCALIZATION_BATCH_SHOTS", 1)
     monkeypatch.setattr(module, "_payload", lambda *_: data)

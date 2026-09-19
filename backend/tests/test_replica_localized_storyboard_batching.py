@@ -143,18 +143,37 @@ def _semantic(*, first_duration_ms: int = 10_000, first_dialogue: str = "Localiz
     })
 
 
-def test_localization_rejects_dialogue_that_cannot_fit_planned_target_duration() -> None:
+def test_localization_expands_undersized_target_duration_for_final_dialogue() -> None:
     payload = _payload()
     semantic = _semantic(
         first_duration_ms=800,
         first_dialogue="This line is much too long and cannot fit in this target shot at all",
     )
 
-    with pytest.raises(AppError) as error:
-        _validate_semantic(payload, semantic)
+    validated = _validate_semantic(payload, semantic)
 
-    assert error.value.code == "LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID"
-    assert "target_duration_ms" in error.value.details["issues"][0]["repair"]
+    assert validated.shots[0].target_duration_ms > 800
+    assert validated.shots[0].target_duration_ms >= 3_000
+
+
+def test_localization_expands_for_aggregate_dialogue_capacity_in_same_owner_shot() -> None:
+    payload = _payload()
+    payload.source_view["shots"][0]["dialogue"].append({
+        "utterance_id": "line-1",
+        "delivery": "ON_SCREEN",
+        "overlap_start_us": 5_000_000,
+        "overlap_end_us": 9_000_000,
+    })
+    payload.source_view["shots"][1]["dialogue"] = []
+    semantic = _semantic(
+        first_duration_ms=1_000,
+        first_dialogue="This first localized line needs enough natural speaking time",
+    )
+    semantic.dialogue[1].target_dialogue = "This second localized line also needs speaking time"
+
+    validated = _validate_semantic(payload, semantic)
+
+    assert validated.shots[0].target_duration_ms > 4_000
 
 
 def test_localization_target_duration_can_expand_beyond_source_overlap() -> None:
