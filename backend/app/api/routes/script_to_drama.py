@@ -5,13 +5,15 @@ from io import BytesIO
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.db.session import get_db
-from app.script_to_drama.schemas import ScriptToDramaState
+from app.script_to_drama.schemas import ScriptToDramaState, SelectionCommand
+from app.script_to_drama.production import accept_generated_video, media_path, start_stage as start_production_stage
 from app.script_to_drama.service import require_project, start_stage, state
 from app.sources.models import SourceAsset, SourceDocument
 from app.sources.schemas import SourceDocumentRead
@@ -39,6 +41,13 @@ class StageName(StrEnum):
     ANALYZE = "analyze"
     WORLD = "world"
     STORYBOARD = "storyboard"
+
+
+class ProductionStageName(StrEnum):
+    ASSET_IMAGES = "asset_images"
+    PROMPTS = "prompts"
+    GENERATE = "generate"
+    POST = "post"
 
 
 @router.get("/source", response_model=SourceRead)
@@ -83,3 +92,30 @@ def run_stage(project_id: str, stage: StageName,
               idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
               db: Session = Depends(get_db)) -> TaskRead:
     return task_to_read(start_stage(db, project_id, stage.value, idempotency_key))
+
+
+@router.post("/commands/production/{stage}", response_model=TaskRead, status_code=202)
+def run_production_stage(
+    project_id: str,
+    stage: ProductionStageName,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    db: Session = Depends(get_db),
+) -> TaskRead:
+    return task_to_read(start_production_stage(db, project_id, stage.value, idempotency_key))
+
+
+@router.post("/commands/accept-generated", response_model=ScriptToDramaState)
+def accept_generated(
+    project_id: str,
+    command: SelectionCommand,
+    db: Session = Depends(get_db),
+) -> ScriptToDramaState:
+    accept_generated_video(db, project_id, command)
+    return state(db, project_id)
+
+
+@router.get("/media/{reference_id}")
+def read_media(project_id: str, reference_id: str, db: Session = Depends(get_db)) -> FileResponse:
+    path = media_path(db, project_id, reference_id)
+    media_type = "image/png" if path.suffix.lower() == ".png" else "video/mp4"
+    return FileResponse(path, media_type=media_type)
