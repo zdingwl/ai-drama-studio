@@ -194,11 +194,18 @@ def _stage(db: Session, project_id: str, kind: ArtifactType) -> StageRead:
 
 def state(db: Session, project_id: str) -> ScriptToDramaState:
     require_project(db, project_id)
-    return ScriptToDramaState(project_id=project_id,
+    return ScriptToDramaState(
+        project_id=project_id,
         analysis=_stage(db, project_id, ArtifactType.SOURCE_TEXT_SNAPSHOT),
         world=_stage(db, project_id, ArtifactType.TARGET_BIBLE),
         assets=_stage(db, project_id, ArtifactType.TARGET_ASSETS),
-        storyboard=_stage(db, project_id, ArtifactType.TARGET_STORYBOARD))
+        storyboard=_stage(db, project_id, ArtifactType.TARGET_STORYBOARD),
+        asset_images=_stage(db, project_id, ArtifactType.TARGET_ASSET_IMAGES),
+        prompts=_stage(db, project_id, ArtifactType.GENERATION_SEGMENTS),
+        generated_video=_stage(db, project_id, ArtifactType.GENERATED_VIDEO),
+        selection=_stage(db, project_id, ArtifactType.GENERATION_SELECTION),
+        final_output=_stage(db, project_id, ArtifactType.FINAL_OUTPUT),
+    )
 
 
 def _publish_one(db: Session, *, project_id: str, kind: ArtifactType,
