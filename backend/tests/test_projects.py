@@ -28,7 +28,7 @@ EXPECTED_SKILL_VERSIONS = {
     "REDRAW": "1.0.0",
     "TRANSLATION": "1.0.0",
     "NOVEL_TO_DRAMA": "1.0.0",
-    "SCRIPT_TO_DRAMA": "1.0.0",
+    "SCRIPT_TO_DRAMA": "1.1.0",
     "SCRIPT_LOCALIZATION": "1.0.0",
 }
 
