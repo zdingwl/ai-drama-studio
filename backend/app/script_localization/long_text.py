@@ -49,10 +49,10 @@ def split_source(text: str, *, max_chars: int = CHUNK_CHARS) -> list[SourceChunk
         limit = min(start + max_chars, len(text))
         end = limit
         if limit < len(text):
-            # Prefer whole scenes/paragraphs; unusually long paragraphs split exactly
-            # at the limit rather than dropping any source characters.
+            # Prefer whole scenes/paragraphs, but don't create excessive tiny chunks
+            # or silently drop source text when a scene exceeds one model request.
             for sep in ("\n\n", "\n"):
-                boundary = text.rfind(sep, start + max_chars // 2, limit)
+                boundary = text.rfind(sep, start + max_chars * 4 // 5, limit)
                 if boundary >= 0:
                     end = boundary + len(sep)
                     break
