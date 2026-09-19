@@ -125,7 +125,7 @@ def test_professional_skill_api_exposes_legacy_and_five_step_manuals(client: Tes
     assert localized_detail["output_contracts"] == ["TARGET_STORYBOARD"]
     localized_rules = "\n".join(localized_detail["provider_rules"])
     assert "4 words/s" in localized_rules
-    assert "简体中文" in localized_rules
+    assert "中文审核" in localized_rules
     assert "target_dialogue_zh" in localized_rules
     assert "确定性最小时长" in localized_rules
 
