@@ -1,18 +1,17 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App.vue'
+import { getProject } from '@/features/projects/api'
 
-const technicalPanels = [
-  'p6-panel',
-  'p7-panel',
-  'p8-panel',
-  'p9-panel',
-  'source-result-approval',
-]
+vi.mock('@/features/projects/api', () => ({ getProject: vi.fn() }))
 
-async function mountApp(path: string) {
+const technicalPanels = ['p6-panel', 'p7-panel', 'p8-panel', 'p9-panel', 'source-result-approval']
+const fiveStepIds = ['source-storyboard-workspace', 'localized-storyboard-workspace', 'asset-images-workspace', 'h3-prompt-workspace', 'h3-generation-workspace']
+
+async function mountApp(path: string, projectType = 'REPLICA') {
+  vi.mocked(getProject).mockResolvedValue({ project_type: projectType } as never)
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{
@@ -40,6 +39,7 @@ async function mountApp(path: string) {
         TargetBibleWorkspace: { template: '<section data-testid="target-bible-workspace" />' },
         TargetScriptWorkspace: { template: '<section data-testid="target-script-workspace" />' },
         ReplicaProductionWorkspace: { template: '<section data-testid="replica-production-workspace" />' },
+        ScriptLocalizationWorkspace: { template: '<section data-testid="script-localization-workspace" />' },
         P6AcceptancePanel: { template: '<section data-testid="p6-panel" />' },
         P7SourceUnderstandingWorkspace: { template: '<section data-testid="p7-panel" />' },
         P8ShotBreakdownPanel: { template: '<section data-testid="p8-panel" />' },
@@ -53,38 +53,29 @@ async function mountApp(path: string) {
   return wrapper
 }
 
-const fiveStepIds = [
-  'source-storyboard-workspace',
-  'localized-storyboard-workspace',
-  'asset-images-workspace',
-  'h3-prompt-workspace',
-  'h3-generation-workspace',
-]
-
 function expectOnlyFiveStep(wrapper: ReturnType<typeof mount>, expected: string) {
-  for (const id of fiveStepIds) {
-    expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(id === expected)
-  }
+  for (const id of fiveStepIds) expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(id === expected)
 }
 
-describe('App Replica five-step product workspaces', () => {
-  it.each([
-    ['overview', 'project-overview-workspace'],
-    ['episodes', 'episode-management-workspace'],
-  ])('routes %s to a real project page without the episode switch rail', async (workspace, testId) => {
-    const wrapper = await mountApp(`/projects/project-1/${workspace}`)
-    expect(wrapper.get(`[data-testid="${testId}"]`)).toBeTruthy()
-    expect(wrapper.find('[data-testid="episode-workspace-nav"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="journey-nav"]')).toBeTruthy()
-    wrapper.unmount()
-  })
+describe('App production workspace isolation', () => {
+  beforeEach(() => vi.clearAllMocks())
 
-  it('routes source to the isolated Chinese production shell and source storyboard surface', async () => {
+  it.each([['overview', 'project-overview-workspace'], ['episodes', 'episode-management-workspace']])(
+    'keeps Replica %s page without the episode switch rail', async (workspace, testId) => {
+      const wrapper = await mountApp(`/projects/project-1/${workspace}`)
+      expect(wrapper.get(`[data-testid="${testId}"]`)).toBeTruthy()
+      expect(wrapper.find('[data-testid="episode-workspace-nav"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="journey-nav"]')).toBeTruthy()
+      wrapper.unmount()
+    },
+  )
+
+  it('routes Replica source to the existing source storyboard and episode rail', async () => {
     const wrapper = await mountApp('/projects/project-1/source')
     expect(wrapper.find('[data-testid="project-route"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="journey-nav"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="episode-workspace-nav"]')).toBeTruthy()
     expectOnlyFiveStep(wrapper, 'source-storyboard-workspace')
+    expect(wrapper.find('[data-testid="script-localization-workspace"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -93,32 +84,40 @@ describe('App Replica five-step product workspaces', () => {
     ['assets', 'asset-images-workspace'],
     ['prompts', 'h3-prompt-workspace'],
     ['generation', 'h3-generation-workspace'],
-  ])('routes %s to exactly one isolated five-step workspace', async (workspace, testId) => {
+  ])('keeps Replica %s in exactly one five-step workspace', async (workspace, testId) => {
     const wrapper = await mountApp(`/projects/project-1/${workspace}`)
     expectOnlyFiveStep(wrapper, testId)
-    expect(wrapper.find('[data-testid="project-route"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="target-bible-workspace"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="target-script-workspace"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="replica-production-workspace"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('keeps historical script route readable without mounting the generic project route', async () => {
+  it('keeps the Replica legacy script route intact', async () => {
     const wrapper = await mountApp('/projects/project-1/script')
-    expect(wrapper.find('[data-testid="project-route"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="source-workspace"]')).toBeTruthy()
-    expect(wrapper.get('[data-testid="target-bible-workspace"]')).toBeTruthy()
-    expect(wrapper.get('[data-testid="target-script-workspace"]')).toBeTruthy()
+    for (const id of ['source-workspace', 'target-bible-workspace', 'target-script-workspace']) {
+      expect(wrapper.get(`[data-testid="${id}"]`)).toBeTruthy()
+    }
     for (const id of fiveStepIds) expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('keeps engineering acceptance panels behind debug=1 with routed engineering host mounted', async () => {
+  it.each(['source', 'script', 'overview'])(
+    'routes script localization %s without mounting a Replica/video component', async workspace => {
+      const wrapper = await mountApp(`/projects/project-1/${workspace}`, 'SCRIPT_LOCALIZATION')
+      expect(wrapper.get('[data-testid="script-localization-workspace"]')).toBeTruthy()
+      expect(wrapper.find('[data-testid="episode-workspace-nav"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="source-workspace"]').exists()).toBe(false)
+      for (const id of fiveStepIds) expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(false)
+      wrapper.unmount()
+    },
+  )
+
+  it('keeps engineering diagnostics behind debug=1', async () => {
     const wrapper = await mountApp('/projects/project-1/source?debug=1')
     expect(wrapper.find('[data-testid="journey-nav"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="project-route"]')).toBeTruthy()
     for (const panel of technicalPanels) expect(wrapper.get(`[data-testid="${panel}"]`)).toBeTruthy()
-    for (const id of fiveStepIds) expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(false)
     wrapper.unmount()
   })
 })
