@@ -24,7 +24,7 @@ const notice = ref('')
 let timer: number | undefined
 
 const latest = computed(() => [...tasks.value]
-  .filter(item => ['SCRIPT_TO_DRAMA_PREPRODUCTION', 'SCRIPT_TO_DRAMA_PRODUCTION'].includes(item.task_type))
+  .filter(item => ['SCRIPT_TO_DRAMA_PREPRODUCTION', 'SCRIPT_TO_DRAMA_PRODUCTION'].includes(item.task_type ?? ''))
   .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))[0] ?? null)
 const processing = computed(() => busy.value || latest.value?.status === 'queued' || latest.value?.status === 'running')
 const analysisReady = computed(() => state.value?.analysis.status === 'CURRENT')
