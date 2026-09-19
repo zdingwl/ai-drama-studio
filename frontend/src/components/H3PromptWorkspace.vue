@@ -22,7 +22,7 @@ let timer:number|undefined
 
 const task=computed(()=>[...tasks.value.filter(item=>item.task_type===TASK_TYPE&&item.episode_id===episodeId.value)].sort((a,b)=>+new Date(b.created_at)-+new Date(a.created_at))[0]??null)
 const busy=computed(()=>action.value||task.value?.status==='queued'||task.value?.status==='running')
-const hasValidationIssues=computed(()=>Boolean(prompts.value?.validation_issues?.length))
+const hasValidationIssues=computed(()=>prompts.value?.status==='CURRENT'&&Boolean(prompts.value?.validation_issues?.length))
 const taskFailure=computed(()=>task.value&&['failed','interrupted'].includes(task.value.status)?task.value.last_error||'生成未完成，请重试。':'')
 const generateLabel=computed(()=>action.value?'正在提交…':task.value?.status==='queued'?'排队中…':task.value?.status==='running'?`正在生成 ${task.value.progress_percent}%`:hasValidationIssues.value?'请先修订本土化分镜':prompts.value?.status==='CURRENT'?'重新生成提示词':'生成 H3 提示词')
 const allSegments=computed(()=>prompts.value?.content?.segments??[])
@@ -34,7 +34,7 @@ const filteredSegments=computed(()=>{
 const selectedSegment=computed(()=>filteredSegments.value.find(segment=>segment.generation_segment_id===selectedSegmentId.value)??filteredSegments.value[0]??null)
 
 async function refresh(silent=false){const project=projectId.value;const episode=episodeId.value;if(!episode)return;try{const [result,items]=await Promise.all([getH3Prompts(project,episode),listProjectTasks(project)]);if(project===projectId.value&&episode===episodeId.value){prompts.value=result;tasks.value=items}}catch(exc){if(!silent&&episode===episodeId.value)error.value=exc instanceof Error?exc.message:'读取 H3 提示词失败'}}
-async function generate(){if(busy.value)return;if(hasValidationIssues.value){error.value='重新生成 H3 提示词不会改变已定稿对白。请先回到「本土化分镜」缩短标红镜头的目标对白，保存并确认后再重新生成。';return}if(!episodeId.value){error.value='请先选择剧集';return}const episode=episodeId.value;const order=episodeOrder.value;action.value=true;error.value='';message.value='';try{await startH3Prompts(projectId.value,episode);if(episode===episodeId.value)message.value=`已开始生成第 ${order} 集的 H3 提示词。`;await refresh()}catch(exc){if(episode===episodeId.value)error.value=exc instanceof Error?exc.message:'启动提示词生成失败'}finally{action.value=false}}
+async function generate(){if(busy.value)return;if(hasValidationIssues.value){error.value='当前正式 H3 分段仍有上游对白或参考图问题。请先按标红提示修订对应本土化分镜或资产，确认后再重新生成。';return}if(!episodeId.value){error.value='请先选择剧集';return}const episode=episodeId.value;const order=episodeOrder.value;action.value=true;error.value='';message.value='';try{await startH3Prompts(projectId.value,episode);if(episode===episodeId.value)message.value=`已开始生成第 ${order} 集的 H3 提示词。`;await refresh()}catch(exc){if(episode===episodeId.value)error.value=exc instanceof Error?exc.message:'启动提示词生成失败'}finally{action.value=false}}
 watch([projectId,episodeId],()=>{prompts.value=null;selectedSegmentId.value='';error.value='';message.value='';void refresh()})
 function seconds(us:number){return `${(us/1_000_000).toFixed(2)}s`}
 function referenceTypeLabel(assetType:string){return ({CHARACTER:'人物',SCENE:'场景',PROP:'道具'} as Record<string,string>)[assetType]??'参考图'}
@@ -50,8 +50,8 @@ onBeforeUnmount(()=>{if(timer!==undefined)window.clearInterval(timer)})
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <div v-if="taskFailure&&!action" class="error" role="alert"><strong>第 {{ episodeOrder }} 集重新生成未完成</strong><p>{{ taskFailure }}</p><p v-if="prompts?.content">下方保留的是上次生成结果，本次未产生新版本。</p></div>
     <p v-else-if="message&&busy" class="success" role="status">{{ message }}</p>
-    <div v-if="prompts?.validation_issues?.length" class="validation-banner" role="alert"><strong>{{ prompts.validation_issues.length }} 个镜头段需要先修订</strong><p>问题来自已定稿对白或参考图，重新生成 H3 提示词不会改变它们。请回到第 2 步「本土化分镜」修订标红镜头，确认后再回到本页生成新版。</p></div>
-    <div v-if="prompts?.status!=='CURRENT'||!prompts.content" class="empty"><strong>{{ task?.last_error || '还没有正式 H3 提示词' }}</strong><span>必须先确认步骤 3 的真实资产图。</span></div>
+    <div v-if="prompts?.status==='CURRENT'&&prompts?.validation_issues?.length" class="validation-banner" role="alert"><strong>{{ prompts.validation_issues.length }} 个镜头段需要先修订</strong><p>问题来自当前正式 H3 所依赖的已定稿对白或参考图。请按标红提示修订对应本土化分镜或资产，确认后再回到本页生成新版。</p></div>
+    <div v-if="prompts?.status!=='CURRENT'||!prompts.content" class="empty"><strong>{{ task?.last_error || (prompts?.status==='STALE' ? '上一版 H3 已因上游更新而失效' : '还没有正式 H3 提示词') }}</strong><span>{{ prompts?.status==='STALE' ? '当前本土化分镜或资产已更新，可以直接生成新版 H3 提示词。' : '必须先确认步骤 3 的真实资产图。' }}</span></div>
     <template v-else>
       <div class="prompt-workbench">
         <aside class="segment-browser" aria-label="H3 镜头段列表">
