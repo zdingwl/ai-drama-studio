@@ -1,4 +1,5 @@
 import subprocess
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -165,7 +166,12 @@ def test_p6_v4_keeps_v3_rejected_microsegments_as_auditable_raw_evidence(
     )
     assert started.status_code == 202, started.text
     task_id = started.json()["id"]
-    task = client.get(f"/api/v3/projects/{project['id']}/tasks/{task_id}").json()
+    deadline = time.monotonic() + 5
+    while True:
+        task = client.get(f"/api/v3/projects/{project['id']}/tasks/{task_id}").json()
+        if task["status"] not in {"queued", "running"} or time.monotonic() >= deadline:
+            break
+        time.sleep(0.01)
     assert task["status"] == "succeeded"
 
     result = client.get(

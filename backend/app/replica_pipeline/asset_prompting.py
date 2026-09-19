@@ -259,10 +259,10 @@ def _assert_character_visual_design_consumed(
     # contract through its required visual dimensions instead.
     if any(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", fragment) for fragment in design_fragments):
         execution_dimensions = {
-            "face": ("face", "facial", "jaw", "cheek", "chin", "nose", "eyes", "brow", "lips"),
+            "face": ("face", "facial", "visage", "countenance", "jaw", "cheek", "chin", "nose", "eyes", "brow", "lips"),
             "hair": ("hair", "bald", "shaved"),
-            "body": ("build", "frame", "body", "shoulder", "height", "stature", "proportion", "physique"),
-            "wardrobe": ("wearing", "shirt", "top", "hoodie", "jacket", "dress", "trousers", "pants", "jeans", "skirt", "sweater", "fabric", "cotton", "denim", "linen", "knit"),
+            "body": ("build", "frame", "body", "shoulder", "height", "stature", "proportion", "physique", "figure", "silhouette", "lean", "slim", "slender", "stocky", "athletic"),
+            "wardrobe": ("wearing", "clothing", "garment", "apparel", "outfit", "shirt", "blouse", "top", "hoodie", "sweatshirt", "jacket", "coat", "suit", "dress", "trousers", "slacks", "pants", "sweatpants", "jeans", "shorts", "skirt", "sweater", "shoes", "sneakers", "fabric", "cotton", "denim", "linen", "knit"),
         }
         missing_dimensions = [
             name for name, tokens in execution_dimensions.items()
@@ -326,24 +326,25 @@ def validate_authored_asset_batch(
                     details={"target_entity_id": entity_id, "runtime_layout_tokens": leaked_layout},
                 )
             detail_groups = {
-                "face": ("face", "facial", "jaw", "cheek", "chin", "nose", "eyes", "brow", "lips"),
+                "face": ("face", "facial", "visage", "countenance", "jaw", "cheek", "chin", "nose", "eyes", "brow", "lips"),
                 "age": ("teen", "twenties", "thirties", "forties", "fifties", "sixties", "seventies", "young", "middle-aged", "senior", "elderly", "older", "mature", "wrinkle"),
                 "hair": ("hair", "bald", "shaved"),
-                "skin": ("skin", "complexion", "freckle"),
-                "body": ("build", "frame", "body", "physique", "figure", "silhouette", "shoulder", "height", "stature", "proportion"),
-                "wardrobe": ("wearing", "clothing", "garment", "apparel", "shirt", "blouse", "top", "hoodie", "jacket", "dress", "trousers", "slacks", "pants", "jeans", "skirt", "sweater", "fabric", "cotton", "denim", "linen", "knit"),
+                "skin": ("skin", "complexion", "skin tone", "freckle"),
+                "body": ("build", "frame", "body", "physique", "figure", "silhouette", "shoulder", "height", "stature", "proportion", "lean", "slim", "slender", "stocky", "athletic"),
+                "wardrobe": ("wearing", "clothing", "garment", "apparel", "outfit", "shirt", "blouse", "top", "hoodie", "sweatshirt", "jacket", "coat", "suit", "dress", "trousers", "slacks", "pants", "sweatpants", "jeans", "shorts", "skirt", "sweater", "shoes", "sneakers", "fabric", "cotton", "denim", "linen", "knit"),
                 "color": ("black", "white", "gray", "grey", "blue", "red", "orange", "green", "brown", "beige", "yellow", "purple", "pink"),
             }
             missing_groups = [
                 name for name, tokens in detail_groups.items()
                 if not any(token in lowered_prompt for token in tokens)
+                and not (name == "age" and re.search(r"\b(?:1[3-9]|[2-9]\d)(?:-year-old|\s+years?\s+old|s\b)", lowered_prompt))
             ]
             _assert_character_visual_design_consumed(
                 next((asset for asset in expected_assets if str(asset["target_entity_id"]) == entity_id), {}),
                 item.image_prompt,
                 target_entity_id=entity_id,
             )
-            if missing_groups or len(item.image_prompt.strip()) < 220:
+            if missing_groups:
                 raise AppError(
                     "ASSET_IMAGE_CHARACTER_DETAIL_INSUFFICIENT",
                     "人物正向提示词缺少足够的稳定视觉身份细节",

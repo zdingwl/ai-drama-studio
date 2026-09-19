@@ -16,6 +16,7 @@ from app.p16.schemas import GenerationAttemptRead, TechnicalQcStatus
 from app.projects.enums import ProjectType
 from app.replica_pipeline.models import ReplicaAssetImageRevision, ReplicaH3PromptRevision, ReplicaLocalizedStoryboardRevision
 from app.replica_pipeline.schemas import ReplicaAssetImagesContent, ReplicaLocalizedStoryboardContent
+from app.replica_pipeline.h3_audit import require_valid_segments
 from app.skills.models import ArtifactType
 from app.target_assets.schemas import ReferenceMediaRole, TargetAssetType
 from app.workflow.models import ProviderJob
@@ -79,8 +80,7 @@ def _validate_reference_contract(*, assets_artifact: ArtifactNode, assets: Repli
                 raise AppError("P16_REFERENCE_CONTRACT_MISMATCH", "GenerationSegment target_asset_ref 与 CURRENT TARGET_ASSETS 不一致", status_code=409, details={"generation_segment_id": segment.generation_segment_id, "target_asset_id": asset_ref.target_asset_id})
             if asset_ref.asset_type == TargetAssetType.CHARACTER:
                 roles = {item.reference_role for item in conditions_by_asset.get(asset_ref.target_asset_id, [])}
-                required = {ReferenceMediaRole.FACE.value, ReferenceMediaRole.FULL_BODY.value}
-                if not required.issubset(roles):
+                if ReferenceMediaRole.FACE.value not in roles or not roles.intersection({ReferenceMediaRole.FULL_BODY.value, ReferenceMediaRole.FULL_BODY_FRONT.value}):
                     raise AppError(
                         "P16_CHARACTER_IDENTITY_REFERENCES_REQUIRED",
                         "人物视频生成必须同时携带 FACE + 正面 FULL_BODY Ref2VA 身份参考；请重新完成步骤 3/4",
@@ -122,6 +122,7 @@ def load_inputs(db: Session, project) -> P16Inputs:
     if any(not segment.reference_conditions for segment in segments.segments if segment.target_asset_refs):
         raise AppError("P16_REFERENCE_CONDITION_REQUIRED", "有正式资产引用的镜头必须使用 H3 多参考 reference_conditions", status_code=409)
     _validate_reference_contract(assets_artifact=assets_artifact, assets=assets, segments=segments)
+    require_valid_segments(segments.segments)
     return P16Inputs(
         project=project,
         storyboard_artifact=storyboard_artifact,

@@ -44,7 +44,7 @@ def _asset(entity_id: str, asset_type: TargetAssetType, media: list):
     )
 
 
-def test_old_character_asset_contract_is_stale_and_blocked_before_h3_prompting() -> None:
+def test_h3_accepts_adopted_legacy_asset_media_when_identity_references_are_complete() -> None:
     current = _asset("char-current", TargetAssetType.CHARACTER, [
         _media(ReferenceMediaRole.OTHER, "board"),
         _media(ReferenceMediaRole.FULL_BODY, "front"),
@@ -54,16 +54,12 @@ def test_old_character_asset_contract_is_stale_and_blocked_before_h3_prompting()
     assert _asset_lookup(SimpleNamespace(assets=[current]))["char-current"] is current
 
     legacy = SimpleNamespace(**{**current.__dict__, "prompt_skill_version": "1.2.0", "prompt_contract": "z-image-turbo-replica-assets-v2"})
-    assert _content_matches_current_asset_contract(SimpleNamespace(assets=[legacy])) is False
-    with pytest.raises(AppError) as captured:
-        _asset_lookup(SimpleNamespace(assets=[legacy]))
-    assert captured.value.code == "H3_PROMPT_ASSET_CONTRACT_STALE"
+    assert _content_matches_current_asset_contract(SimpleNamespace(assets=[legacy])) is True
+    assert _asset_lookup(SimpleNamespace(assets=[legacy]))["char-current"] is legacy
 
     missing_visual_design = SimpleNamespace(**{**current.__dict__, "character_visual_design": None})
-    assert _content_matches_current_asset_contract(SimpleNamespace(assets=[missing_visual_design])) is False
-    with pytest.raises(AppError) as missing_design_error:
-        _asset_lookup(SimpleNamespace(assets=[missing_visual_design]))
-    assert missing_design_error.value.code == "H3_PROMPT_CHARACTER_VISUAL_CONTRACT_STALE"
+    assert _content_matches_current_asset_contract(SimpleNamespace(assets=[missing_visual_design])) is True
+    assert _asset_lookup(SimpleNamespace(assets=[missing_visual_design]))["char-current"] is missing_visual_design
 
     missing_face = _asset("char-no-face", TargetAssetType.CHARACTER, [
         _media(ReferenceMediaRole.OTHER, "board-only"),
@@ -139,11 +135,12 @@ def test_h3_reference_compilation_never_drops_character_identity_to_fit_nine_slo
     assert captured.value.code == "H3_PROMPT_CHARACTER_REFERENCE_CAPACITY_EXCEEDED"
 
 
-def test_p16_reference_contract_matches_current_asset_media_and_requires_character_pair() -> None:
+@pytest.mark.parametrize('body_role', [ReferenceMediaRole.FULL_BODY, ReferenceMediaRole.FULL_BODY_FRONT])
+def test_p16_reference_contract_matches_current_asset_media_and_requires_character_pair(body_role) -> None:
     character = _asset("char-1", TargetAssetType.CHARACTER, [
         _media(ReferenceMediaRole.OTHER, "board"),
         _media(ReferenceMediaRole.FACE, "face"),
-        _media(ReferenceMediaRole.FULL_BODY, "front"),
+        _media(body_role, "front"),
     ])
     shot = SimpleNamespace(target_character_ids=["char-1"], target_scene_ids=[], target_prop_ids=[])
     conditions, refs = _references(shot, [], "assets-artifact-1", {"char-1": character})

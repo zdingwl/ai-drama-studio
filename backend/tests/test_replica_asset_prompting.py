@@ -346,6 +346,30 @@ def test_character_prompt_accepts_common_elderly_body_and_clothing_synonyms() ->
     assert validate_authored_asset_batch([context], authored)["target-char-1"].image_prompt.startswith("One elderly East Asian woman")
 
 
+def test_character_prompt_accepts_concise_complete_numeric_age_and_clothing_synonyms() -> None:
+    context = _character_context()
+    context["character_visual_design"] = {
+        **context["character_visual_design"],
+        "face_design": "暖肤色的椭圆脸和棕色眼睛。",
+        "hair_design": "整洁的黑色短发。",
+        "body_design": "中等身高的纤瘦体态。",
+        "wardrobe_design": "灰色运动衫、运动裤和运动鞋。",
+        "signature_features": ["椭圆脸", "黑色短发"],
+    }
+    prompt = "28-year-old East Asian man, oval face, brown eyes, warm skin, short black hair, slim figure, gray cotton sweatshirt, sweatpants and blue sneakers."
+    authored = AssetImagePromptAuthoringResult.model_validate({
+        "assets": [{
+            "target_entity_id": "target-char-1",
+            "image_prompt": prompt,
+            "negative_prompt": "extra people, text, watermark",
+            "review_prompt_zh": "完整呈现人物年龄、脸型、短发、体态和基础服装。",
+        }],
+    })
+
+    assert len(prompt) < 220
+    assert validate_authored_asset_batch([context], authored)["target-char-1"].image_prompt == prompt
+
+
 def test_z_image_runtime_matches_verified_local_comfyui_workflow() -> None:
     runtime = ComfyUIZImageTurboRuntime()
     payload = runtime._workflow(
@@ -693,6 +717,26 @@ def test_asset_workspace_task_failure_and_retry_reconcile_card_status(
                 "last_error": None,
                 "active_generation_id": None,
                 "generations": [],
+            }, {
+                "target_asset_id": "asset:prop-1",
+                "asset_type": "PROP",
+                "target_entity_id": "prop-1",
+                "display_name": "Red Rose Bouquet",
+                "review_description_zh": "客厅茶几上的红玫瑰花束",
+                "width": 1024,
+                "height": 1024,
+                "image_prompt": None,
+                "negative_prompt": "",
+                "prompt_review_zh": None,
+                "image_model_id": None,
+                "prompt_skill_id": None,
+                "prompt_skill_version": None,
+                "prompt_contract": None,
+                "prompt_status": "QUEUED",
+                "image_status": "NOT_STARTED",
+                "last_error": None,
+                "active_generation_id": None,
+                "generations": [],
             }],
         })
         workspace = ReplicaAssetWorkspace(
@@ -714,7 +758,8 @@ def test_asset_workspace_task_failure_and_retry_reconcile_card_status(
             max_attempts=3,
             checkpoint_json={
                 "operation": "prompts",
-                "target_asset_ids": ["asset:character-1"],
+                "target_asset_ids": ["asset:character-1", "asset:prop-1"],
+                "active_prompt_asset": "asset:character-1",
             },
             last_error="Prompt Provider 失败",
         )
@@ -727,6 +772,9 @@ def test_asset_workspace_task_failure_and_retry_reconcile_card_status(
         failed = AssetWorkspaceContent.model_validate(workspace.content_json).assets[0]
         assert failed.prompt_status == "FAILED"
         assert failed.last_error == "Prompt Provider 失败"
+        untouched = AssetWorkspaceContent.model_validate(workspace.content_json).assets[1]
+        assert untouched.prompt_status == "NOT_STARTED"
+        assert untouched.last_error is None
 
         task.status = TaskStatus.QUEUED
         task.last_error = None

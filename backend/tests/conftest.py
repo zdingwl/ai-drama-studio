@@ -1,10 +1,10 @@
 from collections.abc import Generator
 
 import pytest
+import app.main as main_module
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
 from app.db import models as _models  # noqa: F401
@@ -22,11 +22,10 @@ def isolate_runtime(tmp_path, monkeypatch) -> Generator[None, None, None]:
 
 
 @pytest.fixture()
-def session_factory() -> Generator[sessionmaker[Session], None, None]:
+def session_factory(tmp_path) -> Generator[sessionmaker[Session], None, None]:
     engine = create_engine(
-        "sqlite://",
+        f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, class_=Session)
@@ -36,7 +35,8 @@ def session_factory() -> Generator[sessionmaker[Session], None, None]:
 
 
 @pytest.fixture()
-def client(session_factory: sessionmaker[Session]) -> Generator[TestClient, None, None]:
+def client(session_factory: sessionmaker[Session], monkeypatch) -> Generator[TestClient, None, None]:
+    monkeypatch.setattr(main_module, "SessionLocal", session_factory)
     application = create_app()
 
     def override_get_db() -> Generator[Session, None, None]:

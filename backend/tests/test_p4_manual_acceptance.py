@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -29,9 +31,14 @@ def _start(client: TestClient, project_id: str, scenario: str, key: str) -> dict
 
 
 def _get_task(client: TestClient, project_id: str, task_id: str) -> dict:
-    response = client.get(f"/api/v3/projects/{project_id}/tasks/{task_id}")
-    assert response.status_code == 200, response.text
-    return response.json()
+    deadline = time.monotonic() + 5
+    while True:
+        response = client.get(f"/api/v3/projects/{project_id}/tasks/{task_id}")
+        assert response.status_code == 200, response.text
+        task = response.json()
+        if task["status"] not in {"queued", "running"} or time.monotonic() >= deadline:
+            return task
+        time.sleep(0.01)
 
 
 def test_manual_acceptance_success_uses_real_task_and_provider_job_guardrails(

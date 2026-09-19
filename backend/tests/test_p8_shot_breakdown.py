@@ -1,4 +1,5 @@
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -537,9 +538,14 @@ def _start(client: TestClient, project_id: str, key: str) -> dict:
     )
     assert response.status_code == 202, response.text
     task_id = response.json()["id"]
-    task = client.get(f"/api/v3/projects/{project_id}/tasks/{task_id}")
-    assert task.status_code == 200
-    return task.json()
+    deadline = time.monotonic() + 5
+    while True:
+        task = client.get(f"/api/v3/projects/{project_id}/tasks/{task_id}")
+        assert task.status_code == 200
+        payload = task.json()
+        if payload["status"] not in {"queued", "running"} or time.monotonic() >= deadline:
+            return payload
+        time.sleep(0.01)
 
 
 def test_p8_get_is_read_only_and_post_requires_hard_inputs(client: TestClient, tmp_path: Path) -> None:

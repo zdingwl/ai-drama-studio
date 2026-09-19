@@ -30,6 +30,9 @@ export interface LocalizedStoryboardShot {
   start_us: number
   end_us: number
   duration_us: number
+  source_start_us?: number
+  source_end_us?: number
+  source_duration_us?: number
   output_ratio: string
   source_visual_description: string
   localized_visual_description_zh: string
@@ -46,6 +49,8 @@ export interface LocalizedStoryboardContent {
   source_snapshot_artifact_id: string
   target_language: string
   target_region: string
+  world_design_zh?: string
+  continuity_rules_zh?: string[]
   characters: Array<{ source_character_id: string; target_character_id: string; source_name: string; display_name: string; identity_description_zh: string; appearance_description_zh: string }>
   scenes: Array<{ source_scene_id: string; target_scene_id: string; source_name: string; display_name: string; setting_description_zh: string; visual_description_zh: string }>
   props: Array<{ source_prop_id: string; target_prop_id: string; source_name: string; display_name: string; function_description_zh: string; visual_description_zh: string }>
@@ -65,6 +70,7 @@ export interface LocalizedStoryboardCandidate {
   id: string
   project_id: string
   generation_sequence: number
+  input_fingerprint: string
   review_status: CandidateStatus
   review_reason: string | null
   content: LocalizedStoryboardContent
@@ -215,6 +221,7 @@ export interface H3PromptSegment {
 }
 
 export interface H3PromptsRead {
+  validation_issues?: Array<{ code: string; generation_segment_id: string; message: string }>
   project_id: string
   status: PipelineResultStatus
   artifact_id: string | null
@@ -237,6 +244,7 @@ export const reviewLocalizedStoryboard = (projectId: string, candidate: Localize
 })
 export const updateLocalizedStoryboardShot = (projectId: string, payload: {
   candidate_id: string | null
+  expected_candidate_fingerprint: string | null
   expected_current_artifact_id: string | null
   expected_source_snapshot_artifact_id: string
   storyboard_shot_id: string
@@ -261,5 +269,5 @@ export const reviewAssetImages = (projectId: string, candidate: AssetImageCandid
   body: JSON.stringify({ expected_upstream_artifact_id: candidate.content.target_storyboard_artifact_id, expected_generation_sequence: candidate.generation_sequence, reason }),
 })
 
-export const getH3Prompts = (projectId: string) => apiRequest<H3PromptsRead>(`/projects/${projectId}/h3-prompts`, { cache: 'no-store' })
-export const startH3Prompts = (projectId: string) => apiRequest<TaskRead>(`/projects/${projectId}/commands/h3-prompts`, { method: 'POST', headers: { 'Idempotency-Key': key('h3-prompts') } })
+export const getH3Prompts = (projectId: string, episodeId?: string) => apiRequest<H3PromptsRead>(`/projects/${projectId}/h3-prompts${episodeId ? `?episode_id=${encodeURIComponent(episodeId)}` : ''}`, { cache: 'no-store' })
+export const startH3Prompts = (projectId: string, episodeId: string) => apiRequest<TaskRead>(`/projects/${projectId}/commands/h3-prompts?episode_id=${encodeURIComponent(episodeId)}`, { method: 'POST', headers: { 'Idempotency-Key': key('h3-prompts') } })

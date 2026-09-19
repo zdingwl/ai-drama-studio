@@ -127,6 +127,7 @@ export interface ProjectExecutionPlan {
 }
 
 export interface TaskRead {
+  episode_id?: string | null
   id: string
   project_id: string
   task_type?: string

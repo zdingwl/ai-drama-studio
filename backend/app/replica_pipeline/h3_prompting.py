@@ -27,9 +27,9 @@ from app.p15.schemas import (
 )
 from app.projects.enums import ProjectType, SourceUnderstandingProvider
 from app.projects.service import get_project
-from app.replica_pipeline.models import ReplicaAssetImageRevision, ReplicaH3PromptRevision, ReplicaLocalizedStoryboardRevision
-from app.replica_pipeline.character_visual_design import character_visual_design_skill
-from app.replica_pipeline.image_model_skills import selected_image_model_prompt_skill
+from app.replica_pipeline.models import ReplicaAssetImageRevision, ReplicaAssetWorkspace, ReplicaH3PromptRevision, ReplicaLocalizedStoryboardRevision
+from app.replica_pipeline.h3_audit import audit_segments
+from app.replica_pipeline.asset_images import _publish_workspace_if_complete, asset_image_runtime
 from app.replica_pipeline.schemas import (
     H3_PROMPT_SCHEMA_VERSION,
     H3PromptAuthoringResult,
@@ -100,7 +100,40 @@ def _latest(db: Session, project_id: str, artifact_type: ArtifactType) -> Artifa
 
 def _load_inputs(db: Session, project_id: str) -> tuple[ArtifactNode, ReplicaLocalizedStoryboardContent, ArtifactNode, ReplicaAssetImagesContent]:
     storyboard_artifact = _current(db, project_id, ArtifactType.TARGET_STORYBOARD)
-    assets_artifact = _current(db, project_id, ArtifactType.TARGET_ASSETS)
+    assets_artifact = db.scalar(select(ArtifactNode).where(
+        ArtifactNode.project_id == project_id,
+        ArtifactNode.artifact_type == ArtifactType.TARGET_ASSETS.value,
+        ArtifactNode.validity == ArtifactValidity.CURRENT,
+        ArtifactNode.is_current.is_(True),
+    ))
+    if assets_artifact is None:
+        # H3 is an explicit POST action.  Reconcile a fully generated existing
+        # workspace here so valid adopted images are published without asking
+        # the user to regenerate them after an image Prompt Skill upgrade.
+        workspace = db.scalar(select(ReplicaAssetWorkspace).where(
+            ReplicaAssetWorkspace.project_id == project_id,
+            ReplicaAssetWorkspace.target_storyboard_artifact_id == storyboard_artifact.id,
+        ))
+        image_task = db.scalar(select(Task).where(
+            Task.project_id == project_id,
+            Task.task_type == "replica.asset-images",
+            Task.status == TaskStatus.SUCCEEDED,
+        ).order_by(Task.finished_at.desc(), Task.created_at.desc()).limit(1))
+        if workspace is not None and image_task is not None:
+            from app.replica_pipeline.schemas import AssetWorkspaceContent
+
+            _publish_workspace_if_complete(
+                db,
+                task=TaskWorkerRead.model_validate(image_task),
+                workspace=workspace,
+                content=AssetWorkspaceContent.model_validate(workspace.content_json),
+                provider_job_ids=[],
+                runtime=asset_image_runtime(),
+            )
+            db.commit()
+            assets_artifact = _current(db, project_id, ArtifactType.TARGET_ASSETS)
+    if assets_artifact is None:
+        raise AppError("H3_PROMPT_INPUT_REQUIRED", "第 4 步需要完整的已出图资产；请先为缺失资产生成图片", status_code=409)
     storyboard_row = db.scalar(select(ReplicaLocalizedStoryboardRevision).where(ReplicaLocalizedStoryboardRevision.artifact_id == storyboard_artifact.id))
     assets_row = db.scalar(select(ReplicaAssetImageRevision).where(ReplicaAssetImageRevision.artifact_id == assets_artifact.id))
     if storyboard_row is None:
@@ -116,48 +149,9 @@ def _load_inputs(db: Session, project_id: str) -> tuple[ArtifactNode, ReplicaLoc
 
 def _asset_lookup(assets: ReplicaAssetImagesContent) -> dict[str, object]:
     lookup = {item.target_entity_id: item for item in assets.assets}
-    binding, prompt_skill = selected_image_model_prompt_skill()
-    visual_skill = character_visual_design_skill()
     for entity_id, asset in lookup.items():
-        if (
-            asset.image_model_id != binding.model_id
-            or asset.prompt_skill_id != prompt_skill.id
-            or asset.prompt_skill_version != prompt_skill.version
-            or asset.prompt_contract != binding.prompt_contract
-        ):
-            raise AppError(
-                "H3_PROMPT_ASSET_CONTRACT_STALE",
-                "当前资产图使用旧图片生成合同，请先在资产页重新生成，再进入 H3 提示词",
-                status_code=409,
-                details={
-                    "target_entity_id": entity_id,
-                    "actual_prompt_contract": asset.prompt_contract,
-                    "required_prompt_contract": binding.prompt_contract,
-                    "actual_prompt_skill_version": asset.prompt_skill_version,
-                    "required_prompt_skill_version": prompt_skill.version,
-                },
-            )
         if not asset.reference_media:
             raise AppError("H3_PROMPT_REFERENCE_MISSING", "H3 Prompt 需要每个目标资产都有正式参考图", status_code=409, details={"target_entity_id": entity_id})
-        if asset.asset_type == TargetAssetType.CHARACTER and (
-            asset.character_visual_design is None
-            or asset.character_visual_skill_id != visual_skill.id
-            or asset.character_visual_skill_version != visual_skill.version
-        ):
-            raise AppError(
-                "H3_PROMPT_CHARACTER_VISUAL_CONTRACT_STALE",
-                "当前人物资产缺少最新 Character Visual Design 身份合同，请先在步骤 3 重新生成该人物资产",
-                status_code=409,
-                details={
-                    "target_entity_id": entity_id,
-                    "required_character_visual_skill": f"{visual_skill.id}@{visual_skill.version}",
-                    "actual_character_visual_skill": (
-                        f"{asset.character_visual_skill_id}@{asset.character_visual_skill_version}"
-                        if asset.character_visual_skill_id and asset.character_visual_skill_version
-                        else None
-                    ),
-                },
-            )
         if any(not media.storage_relpath for media in asset.reference_media):
             raise AppError("H3_PROMPT_REFERENCE_PATH_MISSING", "H3 Prompt 参考图缺少受管存储路径", status_code=409, details={"target_entity_id": entity_id})
     return lookup
@@ -183,24 +177,18 @@ def _media_for_role(asset, role: ReferenceMediaRole):
 
 
 def _character_identity_media_priority(asset) -> list[object]:
-    """根据 H3 9 reference 限制选择人物身份参考。
+    """Return H3's required two-image identity pair for a visible character.
 
-    主角身份优先保留脸和正面锚点；视图数量不足时按优先级降级，
-    不能静默随机丢弃参考图。
+    Ref2VA's nine picture slots cannot carry a four-view reference board for
+    every actor. The production contract uses the independent FACE and
+    canonical front FULL_BODY images; side/back views remain review material.
     """
-    priority_roles = (
-        ReferenceMediaRole.FACE,
-        ReferenceMediaRole.FULL_BODY_FRONT,
-        ReferenceMediaRole.FULL_BODY_SIDE,
-        ReferenceMediaRole.FULL_BODY_BACK,
-        ReferenceMediaRole.FULL_BODY,
+    face = _media_for_role(asset, ReferenceMediaRole.FACE)
+    full_body = (
+        _media_for_role(asset, ReferenceMediaRole.FULL_BODY_FRONT)
+        or _media_for_role(asset, ReferenceMediaRole.FULL_BODY)
     )
-    result = []
-    for role in priority_roles:
-        media = _media_for_role(asset, role)
-        if media is not None:
-            result.append(media)
-    return result
+    return [media for media in (face, full_body) if media is not None]
 
 
 def _references(
@@ -256,9 +244,9 @@ def _references(
         ))
         return True
 
-    # Character identity owns the highest-priority Ref2VA slots. Every visually present
-    # character receives the complete identity set (front/side/back/face) when available.
-    # This prevents H3 from treating side/back views as unrelated people.
+    # Character identity owns the highest-priority Ref2VA slots. Every visible character
+    # receives exactly FACE + canonical front FULL_BODY, leaving capacity for the actual
+    # scene and props instead of exhausting all nine slots with review-only rotations.
     for entity_id in visible_character_ids:
         asset = asset_by_entity[entity_id]
         if asset.asset_type != TargetAssetType.CHARACTER:
@@ -293,13 +281,24 @@ def _references(
         asset = asset_by_entity[entity_id]
         add_ref(asset)
         media = _media_for_role(asset, preferred_role) or asset.reference_media[0]
-        add_condition(asset, media)
+        if not add_condition(asset, media):
+            raise AppError("H3_PROMPT_REFERENCE_CAPACITY_EXCEEDED", "参考图超过 9 张，无法完整携带场景与道具，请调整生成分段", status_code=409)
     return conditions, refs
 
 
-def _dialogue_refs(shot, start_us: int, end_us: int) -> list[StoryboardDialogueRef]:
+def _dialogue_refs(
+    shot,
+    start_us: int,
+    end_us: int,
+    assigned_utterance_ids: set[str] | None = None,
+    owner_shot_by_utterance: dict[str, str] | None = None,
+) -> list[StoryboardDialogueRef]:
     refs: list[StoryboardDialogueRef] = []
     for item in shot.dialogue:
+        if owner_shot_by_utterance is not None and owner_shot_by_utterance.get(item.utterance_id) != shot.storyboard_shot_id:
+            continue
+        if assigned_utterance_ids is not None and item.utterance_id in assigned_utterance_ids:
+            continue
         if item.overlap_start_us >= end_us or item.overlap_end_us <= start_us:
             continue
         refs.append(StoryboardDialogueRef(
@@ -312,6 +311,8 @@ def _dialogue_refs(shot, start_us: int, end_us: int) -> list[StoryboardDialogueR
             planned_speech_start_us=max(start_us, item.overlap_start_us),
             planned_speech_end_us=min(end_us, item.overlap_end_us),
         ))
+        if assigned_utterance_ids is not None:
+            assigned_utterance_ids.add(item.utterance_id)
     return refs
 
 
@@ -393,6 +394,8 @@ class H3SegmentDraft:
                     "delivery": item.delivery.value,
                     "target_dialogue": item.final_target_dialogue,
                     "target_dialogue_zh_review_only": item.target_dialogue_zh,
+                    "speech_start_seconds": round((item.planned_speech_start_us - self.start_us) / 1_000_000, 3),
+                    "speech_end_seconds": round((item.planned_speech_end_us - self.start_us) / 1_000_000, 3),
                 }
                 for item in self.dialogue_refs
             ],
@@ -414,12 +417,29 @@ def _build_drafts(
     }
     drafts: list[H3SegmentDraft] = []
     episode_counts: dict[str, int] = {}
-    for shot in sorted(storyboard.shots, key=lambda item: (item.episode_order, item.shot_number)):
+    ordered_shots = sorted(storyboard.shots, key=lambda item: (item.episode_order, item.shot_number))
+    owner_candidates: dict[tuple[str, str], tuple[int, str]] = {}
+    for shot in ordered_shots:
+        for dialogue in shot.dialogue:
+            overlap_us = dialogue.overlap_end_us - dialogue.overlap_start_us
+            key = (shot.episode_id, dialogue.utterance_id)
+            if key not in owner_candidates or overlap_us > owner_candidates[key][0]:
+                owner_candidates[key] = (overlap_us, shot.storyboard_shot_id)
+    owner_shot_by_episode = {
+        episode_id: {utterance_id: owner for (candidate_episode, utterance_id), (_, owner) in owner_candidates.items() if candidate_episode == episode_id}
+        for episode_id in {shot.episode_id for shot in ordered_shots}
+    }
+    for shot in ordered_shots:
         part_count = max(1, math.ceil(shot.duration_us / MAX_SEGMENT_DURATION_US))
         for part_index in range(part_count):
             start_us = shot.start_us + part_index * MAX_SEGMENT_DURATION_US
             end_us = min(shot.end_us, start_us + MAX_SEGMENT_DURATION_US)
-            dialogue_refs = _dialogue_refs(shot, start_us, end_us)
+            dialogue_refs = _dialogue_refs(
+                shot,
+                start_us,
+                end_us,
+                owner_shot_by_utterance=owner_shot_by_episode[shot.episode_id],
+            )
             conditions, asset_refs = _references(shot, dialogue_refs, assets_artifact.id, asset_by_entity)
             episode_counts[shot.episode_id] = episode_counts.get(shot.episode_id, 0) + 1
             segment_number = episode_counts[shot.episode_id]
@@ -638,6 +658,22 @@ def _validate_authored_batch(drafts: list[H3SegmentDraft], authored: H3PromptAut
                 status_code=502,
                 details={"generation_segment_id": draft.generation_segment_id, "expected": sorted(expected_tags), "actual": sorted(picture_tags)},
             )
+        missing_dialogue = [
+            dialogue.final_target_dialogue.strip()
+            for dialogue in draft.dialogue_refs
+            if dialogue.final_target_dialogue.strip() and item.execution_prompt.count(dialogue.final_target_dialogue.strip()) == 0
+        ]
+        if missing_dialogue:
+            # The localized storyboard is the authoritative dialogue source.  A
+            # prompt author may omit it while summarising the shot; restore the
+            # exact target-language text deterministically instead of discarding
+            # an otherwise valid Provider batch.
+            item = item.model_copy(update={
+                "execution_prompt": item.execution_prompt.rstrip()
+                + "\n\nNative synchronized spoken dialogue — say each line exactly once, without translation: "
+                + " | ".join(missing_dialogue),
+            })
+            by_id[draft.generation_segment_id] = item
         for dialogue in draft.dialogue_refs:
             spoken = dialogue.final_target_dialogue.strip()
             if not spoken or item.execution_prompt.count(spoken) != 1:
@@ -706,11 +742,13 @@ def _compile_segments(
     )
 
 
-def create_h3_prompt_task(db: Session, *, project_id: str, idempotency_key: str) -> Task:
+def create_h3_prompt_task(db: Session, *, project_id: str, idempotency_key: str, episode_id: str) -> Task:
     project = get_project(db, project_id)
     if project.project_type != ProjectType.REPLICA:
         raise AppError("H3_PROMPT_PROJECT_UNSUPPORTED", "当前五步主生产链只正式支持 REPLICA", status_code=422)
-    storyboard_artifact, _, assets_artifact, _ = _load_inputs(db, project_id)
+    storyboard_artifact, storyboard, assets_artifact, _ = _load_inputs(db, project_id)
+    if not episode_id or not any(shot.episode_id == episode_id for shot in storyboard.shots):
+        raise AppError("H3_EPISODE_REQUIRED", "请选择有本土化分镜的当前剧集", status_code=422)
     settings = get_settings()
     binding, skill = selected_video_model_prompt_skill(settings)
     provider = _prompt_author_provider(settings, project.source_understanding_provider)
@@ -722,9 +760,11 @@ def create_h3_prompt_task(db: Session, *, project_id: str, idempotency_key: str)
         "prompt_contract": binding.prompt_contract,
         "prompt_provider": provider.profile(),
         "generation_request": idempotency_key.strip(),
+        "episode_id": episode_id,
     })
     task = create_task_from_command(db, project_id=project_id, idempotency_key=idempotency_key, payload=TaskCommandCreate(
         task_type=TASK_TYPE,
+        episode_id=episode_id,
         task_name="用 MiniMax H3 Prompt Skill 生成多参考音画提示词",
         input_fingerprint=fingerprint,
         input_artifact_ids=[storyboard_artifact.id, assets_artifact.id],
@@ -765,6 +805,12 @@ def _claim(db: Session, task_id: str, worker_id: str) -> Task | None:
     return db.get(Task, task_id)
 
 
+def _merge_episode_segments(previous, generated, episode_id):
+    if not generated or any(segment.episode_id != episode_id for segment in generated):
+        raise AppError("H3_EPISODE_SCOPE_MISMATCH", "生成结果为空或包含未选择的剧集", status_code=409)
+    return sorted([*(segment for segment in previous if segment.episode_id != episode_id), *generated], key=lambda segment: (segment.episode_order, segment.segment_number))
+
+
 def _publish(
     db: Session,
     task: TaskWorkerRead,
@@ -786,6 +832,20 @@ def _publish(
         ArtifactNode.validity == ArtifactValidity.CURRENT,
     ))
     latest = _latest(db, task.project_id, ArtifactType.GENERATION_SEGMENTS)
+    episode_provenance = {}
+    if task.episode_id:
+        _merge_episode_segments([], content.segments, task.episode_id)
+        if previous is not None:
+            previous_row = db.scalar(select(ReplicaH3PromptRevision).where(ReplicaH3PromptRevision.artifact_id == previous.id))
+            if previous_row is not None:
+                old_content = ReplicaGenerationSegmentsContent.model_validate(previous_row.content_json)
+                if old_content.target_storyboard_artifact_id == storyboard_artifact.id and old_content.target_assets_artifact_id == assets_artifact.id:
+                    retained = [segment for segment in old_content.segments if segment.episode_id != task.episode_id]
+                    content = content.model_copy(update={"segments": _merge_episode_segments(old_content.segments, content.segments, task.episode_id)})
+                    old_provenance = _read_h3_prompt_provenance(previous_row.provenance_json, previous).model_dump(mode="json")
+                    episode_provenance = dict(previous_row.provenance_json.get("episode_provenance", {}))
+                    for segment in retained:
+                        episode_provenance.setdefault(segment.episode_id, old_provenance)
     generation_sequence = int((task.checkpoint_json or {}).get("h3_prompt_generation_sequence") or 1)
     if previous is not None:
         _mark_stale_with_downstream(db, [previous])
@@ -832,6 +892,10 @@ def _publish(
         provider_jobs=provider_jobs,
         generated_by_task_id=task.id,
     )
+    provenance_payload = provenance.model_dump(mode="json")
+    if task.episode_id:
+        episode_provenance[task.episode_id] = dict(provenance_payload)
+        provenance_payload["episode_provenance"] = episode_provenance
     db.add(ReplicaH3PromptRevision(
         project_id=task.project_id,
         artifact_id=artifact.id,
@@ -840,7 +904,7 @@ def _publish(
         generated_by_task_id=task.id,
         schema_version=H3_PROMPT_SCHEMA_VERSION,
         content_json=content.model_dump(mode="json"),
-        provenance_json=provenance.model_dump(mode="json"),
+        provenance_json=provenance_payload,
     ))
     db.add(ArtifactEdge(project_id=task.project_id, source_node_id=storyboard_artifact.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.DERIVED_FROM))
     db.add(ArtifactEdge(project_id=task.project_id, source_node_id=assets_artifact.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.USES))
@@ -865,6 +929,9 @@ def run_h3_prompt_task(session_factory: sessionmaker[Session], task_id: str) -> 
         with session_factory() as db:
             project = get_project(db, task.project_id)
             storyboard_artifact, storyboard, assets_artifact, assets = _load_inputs(db, task.project_id)
+        if not task.episode_id:
+            raise AppError("H3_EPISODE_REQUIRED", "旧任务未指定剧集，请在当前剧集重新生成提示词", status_code=409)
+        storyboard = storyboard.model_copy(update={"shots": [shot for shot in storyboard.shots if shot.episode_id == task.episode_id]})
         binding, skill = selected_video_model_prompt_skill(settings)
         provider = _prompt_author_provider(settings, project.source_understanding_provider)
         drafts, entity_names = _build_drafts(storyboard, assets_artifact, assets)
@@ -958,7 +1025,7 @@ def _read_h3_prompt_provenance(raw: dict, artifact: ArtifactNode) -> H3PromptPro
     return H3PromptProvenance.model_validate(payload)
 
 
-def get_h3_prompts(db: Session, project_id: str) -> H3PromptsRead:
+def get_h3_prompts(db: Session, project_id: str, *, episode_id: str | None = None) -> H3PromptsRead:
     get_project(db, project_id)
     current = db.scalar(select(ArtifactNode).where(
         ArtifactNode.project_id == project_id,
@@ -972,12 +1039,19 @@ def get_h3_prompts(db: Session, project_id: str) -> H3PromptsRead:
     row = db.scalar(select(ReplicaH3PromptRevision).where(ReplicaH3PromptRevision.artifact_id == latest.id))
     if row is None:
         return H3PromptsRead(project_id=project_id, status=ResultStatus.NOT_BUILT)
+    content = ReplicaGenerationSegmentsContent.model_validate(row.content_json)
+    if episode_id:
+        content = content.model_copy(update={"segments": [segment for segment in content.segments if segment.episode_id == episode_id]})
+        if not content.segments:
+            return H3PromptsRead(project_id=project_id, status=ResultStatus.NOT_BUILT)
+    raw_provenance = row.provenance_json.get("episode_provenance", {}).get(episode_id, row.provenance_json)
     return H3PromptsRead(
         project_id=project_id,
+        validation_issues=audit_segments(content.segments),
         status=ResultStatus.CURRENT if current is not None else ResultStatus.STALE,
         artifact_id=latest.id,
         revision=latest.revision,
         input_fingerprint=latest.input_fingerprint,
-        content=ReplicaGenerationSegmentsContent.model_validate(row.content_json).model_dump(mode="json"),
-        provenance=_read_h3_prompt_provenance(row.provenance_json, latest),
+        content=content.model_dump(mode="json"),
+        provenance=_read_h3_prompt_provenance(raw_provenance, latest),
     )

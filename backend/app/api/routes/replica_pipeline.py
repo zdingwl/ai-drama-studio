@@ -194,13 +194,14 @@ def asset_images_reject(
 @router.post("/projects/{project_id}/commands/h3-prompts", response_model=TaskRead, status_code=status.HTTP_202_ACCEPTED)
 def h3_prompts_command(
     project_id: str,
+    episode_id: str,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
     db: Session = Depends(get_db),
 ) -> TaskRead:
-    task = create_h3_prompt_task(db, project_id=project_id, idempotency_key=idempotency_key)
+    task = create_h3_prompt_task(db, project_id=project_id, episode_id=episode_id, idempotency_key=idempotency_key)
     return task_to_read(task)
 
 
 @router.get("/projects/{project_id}/h3-prompts", response_model=H3PromptsRead)
-def h3_prompts_read(project_id: str, db: Session = Depends(get_db)) -> H3PromptsRead:
-    return get_h3_prompts(db, project_id)
+def h3_prompts_read(project_id: str, episode_id: str | None = None, db: Session = Depends(get_db)) -> H3PromptsRead:
+    return get_h3_prompts(db, project_id, episode_id=episode_id)

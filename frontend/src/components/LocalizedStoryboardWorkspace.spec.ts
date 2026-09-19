@@ -99,13 +99,33 @@ describe('LocalizedStoryboardWorkspace task progress', () => {
     const progress = wrapper.get('[data-testid="localized-storyboard-progress"]')
     expect(progress.text()).toContain('排队中')
     expect(progress.text()).toContain('0%')
-    expect(wrapper.text()).toContain('可在下方查看实时进度')
+    expect(wrapper.text()).not.toContain('任务已启动')
 
     wrapper.unmount()
   })
 })
 
 describe('LocalizedStoryboardWorkspace editing', () => {
+  it('shows the frozen target world and entity designs without starting generation or accepting it', async () => {
+    mockReads([])
+    const content = {
+      source_snapshot_artifact_id: 'snapshot-1', target_language: 'en-US', target_region: 'US',
+      world_design_zh: '美国城市公寓中的邻里与夫妻冲突', continuity_rules_zh: ['所有房间属于同一套住宅'],
+      characters: [{ source_character_id: 'source-c', target_character_id: 'target-c', source_name: '原人物', display_name: 'Alex Carter', identity_description_zh: '年轻公寓业主', appearance_description_zh: '棕色卷发和蓝色棉布衬衫' }],
+      scenes: [{ source_scene_id: 'source-s', target_scene_id: 'target-s', source_name: '原客厅', display_name: 'Unit 5B', setting_description_zh: '城市公寓五楼', visual_description_zh: '浅木地板与米色布艺沙发' }],
+      props: [], dialogue: [], shots: [],
+    }
+    vi.mocked(replicaApi.listLocalizedStoryboardCandidates).mockResolvedValue([{ id: 'planned-candidate', project_id: 'project-1', generation_sequence: 3, input_fingerprint: 'planned', review_status: 'NEEDS_REVIEW', review_reason: null, content }])
+    const wrapper = await mountWorkspace()
+    expect(wrapper.get('.world-plan').text()).toContain(content.world_design_zh)
+    expect(wrapper.get('.world-plan').text()).toContain('Alex Carter')
+    expect(wrapper.get('.world-plan').text()).toContain('浅木地板与米色布艺沙发')
+    expect(wrapper.get('.world-plan').attributes('open')).toBeUndefined()
+    expect(replicaApi.startLocalizedStoryboard).not.toHaveBeenCalled()
+    expect(replicaApi.reviewLocalizedStoryboard).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('edits a confirmed shot and saves it as a review candidate', async () => {
     const content = {
       source_snapshot_artifact_id: 'snapshot-1', target_language: 'en-US', target_region: 'US', characters: [], scenes: [], props: [], dialogue: [],
@@ -118,7 +138,7 @@ describe('LocalizedStoryboardWorkspace editing', () => {
     vi.mocked(replicaApi.getLocalizedStoryboard).mockResolvedValue({ project_id: 'project-1', status: 'CURRENT', artifact_id: 'storyboard-1', revision: 1, content })
     vi.mocked(replicaApi.listLocalizedStoryboardCandidates).mockResolvedValue([])
     vi.mocked(projectApi.listProjectTasks).mockResolvedValue([])
-    vi.mocked(replicaApi.updateLocalizedStoryboardShot).mockResolvedValue({ id: 'candidate-edit-1', project_id: 'project-1', generation_sequence: 2, review_status: 'NEEDS_REVIEW', review_reason: null, content })
+    vi.mocked(replicaApi.updateLocalizedStoryboardShot).mockResolvedValue({ id: 'candidate-edit-1', project_id: 'project-1', generation_sequence: 2, input_fingerprint: 'candidate-fingerprint-1', review_status: 'NEEDS_REVIEW', review_reason: null, content })
 
     const wrapper = await mountWorkspace()
     const fields = wrapper.findAll('textarea')
@@ -138,5 +158,24 @@ describe('LocalizedStoryboardWorkspace editing', () => {
     }))
     expect(wrapper.text()).toContain('已自动保存为待确认版本')
     wrapper.unmount()
+  })
+
+  it('does not keep a launch-success message after the task has failed', async () => {
+    vi.useFakeTimers()
+    const failedTask = { ...runningTask, status: 'failed' as const, progress_percent: 17, last_error: '镜头覆盖不完整', finished_at: '2026-09-19T07:17:25Z' }
+    mockReads([])
+    vi.mocked(replicaApi.startLocalizedStoryboard).mockResolvedValue({ ...runningTask, status: 'queued', progress_percent: 0 })
+
+    const wrapper = await mountWorkspace()
+    await wrapper.findAll('button').find(button => button.text() === '生成本土化分镜')!.trigger('click')
+    vi.mocked(projectApi.listProjectTasks).mockResolvedValue([failedTask])
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('生成失败')
+    expect(wrapper.text()).toContain('镜头覆盖不完整')
+    expect(wrapper.text()).not.toContain('任务已启动')
+    wrapper.unmount()
+    vi.useRealTimers()
   })
 })

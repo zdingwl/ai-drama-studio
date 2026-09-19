@@ -1,7 +1,8 @@
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from itertools import groupby
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -19,7 +20,8 @@ from app.core.errors import AppError
 from app.core.time import utc_now
 from app.projects.enums import ProjectType, SourceUnderstandingProvider
 from app.projects.service import get_project
-from app.replica_pipeline.models import ReplicaLocalizedStoryboardCandidate, ReplicaLocalizedStoryboardRevision
+from app.replica_pipeline.models import ReplicaAssetImageRevision, ReplicaLocalizedStoryboardCandidate, ReplicaLocalizedStoryboardRevision
+from app.replica_pipeline.h3_audit import estimate_spoken_seconds, estimated_speech_fits
 from app.replica_pipeline.schemas import (
     CandidateStatus,
     LOCALIZED_STORYBOARD_SCHEMA_VERSION,
@@ -37,6 +39,7 @@ from app.replica_pipeline.schemas import (
     PipelineProviderJobProvenance,
     PipelineReviewCommand,
     ReplicaLocalizedStoryboardContent,
+    ReplicaAssetImagesContent,
     ResultStatus,
 )
 from app.shot_breakdown.schemas import DialogueDelivery
@@ -106,6 +109,9 @@ class LocalizationProviderInput:
     expected_prop_ids: tuple[str, ...]
     expected_dialogue_ids: tuple[str, ...]
     expected_shot_ids: tuple[str, ...]
+    frozen_identity_names: dict[str, str] | None = None
+    operation: str = "LOCALIZE_SHOTS"
+    frozen_world_plan: LocalizedStoryboardSemantic | None = None
 
 
 @dataclass(frozen=True)
@@ -119,16 +125,34 @@ class LocalizationProvider(Protocol):
     model_name: str
 
     def profile(self) -> dict: ...
-    def localize(self, payload: LocalizationProviderInput) -> LocalizationProviderResult: ...
+    def localize(self, payload: LocalizationProviderInput, *, correction_issues: list[dict] | None = None) -> LocalizationProviderResult: ...
 
 
-def _provider_prompt(payload: LocalizationProviderInput) -> str:
+def _provider_prompt(payload: LocalizationProviderInput, correction_issues: list[dict] | None = None) -> str:
     skill = get_professional_skill(SKILL_ID)
     rules = "\n".join(f"{idx}. {rule}" for idx, rule in enumerate(skill.provider_rules, 1))
     schema = LocalizedStoryboardSemantic.model_json_schema()
+    phase = (
+        "先规划全部剧集共用的目标世界。输入中的所有镜头与对白仅供了解剧情，"
+        "本次不得逐镜改写：shots 和 dialogue 必须返回空数组。"
+        "必须输出 world_design_zh、非空 continuity_rules_zh，以及完整 characters/scenes/props 定义。"
+        "先确定人物完整姓名、家庭关系和称谓、外形服装、场景地址房号与空间关系、装修、道具和金额规则，"
+        "再自查整套设定一致。必须根据目标语言和地区重新设计，不得默认沿用原片演员外形、姓氏和家具。"
+        "目标语言不等于族裔，不强制任何种族，也不得自动把整部剧改为移民故事。"
+        "人物肤色、脸型、发型、体型、服装须有具体可执行的目标设定；场景必须有具体布局、材质和装修。"
+        "所有中文审核描述以目标版本自身为主，不写‘保留原设定’或‘对应原剧情金额’等代替具体设计。"
+        if payload.operation == "PLAN_WORLD" else
+        "按冻结目标世界逐镜改写。characters/scenes/props 返回空数组，由服务端从规划绑定。"
+        "world_design_zh 返回空字符串，continuity_rules_zh 返回空数组，不重复或改写规划。"
+        "仅输出本批 shots/dialogue。画面必须落实冻结人物外形、服装和场景装修，不能照抄原片视觉。"
+        "人名、称谓、家庭关系、地址房号、物件和金额严格使用同一规划；禁止自行起别名或换住宅类型。"
+    )
     return f"""你正在执行 AI Drama Studio Professional Skill：{skill.name}（{skill.id}@{skill.version}）。
 
 任务不是写一份独立 Target Bible，也不是只翻译对白；你必须直接把正式原片分镜表改写成目标地区成立的本土化分镜。
+
+当前操作：{payload.operation}
+{phase}
 
 目标：
 - target_language: {payload.target_language}
@@ -137,12 +161,16 @@ def _provider_prompt(payload: LocalizationProviderInput) -> str:
 - visual_style: {payload.visual_style}
 
 硬规则：
-- characters/scenes/props/dialogue/shots 必须严格逐项覆盖输入给出的稳定 ID，不得漏项、重复、合并、拆分或创造 ID。
+- 本次要求输出的实体/镜头/对白必须严格覆盖下方输出 ID 清单；空清单返回空数组。不得漏项、重复、合并、拆分或创造 ID。
 - localized_visual_description_zh / camera_description_zh / entity description / target_dialogue_zh 必须使用简体中文，供中国用户理解和审核。
 - target_dialogue 必须是 {payload.target_language} 的本土自然对白；target_dialogue_zh 是它的中文意思，不是第二句要说出的对白。
-- 不改变 shot 顺序、shot anchor、start/end/duration 或结构化 camera facts。
-- 可以本土化人物姓名、社会身份、地点、文化物件和自然表达，但不得改写故事事件顺序。
+- 每个 shot 必须输出 target_duration_ms：这是目标版本的镜头时长。根据目标语自然口语、表演停顿、动作和新的场景调度重新规划，可长于或短于原片；服务端会按镜头顺序建立目标时间轴。
+- 原片 start/end/duration 只是 Source Truth 参考，绝不可改写或丢失，但不限制目标镜头时长。
+- 每条 dialogue 必须能在关联 target_duration_ms 所形成的目标语音窗内自然说完；若直译超时，优先合理延长相关镜头或改写为自然口语，不得把问题留给 H3 Prompt 或视频生成阶段。
+- 不改变 shot 顺序、shot anchor 或结构化 camera facts。
+- 必须按目标地区重新规划人物姓名、外形服装、社会身份、地点装修、文化物件和自然表达，但不得改写故事事件顺序、核心关系或动作逻辑。
 - 不生成资产图片、H3 prompt、音频、视频或 Artifact/target entity ID。
+- frozen_identity_names 是前置批次已冻结的目标实体名称；同一 source identity 在后续批次必须逐字复用，不得另起英文名、昵称、姓氏或家庭名。
 - 只输出一个符合 JSON Schema 的 object，不输出 Markdown 或解释。
 
 Professional Skill rules:
@@ -151,12 +179,52 @@ Professional Skill rules:
 正式 Source storyboard view：
 {json.dumps(payload.source_view, ensure_ascii=False, separators=(",", ":"))}
 
+已冻结目标身份名称：
+{json.dumps(payload.frozen_identity_names or {}, ensure_ascii=False, separators=(",", ":"))}
+
+冻结目标世界（目标视觉权威；原片画面仅提供剧情动作与构图依据）：
+{payload.frozen_world_plan.model_dump_json() if payload.frozen_world_plan else "null"}
+
+本次输出 ID 清单：
+{json.dumps({"characters": list(payload.expected_character_ids) if payload.frozen_world_plan is None else [], "scenes": list(payload.expected_scene_ids) if payload.frozen_world_plan is None else [], "props": list(payload.expected_prop_ids) if payload.frozen_world_plan is None else [], "dialogue": list(payload.expected_dialogue_ids), "shots": list(payload.expected_shot_ids)}, ensure_ascii=False)}
+
+上一次输出的定向修正清单（仅在非空时适用）：
+{json.dumps(correction_issues or [], ensure_ascii=False, separators=(",", ":"))}
+
+若修正清单非空：逐项修复。对白超时可缩短对白或延长关联镜头的 target_duration_ms；目标设定漂移必须恢复冻结规划。
+
 输出 JSON Schema：
 {json.dumps(schema, ensure_ascii=False, separators=(",", ":"))}
 """
 
 
 def _validate_semantic(payload: LocalizationProviderInput, semantic: LocalizedStoryboardSemantic) -> LocalizedStoryboardSemantic:
+    if payload.frozen_world_plan is not None:
+        updates = {}
+        for field, id_field, expected in (
+            ("characters", "source_character_id", payload.expected_character_ids),
+            ("scenes", "source_scene_id", payload.expected_scene_ids),
+            ("props", "source_prop_id", payload.expected_prop_ids),
+        ):
+            planned = {getattr(item, id_field): item for item in getattr(payload.frozen_world_plan, field)}
+            returned = getattr(semantic, field)
+            returned_ids = [getattr(item, id_field) for item in returned]
+            if len(set(returned_ids)) != len(returned_ids) or any(
+                getattr(item, id_field) not in expected or planned.get(getattr(item, id_field)) != item
+                for item in returned
+            ):
+                raise AppError("LOCALIZED_STORYBOARD_WORLD_PLAN_DRIFT", "镜头批次不得重新设计已冻结人物、场景或道具", status_code=502,
+                               details={"issues": [{"field": field, "repair": "使用冻结目标世界，不重新返回实体定义"}]})
+            updates[field] = [planned[item] for item in expected]
+        updates["world_design_zh"] = payload.frozen_world_plan.world_design_zh
+        updates["continuity_rules_zh"] = payload.frozen_world_plan.continuity_rules_zh
+        semantic = semantic.model_copy(update=updates)
+    if payload.operation == "PLAN_WORLD":
+        _assert_chinese("目标世界整体设定", semantic.world_design_zh)
+        if not semantic.continuity_rules_zh:
+            raise AppError("LOCALIZED_STORYBOARD_WORLD_PLAN_REQUIRED", "目标世界缺少跨镜连续性规则", status_code=502)
+        for rule in semantic.continuity_rules_zh:
+            _assert_chinese("目标世界连续性规则", rule)
     coverage = (
         (payload.expected_character_ids, [item.source_character_id for item in semantic.characters], "character"),
         (payload.expected_scene_ids, [item.source_scene_id for item in semantic.scenes], "scene"),
@@ -166,11 +234,29 @@ def _validate_semantic(payload: LocalizationProviderInput, semantic: LocalizedSt
     )
     for expected, actual, label in coverage:
         if len(actual) != len(set(actual)) or set(actual) != set(expected):
+            expected_set = set(expected)
+            actual_set = set(actual)
+            duplicates = sorted({item for item in actual if actual.count(item) > 1})
+            missing = sorted(expected_set - actual_set)
+            unexpected = sorted(actual_set - expected_set)
             raise AppError(
                 "LOCALIZED_STORYBOARD_PROVIDER_COVERAGE_INVALID",
                 f"本土化分镜 Provider 的 {label} 覆盖不完整",
                 status_code=502,
-                details={"expected": len(expected), "actual": len(actual)},
+                details={
+                    "expected": len(expected),
+                    "actual": len(actual),
+                    "missing": missing,
+                    "unexpected": unexpected,
+                    "duplicates": duplicates,
+                    "issues": [{
+                        "field": label,
+                        "missing_ids": missing,
+                        "unexpected_ids": unexpected,
+                        "duplicate_ids": duplicates,
+                        "repair": "严格按本批输出 ID 清单逐项返回；补齐缺失 ID，删除多余或重复 ID，不得改变其他有效内容",
+                    }],
+                },
             )
     for item in semantic.characters:
         _assert_chinese("人物身份说明", item.identity_description_zh)
@@ -183,10 +269,120 @@ def _validate_semantic(payload: LocalizationProviderInput, semantic: LocalizedSt
         _assert_chinese("道具视觉说明", item.visual_description_zh)
     for item in semantic.dialogue:
         _assert_chinese("目标对白中文翻译", item.target_dialogue_zh, minimum_cjk=1)
+    if payload.operation == "LOCALIZE_SHOTS":
+        target_duration_by_shot = {item.shot_anchor_id: item.target_duration_ms * 1_000 for item in semantic.shots}
+        source_dialogue = {item["utterance_id"]: item for item in payload.source_view["dialogue"]}
+        dialogue_windows: dict[str, int] = {}
+        for source_shot in payload.source_view["shots"]:
+            target_duration = target_duration_by_shot[source_shot["shot_anchor_id"]]
+            refs = source_shot.get("dialogue", [])
+            source_duration = int(source_shot.get("duration_us") or 0)
+            if source_duration <= 0:
+                source_duration = max((int(source_dialogue[ref["utterance_id"]].get("duration_us") or 0) for ref in refs), default=target_duration)
+            source_duration = max(1, source_duration)
+            for ref in refs:
+                source = source_dialogue[ref["utterance_id"]]
+                overlap = max(0, int(ref.get("overlap_end_us", source.get("end_us", source_duration))) - int(ref.get("overlap_start_us", source.get("start_us", 0))))
+                if overlap <= 0:
+                    overlap = int(source.get("duration_us") or source_duration)
+                overlap = min(source_duration, overlap)
+                dialogue_windows[ref["utterance_id"]] = dialogue_windows.get(ref["utterance_id"], 0) + round(target_duration * overlap / source_duration)
+        timing_issues = []
+        for item in semantic.dialogue:
+            available_seconds = dialogue_windows.get(item.utterance_id, 0) / 1_000_000
+            required_seconds = estimate_spoken_seconds(item.target_dialogue)
+            if not estimated_speech_fits(item.target_dialogue, available_seconds):
+                timing_issues.append({"utterance_id": item.utterance_id, "target_available_seconds": round(available_seconds, 3), "estimated_seconds": round(required_seconds, 3), "target_dialogue": item.target_dialogue})
+        # The provider proposes pacing, but target dialogue must never be forced back into
+        # a source-time slot. Expand the relevant target shot deterministically when its
+        # proposed duration is short; retain a fail-closed limit for pathological output.
+        by_anchor = {item.shot_anchor_id: item for item in semantic.shots}
+        unresolved = []
+        for issue in timing_issues:
+            required_us = round((issue["estimated_seconds"] + 0.15) * 1_000_000)
+            available_us = round(issue["target_available_seconds"] * 1_000_000)
+            deficit_us = max(0, required_us - available_us)
+            refs = [(source_shot, ref) for source_shot in payload.source_view["shots"] for ref in source_shot.get("dialogue", []) if ref["utterance_id"] == issue["utterance_id"]]
+            if not refs:
+                unresolved.append(issue); continue
+            source_shot, ref = refs[0]
+            source_duration = max(1, int(source_shot.get("duration_us") or source_dialogue[issue["utterance_id"]].get("duration_us") or 1))
+            overlap = int(ref.get("overlap_end_us", source_dialogue[issue["utterance_id"]].get("end_us", source_duration))) - int(ref.get("overlap_start_us", source_dialogue[issue["utterance_id"]].get("start_us", 0)))
+            fraction = max(1 / source_duration, min(1.0, max(0, overlap) / source_duration))
+            shot = by_anchor[source_shot["shot_anchor_id"]]
+            expanded_ms = shot.target_duration_ms + max(1, round(deficit_us / fraction / 1_000))
+            if expanded_ms > 15_000:
+                unresolved.append({**issue, "required_target_duration_ms": expanded_ms}); continue
+            shot.target_duration_ms = expanded_ms
+        if unresolved:
+            raise AppError("LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID", "目标对白超过单镜可规划时长上限", status_code=502, details={"issues": unresolved})
     for item in semantic.shots:
         _assert_chinese("本土化镜头描述", item.localized_visual_description_zh)
         _assert_chinese("镜头语言中文说明", item.camera_description_zh)
+    frozen_names = payload.frozen_identity_names or {}
+    identity_items = [
+        *[(item.source_character_id, item.localized_name) for item in semantic.characters],
+        *[(item.source_scene_id, item.localized_name) for item in semantic.scenes],
+        *[(item.source_prop_id, item.localized_name) for item in semantic.props],
+    ]
+    drift = [
+        {"source_id": source_id, "expected": frozen_names[source_id], "actual": localized_name}
+        for source_id, localized_name in identity_items
+        if source_id in frozen_names and localized_name != frozen_names[source_id]
+    ]
+    if drift:
+        raise AppError(
+            "LOCALIZED_STORYBOARD_IDENTITY_NAME_DRIFT",
+            "本土化分镜跨批次人物、场景或道具名称不一致",
+            status_code=502,
+            details={"issues": drift},
+        )
     return semantic
+
+
+def _validate_content_dialogue_timing(content: ReplicaLocalizedStoryboardContent) -> None:
+    available_by_utterance: dict[str, int] = {}
+    for shot in content.shots:
+        for ref in shot.dialogue:
+            available_by_utterance[ref.utterance_id] = available_by_utterance.get(ref.utterance_id, 0) + (ref.overlap_end_us - ref.overlap_start_us)
+    issues = []
+    for item in content.dialogue:
+        available_seconds = available_by_utterance.get(item.utterance_id, 0) / 1_000_000
+        required_seconds = estimate_spoken_seconds(item.target_dialogue)
+        if not estimated_speech_fits(item.target_dialogue, available_seconds):
+            issues.append({"utterance_id": item.utterance_id, "target_available_seconds": round(available_seconds, 3), "estimated_seconds": round(required_seconds, 3)})
+    if issues:
+        raise AppError("LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID", "目标对白无法在规划后的目标时间窗内说完，请缩短对白或延长关联镜头", status_code=422, details={"issues": issues})
+
+
+def _visual_projection_fingerprint(content: ReplicaLocalizedStoryboardContent) -> str:
+    return _sha({
+        "characters": [item.model_dump(mode="json") for item in content.characters],
+        "scenes": [item.model_dump(mode="json") for item in content.scenes],
+        "props": [item.model_dump(mode="json") for item in content.props],
+        "shots": [{
+            "storyboard_shot_id": item.storyboard_shot_id,
+            "localized_visual_description_zh": item.localized_visual_description_zh,
+            "camera_description_zh": item.camera_description_zh,
+            "camera_language": item.camera_language.model_dump(mode="json"),
+            "target_character_ids": item.target_character_ids,
+            "target_scene_ids": item.target_scene_ids,
+            "target_prop_ids": item.target_prop_ids,
+            "sound_effects": item.sound_effects,
+            "ambience": item.ambience,
+        } for item in content.shots],
+    })
+
+
+def _dialogue_projection_fingerprint(content: ReplicaLocalizedStoryboardContent) -> str:
+    return _sha([{
+        "utterance_id": item.utterance_id,
+        "target_character_id": item.target_character_id,
+        "target_dialogue": item.target_dialogue,
+        "target_dialogue_zh": item.target_dialogue_zh,
+        "source_start_us": item.source_start_us,
+        "source_end_us": item.source_end_us,
+    } for item in content.dialogue])
 
 
 class _DoubaoProvider:
@@ -201,7 +397,7 @@ class _DoubaoProvider:
     def profile(self) -> dict:
         return {"provider": self.provider_name, "model": self.model_name, "mode": "CLOUD_API_TEXT", "skill": SKILL_ID}
 
-    def localize(self, payload: LocalizationProviderInput) -> LocalizationProviderResult:
+    def localize(self, payload: LocalizationProviderInput, *, correction_issues: list[dict] | None = None) -> LocalizationProviderResult:
         assert self.settings.p7_doubao_api_key is not None
         client = Ark(
             api_key=self.settings.p7_doubao_api_key.get_secret_value(),
@@ -211,7 +407,7 @@ class _DoubaoProvider:
         )
         response = client.responses.create(
             model=self.model_name,
-            input=[{"role": "user", "content": [{"type": "input_text", "text": _provider_prompt(payload)}]}],
+            input=[{"role": "user", "content": [{"type": "input_text", "text": _provider_prompt(payload, correction_issues)}]}],
             thinking={"type": "enabled"},
             max_output_tokens=MAX_OUTPUT_TOKENS,
         )
@@ -227,7 +423,7 @@ class _DoubaoProvider:
             raise AppError("LOCALIZED_STORYBOARD_PROVIDER_EMPTY", "本土化分镜 Provider 未返回可用文本", status_code=502)
         semantic = LocalizedStoryboardSemantic.model_validate_json(_json_object(text))
         return LocalizationProviderResult(
-            semantic=_validate_semantic(payload, semantic),
+            semantic=semantic,
             remote_job_id=str(getattr(response, "id", "") or "") or None,
         )
 
@@ -244,7 +440,7 @@ class _LocalQwenProvider:
     def profile(self) -> dict:
         return {"provider": self.provider_name, "model": self.model_name, "base_url": self.base_url, "mode": "LOCAL_VLLM_TEXT", "skill": SKILL_ID}
 
-    def localize(self, payload: LocalizationProviderInput) -> LocalizationProviderResult:
+    def localize(self, payload: LocalizationProviderInput, *, correction_issues: list[dict] | None = None) -> LocalizationProviderResult:
         headers = {"Content-Type": "application/json"}
         if self.api_key is not None and self.api_key.get_secret_value().strip():
             headers["Authorization"] = f"Bearer {self.api_key.get_secret_value()}"
@@ -252,7 +448,7 @@ class _LocalQwenProvider:
             response = client.post(
                 f"{self.base_url}/chat/completions",
                 headers=headers,
-                json={"model": self.model_name, "messages": [{"role": "user", "content": _provider_prompt(payload)}], "temperature": 0.2, "max_tokens": MAX_OUTPUT_TOKENS},
+                json={"model": self.model_name, "messages": [{"role": "user", "content": _provider_prompt(payload, correction_issues)}], "temperature": 0.2, "max_tokens": MAX_OUTPUT_TOKENS},
             )
             response.raise_for_status()
             body = response.json()
@@ -261,7 +457,7 @@ class _LocalQwenProvider:
         if not isinstance(text, str) or not text.strip():
             raise AppError("LOCALIZED_STORYBOARD_PROVIDER_EMPTY", "本土化分镜 Provider 未返回可用文本", status_code=502)
         semantic = LocalizedStoryboardSemantic.model_validate_json(_json_object(text))
-        return LocalizationProviderResult(semantic=_validate_semantic(payload, semantic), remote_job_id=str(body.get("id") or "") or None)
+        return LocalizationProviderResult(semantic=semantic, remote_job_id=str(body.get("id") or "") or None)
 
 
 def _provider(settings: Settings, _selection: SourceUnderstandingProvider) -> LocalizationProvider:
@@ -325,7 +521,7 @@ def _source_view(snapshot: SourceVideoSnapshotContent) -> tuple[dict, dict[str, 
                 "character_ids": chars,
                 "scene_ids": [scene] if scene else [],
                 "prop_ids": props,
-                "dialogue": [{"utterance_id": ref.utterance_id, "delivery": ref.delivery.value} for ref in shot.dialogue],
+                "dialogue": [{"utterance_id": ref.utterance_id, "delivery": ref.delivery.value, "overlap_start_us": ref.overlap_start_us, "overlap_end_us": ref.overlap_end_us} for ref in shot.dialogue],
                 "sound_effects": list(shot.sound_effects),
                 "ambience": list(shot.ambience),
             })
@@ -338,7 +534,19 @@ def _source_view(snapshot: SourceVideoSnapshotContent) -> tuple[dict, dict[str, 
         "characters": [{"source_character_id": item.character_id, "name": item.display_name, "aliases": item.aliases, "notes": item.notes} for item in characters],
         "scenes": [{"source_scene_id": item.scene_id, "name": item.display_name, "aliases": item.aliases, "notes": item.notes} for item in scenes],
         "props": [{"source_prop_id": item.prop_id, "name": item.display_name, "aliases": item.aliases, "notes": item.notes} for item in props],
-        "dialogue": [{"utterance_id": item.utterance_id, "utterance_number": item.utterance_number, "text": item.text, "language": item.language, "speaker_character_id": speaker_by_utterance.get(item.utterance_id)} for item in dialogue],
+        "dialogue": [{
+            "utterance_id": item.utterance_id,
+            "utterance_number": item.utterance_number,
+            "text": item.text,
+            "language": item.language,
+            "speaker_character_id": speaker_by_utterance.get(item.utterance_id),
+            "start_us": item.start_us,
+            "end_us": item.end_us,
+            "duration_us": item.end_us - item.start_us,
+            "duration_seconds": round((item.end_us - item.start_us) / 1_000_000, 3),
+            "max_spoken_words": max(1, int((item.end_us - item.start_us) / 1_000_000 * 4)),
+            "max_spoken_cjk_chars": max(1, int((item.end_us - item.start_us) / 1_000_000 * 6)),
+        } for item in dialogue],
         "shots": shot_view,
     }, speaker_by_utterance
 
@@ -360,17 +568,32 @@ def _payload(project, snapshot: SourceVideoSnapshotContent) -> LocalizationProvi
 
 
 def _batched_payloads(payload: LocalizationProviderInput) -> list[LocalizationProviderInput]:
-    """Bound each remote request while preserving exact source-id coverage."""
-    shots = list(payload.source_view["shots"])
+    """Bound requests without crossing episodes or splitting one utterance across batches."""
+    shots = sorted(payload.source_view["shots"], key=lambda item: (item["episode_order"], item["shot_number"]))
     if not shots:
         return [payload]
     dialogue_by_id = {item["utterance_id"]: item for item in payload.source_view["dialogue"]}
     character_by_id = {item["source_character_id"]: item for item in payload.source_view["characters"]}
     scene_by_id = {item["source_scene_id"]: item for item in payload.source_view["scenes"]}
     prop_by_id = {item["source_prop_id"]: item for item in payload.source_view["props"]}
+    shot_groups: list[list[dict]] = []
+    for _, episode_iter in groupby(shots, key=lambda item: item["episode_id"]):
+        episode_shots = list(episode_iter)
+        current: list[dict] = []
+        current_dialogue: set[str] = set()
+        for shot in episode_shots:
+            shot_dialogue = {item["utterance_id"] for item in shot["dialogue"]}
+            if current and len(current) >= LOCALIZATION_BATCH_SHOTS and not (current_dialogue & shot_dialogue):
+                shot_groups.append(current)
+                current = []
+                current_dialogue = set()
+            current.append(shot)
+            current_dialogue.update(shot_dialogue)
+        if current:
+            shot_groups.append(current)
+
     batches: list[LocalizationProviderInput] = []
-    for offset in range(0, len(shots), LOCALIZATION_BATCH_SHOTS):
-        batch_shots = shots[offset : offset + LOCALIZATION_BATCH_SHOTS]
+    for batch_shots in shot_groups:
         dialogue_ids = tuple(dict.fromkeys(ref["utterance_id"] for shot in batch_shots for ref in shot["dialogue"]))
         character_ids = tuple(dict.fromkeys(item for shot in batch_shots for item in shot["character_ids"]))
         scene_ids = tuple(dict.fromkeys(item for shot in batch_shots for item in shot["scene_ids"]))
@@ -397,6 +620,8 @@ def _batched_payloads(payload: LocalizationProviderInput) -> list[LocalizationPr
             expected_prop_ids=prop_ids,
             expected_dialogue_ids=dialogue_ids,
             expected_shot_ids=tuple(item["shot_anchor_id"] for item in batch_shots),
+            frozen_identity_names=payload.frozen_identity_names,
+            frozen_world_plan=payload.frozen_world_plan,
         ))
     return batches
 
@@ -454,23 +679,97 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
         payload = _payload(project, snapshot)
         sequence = _generation_sequence(db, task.project_id, snapshot_artifact.id)
         profile = provider.profile()
-        batches = _batched_payloads(payload)
-        job_payload = {"source_snapshot_artifact_id": snapshot_artifact.id, "source_snapshot_fingerprint": snapshot_artifact.input_fingerprint, "target_language": project.target_language, "target_region": project.target_region, "provider_profile": profile, "generation_sequence": sequence}
-        context.checkpoint({"provider": provider.provider_name, "model": provider.model_name, "generation_sequence": sequence}, progress_percent=10)
-        jobs: list[ProviderJob] = []
-        semantic_parts: list[LocalizedStoryboardSemantic] = []
-        for batch_index, batch in enumerate(batches, 1):
-            def _remote_call(_, current_batch=batch):
-                provider_result = provider.localize(current_batch)
-                return ProviderDispatchResult(value=provider_result, remote_job_id=provider_result.remote_job_id)
+        if task.input_artifact_ids_json != [snapshot_artifact.id]:
+            raise AppError("LOCALIZED_STORYBOARD_INPUT_CHANGED", "原片版本已变化，请重新本土化", status_code=409)
+        job_payload = {"source_snapshot_artifact_id": snapshot_artifact.id, "source_snapshot_fingerprint": snapshot_artifact.input_fingerprint, "target_language": project.target_language, "target_region": project.target_region, "scene_strategy": payload.scene_strategy, "visual_style": payload.visual_style, "provider_profile": profile, "professional_skill_version": get_professional_skill(SKILL_ID).version}
+        planning_fingerprint = _sha(job_payload)
+        checkpoint = dict(task.checkpoint_json or {})
+        if checkpoint.get("localized_semantic_parts") and not checkpoint.get("localized_world_plan"):
+            raise AppError("LOCALIZED_STORYBOARD_REPLAN_REQUIRED", "旧任务未规划完整目标世界，请重新本土化", status_code=409)
+        if checkpoint.get("planning_fingerprint") not in (None, planning_fingerprint):
+            raise AppError("LOCALIZED_STORYBOARD_INPUT_CHANGED", "本土化配置或合同已变化，请重新本土化", status_code=409)
+        sequence = int(checkpoint.get("generation_sequence") or sequence)
+        job_payload["generation_sequence"] = sequence
+        job_ids = list(checkpoint.get("provider_job_ids") or [])
+        jobs: list[ProviderJob] = [db.get(ProviderJob, job_id) for job_id in job_ids]
+        if any(job is None or job.task_id != task.id for job in jobs):
+            raise AppError("LOCALIZED_STORYBOARD_CHECKPOINT_INVALID", "本土化恢复记录缺少模型调用来源", status_code=409)
+        planning_payload = replace(payload, operation="PLAN_WORLD", expected_dialogue_ids=(), expected_shot_ids=())
+        checkpoint.update({"planning_fingerprint": planning_fingerprint, "provider": provider.provider_name, "model": provider.model_name, "generation_sequence": sequence, "phase": "PLAN_WORLD"})
+        context.checkpoint(checkpoint, progress_percent=max(5, task.progress_percent))
+        if checkpoint.get("localized_world_plan"):
+            world_plan = _validate_semantic(planning_payload, LocalizedStoryboardSemantic.model_validate(checkpoint["localized_world_plan"]))
+        else:
+            def _plan_world(_):
+                result = provider.localize(planning_payload)
+                return ProviderDispatchResult(value=result, remote_job_id=result.remote_job_id)
 
-            batch_payload = dict(job_payload)
-            batch_payload.update({"batch_index": batch_index, "batch_count": len(batches), "shot_ids": list(batch.expected_shot_ids)})
-            job, dispatched = dispatch_provider_call(db, task_id=task.id, provider=provider.provider_name, model=provider.model_name, capability=Capability.STORYBOARD_LOCALIZATION, payload=batch_payload, artifact_id=snapshot_artifact.id, remote_call=_remote_call)
+            job, dispatched = dispatch_provider_call(db, task_id=task.id, provider=provider.provider_name, model=provider.model_name, capability=Capability.STORYBOARD_LOCALIZATION, payload={**job_payload, "operation": "PLAN_WORLD", "planning_fingerprint": planning_fingerprint}, artifact_id=snapshot_artifact.id, remote_call=_plan_world)
             jobs.append(job)
-            semantic_parts.append(dispatched.value.semantic)
+            world_plan = _validate_semantic(planning_payload, dispatched.value.semantic)
+            checkpoint.update({"localized_world_plan": world_plan.model_dump(mode="json"), "provider_job_ids": [item.id for item in jobs]})
+            context.checkpoint(checkpoint, progress_percent=10)
+        payload = replace(payload, frozen_world_plan=world_plan)
+        batches = _batched_payloads(payload)
+        semantic_parts = [LocalizedStoryboardSemantic.model_validate(item) for item in checkpoint.get("localized_semantic_parts", [])]
+        if len(semantic_parts) > len(batches):
+            raise AppError("LOCALIZED_STORYBOARD_CHECKPOINT_INVALID", "本土化恢复批次数量不匹配", status_code=409)
+        for index, saved in enumerate(semantic_parts):
+            _validate_semantic(batches[index], saved)
+        frozen_identity_names: dict[str, str] = {}
+        for saved in [world_plan]:
+            for item in saved.characters:
+                frozen_identity_names.setdefault(item.source_character_id, item.localized_name)
+            for item in saved.scenes:
+                frozen_identity_names.setdefault(item.source_scene_id, item.localized_name)
+            for item in saved.props:
+                frozen_identity_names.setdefault(item.source_prop_id, item.localized_name)
+        for batch_index, batch in enumerate(batches, 1):
+            if batch_index <= len(semantic_parts):
+                continue
+            batch = replace(batch, frozen_identity_names=dict(frozen_identity_names))
+            correction_issues: list[dict] | None = None
+            validated_semantic = None
+            for correction_attempt in range(1, 4):
+                def _remote_call(_, current_batch=batch, current_issues=correction_issues):
+                    provider_result = provider.localize(current_batch, correction_issues=current_issues)
+                    return ProviderDispatchResult(value=provider_result, remote_job_id=provider_result.remote_job_id)
+
+                batch_payload = dict(job_payload)
+                batch_payload.update({"operation": "LOCALIZE_SHOTS", "world_plan_fingerprint": _sha(world_plan.model_dump(mode="json")), "batch_index": batch_index, "batch_count": len(batches), "shot_ids": list(batch.expected_shot_ids), "correction_attempt": correction_attempt, "correction_issues": correction_issues or []})
+                job, dispatched = dispatch_provider_call(db, task_id=task.id, provider=provider.provider_name, model=provider.model_name, capability=Capability.STORYBOARD_LOCALIZATION, payload=batch_payload, artifact_id=snapshot_artifact.id, remote_call=_remote_call)
+                jobs.append(job)
+                try:
+                    validated_semantic = _validate_semantic(batch, dispatched.value.semantic)
+                    break
+                except AppError as exc:
+                    if exc.code not in {
+                        "LOCALIZED_STORYBOARD_PROVIDER_COVERAGE_INVALID",
+                        "LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID",
+                        "LOCALIZED_STORYBOARD_IDENTITY_NAME_DRIFT",
+                        "LOCALIZED_STORYBOARD_WORLD_PLAN_DRIFT",
+                    } or correction_attempt >= 3:
+                        raise
+                    correction_issues = list((exc.details or {}).get("issues") or [])
+            assert validated_semantic is not None
+            semantic_parts.append(validated_semantic)
+            for item in validated_semantic.characters:
+                frozen_identity_names.setdefault(item.source_character_id, item.localized_name)
+            for item in validated_semantic.scenes:
+                frozen_identity_names.setdefault(item.source_scene_id, item.localized_name)
+            for item in validated_semantic.props:
+                frozen_identity_names.setdefault(item.source_prop_id, item.localized_name)
             progress = 10 + int(60 * batch_index / len(batches))
-            context.checkpoint({"provider_job_ids": [item.id for item in jobs], "generation_sequence": sequence, "completed_batches": batch_index, "batch_count": len(batches)}, progress_percent=progress)
+            checkpoint.update({"phase": "LOCALIZE_SHOTS", "provider_job_ids": [item.id for item in jobs], "generation_sequence": sequence, "completed_batches": batch_index, "batch_count": len(batches), "localized_semantic_parts": [item.model_dump(mode="json") for item in semantic_parts]})
+            context.checkpoint(checkpoint, progress_percent=progress)
+
+        db.refresh(project)
+        db.refresh(snapshot_artifact)
+        current_project = get_project(db, task.project_id)
+        current_snapshot, _ = _load_snapshot(db, task.project_id)
+        current_payload = _payload(current_project, snapshot)
+        if current_snapshot.id != snapshot_artifact.id or (current_payload.target_language, current_payload.target_region, current_payload.scene_strategy, current_payload.visual_style) != (payload.target_language, payload.target_region, payload.scene_strategy, payload.visual_style):
+            raise AppError("LOCALIZED_STORYBOARD_INPUT_CHANGED", "生成期间原片或目标设定已变化，请重新本土化", status_code=409)
 
     semantic = _merge_semantics(payload, semantic_parts)
     char_sem = {item.source_character_id: item for item in semantic.characters}
@@ -503,24 +802,36 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
     episode_media = {episode.episode_id: episode for episode in snapshot.episodes}
     view_shots = {item["shot_anchor_id"]: item for item in source_view["shots"]}
     shots: list[LocalizedStoryboardShot] = []
+    target_cursor_by_episode: dict[str, int] = {}
     for shot_id in payload.expected_shot_ids:
         episode, shot = source_shots[shot_id]
         view = view_shots[shot_id]
         localized = shot_sem[shot_id]
+        target_start_us = target_cursor_by_episode.get(episode.episode_id, 0)
+        target_duration_us = localized.target_duration_ms * 1_000
+        target_end_us = target_start_us + target_duration_us
         refs: list[LocalizedShotDialogueRef] = []
         for source_ref in shot.dialogue:
             line = dialogue_by_id[source_ref.utterance_id]
-            refs.append(LocalizedShotDialogueRef(utterance_id=line.utterance_id, utterance_number=line.utterance_number, delivery=source_ref.delivery, target_character_id=line.target_character_id, target_dialogue=line.target_dialogue, target_dialogue_zh=line.target_dialogue_zh, overlap_start_us=source_ref.overlap_start_us, overlap_end_us=source_ref.overlap_end_us))
+            # Map original overlap proportionally into the target shot; original values remain explicit provenance.
+            relative_start = max(0.0, min(1.0, (source_ref.overlap_start_us - shot.start_us) / shot.duration_us))
+            relative_end = max(relative_start, min(1.0, (source_ref.overlap_end_us - shot.start_us) / shot.duration_us))
+            overlap_start = target_start_us + round(relative_start * target_duration_us)
+            overlap_end = target_start_us + round(relative_end * target_duration_us)
+            if overlap_end <= overlap_start:
+                overlap_end = min(target_end_us, overlap_start + 1)
+            refs.append(LocalizedShotDialogueRef(utterance_id=line.utterance_id, utterance_number=line.utterance_number, delivery=source_ref.delivery, target_character_id=line.target_character_id, target_dialogue=line.target_dialogue, target_dialogue_zh=line.target_dialogue_zh, overlap_start_us=overlap_start, overlap_end_us=overlap_end, source_overlap_start_us=source_ref.overlap_start_us, source_overlap_end_us=source_ref.overlap_end_us))
         media = episode_media.get(episode.episode_id)
         if media is None:
             raise AppError("LOCALIZED_STORYBOARD_EPISODE_MEDIA_MISSING", "Source Snapshot 缺少 Episode 媒体尺寸", status_code=500)
-        shots.append(LocalizedStoryboardShot(storyboard_shot_id=f"localized:{episode.episode_id}:{shot.shot_anchor_id}", episode_id=episode.episode_id, episode_order=episode.episode_order, source_shot_anchor_id=shot.shot_anchor_id, shot_number=shot.shot_number, start_us=shot.start_us, end_us=shot.end_us, duration_us=shot.duration_us, output_ratio=_nearest_h3_ratio(media.width, media.height), camera_language=shot.camera_language, source_visual_description=shot.visual_description, localized_visual_description_zh=localized.localized_visual_description_zh, camera_description_zh=localized.camera_description_zh, target_character_ids=[target_char[x] for x in view["character_ids"] if x in target_char], target_scene_ids=[target_scene[x] for x in view["scene_ids"] if x in target_scene], target_prop_ids=[target_prop[x] for x in view["prop_ids"] if x in target_prop], dialogue=refs, sound_effects=shot.sound_effects, ambience=shot.ambience))
+        shots.append(LocalizedStoryboardShot(storyboard_shot_id=f"localized:{episode.episode_id}:{shot.shot_anchor_id}", episode_id=episode.episode_id, episode_order=episode.episode_order, source_shot_anchor_id=shot.shot_anchor_id, shot_number=shot.shot_number, start_us=target_start_us, end_us=target_end_us, duration_us=target_duration_us, source_start_us=shot.start_us, source_end_us=shot.end_us, source_duration_us=shot.duration_us, output_ratio=_nearest_h3_ratio(media.width, media.height), camera_language=shot.camera_language, source_visual_description=shot.visual_description, localized_visual_description_zh=localized.localized_visual_description_zh, camera_description_zh=localized.camera_description_zh, target_character_ids=[target_char[x] for x in view["character_ids"] if x in target_char], target_scene_ids=[target_scene[x] for x in view["scene_ids"] if x in target_scene], target_prop_ids=[target_prop[x] for x in view["prop_ids"] if x in target_prop], dialogue=refs, sound_effects=shot.sound_effects, ambience=shot.ambience))
+        target_cursor_by_episode[episode.episode_id] = target_end_us
 
-    content = ReplicaLocalizedStoryboardContent(source_snapshot_artifact_id=snapshot_artifact.id, target_language=project.target_language, target_region=project.target_region, characters=characters, scenes=scenes, props=props, dialogue=dialogue_lines, shots=shots)
+    content = ReplicaLocalizedStoryboardContent(source_snapshot_artifact_id=snapshot_artifact.id, target_language=project.target_language, target_region=project.target_region, world_design_zh=world_plan.world_design_zh, continuity_rules_zh=world_plan.continuity_rules_zh, characters=characters, scenes=scenes, props=props, dialogue=dialogue_lines, shots=shots)
     skill = get_professional_skill(SKILL_ID)
     provider_jobs = [PipelineProviderJobProvenance(provider_job_id=item.id, provider=item.provider, model=item.model, payload_fingerprint=item.payload_fingerprint) for item in jobs]
     provenance = LocalizedStoryboardProvenance(source_snapshot_artifact_id=snapshot_artifact.id, source_snapshot_revision=snapshot_artifact.revision, source_snapshot_fingerprint=snapshot_artifact.input_fingerprint, target_language=project.target_language, target_region=project.target_region, generation_sequence=sequence, professional_skill_version=skill.version, provider_job=provider_jobs[0], provider_jobs=provider_jobs, generated_by_task_id=task.id)
-    context.checkpoint({"provider_job_ids": [item.provider_job_id for item in provider_jobs], "generation_sequence": sequence, "shot_count": len(shots)}, progress_percent=95)
+    context.checkpoint({**checkpoint, "phase": "ASSEMBLE", "provider_job_ids": [item.provider_job_id for item in provider_jobs], "generation_sequence": sequence, "shot_count": len(shots)}, progress_percent=95)
     return content, provenance
 
 
@@ -564,7 +875,7 @@ def run_localized_storyboard_task(session_factory: sessionmaker[Session], task_i
 
 
 def _candidate_read(row: ReplicaLocalizedStoryboardCandidate) -> LocalizedStoryboardCandidateRead:
-    return LocalizedStoryboardCandidateRead(id=row.id, project_id=row.project_id, generation_sequence=row.generation_sequence, review_status=CandidateStatus(row.review_status), review_reason=row.review_reason, reviewed_at=row.reviewed_at, created_at=row.created_at, content=ReplicaLocalizedStoryboardContent.model_validate(row.content_json), provenance=LocalizedStoryboardProvenance.model_validate(row.provenance_json))
+    return LocalizedStoryboardCandidateRead(id=row.id, project_id=row.project_id, generation_sequence=row.generation_sequence, input_fingerprint=row.input_fingerprint, review_status=CandidateStatus(row.review_status), review_reason=row.review_reason, reviewed_at=row.reviewed_at, created_at=row.created_at, content=ReplicaLocalizedStoryboardContent.model_validate(row.content_json), provenance=LocalizedStoryboardProvenance.model_validate(row.provenance_json))
 
 
 def list_localized_storyboard_candidates(db: Session, project_id: str) -> list[LocalizedStoryboardCandidateRead]:
@@ -604,6 +915,8 @@ def update_localized_storyboard_shot(
             raise AppError("LOCALIZED_STORYBOARD_CANDIDATE_NOT_EDITABLE", "候选当前不可修改", status_code=409)
         if candidate.source_snapshot_artifact_id != source.id:
             raise AppError("LOCALIZED_STORYBOARD_EDIT_STALE", "候选依赖的原片分镜已经变化", status_code=409)
+        if not command.expected_candidate_fingerprint or command.expected_candidate_fingerprint != candidate.input_fingerprint:
+            raise AppError("LOCALIZED_STORYBOARD_EDIT_CONFLICT", "这份待确认分镜已在其他窗口更新，请刷新后再编辑", status_code=409)
         content = ReplicaLocalizedStoryboardContent.model_validate(candidate.content_json)
     else:
         current = _current_artifact(db, project_id, ArtifactType.TARGET_STORYBOARD)
@@ -654,6 +967,7 @@ def update_localized_storyboard_shot(
                 dialogue.target_dialogue_zh = edit.target_dialogue_zh
 
     validated = ReplicaLocalizedStoryboardContent.model_validate(content.model_dump(mode="json"))
+    _validate_content_dialogue_timing(validated)
     candidate.content_json = validated.model_dump(mode="json")
     provenance = dict(candidate.provenance_json)
     provenance["last_edited_at"] = utc_now().isoformat()
@@ -666,6 +980,61 @@ def update_localized_storyboard_shot(
     return _candidate_read(candidate)
 
 
+def _rebase_current_assets_for_visual_equivalent_storyboard(
+    db: Session,
+    *,
+    project_id: str,
+    previous_storyboard_id: str,
+    storyboard: ArtifactNode,
+) -> ArtifactNode | None:
+    current_assets = _current_artifact(db, project_id, ArtifactType.TARGET_ASSETS)
+    if current_assets is None:
+        return None
+    row = db.scalar(select(ReplicaAssetImageRevision).where(ReplicaAssetImageRevision.artifact_id == current_assets.id))
+    if row is None or row.target_storyboard_artifact_id != previous_storyboard_id:
+        return None
+    content = ReplicaAssetImagesContent.model_validate(row.content_json).model_copy(
+        update={"target_storyboard_artifact_id": storyboard.id}
+    )
+    latest = _latest_artifact(db, project_id, ArtifactType.TARGET_ASSETS)
+    _mark_stale_with_downstream(db, [current_assets])
+    artifact = ArtifactNode(
+        project_id=project_id,
+        artifact_type=ArtifactType.TARGET_ASSETS.value,
+        namespace=ArtifactNamespace.TARGET,
+        label="目标资产图",
+        revision=(latest.revision if latest else 0) + 1,
+        input_fingerprint=_sha({"visual_rebase_from": current_assets.id, "storyboard": storyboard.id, "content": content.model_dump(mode="json")}),
+        skill_id=current_assets.skill_id,
+        skill_version=current_assets.skill_version,
+        validity=ArtifactValidity.CURRENT,
+        is_current=True,
+        metadata_json={**dict(current_assets.metadata_json or {}), "target_storyboard_artifact_id": storyboard.id, "reused_media_from_artifact_id": current_assets.id},
+    )
+    db.add(artifact)
+    db.flush()
+    provenance = dict(row.provenance_json or {})
+    provenance.update({
+        "target_storyboard_artifact_id": storyboard.id,
+        "reused_media_from_artifact_id": current_assets.id,
+        "reuse_reason": "VISUAL_PROJECTION_UNCHANGED",
+        "provider_job_ids": [],
+    })
+    db.add(ReplicaAssetImageRevision(
+        project_id=project_id,
+        artifact_id=artifact.id,
+        target_storyboard_artifact_id=storyboard.id,
+        candidate_id=row.candidate_id,
+        generated_by_task_id=None,
+        schema_version=row.schema_version,
+        content_json=content.model_dump(mode="json"),
+        provenance_json=provenance,
+    ))
+    db.add(ArtifactEdge(project_id=project_id, source_node_id=storyboard.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.DERIVED_FROM))
+    db.add(ArtifactEdge(project_id=project_id, source_node_id=artifact.id, target_node_id=current_assets.id, relation_type=ArtifactRelationType.SUPERSEDES))
+    return artifact
+
+
 def accept_localized_storyboard_candidate(db: Session, *, project_id: str, candidate_id: str, command: PipelineReviewCommand) -> LocalizedStoryboardRead:
     project = get_project(db, project_id)
     candidate = db.get(ReplicaLocalizedStoryboardCandidate, candidate_id)
@@ -675,11 +1044,21 @@ def accept_localized_storyboard_candidate(db: Session, *, project_id: str, candi
     source = _current_artifact(db, project_id, ArtifactType.SOURCE_VIDEO_SNAPSHOT)
     if source is None or source.id != candidate.source_snapshot_artifact_id: raise AppError("LOCALIZED_STORYBOARD_REVIEW_STALE", "正式原片分镜已经更新，请重新本土化", status_code=409)
     content = ReplicaLocalizedStoryboardContent.model_validate(candidate.content_json)
+    _validate_content_dialogue_timing(content)
     previous = _current_artifact(db, project_id, ArtifactType.TARGET_STORYBOARD)
     latest = _latest_artifact(db, project_id, ArtifactType.TARGET_STORYBOARD)
-    if previous: _mark_stale_with_downstream(db, [previous])
+    previous_content = None
+    if previous:
+        previous_row = db.scalar(select(ReplicaLocalizedStoryboardRevision).where(ReplicaLocalizedStoryboardRevision.artifact_id == previous.id))
+        if previous_row is not None:
+            previous_content = ReplicaLocalizedStoryboardContent.model_validate(previous_row.content_json)
+        previous.validity = ArtifactValidity.STALE
+        previous.is_current = False
+        db.add(previous)
     skill = get_professional_skill(SKILL_ID)
-    artifact = ArtifactNode(project_id=project_id, artifact_type=ArtifactType.TARGET_STORYBOARD.value, namespace=ArtifactNamespace.PRODUCTION, label="本土化分镜表", revision=(latest.revision if latest else 0) + 1, input_fingerprint=_sha({"candidate": candidate.input_fingerprint, "content": content.model_dump(mode="json")}), skill_id=skill.id, skill_version=skill.version, validity=ArtifactValidity.CURRENT, is_current=True, metadata_json={"schema_version": LOCALIZED_STORYBOARD_SCHEMA_VERSION, "source_snapshot_artifact_id": source.id, "shot_count": len(content.shots), "dialogue_count": len(content.dialogue)})
+    visual_fingerprint = _visual_projection_fingerprint(content)
+    dialogue_fingerprint = _dialogue_projection_fingerprint(content)
+    artifact = ArtifactNode(project_id=project_id, artifact_type=ArtifactType.TARGET_STORYBOARD.value, namespace=ArtifactNamespace.PRODUCTION, label="本土化分镜表", revision=(latest.revision if latest else 0) + 1, input_fingerprint=_sha({"candidate": candidate.input_fingerprint, "content": content.model_dump(mode="json")}), skill_id=skill.id, skill_version=skill.version, validity=ArtifactValidity.CURRENT, is_current=True, metadata_json={"schema_version": LOCALIZED_STORYBOARD_SCHEMA_VERSION, "source_snapshot_artifact_id": source.id, "shot_count": len(content.shots), "dialogue_count": len(content.dialogue), "visual_projection_fingerprint": visual_fingerprint, "dialogue_projection_fingerprint": dialogue_fingerprint})
     reviewed_at = utc_now()
     provenance = dict(candidate.provenance_json)
     provenance.update({"candidate_id": candidate.id, "reviewed_by": "USER_EXPLICIT_ACTION", "reviewed_at": reviewed_at.isoformat(), "review_reason": command.reason, "supersedes_artifact_id": latest.id if latest else None})
@@ -687,6 +1066,14 @@ def accept_localized_storyboard_candidate(db: Session, *, project_id: str, candi
     db.add(ReplicaLocalizedStoryboardRevision(project_id=project_id, artifact_id=artifact.id, source_snapshot_artifact_id=source.id, candidate_id=candidate.id, generated_by_task_id=candidate.generated_by_task_id, schema_version=LOCALIZED_STORYBOARD_SCHEMA_VERSION, content_json=content.model_dump(mode="json"), provenance_json=provenance))
     db.add(ArtifactEdge(project_id=project_id, source_node_id=source.id, target_node_id=artifact.id, relation_type=ArtifactRelationType.DERIVED_FROM))
     if latest: db.add(ArtifactEdge(project_id=project_id, source_node_id=artifact.id, target_node_id=latest.id, relation_type=ArtifactRelationType.SUPERSEDES))
+    visual_unchanged = previous is not None and previous_content is not None and _visual_projection_fingerprint(previous_content) == visual_fingerprint
+    if visual_unchanged:
+        _rebase_current_assets_for_visual_equivalent_storyboard(db, project_id=project_id, previous_storyboard_id=previous.id, storyboard=artifact)
+        downstream = [db.get(ArtifactNode, edge.target_node_id) for edge in db.scalars(select(ArtifactEdge).where(ArtifactEdge.project_id == project_id, ArtifactEdge.source_node_id == previous.id)).all()]
+        _mark_stale_with_downstream(db, [item for item in downstream if item is not None and item.artifact_type != ArtifactType.TARGET_ASSETS.value])
+    elif previous is not None:
+        downstream = [db.get(ArtifactNode, edge.target_node_id) for edge in db.scalars(select(ArtifactEdge).where(ArtifactEdge.project_id == project_id, ArtifactEdge.source_node_id == previous.id)).all()]
+        _mark_stale_with_downstream(db, [item for item in downstream if item is not None])
     for other in db.scalars(select(ReplicaLocalizedStoryboardCandidate).where(ReplicaLocalizedStoryboardCandidate.project_id == project_id, ReplicaLocalizedStoryboardCandidate.review_status == CandidateStatus.NEEDS_REVIEW.value, ReplicaLocalizedStoryboardCandidate.id != candidate.id)).all():
         other.review_status = CandidateStatus.SUPERSEDED.value; other.review_reason = "A newer localized storyboard was accepted."; other.reviewed_at = reviewed_at; db.add(other)
     candidate.review_status = CandidateStatus.ACCEPTED.value; candidate.review_reason = command.reason; candidate.reviewed_at = reviewed_at; db.add(candidate)

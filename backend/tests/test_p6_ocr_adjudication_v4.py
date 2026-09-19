@@ -1,4 +1,5 @@
 import subprocess
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -198,7 +199,12 @@ def test_v4_api_persists_corrected_canonical_but_preserves_raw_asr_audit(
     )
     assert task.status_code == 202
     task_id = task.json()["id"]
-    task_read = client.get(f"/api/v3/projects/{project_id}/tasks/{task_id}").json()
+    deadline = time.monotonic() + 5
+    while True:
+        task_read = client.get(f"/api/v3/projects/{project_id}/tasks/{task_id}").json()
+        if task_read["status"] not in {"queued", "running"} or time.monotonic() >= deadline:
+            break
+        time.sleep(0.01)
     assert task_read["status"] == "succeeded"
 
     result = client.get(

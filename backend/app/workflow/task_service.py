@@ -54,6 +54,7 @@ def list_tasks(db: Session, project_id: str) -> list[Task]:
 
 def task_to_read(task: Task) -> TaskRead:
     return TaskRead(
+        episode_id=task.episode_id,
         id=task.id,
         project_id=task.project_id,
         task_name=task.task_name,

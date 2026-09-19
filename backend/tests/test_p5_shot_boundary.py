@@ -1,4 +1,5 @@
 import subprocess
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -73,9 +74,14 @@ def _upload_episode(client: TestClient, project_id: str, payload: bytes, filenam
 
 
 def _task_by_id(client: TestClient, project_id: str, task_id: str) -> dict:
-    response = client.get(f"/api/v3/projects/{project_id}/tasks/{task_id}")
-    assert response.status_code == 200, response.text
-    return response.json()
+    deadline = time.monotonic() + 5
+    while True:
+        response = client.get(f"/api/v3/projects/{project_id}/tasks/{task_id}")
+        assert response.status_code == 200, response.text
+        task = response.json()
+        if task["status"] not in {"queued", "running"} or time.monotonic() >= deadline:
+            return task
+        time.sleep(0.01)
 
 
 def test_p5_real_video_builds_ordered_shots_thumbnails_clips_and_formal_artifact(

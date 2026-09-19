@@ -22,6 +22,7 @@ class TaskCommandCreate(BaseModel):
 
 class TaskRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+    episode_id: str | None = None
 
     id: str
     project_id: str

@@ -1482,22 +1482,11 @@ def _publish_workspace_if_complete(db: Session, *, task: TaskWorkerRead, workspa
     binding, prompt_skill = selected_image_model_prompt_skill()
     visual_skill = character_visual_design_skill()
     prompt_provider = asset_prompt_author_provider()
-    for asset in content.assets:
-        if (
-            asset.image_model_id != binding.model_id
-            or asset.prompt_skill_id != prompt_skill.id
-            or asset.prompt_skill_version != prompt_skill.version
-            or asset.prompt_contract != binding.prompt_contract
-        ):
-            return
-        if asset.asset_type == TargetAssetType.CHARACTER and (
-            asset.character_visual_design is None
-            or asset.character_visual_skill_id != visual_skill.id
-            or asset.character_visual_skill_version != visual_skill.version
-        ):
-            return
-    if any(asset.consistency_status == "FAIL" for asset in content.assets):
-        return
+    # H3 consumes the adopted reference media, not the historical image-prompt
+    # implementation that produced it.  A model/Prompt Skill upgrade must not
+    # invalidate a real, intact asset set or force users to pay for a full redraw.
+    # Character consistency remains review metadata; hard runtime checks still
+    # require the FACE + front FULL_BODY pair for every visible character.
     storyboard = db.get(ArtifactNode, content.target_storyboard_artifact_id)
     if storyboard is None:
         raise AppError("ASSET_WORKSPACE_STALE", "本土化分镜已经失效", status_code=409)
@@ -1780,7 +1769,6 @@ def reconcile_asset_workspace_task_state(db: Session, task: Task) -> None:
         return
     content = AssetWorkspaceContent.model_validate(workspace.content_json)
     if task.status == TaskStatus.FAILED:
-        next_status = "FAILED"
         error = task.last_error or "视觉资产任务失败，请重新生成"
         mutable_statuses = {"QUEUED", "GENERATING", "FAILED"}
     elif task.status in {TaskStatus.CANCELLED, TaskStatus.INTERRUPTED}:
@@ -1800,11 +1788,21 @@ def reconcile_asset_workspace_task_state(db: Session, task: Task) -> None:
         current_status = asset.prompt_status if operation == "prompts" else asset.image_status
         if current_status not in mutable_statuses:
             continue
-        if operation == "prompts":
+        if task.status == TaskStatus.FAILED:
+            active_key = "active_prompt_asset" if operation == "prompts" else "active_image_asset"
+            active_asset_id = str((task.checkpoint_json or {}).get(active_key) or "")
+            is_failed_asset = asset.target_asset_id == active_asset_id or (not active_asset_id and current_status == "GENERATING")
+            if operation == "prompts":
+                asset.prompt_status = "FAILED" if is_failed_asset else ("READY" if asset.image_prompt else "NOT_STARTED")
+            else:
+                asset.image_status = "FAILED" if is_failed_asset else ("READY" if _active_media(asset) else "NOT_STARTED")
+            asset.last_error = error if is_failed_asset else None
+        elif operation == "prompts":
             asset.prompt_status = "READY" if next_status == "NOT_STARTED" and asset.image_prompt else next_status
+            asset.last_error = error
         else:
             asset.image_status = "READY" if next_status == "NOT_STARTED" and _active_media(asset) else next_status
-        asset.last_error = error
+            asset.last_error = error
         changed = True
     if changed:
         workspace.revision += 1
@@ -1830,30 +1828,22 @@ def list_asset_image_candidates(db: Session, project_id: str) -> list[AssetImage
 
 
 def _content_matches_current_asset_contract(content: ReplicaAssetImagesContent) -> bool:
-    """Treat old asset revisions as read-only history without mutating them on GET.
+    """Return whether adopted media can safely be consumed by the H3 Ref2VA chain.
 
-    A model/prompt-skill version bump or the absence of dedicated character FACE + front
-    FULL_BODY media means the revision cannot satisfy the current Ref2VA production chain.
+    Image model and Prompt Skill versions describe provenance, not the validity of
+    already-generated media.  They must stay visible for audit but are not a
+    redraw gate.  H3 does require a managed reference file for every asset and
+    dedicated FACE + front FULL_BODY references for characters.
     """
-    binding, prompt_skill = selected_image_model_prompt_skill()
-    visual_skill = character_visual_design_skill()
     if not content.assets:
         return False
     for asset in content.assets:
-        if (
-            asset.image_model_id != binding.model_id
-            or asset.prompt_skill_id != prompt_skill.id
-            or asset.prompt_skill_version != prompt_skill.version
-            or asset.prompt_contract != binding.prompt_contract
+        if not asset.reference_media or any(
+            not media.storage_relpath or not media.sha256
+            for media in asset.reference_media
         ):
             return False
         if asset.asset_type == TargetAssetType.CHARACTER:
-            if (
-                asset.character_visual_design is None
-                or asset.character_visual_skill_id != visual_skill.id
-                or asset.character_visual_skill_version != visual_skill.version
-            ):
-                return False
             roles = {media.role for media in asset.reference_media}
             if ReferenceMediaRole.FACE not in roles or not {
                 ReferenceMediaRole.FULL_BODY,
@@ -1914,8 +1904,6 @@ def _promote_asset_image_candidate(
     if storyboard is None or storyboard.id != candidate.target_storyboard_artifact_id: raise AppError("ASSET_IMAGE_REVIEW_STALE", "本土化分镜已经更新，请重新生成资产图", status_code=409)
     content = ReplicaAssetImagesContent.model_validate(candidate.content_json)
     if any(not asset.reference_media for asset in content.assets): raise AppError("ASSET_IMAGE_REFERENCE_MISSING", "正式资产图禁止存在无 reference_media 的资产", status_code=409)
-    if any(getattr(asset, "consistency_status", None) == "FAIL" for asset in content.assets):
-        raise AppError("ASSET_IMAGE_CONSISTENCY_FAILED", "存在人物一致性失败资产，禁止发布正式资产", status_code=409)
     previous = _current_artifact(db, project_id, ArtifactType.TARGET_ASSETS); latest = _latest_artifact(db, project_id, ArtifactType.TARGET_ASSETS)
     if previous: _mark_stale_with_downstream(db, [previous])
     skill = get_professional_skill(SKILL_ID)

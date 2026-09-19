@@ -58,6 +58,12 @@ GENERATED_VIDEO / GENERATION_SELECTION
 
 Provider 不拥有 Artifact ID、target entity ID、时间轴或 source identity；这些由服务端确定性绑定。
 
+目标对白时长适配属于第 2 步，不得推迟到 H3 Prompt 或视频生成阶段。每条 canonical utterance 必须把权威 start/end/duration 和宽松语速预算交给本土化 Provider；目标语口语按英文每秒最多 4 词、CJK 每秒最多 6 字进行文本预检。文本估算允许固定 0.15 秒 ASR 边界容差，仅用于极短单音节对白，不得放宽实质性超时。直译超时时必须在不改变剧情信息、语气和人物关系的前提下缩写为自然目标语对白。未通过时长预检的结果不得形成可审核候选；人工编辑保存也必须执行同一校验。H3 阶段只做只读复核，不得自动改句或用加速指令伪造合格。
+
+长剧集本土化必须按 Episode 和跨镜 utterance 边界分批，禁止一个 Provider 批次同时混入两集，也禁止把同一句跨镜对白切到两个批次分别本土化。首次出现的人物、场景和道具目标名称形成任务内冻结 Identity Registry；后续批次必须逐字复用，不得出现 Riley/Rachel/Rae、Jake/Jude 或家庭姓氏漂移。时长或身份名称校验失败时，同一 Task 最多做两次定向修正；每次远端请求必须单独先持久化 ProviderJob。每批已验证 semantic 必须写入 Task checkpoint，中断恢复不得重跑已完成的付费批次。
+
+TARGET_STORYBOARD 必须分别记录 visual projection fingerprint 与 dialogue projection fingerprint。如果新 revision 仅修改对白/时长且 visual projection 逐字未变，服务端应确定性复用已持久化的真实资产媒体并发布新 lineage 的 TARGET_ASSETS，不得再调用图片 Runtime；H3 提示词和视频结果仍必须因对白变化而 STALE。多窗口编辑候选必须使用 candidate content fingerprint 乐观锁，禁止静默后写覆盖先写。
+
 ## 4. 资产图合同
 
 第 3 步只消费 CURRENT `TARGET_STORYBOARD v2`，从实际分镜使用实体中提取 Character / Scene / Prop。
@@ -91,7 +97,7 @@ Character 的稳定脸型、五官、发型、肤色、体态、服装和识别�
 - 真实资产图生成完成后，服务端必须先完成 `reference_media` 完整性与 CURRENT `TARGET_STORYBOARD` lineage 校验；校验通过即自动发布为 CURRENT `TARGET_ASSETS`，普通用户不再额外执行整批“确认资产图”。用户在资产页直接检查结果，发现问题时使用重新生成 / 后续单资产重做能力纠正。
 
 历史 `TARGET_ASSETS v1` 的 text-only 资产仍可回看，但不能作为新 H3 Ref2VA 主链的资产图输入。
-历史 `z-image-turbo-replica-assets-v2` / `z-image-turbo-replica-assets-v3` / `replica-assets-zimage-front-qwen-edit-v4` 人物资产即使已有四栏图，也属于旧合同：页面只读保留，但应显示为需要重新生成；Step 4 必须 fail closed，直到重新生成得到 `replica-assets-zimage-clean-positive-v5` 的 Z-Image front master + Qwen reference-edit identity-lock 资产。
+图片模型或图片 Prompt Skill 的版本变化只记录 provenance，不得单独使已有真实资产图失效或强迫整批重绘。Step 4 以当前采用的、已持久化并校验 SHA256 的 reference media 为准；可见人物仍必须具备独立 `FACE` 与正面 `FULL_BODY` 参考图，缺图、文件损坏、hash 不符或实体绑定不符时必须 fail closed。人物一致性检测结果作为审核警告保留，不能仅因检测失败而阻断已有真实图片进入 H3。
 
 ## 5. 模型专属 Prompt Skill
 
@@ -168,6 +174,18 @@ QC_SELECTION             = PLANNED
 - IndexTTS 仅保留为显式历史兼容 / 可选高级声音能力，默认统一启动器不得自动拉起；
 - 高级独立配音可以在后续作为可选 overlay 重新接入，但不得改变本五步主链。
 # 视觉资产工作台交互补充（2026-09-17）
+
+## H3 输入审计补充（2026-09-18）
+
+- H3 生成命令必须显式指定当前 episode_id，任务持久化剧集范围；worker 仅编写该集。单集重新生成按相同上游 lineage 合并保存，其他集内容及其生成来源保留；读取与页面任务状态按当前剧集隔离。旧无剧集范围任务不得继续执行全项目生成。
+
+- 跨镜重叠对白不得在各独立音画生成段重复要求完整说出；按 episode + utterance id 检查重复，出现重复必须先修订生成分段。
+- 文本语速估算只作明显超时预检，不等于真实音频时长或人工听审。宽松上限按英文每秒 4 词、CJK 每秒 6 字；超时问题必须在 H3 页面明确警示，并在进入视频生成前 fail closed，不能通过加速指令假装合格。H3 Prompt 可先完成并保留，供用户定位需要回到本土化分镜修订的对白。
+- H3 编写 Provider 必须收到相对本段的对白起止时间；场景、道具超过 9 个参考槽不得静默遗漏。
+- FACE 搭配 FULL_BODY 或 FULL_BODY_FRONT 均为合法人物身份对。
+- 旧提示词 GET 只读返回审计问题，不改写历史结果；视频入口再次执行预检。任务成功仅表示生成已完成，不代表当前内容可用于视频。
+- 本次不自动延长原片时间轴、不删改已审核对白。涉及节奏与对白的修订须保持人工审核边界。
+
 
 普通用户的视觉资产阶段必须拆分为以下显式操作，不得再以一次命令同时完成提取、提示词编写和全部出图：
 

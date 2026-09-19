@@ -7,7 +7,7 @@ from app.shot_breakdown.schemas import CameraLanguage, DialogueDelivery
 from app.target_assets.schemas import TargetAssetType, TargetReferenceMedia
 
 
-LOCALIZED_STORYBOARD_SCHEMA_VERSION = "2.0"
+LOCALIZED_STORYBOARD_SCHEMA_VERSION = "2.1"
 ASSET_IMAGES_SCHEMA_VERSION = "2.0"
 H3_PROMPT_SCHEMA_VERSION = "2.0"
 
@@ -59,11 +59,14 @@ class ProviderLocalizedDialogue(_StrictProvider):
 
 class ProviderLocalizedShot(_StrictProvider):
     shot_anchor_id: str
+    target_duration_ms: int = Field(ge=500, le=15_000)
     localized_visual_description_zh: str
     camera_description_zh: str
 
 
 class LocalizedStoryboardSemantic(_StrictProvider):
+    world_design_zh: str = ""
+    continuity_rules_zh: list[str] = Field(default_factory=list)
     characters: list[ProviderLocalizedCharacter] = Field(default_factory=list)
     scenes: list[ProviderLocalizedScene] = Field(default_factory=list)
     props: list[ProviderLocalizedProp] = Field(default_factory=list)
@@ -119,6 +122,18 @@ class LocalizedShotDialogueRef(BaseModel):
     target_dialogue_zh: str
     overlap_start_us: int = Field(ge=0)
     overlap_end_us: int = Field(gt=0)
+    source_overlap_start_us: int | None = Field(default=None, ge=0)
+    source_overlap_end_us: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_overlap(self) -> "LocalizedShotDialogueRef":
+        if self.overlap_end_us <= self.overlap_start_us:
+            raise ValueError("target dialogue overlap must be positive")
+        if (self.source_overlap_start_us is None) != (self.source_overlap_end_us is None):
+            raise ValueError("source dialogue overlap must be complete")
+        if self.source_overlap_start_us is not None and self.source_overlap_end_us <= self.source_overlap_start_us:
+            raise ValueError("source dialogue overlap must be positive")
+        return self
 
 
 class LocalizedStoryboardShot(BaseModel):
@@ -127,9 +142,13 @@ class LocalizedStoryboardShot(BaseModel):
     episode_order: int = Field(ge=1)
     source_shot_anchor_id: str
     shot_number: int = Field(ge=1)
+    # target timeline; source timing is retained separately as immutable provenance.
     start_us: int = Field(ge=0)
     end_us: int = Field(gt=0)
     duration_us: int = Field(gt=0)
+    source_start_us: int | None = Field(default=None, ge=0)
+    source_end_us: int | None = Field(default=None, gt=0)
+    source_duration_us: int | None = Field(default=None, gt=0)
     output_ratio: str = Field(pattern=r"^(21:9|16:9|4:3|1:1|3:4|9:16)$")
     camera_language: CameraLanguage
     source_visual_description: str
@@ -145,7 +164,11 @@ class LocalizedStoryboardShot(BaseModel):
     @model_validator(mode="after")
     def validate_timing(self) -> "LocalizedStoryboardShot":
         if self.end_us <= self.start_us or self.duration_us != self.end_us - self.start_us:
-            raise ValueError("localized storyboard must preserve source shot timing")
+            raise ValueError("target storyboard shot timing is inconsistent")
+        if self.source_start_us is None:
+            self.source_start_us, self.source_end_us, self.source_duration_us = self.start_us, self.end_us, self.duration_us
+        if self.source_end_us is None or self.source_duration_us is None or self.source_end_us <= self.source_start_us or self.source_duration_us != self.source_end_us - self.source_start_us:
+            raise ValueError("source storyboard shot timing is inconsistent")
         return self
 
 
@@ -155,6 +178,8 @@ class ReplicaLocalizedStoryboardContent(BaseModel):
     source_snapshot_artifact_id: str
     target_language: str
     target_region: str
+    world_design_zh: str = ""
+    continuity_rules_zh: list[str] = Field(default_factory=list)
     characters: list[LocalizedTargetCharacter] = Field(default_factory=list)
     scenes: list[LocalizedTargetScene] = Field(default_factory=list)
     props: list[LocalizedTargetProp] = Field(default_factory=list)
@@ -187,6 +212,7 @@ class LocalizedStoryboardCandidateRead(BaseModel):
     id: str
     project_id: str
     generation_sequence: int
+    input_fingerprint: str
     review_status: CandidateStatus
     review_reason: str | None = None
     reviewed_at: datetime | None = None
@@ -221,6 +247,7 @@ class LocalizedStoryboardDialogueEdit(_StrictProvider):
 
 class LocalizedStoryboardShotEditCommand(_StrictProvider):
     candidate_id: str | None = None
+    expected_candidate_fingerprint: str | None = None
     expected_current_artifact_id: str | None = None
     expected_source_snapshot_artifact_id: str
     storyboard_shot_id: str
@@ -450,6 +477,7 @@ class H3PromptProvenance(BaseModel):
 
 
 class H3PromptsRead(BaseModel):
+    validation_issues: list[dict] = Field(default_factory=list)
     project_id: str
     status: ResultStatus
     artifact_id: str | None = None
