@@ -97,11 +97,12 @@ def test_preproduction_pipeline_two_chunks_and_source_staleness(client: TestClie
     assert state["storyboard"]["status"] == "CURRENT"
     shots = state["storyboard"]["content"]["shots"]
     assert {shot["source_chunk_index"] for shot in shots} == set(range(1, len(state["analysis"]["content"]["chunk_analyses"]) + 1))
-    assert state["video_runtime_status"] == "NOT_CONNECTED"
+    assert state["video_runtime_status"] == "PRODUCTION_PIPELINE_CONNECTED"
 
     assert client.post(f"{base}/paste", json={"text": "内景·办公室·夜\n甲：晚安。"}).status_code == 201
     state = client.get(f"{base}/state").json()
     assert all(state[key]["status"] == "STALE" for key in ("analysis", "world", "assets", "storyboard"))
+    assert all(state[key]["status"] == "NOT_BUILT" for key in ("asset_images", "prompts", "generated_video", "selection", "final_output"))
     assert client.post(f"{base}/commands/run/storyboard", headers={"Idempotency-Key": str(uuid4())}).status_code == 409
 
 
