@@ -64,7 +64,12 @@ class ScriptToDramaState(BaseModel):
     world: StageRead
     assets: StageRead
     storyboard: StageRead
-    video_runtime_status: str = "NOT_CONNECTED"
+    asset_images: StageRead
+    prompts: StageRead
+    generated_video: StageRead
+    selection: StageRead
+    final_output: StageRead
+    video_runtime_status: str = "PRODUCTION_PIPELINE_CONNECTED"
 
 
 class AssetPromptItem(Strict):
