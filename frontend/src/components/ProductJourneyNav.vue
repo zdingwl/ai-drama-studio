@@ -21,6 +21,13 @@ const scriptSteps: { id: WorkspaceId; label: string; hint: string }[] = [
   { id: 'source', label: '原剧本', hint: '上传与粘贴' },
   { id: 'script', label: '本土化剧本', hint: '分析与改写' },
 ]
+const dramaSteps: { id: WorkspaceId; label: string; hint: string }[] = [
+  { id: 'source', label: '原剧本', hint: '上传与粘贴' },
+  { id: 'script', label: '剧本分析', hint: '人物 · 场次 · 节奏' },
+  { id: 'assets', label: '目标世界', hint: '人物 · 场景 · 资产定义' },
+  { id: 'storyboard', label: '导演分镜', hint: '镜头计划' },
+  { id: 'generation', label: '视频生成（待接入）', hint: '尚未连通模型' },
+]
 const legacySteps: { id: WorkspaceId; label: string; hint: string }[] = [
   { id: 'source', label: '原作', hint: '上传与解析' },
   { id: 'script', label: '剧本', hint: '故事、剧集、对白' },
@@ -31,7 +38,7 @@ const legacySteps: { id: WorkspaceId; label: string; hint: string }[] = [
 ]
 
 const activeId = computed<WorkspaceId>(() => (route.params.workspace as WorkspaceId | undefined) ?? 'source')
-const visibleSteps = computed(() => projectType.value === 'REPLICA' ? replicaSteps : projectType.value === 'SCRIPT_LOCALIZATION' ? scriptSteps : legacySteps)
+const visibleSteps = computed(() => projectType.value === 'REPLICA' ? replicaSteps : projectType.value === 'SCRIPT_LOCALIZATION' ? scriptSteps : projectType.value === 'SCRIPT_TO_DRAMA' ? dramaSteps : legacySteps)
 
 function openWorkspace(id: WorkspaceId) {
   void router.push({ path: `/projects/${String(route.params.id)}/${id}`, query: route.query })
@@ -51,6 +58,8 @@ async function loadProject() {
       if (target) await router.replace(`/projects/${id}/${target}`)
     } else if (type === 'SCRIPT_LOCALIZATION' && !['source', 'script', 'overview'].includes(activeId.value)) {
       await router.replace(`/projects/${id}/source`)
+    } else if (type === 'SCRIPT_TO_DRAMA' && !['source', 'script', 'assets', 'storyboard', 'generation', 'overview'].includes(activeId.value)) {
+      await router.replace(`/projects/${id}/source`)
     }
   } catch { projectType.value = null }
 }
@@ -63,7 +72,7 @@ watch(() => route.params.id, () => { projectType.value = null; void loadProject(
     <section class="nav-group">
       <span class="group-title">项目</span>
       <a class="utility-link" :class="{ active: activeId === 'overview' }" :href="workspaceHref('overview')" @click.prevent="openWorkspace('overview')"><span aria-hidden="true">▦</span><strong>项目概览</strong></a>
-      <a v-if="projectType !== 'SCRIPT_LOCALIZATION'" class="utility-link" :class="{ active: activeId === 'episodes' }" :href="workspaceHref('episodes')" @click.prevent="openWorkspace('episodes')"><span aria-hidden="true">▣</span><strong>剧集管理</strong></a>
+      <a v-if="projectType !== 'SCRIPT_LOCALIZATION' && projectType !== 'SCRIPT_TO_DRAMA'" class="utility-link" :class="{ active: activeId === 'episodes' }" :href="workspaceHref('episodes')" @click.prevent="openWorkspace('episodes')"><span aria-hidden="true">▣</span><strong>剧集管理</strong></a>
     </section>
     <section class="nav-group flow-group">
       <span class="group-title">制作流程</span>
