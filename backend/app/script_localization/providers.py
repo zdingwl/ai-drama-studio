@@ -14,7 +14,7 @@ from app.projects.enums import SourceUnderstandingProvider
 from app.skills.professional import get_professional_skill_detail
 
 T = TypeVar("T", bound=BaseModel)
-MAX_OUTPUT_TOKENS = 65536
+MAX_OUTPUT_TOKENS = 65536  # Legacy short-script default; long pipeline supplies its own per-call budget.
 
 
 def _json_object(text: str) -> str:
@@ -29,7 +29,7 @@ def _json_object(text: str) -> str:
 
 def _ark_text(response: Any) -> str:
     if str(getattr(response, "status", "") or "").lower() == "incomplete":
-        raise AppError("SCRIPT_LOCALIZATION_PROVIDER_INCOMPLETE", "文本模型输出被截断，未发布任何结果", status_code=502)
+        raise AppError("SCRIPT_LOCALIZATION_PROVIDER_INCOMPLETE", "文本模型输出被截断；请减小分段或调整模型输出预算", status_code=502)
     direct = getattr(response, "output_text", None)
     if isinstance(direct, str) and direct.strip():
         return direct
@@ -70,7 +70,11 @@ class ScriptLocalizationProvider:
     def profile(self) -> dict:
         return {"provider": self.provider_name, "model": self.model_name, "selection": self.selection.value, "output_contract": "Pydantic strict typed JSON"}
 
-    def generate(self, *, skill_id: str, prompt: str, output_model: type[T]) -> tuple[T, str | None]:
+    def generate(self, *, skill_id: str, prompt: str, output_model: type[T],
+                 max_output_tokens: int | None = None) -> tuple[T, str | None]:
+        output_budget = MAX_OUTPUT_TOKENS if max_output_tokens is None else max_output_tokens
+        if not 512 <= output_budget <= MAX_OUTPUT_TOKENS:
+            raise AppError("SCRIPT_LOCALIZATION_OUTPUT_BUDGET_INVALID", "模型输出预算无效", status_code=422)
         skill = get_professional_skill_detail(skill_id)
         content = (
             f"你正在执行 {skill.name}（{skill.id}@{skill.version}）。\n"
@@ -88,7 +92,7 @@ class ScriptLocalizationProvider:
                 model=self.model_name,
                 input=[{"role": "user", "content": [{"type": "input_text", "text": content}]}],
                 thinking={"type": "enabled"},
-                max_output_tokens=MAX_OUTPUT_TOKENS,
+                max_output_tokens=output_budget,
             )
             raw = _ark_text(response)
             remote_id = str(getattr(response, "id", "") or "") or None
@@ -99,12 +103,19 @@ class ScriptLocalizationProvider:
             with httpx.Client(timeout=httpx.Timeout(self.settings.p7_qwen_local_request_timeout_seconds)) as client:
                 response = client.post(
                     f"{self.base_url.rstrip('/')}/chat/completions", headers=headers,
-                    json={"model": self.model_name, "temperature": 0.2, "max_tokens": MAX_OUTPUT_TOKENS,
+                    json={"model": self.model_name, "temperature": 0.2, "max_tokens": output_budget,
                           "messages": [{"role": "user", "content": content}]},
                 )
+                if response.status_code in {400, 413, 422} and any(
+                    token in response.text.lower() for token in ("context", "token", "length", "maximum")
+                ):
+                    raise AppError("SCRIPT_LOCALIZATION_MODEL_CONTEXT_EXCEEDED",
+                                   "当前模型上下文或输出预算不足，请缩小源分段或调整本地模型上下文配置", status_code=422)
                 response.raise_for_status()
                 body = response.json()
             choices = body.get("choices") or []
+            if choices and choices[0].get("finish_reason") == "length":
+                raise AppError("SCRIPT_LOCALIZATION_PROVIDER_INCOMPLETE", "本地文本模型达到输出上限，禁止发布不完整 JSON", status_code=502)
             raw = ((choices[0].get("message") or {}).get("content") if choices else None)
             remote_id = str(body.get("id") or "") or None
             if not isinstance(raw, str) or not raw.strip():
