@@ -1,0 +1,31 @@
+{
+  "id": "script-storyboard-directing",
+  "name": "剧本生成短剧·导演分镜",
+  "version": "1.0.0",
+  "category": "storyboard",
+  "description": "把已有剧本的场次、动作、对白按目标世界拆解为可生成的连续镜头，标注场次锚点、视觉资产、镜头语言、表演/对白与大致时长。",
+  "when_to_use": ["SCRIPT_TO_DRAMA 已有 CURRENT SOURCE_TEXT_SNAPSHOT 与 TARGET_BIBLE/TARGET_ASSETS，准备导演分镜"],
+  "when_not_to_use": ["复刻短剧已有原片镜头重排", "未确定目标世界却假装生成视频", "剧情冲突待人工决定"],
+  "required_inputs": ["SOURCE_TEXT_SNAPSHOT", "TARGET_BIBLE", "TARGET_ASSETS"],
+  "readable_artifacts": ["SOURCE_TEXT", "SOURCE_TEXT_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON", "TARGET_BIBLE", "TARGET_ASSETS", "TARGET_SCRIPT"],
+  "required_capabilities": ["STORYBOARD"],
+  "manual_path": "script-storyboard-directing/SKILL.md",
+  "steps": [
+    {"id":"scene_coverage","phase":"导演分镜","title":"逐场覆盖原剧本","description":"依原文顺序确认每场动作、对白、反应和叙事信息都在镜头计划中有覆盖。","capabilities":["STORYBOARD"],"requires":["SOURCE_TEXT_SNAPSHOT","TARGET_BIBLE","TARGET_ASSETS"],"produces":[]},
+    {"id":"shot_language","phase":"导演分镜","title":"规划镜头与剪辑连接","description":"分别定义镜头尺寸、构图、机位、镜头运动、可见动作、人物方向及估计时长。","capabilities":["STORYBOARD"],"requires":["SOURCE_TEXT_SNAPSHOT","TARGET_BIBLE","TARGET_ASSETS"],"produces":["TARGET_STORYBOARD"]},
+    {"id":"validate_continuity","phase":"导演分镜","title":"校验剧情与空间连续性","description":"核对源场次引用、人物与重要道具、时序与切镜连接。","capabilities":["STORYBOARD"],"requires":["TARGET_STORYBOARD"],"produces":[]}
+  ],
+  "fact_levels": ["SOURCE_BEAT", "DIRECTORIAL_CHOICE", "UNRESOLVED"],
+  "provider_rules": [
+    "分镜是一份生成前的导演计划；不得把计划写成已完成的视频或已实际测得的对白时长。",
+    "每镜必须回指原剧本场次/文本片段，遵守原剧本人物对白和叙事信息顺序，不得省略导致因果缺失的桥段。",
+    "镜头画面主体、动作、机位、景别、镜头运动、对应角色/地点/道具 ID 和上一镜连续性都要清楚。",
+    "遵循视线方向、人物屏幕方向和动作衔接；确需越轴或跳切时须说明叙事目的。",
+    "动作段与人物反应段拆开安排，避免单一镜头承载无法实现的多次地点跳转/多次切换。",
+    "只估计时长，不能用模型估计代替未来音频的真实 duration。",
+    "最终视频模型提示词由对应模型专属 Prompt Skill 另行编译，不在本 Skill 自行硬编码 H3 Prompt。"
+  ],
+  "output_contracts": ["TARGET_STORYBOARD"],
+  "completion_criteria": ["原剧本的场次/叙事要点有可追踪覆盖", "镜头可单独生成并有剪辑连接说明", "涉及目标人物/场景/道具的 ID 一致"],
+  "failure_policy": ["重要原剧情节点无镜头覆盖则拒绝发布", "上下游版本变化则阻断", "缺少必要的资产与关键场面人工选择时阻断"]
+}
