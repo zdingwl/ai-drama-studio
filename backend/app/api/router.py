@@ -11,6 +11,7 @@ from app.api.routes.preprocessing import router as preprocessing_router
 from app.api.routes.projects import router as projects_router
 from app.api.routes.replica_pipeline import router as replica_pipeline_router
 from app.api.routes.script_localization import router as script_localization_router
+from app.api.routes.script_to_drama import router as script_to_drama_router
 from app.api.routes.shot_breakdown import router as shot_breakdown_router
 from app.api.routes.skills import router as skills_router
 from app.api.routes.source_analysis import router as source_analysis_router
@@ -30,6 +31,7 @@ api_router.include_router(replica_pipeline_router)
 api_router.include_router(skills_router)
 api_router.include_router(sources_router)
 api_router.include_router(script_localization_router)
+api_router.include_router(script_to_drama_router)
 api_router.include_router(preprocessing_router)
 api_router.include_router(evidence_router)
 api_router.include_router(understanding_router)
