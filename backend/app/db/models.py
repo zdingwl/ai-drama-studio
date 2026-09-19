@@ -39,6 +39,7 @@ from app.replica_pipeline.models import (
     ReplicaLocalizedStoryboardRevision,
 )
 from app.script_localization.models import ScriptLocalizationRevision
+from app.script_to_drama.models import ScriptToDramaRevision
 from app.shot_breakdown.models import SourceShotFactsRevision
 from app.skills.plan_models import ProjectExecutionPlanRecord, ProjectExecutionPlanStepRecord
 from app.source_analysis.models import SourceStoryboardDraftRevision
@@ -62,7 +63,7 @@ __all__ = [
     "ReplicaLocalizedStoryboardRevision", "ReplicaStoryboardCandidate", "ReplicaTargetAssetsCandidate",
     "ReplicaTargetAssetsRevision", "ReplicaTargetAudioCandidate", "ReplicaTargetAudioRevision",
     "ReplicaTargetRevision", "ReplicaTargetScriptRevision", "ReplicaTargetStoryboardRevision",
-    "ReplicaTimingPlanCandidate", "ScriptLocalizationRevision", "ShotAnchor", "ShotBoundarySet",
+    "ReplicaTimingPlanCandidate", "ScriptLocalizationRevision", "ScriptToDramaRevision", "ShotAnchor", "ShotBoundarySet",
     "ShotDialogueProjection", "SourceAsset", "SourceBibleRevision", "SourceDialogueUtterance",
     "SourceDocument", "SourceEvidenceSet", "SourceResolutionRevision", "SourceScriptRevision",
     "SourceShotFactsRevision", "SourceStoryboardDraftRevision", "SourceVideoSnapshotRevision",
