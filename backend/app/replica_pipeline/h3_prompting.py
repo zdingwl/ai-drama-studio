@@ -286,6 +286,60 @@ def _references(
     return conditions, refs
 
 
+def _segment_bounds(shot) -> list[tuple[int, int]]:
+    """Split a target shot without cutting through any finalized speech window."""
+    dialogue_windows = sorted(
+        [(item.overlap_start_us, item.overlap_end_us, item.utterance_id) for item in shot.dialogue],
+        key=lambda item: (item[0], item[1], item[2]),
+    )
+    for start_us, end_us, utterance_id in dialogue_windows:
+        if end_us - start_us > MAX_SEGMENT_DURATION_US:
+            raise AppError(
+                "H3_PROMPT_DIALOGUE_WINDOW_TOO_LONG",
+                "单条目标对白语音窗超过视频模型单段上限，不能在不切断对白的前提下分段",
+                status_code=409,
+                details={
+                    "storyboard_shot_id": shot.storyboard_shot_id,
+                    "utterance_id": utterance_id,
+                    "speech_duration_us": end_us - start_us,
+                    "max_segment_duration_us": MAX_SEGMENT_DURATION_US,
+                },
+            )
+
+    bounds: list[tuple[int, int]] = []
+    cursor = shot.start_us
+    while cursor < shot.end_us:
+        nominal_end = min(shot.end_us, cursor + MAX_SEGMENT_DURATION_US)
+        if nominal_end == shot.end_us:
+            bounds.append((cursor, nominal_end))
+            break
+
+        crossing = next(
+            (
+                (speech_start, speech_end)
+                for speech_start, speech_end, _ in dialogue_windows
+                if speech_start < nominal_end < speech_end
+            ),
+            None,
+        )
+        if crossing is None:
+            boundary = nominal_end
+        else:
+            speech_start, speech_end = crossing
+            boundary = speech_start if speech_start > cursor else speech_end
+
+        if boundary <= cursor or boundary - cursor > MAX_SEGMENT_DURATION_US:
+            raise AppError(
+                "H3_PROMPT_SEGMENTATION_INVALID",
+                "无法在视频模型单段上限内找到不切断对白的分段边界",
+                status_code=409,
+                details={"storyboard_shot_id": shot.storyboard_shot_id},
+            )
+        bounds.append((cursor, boundary))
+        cursor = boundary
+    return bounds
+
+
 def _dialogue_refs(
     shot,
     start_us: int,
@@ -424,10 +478,9 @@ def _build_drafts(
         for episode_id in {shot.episode_id for shot in ordered_shots}
     }
     for shot in ordered_shots:
-        part_count = max(1, math.ceil(shot.duration_us / MAX_SEGMENT_DURATION_US))
-        for part_index in range(part_count):
-            start_us = shot.start_us + part_index * MAX_SEGMENT_DURATION_US
-            end_us = min(shot.end_us, start_us + MAX_SEGMENT_DURATION_US)
+        segment_bounds = _segment_bounds(shot)
+        part_count = len(segment_bounds)
+        for part_index, (start_us, end_us) in enumerate(segment_bounds):
             dialogue_refs = _dialogue_refs(
                 shot,
                 start_us,
