@@ -1071,6 +1071,16 @@ def _read_h3_prompt_provenance(raw: dict, artifact: ArtifactNode) -> H3PromptPro
     return H3PromptProvenance.model_validate(payload)
 
 
+def _read_validation_issues(content: ReplicaGenerationSegmentsContent, *, is_current: bool) -> list[dict]:
+    """Only CURRENT H3 output can produce actionable read-time validation issues.
+
+    STALE segments were compiled from superseded storyboard/assets and are historical
+    diagnostics only. Returning their audit findings as actionable creates a UI deadlock:
+    the old issues block the very regeneration that should replace them.
+    """
+    return audit_segments(content.segments) if is_current else []
+
+
 def get_h3_prompts(db: Session, project_id: str, *, episode_id: str | None = None) -> H3PromptsRead:
     get_project(db, project_id)
     current = db.scalar(select(ArtifactNode).where(
@@ -1091,10 +1101,13 @@ def get_h3_prompts(db: Session, project_id: str, *, episode_id: str | None = Non
         if not content.segments:
             return H3PromptsRead(project_id=project_id, status=ResultStatus.NOT_BUILT)
     raw_provenance = row.provenance_json.get("episode_provenance", {}).get(episode_id, row.provenance_json)
+    is_current = current is not None
     return H3PromptsRead(
         project_id=project_id,
-        validation_issues=audit_segments(content.segments),
-        status=ResultStatus.CURRENT if current is not None else ResultStatus.STALE,
+        # A stale H3 artifact belongs to superseded storyboard/assets. Its old audit
+        # findings must never block rebuilding against the new CURRENT upstreams.
+        validation_issues=_read_validation_issues(content, is_current=is_current),
+        status=ResultStatus.CURRENT if is_current else ResultStatus.STALE,
         artifact_id=latest.id,
         revision=latest.revision,
         input_fingerprint=latest.input_fingerprint,
