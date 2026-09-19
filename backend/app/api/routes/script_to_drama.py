@@ -1,0 +1,85 @@
+"""Script-to-drama only: text source, source analysis, visual registry and storyboard plan."""
+
+from enum import StrEnum
+from io import BytesIO
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Header, UploadFile
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.errors import AppError
+from app.db.session import get_db
+from app.script_to_drama.schemas import ScriptToDramaState
+from app.script_to_drama.service import require_project, start_stage, state
+from app.sources.models import SourceAsset, SourceDocument
+from app.sources.schemas import SourceDocumentRead
+from app.sources.service import ingest_text_upload
+from app.sources.storage import resolve_source_asset_path
+from app.workflow.schemas import TaskRead
+from app.workflow.task_service import task_to_read
+
+router = APIRouter(prefix="/projects/{project_id}/script-to-drama", tags=["script-to-drama"])
+
+
+class SourceRead(BaseModel):
+    project_id: str
+    document_id: str | None = None
+    revision: int | None = None
+    filename: str | None = None
+    text: str | None = None
+
+
+class PasteCommand(BaseModel):
+    text: str = Field(min_length=1, max_length=200_000)
+
+
+class StageName(StrEnum):
+    ANALYZE = "analyze"
+    WORLD = "world"
+    STORYBOARD = "storyboard"
+
+
+@router.get("/source", response_model=SourceRead)
+def get_source(project_id: str, db: Session = Depends(get_db)) -> SourceRead:
+    require_project(db, project_id)
+    doc = db.scalar(select(SourceDocument).where(
+        SourceDocument.project_id == project_id, SourceDocument.is_current.is_(True)))
+    if doc is None:
+        return SourceRead(project_id=project_id)
+    asset = db.get(SourceAsset, doc.source_asset_id)
+    if asset is None or asset.project_id != project_id:
+        raise AppError("SCRIPT_TO_DRAMA_SOURCE_MISSING", "原剧本源文件不存在", status_code=409)
+    path = resolve_source_asset_path(asset.relative_path)
+    if not path.is_file():
+        raise AppError("SCRIPT_TO_DRAMA_SOURCE_MISSING", "原剧本内容不存在", status_code=409)
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeError as exc:
+        raise AppError("SCRIPT_TO_DRAMA_ENCODING_INVALID", "原剧本编码必须为 UTF-8", status_code=422) from exc
+    return SourceRead(project_id=project_id, document_id=doc.id,
+                      revision=doc.revision, filename=asset.original_filename, text=text)
+
+
+@router.post("/paste", response_model=SourceDocumentRead, status_code=201)
+async def paste_source(project_id: str, payload: PasteCommand,
+                       db: Session = Depends(get_db)) -> SourceDocumentRead:
+    require_project(db, project_id)
+    text = payload.text.replace("\r\n", "\n").replace("\r", "\n")
+    if not text.strip():
+        raise AppError("SCRIPT_TO_DRAMA_SOURCE_EMPTY", "剧本文本不能为空", status_code=422)
+    upload = UploadFile(file=BytesIO(text.encode("utf-8")), filename="粘贴原剧本.txt")
+    return await ingest_text_upload(db, project_id, upload)
+
+
+@router.get("/state", response_model=ScriptToDramaState)
+def get_state(project_id: str, db: Session = Depends(get_db)) -> ScriptToDramaState:
+    return state(db, project_id)
+
+
+@router.post("/commands/run/{stage}", response_model=TaskRead, status_code=202)
+def run_stage(project_id: str, stage: StageName,
+              idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+              db: Session = Depends(get_db)) -> TaskRead:
+    return task_to_read(start_stage(db, project_id, stage.value, idempotency_key))
