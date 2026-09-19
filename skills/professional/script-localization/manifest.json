@@ -1,0 +1,36 @@
+{
+  "id": "script-localization",
+  "name": "剧本跨文化本土化",
+  "version": "1.0.0",
+  "category": "localization",
+  "description": "在锁定故事主线、人物功能、因果、信息揭示和情绪意图的前提下，把人名、制度、场景、金额、称谓、文化梗和对白表达迁移到目标地区，并输出完整可读剧本与逐项变更记录。",
+  "when_to_use": ["SCRIPT_LOCALIZATION 已完成 script-analysis，需要生成目标语言/目标地区正式剧本时"],
+  "when_not_to_use": ["原剧本尚未完成结构化分析", "需要改变故事主线或重新编剧", "需要视频生成"],
+  "required_inputs": ["SOURCE_TEXT_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON"],
+  "optional_inputs": [],
+  "readable_artifacts": ["SOURCE_TEXT", "SOURCE_TEXT_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON", "ADAPTATION_PLAN", "TARGET_SCRIPT"],
+  "required_capabilities": ["LOCALIZATION", "TARGET_SCRIPT"],
+  "manual_path": "script-localization/SKILL.md",
+  "steps": [
+    {"id":"lock_story","phase":"本土化","title":"锁定剧情不可变项","description":"从 Story/Rhythm Skeleton 形成 preservation locks。","capabilities":["LOCALIZATION"],"requires":["SOURCE_TEXT_SNAPSHOT","STORY_SKELETON","RHYTHM_SKELETON"],"produces":[]},
+    {"id":"plan_localization","phase":"本土化","title":"制定本土化方案","description":"建立人物、地点、制度、术语、称谓、文化元素与对白语域的一致性映射。","capabilities":["LOCALIZATION"],"requires":["SOURCE_TEXT_SNAPSHOT","STORY_SKELETON"],"produces":["ADAPTATION_PLAN"]},
+    {"id":"localize_script","phase":"本土化","title":"生成目标地区剧本","description":"按计划重写可本土化元素，保持剧情功能和情绪强度，输出完整目标剧本。","capabilities":["TARGET_SCRIPT"],"requires":["SOURCE_TEXT_SNAPSHOT","ADAPTATION_PLAN"],"produces":["TARGET_SCRIPT"]},
+    {"id":"validate","phase":"本土化","title":"一致性与回归校验","description":"检查人物映射、场景、术语、因果、剧情顺序和对白语域是否一致。","capabilities":["LOCALIZATION","TARGET_SCRIPT"],"requires":["TARGET_SCRIPT"],"produces":[]}
+  ],
+  "fact_levels": ["PRESERVATION_LOCK", "LOCALIZATION_DECISION", "TARGET_EXPRESSION"],
+  "provider_rules": [
+    "不得改变故事主线、因果、人物功能、核心关系、信息揭示顺序、反转顺序、Payoff 与 Cliffhanger；需要改变时必须列为 unresolved_decision，而不是静默修改。",
+    "本土化不是逐字翻译：目标对白应在目标地区自然成立，同时保持原意、角色声音、语气、阶层、正式程度、情绪强度和戏剧功能。",
+    "人物姓名、地点、机构、货币、度量衡、学校/职场/医疗/司法/社交习惯等可按目标地区替换，但必须记录 source→target 映射和理由并全剧一致。",
+    "脏话、冒犯、亲密称呼、敬语和权力关系应匹配原始意图和强度，避免直译导致语气变强或变弱。",
+    "双关、笑话、习语和文化梗优先保留剧情功能与情绪效果；无法等价时允许 transcreation，但必须进入 change log。",
+    "专名、品牌、作品名不得随意换成竞争品牌；已在目标地区有公认名称时优先使用公认名称，否则保留或改为泛称并记录理由。",
+    "输出必须保持剧本可读结构；Scene Heading、Action、Character Cue、Dialogue 等不应被扁平化成小说散文。",
+    "长文本按稳定块生成时必须复用同一 Adaptation Plan、人物映射、术语表和对白 style guide；块之间不得漂移。",
+    "每个实质替换都要进入 change log，便于人工审查；纯语序和自然化微调可以合并记录。",
+    "目标剧本不能提前生成分镜、资产、配音、视频或后期信息。"
+  ],
+  "output_contracts": ["ADAPTATION_PLAN", "TARGET_SCRIPT"],
+  "completion_criteria": ["剧情主线与因果未被静默改变", "人物/地点/机构/术语映射全剧一致", "对白在目标地区自然且角色声音稳定", "完整目标剧本可直接人工审阅和导出", "实质文化替换有 change log"],
+  "failure_policy": ["结构分析缺失或 STALE 时阻断", "核心冲突必须改变才能在目标地区成立时输出 unresolved_decision 并请求用户决定", "Provider 输出不完整、分块缺失或 schema 失败时不得发布 TARGET_SCRIPT"]
+}
