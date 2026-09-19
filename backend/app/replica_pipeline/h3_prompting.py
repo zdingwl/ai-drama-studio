@@ -1,6 +1,5 @@
 import hashlib
 import json
-import math
 import re
 from dataclasses import dataclass
 from typing import Protocol
