@@ -115,14 +115,14 @@ def test_short_chinese_dialogue_translation_is_valid_but_non_chinese_is_not() ->
         _assert_chinese("目标对白中文翻译", "OK", minimum_cjk=1)
 
 
-def test_provider_budget_uses_owner_overlap_instead_of_full_utterance() -> None:
+def test_provider_view_marks_source_owner_overlap_as_reference_only() -> None:
     line = SimpleNamespace(utterance_id="line", utterance_number=1, text="原台词", language="zh-CN", start_us=0, end_us=1_300_000)
     view = _dialogue_provider_view(line, {"line": "character"}, {"line": ("shot-b", 600_000, 1_300_000)})
 
-    assert view["authoritative_owner_shot_id"] == "shot-b"
-    assert view["authoritative_available_seconds"] == 0.7
-    assert view["max_spoken_words"] == 3
-    assert view["max_spoken_cjk_chars"] == 5
+    assert view["source_owner_shot_id"] == "shot-b"
+    assert view["source_owner_overlap_seconds"] == 0.7
+    assert "target_duration_ms independently" in view["timing_note"]
+    assert "max_spoken_words" not in view
 
 
 def _semantic(*, first_duration_ms: int = 10_000, first_dialogue: str = "Localized dialogue") -> LocalizedStoryboardSemantic:
