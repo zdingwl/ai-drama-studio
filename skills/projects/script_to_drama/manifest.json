@@ -101,6 +101,21 @@
       ]
     },
     {
+      "id": "asset_images",
+      "phase": "生成",
+      "title": "首帧与资产出图",
+      "description": "工程接入：从独立 TARGET_ASSETS 生成模型专属资产 Prompt 和正式人物/场景/道具参考图；复用底层图片 Runtime，不写入 Replica 专属资产表。",
+      "capabilities": [
+        "ASSET_IMAGE_GENERATION"
+      ],
+      "requires": [
+        "TARGET_ASSETS"
+      ],
+      "produces": [
+        "TARGET_ASSET_IMAGES"
+      ]
+    },
+    {
       "id": "director_storyboard",
       "phase": "预制作",
       "title": "导演分镜计划",
@@ -115,21 +130,6 @@
       ],
       "produces": [
         "TARGET_STORYBOARD"
-      ]
-    },
-    {
-      "id": "asset_images",
-      "phase": "生成",
-      "title": "首帧与资产出图",
-      "description": "工程接入：从独立 TARGET_ASSETS 生成模型专属资产 Prompt 和正式人物/场景/道具参考图；复用底层图片 Runtime，不写入 Replica 专属资产表。",
-      "capabilities": [
-        "ASSET_IMAGE_GENERATION"
-      ],
-      "requires": [
-        "TARGET_ASSETS"
-      ],
-      "produces": [
-        "TARGET_ASSET_IMAGES"
       ]
     },
     {
