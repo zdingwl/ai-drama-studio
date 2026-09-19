@@ -178,6 +178,8 @@ Every localized shot must return a positive `target_duration_ms` planned from:
 
 The server lays target shots out continuously per episode in source shot order.
 
+Provider-authored `target_duration_ms` is the creative pacing proposal, not an unsafe hard ceiling. After the final localized dialogue is known, the server computes a deterministic minimum executable duration for every dialogue-owning shot from the speech estimate plus basic entry/exit and inter-line cadence slack. If the provider duration is shorter, the server may only expand it upward; it must never shrink a valid provider duration or modify source timing to make dialogue fit.
+
 Every canonical utterance is spoken exactly once in one deterministic owner shot. Cross-shot source dialogue must not become duplicated target dialogue.
 
 The localized spoken line must fit the target speech window at no more than approximately 4 whitespace-delimited words per second or 6 CJK characters per second. Leave room for breath, interruption, listening, and reaction; do not solve a bad fit by forcing unnatural speech.
@@ -263,8 +265,8 @@ Fail closed when any of the following occurs:
 - incomplete or duplicate ID coverage;
 - global plan drift across shot batches;
 - identity/name drift;
-- target dialogue that cannot fit planned target timing;
-- target shot timing that is non-positive or inconsistent;
+- target dialogue without a valid deterministic owner shot;
+- target shot timing that is non-positive or inconsistent after server normalization;
 - cultural replacement that changes locked story causality or relationship meaning;
 - provider output that invents unsupported source facts;
 - review prose not usable by Chinese reviewers.
@@ -289,6 +291,6 @@ Before returning a candidate, verify:
 - every shot is visually executable and causally legible;
 - dialogue sounds native to the target region and preserves intent/subtext;
 - every utterance is spoken once;
-- target timing is sufficient for speech, action, reaction, and camera rhythm;
+- target timing is sufficient for speech, action, reaction, and camera rhythm after deterministic server minimum-duration normalization;
 - source provenance remains intact;
 - no downstream stage is being asked to repair a localization decision that belongs here.
