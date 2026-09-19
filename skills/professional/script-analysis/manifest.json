@@ -1,0 +1,34 @@
+{
+  "id": "script-analysis",
+  "name": "剧本结构化理解",
+  "version": "1.0.0",
+  "category": "text-analysis",
+  "description": "把上传的剧本文本解析为可审计的故事骨架、节奏骨架、人物、场景、对白语域、文化锚点与本土化风险；不改写原剧本事实。",
+  "when_to_use": ["SCRIPT_LOCALIZATION / SCRIPT_TO_DRAMA 已有 SOURCE_TEXT，需要先建立结构化 Source Truth 时"],
+  "when_not_to_use": ["输入是小说而非剧本", "需要直接生成目标剧本或视频", "需要修改原剧情"],
+  "required_inputs": ["SOURCE_TEXT"],
+  "optional_inputs": [],
+  "readable_artifacts": ["SOURCE_TEXT"],
+  "required_capabilities": ["SCRIPT_ANALYSIS", "STORY_RHYTHM"],
+  "manual_path": "script-analysis/SKILL.md",
+  "steps": [
+    {"id":"read_source","phase":"理解","title":"读取完整剧本","description":"读取 CURRENT SOURCE_TEXT 全文和文档版本，保持原文只读。","capabilities":["SCRIPT_ANALYSIS"],"requires":["SOURCE_TEXT"],"produces":[]},
+    {"id":"parse_script","phase":"理解","title":"解析剧本元素","description":"识别场景标题、动作、人物、对白、旁白/画外音、关键道具与人物关系。","capabilities":["SCRIPT_ANALYSIS"],"requires":["SOURCE_TEXT"],"produces":[]},
+    {"id":"extract_story","phase":"理解","title":"提取故事与节奏","description":"建立主线、因果、Hook、冲突、反转、情绪峰值、Payoff 与 Cliffhanger。","capabilities":["SCRIPT_ANALYSIS","STORY_RHYTHM"],"requires":["SOURCE_TEXT"],"produces":["STORY_SKELETON","RHYTHM_SKELETON"]},
+    {"id":"freeze_snapshot","phase":"理解","title":"冻结文本分析快照","description":"发布 SOURCE_TEXT_SNAPSHOT，并记录文化锚点、术语和不确定项。","capabilities":["SCRIPT_ANALYSIS"],"requires":["SOURCE_TEXT"],"produces":["SOURCE_TEXT_SNAPSHOT"]}
+  ],
+  "fact_levels": ["SOURCE_FACT", "STRUCTURAL_INFERENCE", "UNRESOLVED"],
+  "provider_rules": [
+    "SOURCE_TEXT 是唯一原文事实；不得修正、补写或把模型常识冒充原剧本内容。",
+    "必须区分场景标题、动作、人物提示、对白、括注、转场等剧本元素；格式不标准时允许标记 UNKNOWN，不得凭空恢复不存在的结构。",
+    "人物关系、动机、主题等解释必须能由原文支持；证据不足时进入 unresolved_questions。",
+    "Story Beat 必须保持原始因果和顺序，不得为了让故事更顺而重排剧情。",
+    "节奏分析描述 Hook、冲突、升级、反转、情绪峰值、Payoff、Cliffhanger 的功能和强度，不修改原文。",
+    "文化元素必须记录其剧情功能和本土化风险，供后续本土化使用，而不是在本阶段直接替换。",
+    "术语、称谓、专名、机构、金额、度量衡、社交平台、品牌等应形成一致性词表候选。",
+    "长剧本可按稳定文本块分段分析，但最终必须做全局合并，避免同一人物/场景被分块重复建模。"
+  ],
+  "output_contracts": ["SOURCE_TEXT_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON"],
+  "completion_criteria": ["主线和 Story Beat 可追溯到 SOURCE_TEXT", "人物与场景跨全文一致", "文化锚点与术语有明确记录", "不确定内容没有被模型补全"],
+  "failure_policy": ["SOURCE_TEXT 缺失或 STALE 时阻断", "Provider 输出无法通过 typed schema 时阻断", "全文过长时使用分块分析与全局合并，不能静默截断"]
+}
