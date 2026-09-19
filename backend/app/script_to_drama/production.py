@@ -194,10 +194,7 @@ def _stage_inputs(db: Session, project_id: str, stage: str) -> tuple[object, lis
         raise AppError("SCRIPT_TO_DRAMA_STAGE_INVALID", "未知生产阶段", status_code=422)
     project = _require_project(db, project_id)
     if stage == "asset_images":
-        artifacts = [
-            _require(db, project_id, ArtifactType.TARGET_STORYBOARD),
-            _require(db, project_id, ArtifactType.TARGET_ASSETS),
-        ]
+        artifacts = [_require(db, project_id, ArtifactType.TARGET_ASSETS)]
     elif stage == "prompts":
         artifacts = [
             _require(db, project_id, ArtifactType.TARGET_STORYBOARD),
@@ -369,9 +366,7 @@ def _simple_media(generated, role: str) -> list[AssetMedia]:
 def _run_asset_images(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[dict, list[str]]:
     with context.session_factory() as db:
         project, artifacts, contents = _assert_fresh(db, task, "asset_images")
-        storyboard, definitions = contents
-        if definitions.get("target_bible_artifact_id") != storyboard.get("target_bible_artifact_id"):
-            raise AppError("SCRIPT_TO_DRAMA_ASSET_LINEAGE_INVALID", "资产定义与当前导演分镜不属于同一目标世界", status_code=409)
+        definitions = contents[0]
         specs = _entity_specs(definitions)
         text_provider = ScriptLocalizationProvider(get_settings(), project.source_understanding_provider)
         binding, prompt_skill = selected_image_model_prompt_skill()
@@ -514,8 +509,7 @@ def _run_asset_images(context: TaskExecutionContext, task: TaskWorkerRead) -> tu
     if len(generated_assets) != len(specs):
         raise AppError("SCRIPT_TO_DRAMA_ASSET_IMAGES_INCOMPLETE", "资产图没有完整覆盖全部资产定义", status_code=422)
     return {
-        "target_storyboard_artifact_id": artifacts[0].id,
-        "target_assets_definition_artifact_id": artifacts[1].id,
+        "target_assets_definition_artifact_id": artifacts[0].id,
         "image_model_id": binding.model_id,
         "prompt_skill_id": prompt_skill.id,
         "prompt_skill_version": prompt_skill.version,
