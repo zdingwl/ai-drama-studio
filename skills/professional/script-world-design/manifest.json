@@ -1,0 +1,31 @@
+{
+  "id": "script-world-design",
+  "name": "剧本生成短剧·目标世界与资产定义",
+  "version": "1.0.0",
+  "category": "preproduction",
+  "description": "基于当前原剧本及其结构化分析，设计跨镜一致的可视化人物、场景和剧情道具；显式标注原文事实、合理视觉补足和需要用户决策的冲突。",
+  "when_to_use": ["SCRIPT_TO_DRAMA 已有 CURRENT SOURCE_TEXT_SNAPSHOT，准备导演分镜与资产出图"],
+  "when_not_to_use": ["REPLICA 的目标世界", "SCRIPT_LOCALIZATION 的文化改写", "没有源剧本分析时猜测人物或镜头"],
+  "required_inputs": ["SOURCE_TEXT_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON"],
+  "readable_artifacts": ["SOURCE_TEXT", "SOURCE_TEXT_SNAPSHOT", "STORY_SKELETON", "RHYTHM_SKELETON"],
+  "required_capabilities": ["TARGET_BIBLE", "TARGET_ASSETS"],
+  "manual_path": "script-world-design/SKILL.md",
+  "steps": [
+    {"id":"source_locks","phase":"目标世界","title":"锁定已有剧本事实","description":"按场次提取人物、环境、关键道具、关系、行动和剧情后果的来源证据。","capabilities":["TARGET_BIBLE"],"requires":["SOURCE_TEXT_SNAPSHOT","STORY_SKELETON"],"produces":[]},
+    {"id":"visual_registry","phase":"目标世界","title":"设计可复用视觉实体","description":"统一人物、场景、道具的稳定 ID、外形/服饰/空间/重要变化及视觉提示。","capabilities":["TARGET_BIBLE","TARGET_ASSETS"],"requires":["SOURCE_TEXT_SNAPSHOT"],"produces":["TARGET_BIBLE","TARGET_ASSETS"]},
+    {"id":"quality_gate","phase":"目标世界","title":"校验剧情与视觉一致性","description":"检查原文事实与模型补足区分，冲突进入待人工决策，不发布自相矛盾资产。","capabilities":["TARGET_BIBLE","TARGET_ASSETS"],"requires":["TARGET_BIBLE","TARGET_ASSETS"],"produces":[]}
+  ],
+  "fact_levels": ["SOURCE_FACT", "VISUAL_INFERENCE", "USER_DECISION_REQUIRED"],
+  "provider_rules": [
+    "只消费 SCRIPT_TO_DRAMA 项目的 CURRENT 剧本分析，不调用 REPLICA 的 SourceVideoSnapshot 或 Replica-only API。",
+    "角色关系、服饰变化、地点和重要道具必须有稳定 ID 与对应原文场次证据；不可把视觉创作当成原文事实。",
+    "先辨别单纯缺少外形细节与真正改变因果的空白，前者可补足可视化设定，后者必须进入 unresolved_decisions。",
+    "不以不可见心理活动替代镜头可呈现的动作或表情。",
+    "人物、场景和道具提取依照实际生产需要，绝不把所有背景杂物自动变成重要资产。",
+    "方案需要全文统一，并验证角色姓名、实体和道具出现/消失的连续性。",
+    "输出是 TARGET_BIBLE/TARGET_ASSETS 的结构数据，不生成视频，不声称影像已经渲染。"
+  ],
+  "output_contracts": ["TARGET_BIBLE", "TARGET_ASSETS"],
+  "completion_criteria": ["关键人物/地点/道具稳定可识别", "视觉补足与来源事实可区分", "未决定的核心剧情冲突不会被静默改写"],
+  "failure_policy": ["来源或版本失效则停止", "必需资产或证据缺失则拒绝发布", "影响剧情的重大空白交人工确认"]
+}
