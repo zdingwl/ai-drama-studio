@@ -606,8 +606,9 @@ def _run_prompts(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[d
     with context.session_factory() as db:
         project, artifacts, contents = _assert_fresh(db, task, "prompts")
         storyboard, definitions, image_content = contents
-        if image_content.get("target_storyboard_artifact_id") != artifacts[0].id or                 image_content.get("target_assets_definition_artifact_id") != artifacts[1].id:
-            raise AppError("SCRIPT_TO_DRAMA_ASSET_IMAGES_STALE", "资产图不属于当前导演分镜/资产定义", status_code=409)
+        if storyboard.get("target_assets_artifact_id") != artifacts[1].id or \
+                image_content.get("target_assets_definition_artifact_id") != artifacts[1].id:
+            raise AppError("SCRIPT_TO_DRAMA_ASSET_IMAGES_STALE", "导演分镜或资产图不属于当前资产定义", status_code=409)
         drafts = _segment_drafts(task.project_id, storyboard, image_content)
         provider = ScriptLocalizationProvider(get_settings(), project.source_understanding_provider)
         binding, skill = selected_video_model_prompt_skill()
