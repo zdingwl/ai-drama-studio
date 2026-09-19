@@ -65,3 +65,65 @@ class ScriptToDramaState(BaseModel):
     assets: StageRead
     storyboard: StageRead
     video_runtime_status: str = "NOT_CONNECTED"
+
+
+class AssetPromptItem(Strict):
+    target_entity_id: str = Field(min_length=1, max_length=120)
+    image_prompt: str = Field(min_length=1, max_length=12000)
+    negative_prompt: str = Field(default="", max_length=6000)
+    review_prompt_zh: str = Field(min_length=1, max_length=6000)
+
+
+class AssetPromptBatch(Strict):
+    assets: list[AssetPromptItem] = Field(min_length=1, max_length=24)
+
+
+class AssetMedia(Strict):
+    reference_id: str
+    role: str
+    storage_relpath: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    mime_type: str = "image/png"
+
+
+class GeneratedAsset(Strict):
+    target_asset_id: str
+    target_entity_id: str
+    asset_type: str
+    display_name: str
+    image_prompt: str
+    negative_prompt: str = ""
+    review_prompt_zh: str
+    media: list[AssetMedia] = Field(min_length=1)
+
+
+class H3PromptItem(Strict):
+    generation_segment_id: str
+    execution_prompt: str = Field(min_length=1, max_length=12000)
+    negative_prompt: str = Field(default="", max_length=6000)
+    review_prompt_zh: str = Field(min_length=1, max_length=12000)
+
+
+class H3PromptBatch(Strict):
+    segments: list[H3PromptItem] = Field(min_length=1, max_length=24)
+
+
+class GeneratedClip(Strict):
+    generation_segment_id: str
+    storage_relpath: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    mime_type: str = "video/mp4"
+    duration_us: int = Field(gt=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    codec_name: str
+    provider_job_id: str
+    remote_job_id: str | None = None
+
+
+class SelectionCommand(BaseModel):
+    expected_generated_video_artifact_id: str = Field(min_length=1, max_length=160)
+    selected_segment_ids: list[str] = Field(min_length=1, max_length=1000)
+    reason: str = Field(min_length=1, max_length=800)
