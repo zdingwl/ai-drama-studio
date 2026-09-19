@@ -2,52 +2,293 @@
 
 ## Purpose
 
-Turn the accepted source storyboard into the actual working target storyboard. This is the primary localization surface: not a separate Target Bible followed by a separate Target Script.
+Turn the accepted Source Video Snapshot into one coherent, production-ready target storyboard for a specific language and region.
+
+This Skill is not literal translation, not cosmetic renaming, and not free-form story rewriting. It performs **function-preserving localization**: preserve the source episode's causal skeleton, shot identity, dramatic function, relationship logic, and evidence/action dependencies while redesigning the target-world realization so it feels native to the configured market.
+
+The result must be usable by downstream asset, dialogue, and video-generation stages without asking those stages to repair cultural incoherence, timing, identity drift, or continuity mistakes.
 
 ## Hard input
 
-`CURRENT SOURCE_VIDEO_SNAPSHOT` only, plus project target language/region settings.
+`CURRENT SOURCE_VIDEO_SNAPSHOT` only, plus project:
+
+- `target_language`
+- `target_region`
+- `scene_strategy`
+- `visual_style`
+
+Source facts remain source facts. Target design is created only in the target namespace.
 
 ## Runtime provider
 
-The current Step 2 runtime uses Volcengine Ark / Doubao directly. It does **not** inherit the project's Step 1 `source_understanding_provider`; a project may use local Qwen for source understanding while storyboard localization still executes through Volcengine Ark. The current default model is `doubao-seed-2-1-pro-260628`, using the configured Ark endpoint and credentials.
+Step 2 currently runs through Volcengine Ark / Doubao. It does **not** inherit the Step 1 source-understanding provider.
 
-## Output language contract
+The provider may author target-world and shot semantics, but it may not invent Artifact IDs or stable target entity IDs. Those are server-owned.
 
-- Visual/action/setting review prose: Simplified Chinese.
-- Camera explanation: Simplified Chinese while preserving the original structured camera facts.
-- Spoken dialogue: `target_language`.
-- Every spoken line also carries `target_dialogue_zh` for Chinese human understanding.
-- `target_dialogue_zh` is review metadata and must never be spoken by the video model unless target language itself is Chinese.
+## Three-layer adaptation boundary
+
+Treat every localization decision as one of three layers.
+
+### 1. Foundation — frozen source truth
+
+Never silently alter:
+
+- episode and shot order;
+- source shot anchor identity;
+- canonical utterance identity and source text;
+- source start/end/duration provenance;
+- structured source camera facts;
+- core relationship graph;
+- causal order of story events;
+- evidence ownership and action consequences;
+- who knows what at a given point in the story, unless the source itself changes that state.
+
+If an apparently cultural change would alter one of these, it is no longer localization.
+
+### 2. Story function — preserve function, not expression
+
+Preserve what each beat **does**:
+
+- pressure introduced or increased;
+- information revealed or concealed;
+- status or power changed;
+- relationship tested or redefined;
+- action attempted and consequence produced;
+- setup, payoff, reversal, hook, or reaction function;
+- why a prop, location, social custom, amount of money, or form of address matters to the conflict.
+
+A target realization may look very different from the source if it performs the same story function.
+
+### 3. Surface realization — redesign for the target market
+
+This layer may change coherently:
+
+- names and forms of address;
+- professions and social presentation when needed for plausibility;
+- housing type, architecture, furnishings, signage, brands, currency, and local objects;
+- wardrobe, grooming, visible styling, and non-source actor appearance;
+- cultural customs, etiquette, food, gifts, transport, schooling, workplace conventions, and public behavior;
+- idioms, register, humor, emotional phrasing, and conversational rhythm;
+- shot-local blocking and visual detail, provided source shot identity and camera facts remain intact.
+
+Do not over-localize neutral details merely to prove that localization happened.
+
+## Global planning before shot batches
+
+Read the complete Source Snapshot before rewriting shots.
+
+First produce one complete target-world plan covering every entity used across all episodes:
+
+- `world_design_zh`
+- `continuity_rules_zh`
+- every Character
+- every Scene
+- every Prop
+
+The plan must be concrete enough to execute visually. Avoid placeholders such as "same as source", "local equivalent", or "similar amount".
+
+### Character plan
+
+For each character, lock:
+
+- localized full name and aliases actually needed by the story;
+- family/relationship naming logic;
+- social identity and status cues;
+- age band when supported by source;
+- target-world appearance, hair, body presentation, wardrobe baseline, and distinctive stable features;
+- expected address/register relationships with other characters.
+
+Target language does not imply ethnicity. Do not force a single ethnicity, immigrant framing, or stereotype because the source is Chinese or because the target language is English.
+
+### Scene plan
+
+For each scene, lock:
+
+- target location identity;
+- address/room naming when relevant;
+- architecture and spatial layout;
+- fixed landmarks and furniture;
+- materials, lighting baseline, signage, and region-specific visual cues only where useful;
+- room-to-room or exterior/interior relationships needed for continuity.
+
+A scene must remain spatially usable across all shots that reference it.
+
+### Prop plan
+
+For each prop, lock:
+
+- localized name;
+- story function;
+- owner/custodian when relevant;
+- target-market form, material, scale, color, packaging, denomination, or interface;
+- continuity-critical state changes.
+
+When localizing money, documents, gifts, medications, devices, vehicles, school/work items, or legal/administrative objects, preserve the **conditions that make the conflict work**, not merely the noun.
+
+## Functional localization ledger
+
+Before choosing a culturally loaded replacement, reason through:
+
+1. What source fact is locked?
+2. What dramatic function does this element serve?
+3. What target-market convention can perform that function naturally?
+4. What downstream continuity does the replacement create?
+5. Does the replacement accidentally change status, legality, evidence, stakes, chronology, or relationship meaning?
+
+For high-risk elements, internally consider multiple plausible target realizations and choose one coherent solution. Return only the selected plan; do not emit competing worlds.
+
+If no safe local equivalent exists, prefer a neutral, believable target formulation over an invented stereotype.
+
+## Dialogue transcreation
+
+`target_dialogue` is spoken target-language dialogue. `target_dialogue_zh` is Chinese review metadata only.
+
+Dialogue must preserve:
+
+- speaker intent;
+- relationship and status;
+- information payload;
+- subtext and pressure;
+- emotional direction;
+- source utterance identity.
+
+Dialogue should sound like speech from the target region, not translated prose.
+
+Localize:
+
+- honorifics, kinship address, pronouns, titles;
+- contractions and conversational syntax;
+- idioms and culturally specific references;
+- politeness, confrontation, intimacy, and status register;
+- jokes or indirect phrasing when the source function requires them.
+
+Do not add explanatory dialogue for cultural facts that the target audience would naturally understand. Do not preserve source-language idioms word-for-word when the dramatic function can be expressed more naturally.
 
 ## Target timeline contract
 
-Source start/end/duration remain immutable provenance, but they are not the target cut timeline. The provider plans `target_duration_ms` for every localized shot from its target action, camera rhythm and localized dialogue. The server lays those durations out continuously per episode and deterministically schedules every canonical utterance once in its owner shot. The target spoken line must fit its newly planned speech window at no more than 4 whitespace-delimited words per second or 6 CJK characters per second. A timing-invalid candidate fails closed here; H3 Prompt Skill consumes this target schedule and must not repair or accelerate finalized dialogue later.
+Source shot timing is immutable provenance, not the target cut timeline.
 
-Storyboard planning does not inherit a video model's per-generation duration limit. A longer target shot is valid storyboard structure; the downstream model-specific Prompt Skill divides it into executable generation segments without cutting a planned dialogue window.
+Every localized shot must return a positive `target_duration_ms` planned from:
 
-## Preservation
+- localized spoken dialogue;
+- listening/reaction time;
+- target blocking and action;
+- camera rhythm;
+- necessary visual comprehension.
 
-Shot order, shot anchor identity, source start/end/duration provenance and structured camera language are frozen source facts. Target start/end/duration are newly planned production facts. Localization may replace people, locations, culturally specific props and expression, but cannot silently reorder or create source shots.
+The server lays target shots out continuously per episode in source shot order.
 
-## Plan the whole target world before localizing shots
+Every canonical utterance is spoken exactly once in one deterministic owner shot. Cross-shot source dialogue must not become duplicated target dialogue.
 
-Read every episode's frozen story, dialogue and shot context first. In the same task, produce one complete target-world design, continuity rules and full Character / Scene / Prop definitions before any shot batch. This is internal planning, not a separate Target Bible product prerequisite.
+The localized spoken line must fit the target speech window at no more than approximately 4 whitespace-delimited words per second or 6 CJK characters per second. Leave room for breath, interruption, listening, and reaction; do not solve a bad fit by forcing unnatural speech.
 
-Redesign names, family relationships and forms of address, appearance and wardrobe, housing and room relationships, architecture and furnishings, props and cultural conventions for the configured target language and region. Source actor appearance, surnames and furniture are not target design defaults. Target language does not determine ethnicity; neither force a single ethnicity nor assume an immigrant setting because the source is Chinese. Preserve dramatic function, relationships, conflict, action logic and frozen timing.
+A longer target shot is valid storyboard structure. Downstream model-specific prompting may split long target shots into executable generation segments, but it must not cut through a planned speech window.
 
-Specify concrete target details instead of saying "retain the original" or "equivalent to the source amount". Names, aliases, family surnames, addresses, currency decisions and room layouts must be consistent across the complete plan, dialogue and every shot. Cultural equivalents must retain the conditions that make the original conflict possible. Plan each target shot duration rather than copying the source duration.
+H3 Prompt Skill must consume finalized target timing. It must not rewrite, accelerate, or duplicate finalized dialogue.
 
-Persist the validated complete plan before shot rewriting. Every shot batch receives that same plan, including entities appearing in other episodes. Batches write only shots and dialogue; the server supplies immutable planned entity definitions. Do not independently redesign identities in later batches or merge competing definitions by keeping the first one.
+## Shot localization contract
 
-## Identity
+Shot batches consume the frozen target world and may not redesign it.
 
-Provider may propose localized names/descriptions. Stable target entity IDs are generated and bound by the server from stable source identities; Provider must not invent IDs.
+For each source shot:
 
-The validated global plan freezes each complete Character, Scene and Prop definition before the first shot batch. Batches may not cross Episode boundaries or split a cross-shot utterance. Plan and validated batch semantics are checkpointed so resume does not repeat completed remote calls. Changed source/configuration/contracts cannot reuse the checkpoint.
+- preserve source shot identity and order;
+- preserve structured source camera facts;
+- preserve the beat's dramatic function;
+- preserve the action/consequence relationship;
+- realize the frozen target characters, scene, props, wardrobe, and naming;
+- make blocking, reactions, and object use causally legible;
+- write `localized_visual_description_zh` as the target shot itself, not as a comparison to the source;
+- write `camera_description_zh` as clear Chinese review prose consistent with the structured camera facts;
+- plan `target_duration_ms` from the target realization.
 
-## Review
+Do not copy source actor appearance, furniture, signs, brands, money, or cultural texture by default. Equally, do not replace a neutral detail unless the target version benefits from doing so.
 
-Generation produces a NEEDS_REVIEW candidate. Explicit ACCEPT publishes CURRENT TARGET_STORYBOARD v2.
+### Performance causality
 
-Storyboard revisions carry separate visual and dialogue projection fingerprints. Dialogue-only revisions may deterministically rebind already persisted asset media to the new storyboard lineage; they must still invalidate H3 prompts and generated video, but must not call the image runtime again.
+Keep visible reactions after their triggers:
+
+- a facial reaction after information is heard or seen;
+- physical movement after contact, force, or decision;
+- tears, laughter, panic, recovery, or silence after the causal beat;
+- prop state changes after the action that changes them.
+
+Do not use localization as permission to reorder cause and effect.
+
+## Continuity locks
+
+`continuity_rules_zh` should contain only useful cross-shot invariants, such as:
+
+- identity and naming;
+- wardrobe state;
+- wounds, dirt, makeup, wetness, or other persistent body state;
+- prop ownership and prop state;
+- geography, room relationships, and entrances/exits;
+- vehicle or device state;
+- information/knowledge state when visually relevant;
+- address/register rules;
+- currency/amount conventions;
+- stable visual style and protected camera-axis facts when needed.
+
+Continuity rules are not a place to restate the whole plot.
+
+## Batching and identity
+
+The validated global plan is frozen before the first shot batch.
+
+Every batch receives the same complete plan. Batches return only their assigned shots and dialogue. They must not independently rename, redesign, or reinterpret characters, scenes, or props.
+
+Batches:
+
+- may not cross Episode boundaries;
+- may not split a cross-shot utterance across different localization calls;
+- must exactly cover their assigned source shot and utterance IDs;
+- may not create new source IDs or target IDs.
+
+Checkpointed completed batches are reusable only when source/configuration/contracts are unchanged.
+
+## Output language contract
+
+- world, entity, visual, camera, and continuity review prose: Simplified Chinese;
+- spoken dialogue: `target_language`;
+- dialogue review translation: Simplified Chinese;
+- target entity names may remain in the target language;
+- proper nouns, brands, addresses, and currency notation may remain in their natural target-market form.
+
+## Failure conditions
+
+Fail closed when any of the following occurs:
+
+- missing/stale Source Snapshot;
+- incomplete or duplicate ID coverage;
+- global plan drift across shot batches;
+- identity/name drift;
+- target dialogue that cannot fit planned target timing;
+- target shot timing that is non-positive or inconsistent;
+- cultural replacement that changes locked story causality or relationship meaning;
+- provider output that invents unsupported source facts;
+- review prose not usable by Chinese reviewers.
+
+When an output is repairable, correct only the failed dimension. Preserve already valid world, identity, continuity, and shot decisions.
+
+## Review and publication
+
+Generation produces a `NEEDS_REVIEW` candidate.
+
+Only explicit ACCEPT publishes CURRENT `TARGET_STORYBOARD`.
+
+Storyboard revisions maintain separate visual and dialogue projection fingerprints. Dialogue-only revisions may deterministically rebind persisted asset media to the new storyboard lineage, but they must still invalidate downstream H3 prompts and generated video.
+
+## Quality checklist
+
+Before returning a candidate, verify:
+
+- the target version is culturally plausible without becoming stereotyped;
+- story function is preserved even where surface expression changes;
+- every character, location, prop, name, address, amount, and relationship convention agrees globally;
+- every shot is visually executable and causally legible;
+- dialogue sounds native to the target region and preserves intent/subtext;
+- every utterance is spoken once;
+- target timing is sufficient for speech, action, reaction, and camera rhythm;
+- source provenance remains intact;
+- no downstream stage is being asked to repair a localization decision that belongs here.
