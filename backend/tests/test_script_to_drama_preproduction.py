@@ -78,7 +78,7 @@ def test_preproduction_pipeline_two_chunks_and_source_staleness(client: TestClie
     monkeypatch.setattr(service, "ScriptLocalizationProvider", MockProvider)
     project_id = create_project(client)
     base = f"/api/v3/projects/{project_id}/script-to-drama"
-    source_text = "内景·办公室·日\n甲：我会回来。\n" * 180
+    source_text = "内景·办公室·日\n甲：我会回来。\n" * 360
     assert len(source_text) > 4000
     response = client.post(f"{base}/paste", json={"text": source_text})
     assert response.status_code == 201, response.text
