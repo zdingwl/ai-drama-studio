@@ -832,7 +832,11 @@ def _run_post(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[dict
     output = (root / output_rel).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     concat = output.with_suffix(".concat.txt")
-    concat.write_text("".join(f"file '{str(path).replace("'", "'\\''")}'\n" for path in paths), encoding="utf-8")
+    concat_lines: list[str] = []
+    for media_path in paths:
+        escaped_path = str(media_path).replace("'", "'\\''")
+        concat_lines.append(f"file '{escaped_path}'\\n")
+    concat.write_text("".join(concat_lines), encoding="utf-8")
     settings = get_settings()
     try:
         subprocess.run([
