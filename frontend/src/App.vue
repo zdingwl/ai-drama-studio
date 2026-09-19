@@ -17,6 +17,7 @@ import ProjectOverviewWorkspace from '@/components/ProjectOverviewWorkspace.vue'
 import ProductJourneyNav from '@/components/ProductJourneyNav.vue'
 import ReplicaProductionWorkspace from '@/components/ReplicaProductionWorkspace.vue'
 import ScriptLocalizationWorkspace from '@/components/ScriptLocalizationWorkspace.vue'
+import ScriptToDramaWorkspace from '@/components/ScriptToDramaWorkspace.vue'
 import SourceResultApprovalBar from '@/components/SourceResultApprovalBar.vue'
 import SourceScriptStoryboardWorkspace from '@/components/SourceScriptStoryboardWorkspace.vue'
 import SourceStoryboardWorkspace from '@/components/SourceStoryboardWorkspace.vue'
@@ -32,7 +33,9 @@ const activeWorkspace = computed(() => String(route.params.workspace ?? 'source'
 const projectType = ref<ProjectType | null>(null)
 const projectError = ref('')
 const scriptLocalization = computed(() => projectType.value === 'SCRIPT_LOCALIZATION')
-const hideEpisodeNav = computed(() => scriptLocalization.value || activeWorkspace.value === 'overview' || activeWorkspace.value === 'episodes')
+const scriptToDrama = computed(() => projectType.value === 'SCRIPT_TO_DRAMA')
+const textProject = computed(() => scriptLocalization.value || scriptToDrama.value)
+const hideEpisodeNav = computed(() => textProject.value || activeWorkspace.value === 'overview' || activeWorkspace.value === 'episodes')
 const showRoutedView = computed(() => !isProjectWorkspace.value || debugMode.value)
 
 watch(() => String(route.params.id ?? ''), async id => {
@@ -62,6 +65,13 @@ watch(() => String(route.params.id ?? ''), async id => {
           <template v-if="scriptLocalization">
             <section v-if="activeWorkspace === 'source' || activeWorkspace === 'overview'" class="product-page"><ScriptLocalizationWorkspace mode="source" /></section>
             <section v-else class="product-page"><ScriptLocalizationWorkspace mode="script" /></section>
+          </template>
+          <template v-else-if="scriptToDrama">
+            <section v-if="activeWorkspace === 'source' || activeWorkspace === 'overview'" class="product-page"><ScriptToDramaWorkspace mode="source" /></section>
+            <section v-else-if="activeWorkspace === 'script'" class="product-page"><ScriptToDramaWorkspace mode="script" /></section>
+            <section v-else-if="activeWorkspace === 'assets'" class="product-page"><ScriptToDramaWorkspace mode="assets" /></section>
+            <section v-else-if="activeWorkspace === 'storyboard'" class="product-page"><ScriptToDramaWorkspace mode="storyboard" /></section>
+            <section v-else class="product-page"><ScriptToDramaWorkspace mode="generation" /></section>
           </template>
           <template v-else>
             <section v-if="activeWorkspace === 'overview'" class="product-page"><ProjectOverviewWorkspace /></section>
@@ -111,6 +121,6 @@ watch(() => String(route.params.id ?? ''), async id => {
 .product-stage-host{min-width:0;min-height:0;overflow:auto;padding:10px 14px 12px;background:#f7f8fb}
 .product-mode.workspace-source .product-stage-host{overflow:hidden}
 .product-mode.workspace-source .product-page{height:100%;min-height:0}
-.product-mode.workspace-source .script-workspace{height:100%;overflow:auto}
+.product-mode.workspace-source .script-workspace,.product-mode.workspace-source .drama-workspace{height:100%;overflow:auto}
 @media(max-width:980px){.product-mode{grid-template-columns:1fr;height:auto;min-height:calc(100dvh - 56px);overflow:visible}.product-sidebar{position:sticky;top:56px;z-index:50}.product-content,.product-stage-host{overflow:visible}.product-stage-host{padding:10px}.product-mode.workspace-source .product-page{height:auto}}
 </style>
