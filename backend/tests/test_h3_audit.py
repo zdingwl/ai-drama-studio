@@ -4,7 +4,7 @@ import pytest
 
 from app.core.errors import AppError
 from app.replica_pipeline.h3_audit import audit_segments, dialogue_owner_windows, estimated_speech_fits, require_valid_segments
-from app.replica_pipeline.h3_prompting import _dialogue_refs
+from app.replica_pipeline.h3_prompting import MAX_SEGMENT_DURATION_US, _dialogue_refs, _segment_bounds
 from app.shot_breakdown.schemas import DialogueDelivery
 
 
@@ -93,3 +93,42 @@ def test_shared_owner_rule_selects_largest_authoritative_overlap() -> None:
         {"episode_id": "episode", "shot_anchor_id": "shot-b", "dialogue": [{"utterance_id": "line", "overlap_start_us": 600_000, "overlap_end_us": 1_300_000}]},
     ])
     assert owners[("episode", "line")] == ("shot-b", 600_000, 1_300_000)
+
+
+def test_h3_segment_boundaries_do_not_cut_planned_speech_window() -> None:
+    shot = NS(
+        storyboard_shot_id="shot-long",
+        start_us=0,
+        end_us=30_000_000,
+        duration_us=30_000_000,
+        dialogue=[
+            NS(utterance_id="u1", overlap_start_us=14_000_000, overlap_end_us=17_000_000),
+        ],
+    )
+
+    bounds = _segment_bounds(shot)
+
+    assert bounds == [
+        (0, 14_000_000),
+        (14_000_000, 29_000_000),
+        (29_000_000, 30_000_000),
+    ]
+    assert all(end - start <= MAX_SEGMENT_DURATION_US for start, end in bounds)
+    assert all(not (start < 14_000_000 < end < 17_000_000) for start, end in bounds)
+
+
+def test_h3_rejects_single_speech_window_longer_than_model_segment_limit() -> None:
+    shot = NS(
+        storyboard_shot_id="shot-long-line",
+        start_us=0,
+        end_us=20_000_000,
+        duration_us=20_000_000,
+        dialogue=[
+            NS(utterance_id="u1", overlap_start_us=0, overlap_end_us=16_000_000),
+        ],
+    )
+
+    with pytest.raises(AppError) as error:
+        _segment_bounds(shot)
+
+    assert error.value.code == "H3_PROMPT_DIALOGUE_WINDOW_TOO_LONG"
