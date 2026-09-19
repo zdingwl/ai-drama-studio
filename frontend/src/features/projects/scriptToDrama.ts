@@ -22,7 +22,12 @@ export interface ScriptToDramaState {
   world: PreproductionStage
   assets: PreproductionStage
   storyboard: PreproductionStage
-  video_runtime_status: 'NOT_CONNECTED'
+  asset_images: PreproductionStage
+  prompts: PreproductionStage
+  generated_video: PreproductionStage
+  selection: PreproductionStage
+  final_output: PreproductionStage
+  video_runtime_status: string
 }
 
 const endpoint = (projectId: string) => `/projects/${projectId}/script-to-drama`
@@ -51,4 +56,34 @@ export function runDramaStage(projectId: string, stage: 'analyze' | 'world' | 's
   return apiRequest<TaskRead>(`${endpoint(projectId)}/commands/run/${stage}`, {
     method: 'POST', headers: { 'Idempotency-Key': `script-to-drama-${stage}-${crypto.randomUUID()}` },
   })
+}
+
+
+export type ScriptToDramaProductionStage = 'asset_images' | 'prompts' | 'generate' | 'post'
+
+export function runDramaProductionStage(projectId: string, stage: ScriptToDramaProductionStage): Promise<TaskRead> {
+  return apiRequest<TaskRead>(`${endpoint(projectId)}/commands/production/${stage}`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': `script-to-drama-production-${stage}-${crypto.randomUUID()}` },
+  })
+}
+
+export function acceptDramaGenerated(
+  projectId: string,
+  expectedGeneratedVideoArtifactId: string,
+  selectedSegmentIds: string[],
+  reason: string,
+): Promise<ScriptToDramaState> {
+  return apiRequest<ScriptToDramaState>(`${endpoint(projectId)}/commands/accept-generated`, {
+    method: 'POST',
+    body: JSON.stringify({
+      expected_generated_video_artifact_id: expectedGeneratedVideoArtifactId,
+      selected_segment_ids: selectedSegmentIds,
+      reason,
+    }),
+  })
+}
+
+export function dramaMediaUrl(projectId: string, referenceId: string): string {
+  return `/api/v3${endpoint(projectId)}/media/${encodeURIComponent(referenceId)}`
 }
