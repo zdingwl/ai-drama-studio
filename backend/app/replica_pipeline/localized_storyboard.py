@@ -342,7 +342,7 @@ def _validate_content_dialogue_timing(content: ReplicaLocalizedStoryboardContent
         if not estimated_speech_fits(item.target_dialogue, available_seconds):
             issues.append({"utterance_id": item.utterance_id, "target_available_seconds": round(available_seconds, 3), "estimated_seconds": round(required_seconds, 3)})
     if issues:
-        raise AppError("LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID", "目标对白无法在权威原片时间窗内说完，请缩短对白", status_code=422, details={"issues": issues})
+        raise AppError("LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID", "目标对白无法在规划后的目标语音窗内自然说完，请修订对白或目标镜头时长", status_code=422, details={"issues": issues})
 
 
 def _plan_target_dialogue_windows(
@@ -549,8 +549,7 @@ def _load_snapshot(db: Session, project_id: str) -> tuple[ArtifactNode, SourceVi
 def _dialogue_provider_view(item, speaker_by_utterance: dict[str, str | None], owner_by_utterance: dict[str, tuple[str, int, int]]) -> dict:
     owner = owner_by_utterance.get(item.utterance_id)
     owner_shot_id, owner_start_us, owner_end_us = owner or (None, item.start_us, item.end_us)
-    available_seconds = max(0, owner_end_us - owner_start_us) / 1_000_000
-    budget_seconds = available_seconds + 0.15
+    source_overlap_seconds = max(0, owner_end_us - owner_start_us) / 1_000_000
     return {
         "utterance_id": item.utterance_id,
         "utterance_number": item.utterance_number,
@@ -561,12 +560,11 @@ def _dialogue_provider_view(item, speaker_by_utterance: dict[str, str | None], o
         "end_us": item.end_us,
         "duration_us": item.end_us - item.start_us,
         "duration_seconds": round((item.end_us - item.start_us) / 1_000_000, 3),
-        "authoritative_owner_shot_id": owner_shot_id,
-        "authoritative_speech_start_us": owner_start_us,
-        "authoritative_speech_end_us": owner_end_us,
-        "authoritative_available_seconds": round(available_seconds, 3),
-        "max_spoken_words": max(1, int(budget_seconds * 4)),
-        "max_spoken_cjk_chars": max(1, int(budget_seconds * 6)),
+        "source_owner_shot_id": owner_shot_id,
+        "source_owner_overlap_start_us": owner_start_us,
+        "source_owner_overlap_end_us": owner_end_us,
+        "source_owner_overlap_seconds": round(source_overlap_seconds, 3),
+        "timing_note": "Source timing is provenance/rhythm reference only; plan target_duration_ms independently.",
     }
 
 
