@@ -1,9 +1,9 @@
 {
   "id": "storyboard-localization",
   "name": "Replica Storyboard Localization",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "category": "target",
-  "description": "Localize accepted source shot facts directly into a Chinese-reviewable target storyboard with target-language dialogue and Chinese dialogue translations.",
+  "description": "Function-preserving localization of a frozen source storyboard into one culturally coherent target world, native dialogue, executable target shots, and independently planned target timing.",
   "when_to_use": ["REPLICA has a CURRENT SOURCE_VIDEO_SNAPSHOT and needs the target-localized shot table"],
   "when_not_to_use": ["Source snapshot is missing or stale", "The request is only script translation without shot structure"],
   "required_inputs": ["SOURCE_VIDEO_SNAPSHOT"],
@@ -12,13 +12,47 @@
   "required_capabilities": ["STORYBOARD_LOCALIZATION"],
   "manual_path": "storyboard-localization/SKILL.md",
   "steps": [
-    {"id":"read_source_storyboard","phase":"本土化分镜","title":"读取正式原片分镜","description":"Read frozen shot facts, stable identities and canonical dialogue from the current source snapshot.","capabilities":["STORYBOARD_LOCALIZATION"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":[]},
-    {"id":"plan_target_world","phase":"本土化分镜","title":"规划人物与场景","description":"Read all episodes and freeze one coherent target world, full character designs, family relationships, settings and cultural props before rewriting any shots.","capabilities":["STORYBOARD_LOCALIZATION"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":[]},
-    {"id":"localize_storyboard","phase":"本土化分镜","title":"逐镜本土化","description":"Rewrite each shot using the frozen target world and server-bound entity definitions, and plan an independent target duration while retaining source timing as provenance.","capabilities":["STORYBOARD_LOCALIZATION"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":["TARGET_STORYBOARD"]}
+    {"id":"read_source_storyboard","phase":"本土化分镜","title":"读取正式原片分镜","description":"Read frozen shot facts, canonical dialogue, stable identities, causal dependencies and source provenance.","capabilities":["STORYBOARD_LOCALIZATION"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":[]},
+    {"id":"plan_target_world","phase":"本土化分镜","title":"规划目标世界与文化映射","description":"Freeze one coherent target world across all episodes: character identity/register, spatial design, props, cultural equivalents, continuity locks and functional localization choices.","capabilities":["STORYBOARD_LOCALIZATION"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":[]},
+    {"id":"localize_storyboard","phase":"本土化分镜","title":"逐镜功能保真本土化","description":"Rewrite each source shot as a target-market realization that preserves shot identity, camera facts and dramatic function, while authoring native dialogue and independent target duration.","capabilities":["STORYBOARD_LOCALIZATION"],"requires":["SOURCE_VIDEO_SNAPSHOT"],"produces":["TARGET_STORYBOARD"]}
   ],
   "fact_levels": ["FROZEN_SOURCE_SHOT", "TARGET_LOCALIZED_STORYBOARD"],
-  "provider_rules": ["Plan the complete target world across all episodes before any shot batch; redesign character appearance, wardrobe, names, family relationships, housing, furnishings and cultural props for target_language and target_region", "Target language does not determine ethnicity; do not force one ethnicity or automatically retain source ethnicity and surnames", "Freeze complete entity definitions and global continuity rules; shot batches consume the same full plan and never redesign entities", "Names, family relationships, addresses, room layouts and currency choices must agree across entity definitions, visual prose and dialogue", "Source visuals describe story action and composition, not mandatory target actor appearance or decor", "Exact-cover all source shots and canonical dialogue IDs in shot rewriting; PLAN_WORLD reads all shots as context but returns no shots or dialogue", "Visual and camera review descriptions must be Simplified Chinese", "Spoken dialogue must be in target_language and each line must include a Simplified Chinese review translation", "Plan target_duration_ms for every target shot from localized action, camera rhythm and dialogue; source timing is provenance, not the target duration", "Every localized spoken line must fit the newly planned target shot at no more than 4 words per second or 6 CJK characters per second", "Do not leave dialogue timing repair or acceleration to H3 Prompt Skill", "Do not change shot order, source shot identity or source camera facts", "Do not generate asset images or video prompts"],
+  "provider_rules": [
+    "先区分 Foundation、Story Function、Surface Realization：锁定源事实和因果，只重构目标市场的表现层；本土化不得变成自由改剧情。",
+    "在任何镜头批次前读取全部剧集，冻结一个完整目标世界；人物、场景、道具、称谓、金额、地址、空间关系和连续性规则必须全局一致。",
+    "文化替换要保留原元素的戏剧功能与冲突条件，而不是做字面名词替换；不得因为替换货币、职业、礼俗、住宅或物件而改变证据、权力、合法性、关系或故事因果。",
+    "目标语言不等于族裔；不得强制单一族裔、移民叙事或刻板印象，也不要为了显示本土化而过度替换本来中性的细节。",
+    "人物必须给出可执行且稳定的姓名/称谓关系、社会身份、外形、发型、体型与服装基线；原片演员外形不是默认目标设计。",
+    "场景必须给出可跨镜复用的空间布局、固定地标、建筑/材质/家具与必要地域线索；同一地点不得在批次间改变住宅类型、房间关系或地址逻辑。",
+    "道具必须保留故事功能、所有权和关键状态；货币、证件、礼物、设备、车辆等本土化时优先保持冲突成立的条件与量级。",
+    "PLAN_WORLD 读取所有镜头和对白作为上下文但返回空 shots/dialogue；LOCALIZE_SHOTS 只返回本批 shots/dialogue，实体定义由冻结世界计划提供。",
+    "严格一一覆盖服务端给定的 source entity、shot 和 utterance ID；不得漏项、重复、合并、拆分或创造 ID。",
+    "逐镜保留 source shot identity、顺序和结构化 camera facts，并保留该镜头的戏剧功能、动作因果与反应顺序；目标画面可以重设计但不能重写事件顺序。",
+    "localized_visual_description_zh 必须直接描述目标镜头本身，落实冻结人物、服装、场景和道具；不要写‘同原片’、‘对应原场景’或比较性说明。",
+    "对白必须做目标地区的口语化 transcreation：保留意图、信息、关系、身份、潜台词与情绪方向，本土化称谓、礼貌等级、习语和句法；不要输出翻译腔或额外解释目标观众本来就懂的文化常识。",
+    "target_dialogue 使用 target_language，target_dialogue_zh 只用于中文审核，不得作为第二句对白。",
+    "每个镜头必须根据目标对白、动作、反应、理解停顿和镜头节奏规划正的 target_duration_ms；source timing 只保留为 provenance，不作为目标剪辑时长。",
+    "跨镜 source utterance 在目标版本只能说一次，由服务端确定 owner shot；不得在多个镜头重复全文。",
+    "目标对白必须能在规划后的目标语音窗自然说完，约束上限为约 4 words/s 或 6 CJK chars/s；优先缩短冗余表达或增加合理目标镜头时长，不得把修复留给 H3。",
+    "连续性规则只锁真正跨镜需要保持的状态：身份、称谓、服装、伤痕/脏污、道具所有权与状态、空间地理、车辆/设备状态、金额/货币和必要视觉轴线；不要把整段剧情抄进连续性规则。",
+    "禁止生成资产图片、H3 prompt、音频、视频或 Artifact/target entity ID；禁止让后续阶段替本阶段修复文化、身份、对白或时间轴错误。"
+  ],
   "output_contracts": ["TARGET_STORYBOARD"],
-  "completion_criteria": ["Every source shot is represented exactly once", "Every canonical dialogue line is localized exactly once", "Every target shot has an independently planned positive duration", "Every target spoken line passes the target-window timing preflight", "Chinese review text is present", "Target entity IDs are server-owned and traceable"],
-  "failure_policy": ["Missing/stale snapshot fails closed", "Missing/duplicate shot or dialogue coverage fails the whole candidate", "A target shot duration that cannot contain its assigned dialogue fails the candidate before review", "Provider cannot publish CURRENT without explicit review"]
+  "completion_criteria": [
+    "Every source shot is represented exactly once and source provenance remains intact",
+    "Every canonical dialogue line is localized exactly once",
+    "One globally coherent target world is frozen before shot rewriting",
+    "Every target shot has an independently planned positive duration",
+    "Every target spoken line fits its planned target speech window",
+    "Chinese review text is present and directly describes the target realization",
+    "Target entity IDs remain server-owned and traceable"
+  ],
+  "failure_policy": [
+    "Missing/stale snapshot fails closed",
+    "Missing/duplicate shot, entity or dialogue coverage fails the candidate",
+    "World-plan, identity or naming drift fails the candidate",
+    "Target timing that cannot contain assigned dialogue fails before review",
+    "A cultural rewrite that changes locked source causality or relationship meaning must be repaired rather than published",
+    "Provider cannot publish CURRENT without explicit review"
+  ]
 }
