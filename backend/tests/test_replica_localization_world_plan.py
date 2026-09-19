@@ -43,7 +43,7 @@ def payload():
 def shot_result(batch):
     return LocalizedStoryboardSemantic.model_validate({
         "dialogue": [{"utterance_id": item, "target_dialogue": "Hi!", "target_dialogue_zh": "你好"} for item in batch.expected_dialogue_ids],
-        "shots": [{"shot_anchor_id": item, "localized_visual_description_zh": "Alex身穿蓝色衬衫站在米色布艺沙发旁，向邻居问好。", "camera_description_zh": "固定平视镜头保持原片构图"} for item in batch.expected_shot_ids],
+        "shots": [{"shot_anchor_id": item, "target_duration_ms": 2_000, "localized_visual_description_zh": "Alex身穿蓝色衬衫站在米色布艺沙发旁，向邻居问好。", "camera_description_zh": "固定平视镜头保持原片构图"} for item in batch.expected_shot_ids],
     })
 
 
