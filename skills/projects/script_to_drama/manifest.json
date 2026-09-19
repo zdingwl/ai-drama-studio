@@ -26,5 +26,6 @@
   "auto_decision_policy": ["不擅自改写主线，只补足明确标记为视觉推断的可生成信息"],
   "output_contracts": ["SOURCE_TEXT_SNAPSHOT", "TARGET_BIBLE", "TARGET_ASSETS", "TARGET_STORYBOARD", "FINAL_OUTPUT"],
   "completion_criteria": ["完整源剧本被分析且可回溯", "目标世界与原剧本一致", "分镜完整可审阅", "实际成片仅在真实生成、人工选择和后期验收后才能声称完成"],
-  "failure_policy": ["每段模型上下文/输出失败时不发布残缺结果，保留检查点以续跑", "上游版本变化则阻断旧下游发布", "未接通的视频生成能力不允许调用复刻短剧专用 API 代替"]
+  "failure_policy": ["每段模型上下文/输出失败时不发布残缺结果，保留检查点以续跑", "上游版本变化则阻断旧下游发布", "未接通的视频生成能力不允许调用复刻短剧专用 API 代替"],
+  "next_recommended_skills": []
 }
