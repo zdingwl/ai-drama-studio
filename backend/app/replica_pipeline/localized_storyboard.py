@@ -283,7 +283,7 @@ def _validate_semantic(payload: LocalizationProviderInput, semantic: LocalizedSt
             required_seconds = estimate_spoken_seconds(item.target_dialogue)
             if owner_shot_id:
                 required_by_owner[owner_shot_id] = required_by_owner.get(owner_shot_id, 0.0) + max(
-                    0.0, required_seconds - SPEECH_ESTIMATE_TOLERANCE_SECONDS
+                    0.1, required_seconds - SPEECH_ESTIMATE_TOLERANCE_SECONDS
                 )
                 dialogue_by_owner.setdefault(owner_shot_id, []).append(item.utterance_id)
             if target_shot is None or not estimated_speech_fits(item.target_dialogue, available_seconds):
