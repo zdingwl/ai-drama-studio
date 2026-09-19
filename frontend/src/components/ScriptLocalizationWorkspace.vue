@@ -25,8 +25,9 @@ const error = ref('')
 const notice = ref('')
 let timer: number | undefined
 
+const LONG_SOURCE_LIMIT = 200_000
 const latestTask = computed(() => [...tasks.value]
-  .filter(item => item.task_type === 'SCRIPT_LOCALIZATION_STAGE')
+  .filter(item => item.task_type === 'SCRIPT_LOCALIZATION_STAGE' || item.task_type === 'SCRIPT_LOCALIZATION_LONG_STAGE')
   .sort((left, right) => +new Date(right.created_at) - +new Date(left.created_at))[0] ?? null)
 const processing = computed(() => busy.value || latestTask.value?.status === 'queued' || latestTask.value?.status === 'running')
 const analysisReady = computed(() => state.value?.analysis.status === 'CURRENT')
@@ -40,7 +41,9 @@ const characters = computed(() => array(analysis.value.characters))
 const mappings = computed(() => array(plan.value.mappings))
 const unresolved = computed(() => Array.isArray(plan.value.unresolved_decisions) ? plan.value.unresolved_decisions as string[] : [])
 const hasSource = computed(() => Boolean(source.value?.document_id))
-const eligibleForModel = computed(() => hasSource.value && (source.value?.text?.length ?? 0) <= 24000)
+const sourceLength = computed(() => source.value?.text?.length ?? 0)
+const eligibleForModel = computed(() => hasSource.value && sourceLength.value <= LONG_SOURCE_LIMIT)
+const longSource = computed(() => sourceLength.value > 24_000)
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -117,7 +120,9 @@ async function execute(stage: 'analyze' | 'plan' | 'generate') {
   notice.value = ''
   try {
     await runScriptStage(projectId.value, stage)
-    notice.value = '任务已提交，正在等待真实模型处理。结果通过校验后才会发布。'
+    notice.value = longSource.value
+      ? '长剧本任务已提交：系统将逐段调用模型、保存检查点，所有分段完成后才发布结果。'
+      : '任务已提交，正在等待真实模型处理。结果通过校验后才会发布。'
     await refresh()
   } catch (exc) {
     error.value = exc instanceof Error ? exc.message : '提交任务失败'
@@ -207,8 +212,9 @@ onBeforeUnmount(() => { if (timer !== undefined) window.clearInterval(timer) })
       <section class="panel">
         <h3>当前原剧本</h3>
         <template v-if="source?.document_id">
-          <p class="meta">{{ source.filename }} · r{{ source.revision }} · {{ source.text?.length ?? 0 }} 字符</p>
-          <p v-if="!eligibleForModel" class="message error">当前单次分析上限为 24000 字符。长文本分块链尚未验收，系统不会截断后冒充全文分析。</p>
+          <p class="meta">{{ source.filename }} · r{{ source.revision }} · {{ sourceLength }} 字符</p>
+          <p v-if="longSource && eligibleForModel" class="message">长剧本将自动分段处理，每段最多 4000 字符；所有分段完成并校验覆盖范围后才发布。每个阶段会产生多次模型调用和相应费用。</p>
+          <p v-if="!eligibleForModel" class="message error">当前长剧本生产链最多处理 200000 字符，请按集或章节拆成多个文档。系统不会截断后冒充全文分析。</p>
           <details :open="props.mode === 'source'"><summary>查看原始内容</summary><pre class="source-text">{{ source.text }}</pre></details>
         </template>
         <p v-else>还没有原剧本，请在「原剧本」页面上传 TXT / MD 或粘贴文字。</p>
