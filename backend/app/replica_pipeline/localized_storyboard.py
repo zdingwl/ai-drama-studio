@@ -21,7 +21,7 @@ from app.core.time import utc_now
 from app.projects.enums import ProjectType, SourceUnderstandingProvider
 from app.projects.service import get_project
 from app.replica_pipeline.models import ReplicaAssetImageRevision, ReplicaLocalizedStoryboardCandidate, ReplicaLocalizedStoryboardRevision
-from app.replica_pipeline.h3_audit import estimate_spoken_seconds, estimated_speech_fits
+from app.replica_pipeline.h3_audit import dialogue_owner_windows, estimate_spoken_seconds, estimated_speech_fits
 from app.replica_pipeline.schemas import (
     CandidateStatus,
     LOCALIZED_STORYBOARD_SCHEMA_VERSION,
@@ -164,10 +164,9 @@ def _provider_prompt(payload: LocalizationProviderInput, correction_issues: list
 - 本次要求输出的实体/镜头/对白必须严格覆盖下方输出 ID 清单；空清单返回空数组。不得漏项、重复、合并、拆分或创造 ID。
 - localized_visual_description_zh / camera_description_zh / entity description / target_dialogue_zh 必须使用简体中文，供中国用户理解和审核。
 - target_dialogue 必须是 {payload.target_language} 的本土自然对白；target_dialogue_zh 是它的中文意思，不是第二句要说出的对白。
-- 每个 shot 必须输出 target_duration_ms：这是目标版本的镜头时长。根据目标语自然口语、表演停顿、动作和新的场景调度重新规划，可长于或短于原片；服务端会按镜头顺序建立目标时间轴。
-- 原片 start/end/duration 只是 Source Truth 参考，绝不可改写或丢失，但不限制目标镜头时长。
-- 每条 dialogue 必须能在关联 target_duration_ms 所形成的目标语音窗内自然说完；若直译超时，优先合理延长相关镜头或改写为自然口语，不得把问题留给 H3 Prompt 或视频生成阶段。
-- 不改变 shot 顺序、shot anchor 或结构化 camera facts。
+- source start/end/duration 是权威时间轴，服务端确定性绑定；不得输出、规划或修改镜头时长。
+- 每条 dialogue 必须在其权威 source overlap 语音窗内自然说完；若直译超时，必须缩短为自然口语，不得把问题留给 H3 Prompt 或视频生成阶段。
+- 不改变 shot 顺序、shot anchor、start/end/duration 或结构化 camera facts。
 - 必须按目标地区重新规划人物姓名、外形服装、社会身份、地点装修、文化物件和自然表达，但不得改写故事事件顺序、核心关系或动作逻辑。
 - 不生成资产图片、H3 prompt、音频、视频或 Artifact/target entity ID。
 - frozen_identity_names 是前置批次已冻结的目标实体名称；同一 source identity 在后续批次必须逐字复用，不得另起英文名、昵称、姓氏或家庭名。
@@ -191,7 +190,7 @@ Professional Skill rules:
 上一次输出的定向修正清单（仅在非空时适用）：
 {json.dumps(correction_issues or [], ensure_ascii=False, separators=(",", ":"))}
 
-若修正清单非空：逐项修复。对白超时可缩短对白或延长关联镜头的 target_duration_ms；目标设定漂移必须恢复冻结规划。
+若修正清单非空：逐项修复。对白超时只能缩短 target_dialogue；目标设定漂移必须恢复冻结规划。
 
 输出 JSON Schema：
 {json.dumps(schema, ensure_ascii=False, separators=(",", ":"))}
@@ -270,52 +269,27 @@ def _validate_semantic(payload: LocalizationProviderInput, semantic: LocalizedSt
     for item in semantic.dialogue:
         _assert_chinese("目标对白中文翻译", item.target_dialogue_zh, minimum_cjk=1)
     if payload.operation == "LOCALIZE_SHOTS":
-        target_duration_by_shot = {item.shot_anchor_id: item.target_duration_ms * 1_000 for item in semantic.shots}
+        owner_windows = dialogue_owner_windows(payload.source_view["shots"])
         source_dialogue = {item["utterance_id"]: item for item in payload.source_view["dialogue"]}
-        dialogue_windows: dict[str, int] = {}
-        for source_shot in payload.source_view["shots"]:
-            target_duration = target_duration_by_shot[source_shot["shot_anchor_id"]]
-            refs = source_shot.get("dialogue", [])
-            source_duration = int(source_shot.get("duration_us") or 0)
-            if source_duration <= 0:
-                source_duration = max((int(source_dialogue[ref["utterance_id"]].get("duration_us") or 0) for ref in refs), default=target_duration)
-            source_duration = max(1, source_duration)
-            for ref in refs:
-                source = source_dialogue[ref["utterance_id"]]
-                overlap = max(0, int(ref.get("overlap_end_us", source.get("end_us", source_duration))) - int(ref.get("overlap_start_us", source.get("start_us", 0))))
-                if overlap <= 0:
-                    overlap = int(source.get("duration_us") or source_duration)
-                overlap = min(source_duration, overlap)
-                dialogue_windows[ref["utterance_id"]] = dialogue_windows.get(ref["utterance_id"], 0) + round(target_duration * overlap / source_duration)
         timing_issues = []
         for item in semantic.dialogue:
-            available_seconds = dialogue_windows.get(item.utterance_id, 0) / 1_000_000
+            owner = next((window for (_, utterance_id), window in owner_windows.items() if utterance_id == item.utterance_id), None)
+            available_seconds = 0 if owner is None else (owner[2] - owner[1]) / 1_000_000
             required_seconds = estimate_spoken_seconds(item.target_dialogue)
             if not estimated_speech_fits(item.target_dialogue, available_seconds):
-                timing_issues.append({"utterance_id": item.utterance_id, "target_available_seconds": round(available_seconds, 3), "estimated_seconds": round(required_seconds, 3), "target_dialogue": item.target_dialogue})
-        # The provider proposes pacing, but target dialogue must never be forced back into
-        # a source-time slot. Expand the relevant target shot deterministically when its
-        # proposed duration is short; retain a fail-closed limit for pathological output.
-        by_anchor = {item.shot_anchor_id: item for item in semantic.shots}
-        unresolved = []
-        for issue in timing_issues:
-            required_us = round((issue["estimated_seconds"] + 0.15) * 1_000_000)
-            available_us = round(issue["target_available_seconds"] * 1_000_000)
-            deficit_us = max(0, required_us - available_us)
-            refs = [(source_shot, ref) for source_shot in payload.source_view["shots"] for ref in source_shot.get("dialogue", []) if ref["utterance_id"] == issue["utterance_id"]]
-            if not refs:
-                unresolved.append(issue); continue
-            source_shot, ref = refs[0]
-            source_duration = max(1, int(source_shot.get("duration_us") or source_dialogue[issue["utterance_id"]].get("duration_us") or 1))
-            overlap = int(ref.get("overlap_end_us", source_dialogue[issue["utterance_id"]].get("end_us", source_duration))) - int(ref.get("overlap_start_us", source_dialogue[issue["utterance_id"]].get("start_us", 0)))
-            fraction = max(1 / source_duration, min(1.0, max(0, overlap) / source_duration))
-            shot = by_anchor[source_shot["shot_anchor_id"]]
-            expanded_ms = shot.target_duration_ms + max(1, round(deficit_us / fraction / 1_000))
-            if expanded_ms > 15_000:
-                unresolved.append({**issue, "required_target_duration_ms": expanded_ms}); continue
-            shot.target_duration_ms = expanded_ms
-        if unresolved:
-            raise AppError("LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID", "目标对白超过单镜可规划时长上限", status_code=502, details={"issues": unresolved})
+                source = source_dialogue[item.utterance_id]
+                timing_issues.append({
+                    "utterance_id": item.utterance_id,
+                    "authoritative_owner_shot_id": owner[0] if owner else None,
+                    "authoritative_available_seconds": round(available_seconds, 3),
+                    "max_spoken_words": source.get("max_spoken_words"),
+                    "max_spoken_cjk_chars": source.get("max_spoken_cjk_chars"),
+                    "estimated_seconds": round(required_seconds, 3),
+                    "target_dialogue": item.target_dialogue,
+                    "repair": "仅重写并缩短 target_dialogue，英文不得超过 max_spoken_words，CJK 不得超过 max_spoken_cjk_chars；不得修改镜头时长",
+                })
+        if timing_issues:
+            raise AppError("LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID", "目标对白无法在权威原片时间窗内说完，请缩短对白", status_code=502, details={"issues": timing_issues})
     for item in semantic.shots:
         _assert_chinese("本土化镜头描述", item.localized_visual_description_zh)
         _assert_chinese("镜头语言中文说明", item.camera_description_zh)
@@ -341,18 +315,16 @@ def _validate_semantic(payload: LocalizationProviderInput, semantic: LocalizedSt
 
 
 def _validate_content_dialogue_timing(content: ReplicaLocalizedStoryboardContent) -> None:
-    available_by_utterance: dict[str, int] = {}
-    for shot in content.shots:
-        for ref in shot.dialogue:
-            available_by_utterance[ref.utterance_id] = available_by_utterance.get(ref.utterance_id, 0) + (ref.overlap_end_us - ref.overlap_start_us)
+    owner_windows = dialogue_owner_windows(content.shots)
     issues = []
     for item in content.dialogue:
-        available_seconds = available_by_utterance.get(item.utterance_id, 0) / 1_000_000
+        owner = next((window for (_, utterance_id), window in owner_windows.items() if utterance_id == item.utterance_id), None)
+        available_seconds = 0 if owner is None else (owner[2] - owner[1]) / 1_000_000
         required_seconds = estimate_spoken_seconds(item.target_dialogue)
         if not estimated_speech_fits(item.target_dialogue, available_seconds):
             issues.append({"utterance_id": item.utterance_id, "target_available_seconds": round(available_seconds, 3), "estimated_seconds": round(required_seconds, 3)})
     if issues:
-        raise AppError("LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID", "目标对白无法在规划后的目标时间窗内说完，请缩短对白或延长关联镜头", status_code=422, details={"issues": issues})
+        raise AppError("LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID", "目标对白无法在权威原片时间窗内说完，请缩短对白", status_code=422, details={"issues": issues})
 
 
 def _visual_projection_fingerprint(content: ReplicaLocalizedStoryboardContent) -> str:
@@ -485,6 +457,30 @@ def _load_snapshot(db: Session, project_id: str) -> tuple[ArtifactNode, SourceVi
     return artifact, SourceVideoSnapshotContent.model_validate(row.content_json)
 
 
+def _dialogue_provider_view(item, speaker_by_utterance: dict[str, str | None], owner_by_utterance: dict[str, tuple[str, int, int]]) -> dict:
+    owner = owner_by_utterance.get(item.utterance_id)
+    owner_shot_id, owner_start_us, owner_end_us = owner or (None, item.start_us, item.end_us)
+    available_seconds = max(0, owner_end_us - owner_start_us) / 1_000_000
+    budget_seconds = available_seconds + 0.15
+    return {
+        "utterance_id": item.utterance_id,
+        "utterance_number": item.utterance_number,
+        "text": item.text,
+        "language": item.language,
+        "speaker_character_id": speaker_by_utterance.get(item.utterance_id),
+        "start_us": item.start_us,
+        "end_us": item.end_us,
+        "duration_us": item.end_us - item.start_us,
+        "duration_seconds": round((item.end_us - item.start_us) / 1_000_000, 3),
+        "authoritative_owner_shot_id": owner_shot_id,
+        "authoritative_speech_start_us": owner_start_us,
+        "authoritative_speech_end_us": owner_end_us,
+        "authoritative_available_seconds": round(available_seconds, 3),
+        "max_spoken_words": max(1, int(budget_seconds * 4)),
+        "max_spoken_cjk_chars": max(1, int(budget_seconds * 6)),
+    }
+
+
 def _source_view(snapshot: SourceVideoSnapshotContent) -> tuple[dict, dict[str, str | None]]:
     char_candidate = {candidate: entity.character_id for entity in snapshot.source_characters.entities for candidate in entity.source_candidate_ids}
     prop_candidate = {candidate: entity.prop_id for entity in snapshot.source_props.entities for candidate in entity.source_candidate_ids}
@@ -530,23 +526,16 @@ def _source_view(snapshot: SourceVideoSnapshotContent) -> tuple[dict, dict[str, 
     scenes = [item for item in snapshot.source_scenes.entities if item.scene_id in used_scenes]
     props = [item for item in snapshot.source_props.entities if item.prop_id in used_props]
     dialogue = [line for episode in sorted(snapshot.episodes, key=lambda item: item.episode_order) for line in episode.canonical_dialogue]
+    owner_windows = dialogue_owner_windows(shot_view)
+    owner_by_utterance = {
+        utterance_id: (shot_id, start_us, end_us)
+        for (_, utterance_id), (shot_id, start_us, end_us) in owner_windows.items()
+    }
     return {
         "characters": [{"source_character_id": item.character_id, "name": item.display_name, "aliases": item.aliases, "notes": item.notes} for item in characters],
         "scenes": [{"source_scene_id": item.scene_id, "name": item.display_name, "aliases": item.aliases, "notes": item.notes} for item in scenes],
         "props": [{"source_prop_id": item.prop_id, "name": item.display_name, "aliases": item.aliases, "notes": item.notes} for item in props],
-        "dialogue": [{
-            "utterance_id": item.utterance_id,
-            "utterance_number": item.utterance_number,
-            "text": item.text,
-            "language": item.language,
-            "speaker_character_id": speaker_by_utterance.get(item.utterance_id),
-            "start_us": item.start_us,
-            "end_us": item.end_us,
-            "duration_us": item.end_us - item.start_us,
-            "duration_seconds": round((item.end_us - item.start_us) / 1_000_000, 3),
-            "max_spoken_words": max(1, int((item.end_us - item.start_us) / 1_000_000 * 4)),
-            "max_spoken_cjk_chars": max(1, int((item.end_us - item.start_us) / 1_000_000 * 6)),
-        } for item in dialogue],
+        "dialogue": [_dialogue_provider_view(item, speaker_by_utterance, owner_by_utterance) for item in dialogue],
         "shots": shot_view,
     }, speaker_by_utterance
 
@@ -802,30 +791,23 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[Repli
     episode_media = {episode.episode_id: episode for episode in snapshot.episodes}
     view_shots = {item["shot_anchor_id"]: item for item in source_view["shots"]}
     shots: list[LocalizedStoryboardShot] = []
-    target_cursor_by_episode: dict[str, int] = {}
     for shot_id in payload.expected_shot_ids:
         episode, shot = source_shots[shot_id]
         view = view_shots[shot_id]
         localized = shot_sem[shot_id]
-        target_start_us = target_cursor_by_episode.get(episode.episode_id, 0)
-        target_duration_us = localized.target_duration_ms * 1_000
-        target_end_us = target_start_us + target_duration_us
+        target_start_us = shot.start_us
+        target_end_us = shot.end_us
+        target_duration_us = shot.duration_us
         refs: list[LocalizedShotDialogueRef] = []
         for source_ref in shot.dialogue:
             line = dialogue_by_id[source_ref.utterance_id]
-            # Map original overlap proportionally into the target shot; original values remain explicit provenance.
-            relative_start = max(0.0, min(1.0, (source_ref.overlap_start_us - shot.start_us) / shot.duration_us))
-            relative_end = max(relative_start, min(1.0, (source_ref.overlap_end_us - shot.start_us) / shot.duration_us))
-            overlap_start = target_start_us + round(relative_start * target_duration_us)
-            overlap_end = target_start_us + round(relative_end * target_duration_us)
-            if overlap_end <= overlap_start:
-                overlap_end = min(target_end_us, overlap_start + 1)
+            overlap_start = max(target_start_us, source_ref.overlap_start_us)
+            overlap_end = min(target_end_us, source_ref.overlap_end_us)
             refs.append(LocalizedShotDialogueRef(utterance_id=line.utterance_id, utterance_number=line.utterance_number, delivery=source_ref.delivery, target_character_id=line.target_character_id, target_dialogue=line.target_dialogue, target_dialogue_zh=line.target_dialogue_zh, overlap_start_us=overlap_start, overlap_end_us=overlap_end, source_overlap_start_us=source_ref.overlap_start_us, source_overlap_end_us=source_ref.overlap_end_us))
         media = episode_media.get(episode.episode_id)
         if media is None:
             raise AppError("LOCALIZED_STORYBOARD_EPISODE_MEDIA_MISSING", "Source Snapshot 缺少 Episode 媒体尺寸", status_code=500)
         shots.append(LocalizedStoryboardShot(storyboard_shot_id=f"localized:{episode.episode_id}:{shot.shot_anchor_id}", episode_id=episode.episode_id, episode_order=episode.episode_order, source_shot_anchor_id=shot.shot_anchor_id, shot_number=shot.shot_number, start_us=target_start_us, end_us=target_end_us, duration_us=target_duration_us, source_start_us=shot.start_us, source_end_us=shot.end_us, source_duration_us=shot.duration_us, output_ratio=_nearest_h3_ratio(media.width, media.height), camera_language=shot.camera_language, source_visual_description=shot.visual_description, localized_visual_description_zh=localized.localized_visual_description_zh, camera_description_zh=localized.camera_description_zh, target_character_ids=[target_char[x] for x in view["character_ids"] if x in target_char], target_scene_ids=[target_scene[x] for x in view["scene_ids"] if x in target_scene], target_prop_ids=[target_prop[x] for x in view["prop_ids"] if x in target_prop], dialogue=refs, sound_effects=shot.sound_effects, ambience=shot.ambience))
-        target_cursor_by_episode[episode.episode_id] = target_end_us
 
     content = ReplicaLocalizedStoryboardContent(source_snapshot_artifact_id=snapshot_artifact.id, target_language=project.target_language, target_region=project.target_region, world_design_zh=world_plan.world_design_zh, continuity_rules_zh=world_plan.continuity_rules_zh, characters=characters, scenes=scenes, props=props, dialogue=dialogue_lines, shots=shots)
     skill = get_professional_skill(SKILL_ID)
@@ -967,6 +949,11 @@ def update_localized_storyboard_shot(
                 dialogue.target_dialogue_zh = edit.target_dialogue_zh
 
     validated = ReplicaLocalizedStoryboardContent.model_validate(content.model_dump(mode="json"))
+    for updated_shot in validated.shots:
+        _assert_chinese("本土化镜头描述", updated_shot.localized_visual_description_zh)
+        _assert_chinese("镜头语言中文说明", updated_shot.camera_description_zh)
+    for updated_dialogue in validated.dialogue:
+        _assert_chinese("目标对白中文翻译", updated_dialogue.target_dialogue_zh, minimum_cjk=1)
     _validate_content_dialogue_timing(validated)
     candidate.content_json = validated.model_dump(mode="json")
     provenance = dict(candidate.provenance_json)

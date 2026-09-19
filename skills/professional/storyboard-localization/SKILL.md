@@ -20,13 +20,15 @@ The current Step 2 runtime uses Volcengine Ark / Doubao directly. It does **not*
 - Every spoken line also carries `target_dialogue_zh` for Chinese human understanding.
 - `target_dialogue_zh` is review metadata and must never be spoken by the video model unless target language itself is Chinese.
 
-## Dialogue timing contract
+## Target timeline contract
 
-Each canonical utterance carries its authoritative source start/end time, available seconds, and an optimistic target-language word/character budget. The localized spoken line must fit that window at no more than 4 whitespace-delimited words per second or 6 CJK characters per second. Text-only preflight allows a fixed 0.15-second ASR-boundary tolerance for very short one-syllable lines; this does not relax material overflow. When literal translation does not fit, rewrite it into shorter natural target-language speech while preserving the story information, tone, and relationship. A timing-invalid candidate fails closed here; H3 Prompt Skill must not repair or accelerate finalized dialogue later.
+Source start/end/duration remain immutable provenance, but they are not the target cut timeline. The provider plans `target_duration_ms` for every localized shot from its target action, camera rhythm and localized dialogue. The server lays those durations out continuously per episode and deterministically schedules every canonical utterance once in its owner shot. The target spoken line must fit its newly planned speech window at no more than 4 whitespace-delimited words per second or 6 CJK characters per second. A timing-invalid candidate fails closed here; H3 Prompt Skill consumes this target schedule and must not repair or accelerate finalized dialogue later.
+
+Storyboard planning does not inherit a video model's per-generation duration limit. A longer target shot is valid storyboard structure; the downstream model-specific Prompt Skill divides it into executable generation segments without cutting a planned dialogue window.
 
 ## Preservation
 
-Shot order, shot anchor identity, source start/end/duration and structured camera language are frozen source facts. Localization may replace people, locations, culturally specific props and expression, but cannot silently restructure the episode.
+Shot order, shot anchor identity, source start/end/duration provenance and structured camera language are frozen source facts. Target start/end/duration are newly planned production facts. Localization may replace people, locations, culturally specific props and expression, but cannot silently reorder or create source shots.
 
 ## Plan the whole target world before localizing shots
 
@@ -34,7 +36,7 @@ Read every episode's frozen story, dialogue and shot context first. In the same 
 
 Redesign names, family relationships and forms of address, appearance and wardrobe, housing and room relationships, architecture and furnishings, props and cultural conventions for the configured target language and region. Source actor appearance, surnames and furniture are not target design defaults. Target language does not determine ethnicity; neither force a single ethnicity nor assume an immigrant setting because the source is Chinese. Preserve dramatic function, relationships, conflict, action logic and frozen timing.
 
-Specify concrete target details instead of saying "retain the original" or "equivalent to the source amount". Names, aliases, family surnames, addresses, currency decisions and room layouts must be consistent across the complete plan, dialogue and every shot. Cultural equivalents must retain the conditions that make the original conflict possible.
+Specify concrete target details instead of saying "retain the original" or "equivalent to the source amount". Names, aliases, family surnames, addresses, currency decisions and room layouts must be consistent across the complete plan, dialogue and every shot. Cultural equivalents must retain the conditions that make the original conflict possible. Plan each target shot duration rather than copying the source duration.
 
 Persist the validated complete plan before shot rewriting. Every shot batch receives that same plan, including entities appearing in other episodes. Batches write only shots and dialogue; the server supplies immutable planned entity definitions. Do not independently redesign identities in later batches or merge competing definitions by keeping the first one.
 

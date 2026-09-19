@@ -2,11 +2,13 @@ from app.replica_pipeline.localized_storyboard import (
     LocalizationProviderInput,
     _assert_chinese,
     _batched_payloads,
+    _dialogue_provider_view,
     _merge_semantics,
     _validate_semantic,
 )
 from app.core.errors import AppError
 import pytest
+from types import SimpleNamespace
 from app.replica_pipeline.schemas import LocalizedStoryboardSemantic
 
 
@@ -20,7 +22,7 @@ def _payload() -> LocalizationProviderInput:
             "character_ids": ["character-1"],
             "scene_ids": ["scene-1"],
             "prop_ids": ["prop-1"],
-            "dialogue": [{"utterance_id": f"line-{index}", "delivery": "ON_SCREEN"}],
+            "dialogue": [{"utterance_id": f"line-{index}", "delivery": "ON_SCREEN", "overlap_start_us": index * 10_000_000, "overlap_end_us": (index + 1) * 10_000_000}],
         }
         for index in range(31)
     ]
@@ -96,7 +98,7 @@ def test_localization_batch_semantics_merge_to_exact_full_contract() -> None:
             "scenes": [{"source_scene_id": item, "localized_name": "Home", "setting_description_zh": "符合目标地区的住宅空间", "visual_description_zh": "稳定清晰的室内视觉环境"} for item in batch.expected_scene_ids],
             "props": [{"source_prop_id": item, "localized_name": "Flowers", "function_description_zh": "推动冲突发展的关键道具", "visual_description_zh": "稳定清晰的花束视觉外观"} for item in batch.expected_prop_ids],
             "dialogue": [{"utterance_id": item, "target_dialogue": "Localized dialogue", "target_dialogue_zh": "这是目标对白的中文翻译"} for item in batch.expected_dialogue_ids],
-            "shots": [{"shot_anchor_id": item, "target_duration_ms": 3000, "localized_visual_description_zh": "这是本土化后的镜头画面描述", "camera_description_zh": "这是供审核理解的镜头语言说明"} for item in batch.expected_shot_ids],
+            "shots": [{"shot_anchor_id": item, "localized_visual_description_zh": "这是本土化后的镜头画面描述", "camera_description_zh": "这是供审核理解的镜头语言说明"} for item in batch.expected_shot_ids],
         }))
 
     merged = _merge_semantics(payload, semantics)
@@ -112,21 +114,34 @@ def test_short_chinese_dialogue_translation_is_valid_but_non_chinese_is_not() ->
         _assert_chinese("目标对白中文翻译", "OK", minimum_cjk=1)
 
 
-def test_localization_rejects_target_dialogue_that_cannot_fit_planned_target_window() -> None:
+def test_provider_budget_uses_owner_overlap_instead_of_full_utterance() -> None:
+    line = SimpleNamespace(utterance_id="line", utterance_number=1, text="原台词", language="zh-CN", start_us=0, end_us=1_300_000)
+    view = _dialogue_provider_view(line, {"line": "character"}, {"line": ("shot-b", 600_000, 1_300_000)})
+
+    assert view["authoritative_owner_shot_id"] == "shot-b"
+    assert view["authoritative_available_seconds"] == 0.7
+    assert view["max_spoken_words"] == 3
+    assert view["max_spoken_cjk_chars"] == 5
+
+
+def test_localization_rejects_target_dialogue_that_cannot_fit_authoritative_window() -> None:
     payload = _payload()
     payload.source_view["dialogue"][0].update({
         "duration_us": 800_000,
         "duration_seconds": 0.8,
         "max_spoken_words": 3,
     })
+    payload.source_view["shots"][0]["dialogue"][0]["overlap_end_us"] = 800_000
     semantic = LocalizedStoryboardSemantic.model_validate({
         "characters": [{"source_character_id": "character-1", "localized_name": "Alex", "identity_description_zh": "本土化后的核心人物身份", "appearance_description_zh": "稳定清晰的人物外形设定"}],
         "scenes": [{"source_scene_id": "scene-1", "localized_name": "Home", "setting_description_zh": "符合目标地区的住宅空间", "visual_description_zh": "稳定清晰的室内视觉环境"}],
         "props": [{"source_prop_id": "prop-1", "localized_name": "Flowers", "function_description_zh": "推动冲突发展的关键道具", "visual_description_zh": "稳定清晰的花束视觉外观"}],
         "dialogue": [{"utterance_id": f"line-{index}", "target_dialogue": "This line is much too long and cannot fit in this target shot at all" if index == 0 else "OK", "target_dialogue_zh": "目标对白中文翻译"} for index in range(31)],
-        "shots": [{"shot_anchor_id": f"shot-{index}", "target_duration_ms": 500 if index == 0 else 3000, "localized_visual_description_zh": "这是本土化后的镜头画面描述", "camera_description_zh": "这是供审核理解的镜头语言说明"} for index in range(31)],
+        "shots": [{"shot_anchor_id": f"shot-{index}", "localized_visual_description_zh": "这是本土化后的镜头画面描述", "camera_description_zh": "这是供审核理解的镜头语言说明"} for index in range(31)],
     })
 
-    repaired = _validate_semantic(payload, semantic)
+    with pytest.raises(AppError) as error:
+        _validate_semantic(payload, semantic)
 
-    assert next(item for item in repaired.shots if item.shot_anchor_id == "shot-0").target_duration_ms > 500
+    assert error.value.code == "LOCALIZED_STORYBOARD_DIALOGUE_TIMING_INVALID"
+    assert "不得超过 max_spoken_words" in error.value.details["issues"][0]["repair"]

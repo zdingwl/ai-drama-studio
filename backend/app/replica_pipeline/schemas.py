@@ -59,7 +59,7 @@ class ProviderLocalizedDialogue(_StrictProvider):
 
 class ProviderLocalizedShot(_StrictProvider):
     shot_anchor_id: str
-    target_duration_ms: int = Field(ge=500, le=15_000)
+    target_duration_ms: int = Field(ge=250)
     localized_visual_description_zh: str
     camera_description_zh: str
 
@@ -142,7 +142,7 @@ class LocalizedStoryboardShot(BaseModel):
     episode_order: int = Field(ge=1)
     source_shot_anchor_id: str
     shot_number: int = Field(ge=1)
-    # target timeline; source timing is retained separately as immutable provenance.
+    # Target timing is independently planned; source timing remains provenance.
     start_us: int = Field(ge=0)
     end_us: int = Field(gt=0)
     duration_us: int = Field(gt=0)

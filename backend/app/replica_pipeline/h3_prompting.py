@@ -28,7 +28,7 @@ from app.p15.schemas import (
 from app.projects.enums import ProjectType, SourceUnderstandingProvider
 from app.projects.service import get_project
 from app.replica_pipeline.models import ReplicaAssetImageRevision, ReplicaAssetWorkspace, ReplicaH3PromptRevision, ReplicaLocalizedStoryboardRevision
-from app.replica_pipeline.h3_audit import audit_segments
+from app.replica_pipeline.h3_audit import audit_segments, dialogue_owner_windows
 from app.replica_pipeline.asset_images import _publish_workspace_if_complete, asset_image_runtime
 from app.replica_pipeline.schemas import (
     H3_PROMPT_SCHEMA_VERSION,
@@ -418,15 +418,9 @@ def _build_drafts(
     drafts: list[H3SegmentDraft] = []
     episode_counts: dict[str, int] = {}
     ordered_shots = sorted(storyboard.shots, key=lambda item: (item.episode_order, item.shot_number))
-    owner_candidates: dict[tuple[str, str], tuple[int, str]] = {}
-    for shot in ordered_shots:
-        for dialogue in shot.dialogue:
-            overlap_us = dialogue.overlap_end_us - dialogue.overlap_start_us
-            key = (shot.episode_id, dialogue.utterance_id)
-            if key not in owner_candidates or overlap_us > owner_candidates[key][0]:
-                owner_candidates[key] = (overlap_us, shot.storyboard_shot_id)
+    owner_candidates = dialogue_owner_windows(ordered_shots)
     owner_shot_by_episode = {
-        episode_id: {utterance_id: owner for (candidate_episode, utterance_id), (_, owner) in owner_candidates.items() if candidate_episode == episode_id}
+        episode_id: {utterance_id: owner for (candidate_episode, utterance_id), (owner, _, _) in owner_candidates.items() if candidate_episode == episode_id}
         for episode_id in {shot.episode_id for shot in ordered_shots}
     }
     for shot in ordered_shots:

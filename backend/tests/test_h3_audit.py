@@ -3,14 +3,15 @@ from types import SimpleNamespace as NS
 import pytest
 
 from app.core.errors import AppError
-from app.replica_pipeline.h3_audit import audit_segments, estimated_speech_fits, require_valid_segments
+from app.replica_pipeline.h3_audit import audit_segments, dialogue_owner_windows, estimated_speech_fits, require_valid_segments
 from app.replica_pipeline.h3_prompting import _dialogue_refs
 from app.shot_breakdown.schemas import DialogueDelivery
 
 
-def segment(name='s1', episode='e1', text='Hello.', duration=3_000_000):
+def segment(name='s1', episode='e1', text='Hello.', duration=3_000_000, speech_start=0, speech_end=None):
+    speech_end = duration if speech_end is None else speech_end
     return NS(generation_segment_id=name, episode_id=episode, duration_us=duration,
-              dialogue_refs=[NS(utterance_id='u1', final_target_dialogue=text)],
+              dialogue_refs=[NS(utterance_id='u1', final_target_dialogue=text, planned_speech_start_us=speech_start, planned_speech_end_us=speech_end)],
               target_asset_refs=[], reference_conditions=[])
 
 
@@ -27,6 +28,11 @@ def test_same_id_in_different_episodes_is_not_duplicate():
 
 def test_optimistic_speech_estimate_still_detects_obvious_overflow():
     issues = audit_segments([segment(text='Those flowers were just left out in the hallway!', duration=800_000)])
+    assert issues[0]['code'] == 'DIALOGUE_TOO_LONG'
+
+
+def test_speech_window_not_full_segment_is_used_for_overflow_audit():
+    issues = audit_segments([segment(text='This is a long enough line.', duration=3_000_000, speech_start=2_600_000, speech_end=3_000_000)])
     assert issues[0]['code'] == 'DIALOGUE_TOO_LONG'
 
 
@@ -79,3 +85,11 @@ def test_cross_shot_dialogue_is_owned_by_the_largest_overlap() -> None:
 
     assert first == []
     assert [item.utterance_id for item in second] == ['u-shared']
+
+
+def test_shared_owner_rule_selects_largest_authoritative_overlap() -> None:
+    owners = dialogue_owner_windows([
+        {"episode_id": "episode", "shot_anchor_id": "shot-a", "dialogue": [{"utterance_id": "line", "overlap_start_us": 0, "overlap_end_us": 600_000}]},
+        {"episode_id": "episode", "shot_anchor_id": "shot-b", "dialogue": [{"utterance_id": "line", "overlap_start_us": 600_000, "overlap_end_us": 1_300_000}]},
+    ])
+    assert owners[("episode", "line")] == ("shot-b", 600_000, 1_300_000)

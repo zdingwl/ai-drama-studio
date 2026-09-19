@@ -35,7 +35,7 @@ def payload():
             "characters": [{"source_character_id": "c", "name": "原人物"}],
             "scenes": [{"source_scene_id": "s", "name": "原场景"}], "props": [],
             "dialogue": [{"utterance_id": f"d{i}", "utterance_number": i, "text": "你好", "language": "zh", "speaker_character_id": "c", "start_us": (i-1)*2_000_000, "end_us": i*2_000_000, "duration_us": 2_000_000, "max_spoken_words": 8, "max_spoken_cjk_chars": 12} for i in (1, 2)],
-            "shots": [{"episode_id": "e", "episode_order": 1, "shot_number": i, "shot_anchor_id": f"s{i}", "character_ids": ["c"], "scene_ids": ["s"], "prop_ids": [], "dialogue": [{"utterance_id": f"d{i}"}]} for i in (1, 2)],
+            "shots": [{"episode_id": "e", "episode_order": 1, "shot_number": i, "shot_anchor_id": f"s{i}", "character_ids": ["c"], "scene_ids": ["s"], "prop_ids": [], "dialogue": [{"utterance_id": f"d{i}", "overlap_start_us": (i-1)*2_000_000, "overlap_end_us": i*2_000_000}]} for i in (1, 2)],
         }, expected_character_ids=("c",), expected_scene_ids=("s",), expected_prop_ids=(), expected_dialogue_ids=("d1", "d2"), expected_shot_ids=("s1", "s2"),
     )
 
@@ -43,7 +43,7 @@ def payload():
 def shot_result(batch):
     return LocalizedStoryboardSemantic.model_validate({
         "dialogue": [{"utterance_id": item, "target_dialogue": "Hi!", "target_dialogue_zh": "你好"} for item in batch.expected_dialogue_ids],
-        "shots": [{"shot_anchor_id": item, "target_duration_ms": 3000, "localized_visual_description_zh": "Alex身穿蓝色衬衫站在米色布艺沙发旁，向邻居问好。", "camera_description_zh": "固定平视镜头保持原片构图"} for item in batch.expected_shot_ids],
+        "shots": [{"shot_anchor_id": item, "localized_visual_description_zh": "Alex身穿蓝色衬衫站在米色布艺沙发旁，向邻居问好。", "camera_description_zh": "固定平视镜头保持原片构图"} for item in batch.expected_shot_ids],
     })
 
 
@@ -195,7 +195,7 @@ def test_execute_plans_once_and_resumes_without_repeating_paid_plan_or_completed
     assert content.world_design_zh == plan().world_design_zh
     assert content.characters[0].appearance_description_zh == plan().characters[0].appearance_description_zh
     assert len(provenance.provider_jobs) == 3
-    assert [(shot.start_us, shot.end_us) for shot in content.shots] == [(0, 3_000_000), (3_000_000, 6_000_000)]
+    assert [(shot.start_us, shot.end_us) for shot in content.shots] == [(0, 2_000_000), (2_000_000, 4_000_000)]
     assert [(shot.source_start_us, shot.source_end_us) for shot in content.shots] == [(0, 2_000_000), (2_000_000, 4_000_000)]
     assert [line.source_text for line in content.dialogue] == ["你好", "你好"]
     assert data.source_view["characters"][0]["name"] == "原人物"
