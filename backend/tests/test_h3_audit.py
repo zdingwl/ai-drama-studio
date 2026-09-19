@@ -4,7 +4,7 @@ import pytest
 
 from app.core.errors import AppError
 from app.replica_pipeline.h3_audit import audit_segments, dialogue_owner_windows, estimated_speech_fits, require_valid_segments
-from app.replica_pipeline.h3_prompting import MAX_SEGMENT_DURATION_US, _dialogue_refs, _segment_bounds
+from app.replica_pipeline.h3_prompting import MAX_SEGMENT_DURATION_US, _dialogue_refs, _read_validation_issues, _segment_bounds
 from app.shot_breakdown.schemas import DialogueDelivery
 
 
@@ -132,3 +132,11 @@ def test_h3_rejects_single_speech_window_longer_than_model_segment_limit() -> No
         _segment_bounds(shot)
 
     assert error.value.code == "H3_PROMPT_DIALOGUE_WINDOW_TOO_LONG"
+
+
+def test_stale_h3_read_does_not_surface_historical_validation_issues() -> None:
+    invalid = segment(text='This dialogue is far too long for the old stale segment.', duration=200_000)
+    content = NS(segments=[invalid])
+
+    assert _read_validation_issues(content, is_current=False) == []
+    assert _read_validation_issues(content, is_current=True)[0]['code'] == 'DIALOGUE_TOO_LONG'
