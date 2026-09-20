@@ -74,6 +74,20 @@ def execute(client: TestClient, factory: sessionmaker[Session], project_id: str,
     return result
 
 
+def approve_assets(client: TestClient, project_id: str) -> dict:
+    base = f"/api/v3/projects/{project_id}/script-to-drama"
+    before = client.get(f"{base}/state").json()
+    assert before["world"]["status"] == "CURRENT"
+    response = client.post(f"{base}/commands/review-world", json={
+        "expected_world_artifact_id": before["world"]["artifact_id"],
+        "approve": True,
+        "reason": "人工检查并确认测试剧本的当前人物与场景清单",
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["world"]["content"]["review_status"] == "APPROVED"
+    return response.json()
+
+
 def test_preproduction_pipeline_two_chunks_and_source_staleness(client: TestClient, session_factory, monkeypatch) -> None:
     monkeypatch.setattr(service, "ScriptLocalizationProvider", MockProvider)
     project_id = create_project(client)
@@ -92,6 +106,10 @@ def test_preproduction_pipeline_two_chunks_and_source_staleness(client: TestClie
     state = client.get(f"{base}/state").json()
     assert state["world"]["status"] == "CURRENT"
     assert state["assets"]["content"]["status"] == "DEFINITIONS_ONLY"
+    denied = client.post(f"{base}/commands/run/storyboard", headers={"Idempotency-Key": str(uuid4())})
+    assert denied.status_code == 409
+    assert denied.json()["error"]["code"] == "SCRIPT_TO_DRAMA_ASSETS_NOT_APPROVED"
+    approve_assets(client, project_id)
     assert execute(client, session_factory, project_id, "storyboard")["status"] == "succeeded"
     state = client.get(f"{base}/state").json()
     assert state["storyboard"]["status"] == "CURRENT"
@@ -128,6 +146,7 @@ def test_unknown_quote_refuses_storyboard_publication(client: TestClient, sessio
     assert client.post(f"{base}/paste", json={"text": "内景·办公室\n甲：你好。"}).status_code == 201
     assert execute(client, session_factory, project_id, "analyze")["status"] == "succeeded"
     assert execute(client, session_factory, project_id, "world")["status"] == "succeeded"
+    approve_assets(client, project_id)
     assert execute(client, session_factory, project_id, "storyboard")["status"] == "failed"
     assert client.get(f"{base}/state").json()["storyboard"]["status"] == "NOT_BUILT"
     assert client.post(f"{base}/commands/run/generate", headers={"Idempotency-Key": str(uuid4())}).status_code == 422
