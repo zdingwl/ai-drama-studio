@@ -64,7 +64,7 @@ describe('ScriptToDramaScriptLibrary', () => {
     await wrapper.find('.card-content').trigger('click')
     await flushPromises()
     expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
-    expect(wrapper.find('textarea[readonly]').element.value).toBe('完整剧本正文')
+    expect((wrapper.find('textarea[readonly]').element as HTMLTextAreaElement).value).toBe('完整剧本正文')
     await wrapper.find('.dialog-footer .secondary').trigger('click')
     await wrapper.find('.select-all input').setValue(true)
     expect(wrapper.text()).toContain('已选 2 份')
