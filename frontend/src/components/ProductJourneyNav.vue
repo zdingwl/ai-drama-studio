@@ -22,11 +22,10 @@ const scriptSteps: { id: WorkspaceId; label: string; hint: string }[] = [
   { id: 'script', label: '本土化剧本', hint: '分析与改写' },
 ]
 const dramaSteps: { id: WorkspaceId; label: string; hint: string }[] = [
-  { id: 'source', label: '剧本库', hint: '搜索 · 上传 · 选用' },
-  { id: 'script', label: '剧本分析', hint: '人物 · 场次 · 节奏' },
-  { id: 'assets', label: '视觉资产', hint: '人物 · 场景 · 道具 · 审核' },
-  { id: 'storyboard', label: '导演分镜', hint: '镜头计划' },
-  { id: 'generation', label: '视频制作', hint: '提示词 · 生成 · 选片 · 成片' },
+  { id: 'source', label: '剧本库', hint: '选定剧本 · 一键提取资产' },
+  { id: 'assets', label: '资产审核与出图', hint: '人物 · 场景 · 道具' },
+  { id: 'storyboard', label: '导演分镜', hint: '已确认资产 · 镜头计划' },
+  { id: 'generation', label: '视频生成与成片', hint: '生成 · 选片 · 合成' },
 ]
 const legacySteps: { id: WorkspaceId; label: string; hint: string }[] = [
   { id: 'source', label: '原作', hint: '上传与解析' },
@@ -58,8 +57,9 @@ async function loadProject() {
       if (target) await router.replace(`/projects/${id}/${target}`)
     } else if (type === 'SCRIPT_LOCALIZATION' && !['source', 'script', 'overview'].includes(activeId.value)) {
       await router.replace(`/projects/${id}/source`)
-    } else if (type === 'SCRIPT_TO_DRAMA' && !['source', 'script', 'assets', 'storyboard', 'generation', 'overview'].includes(activeId.value)) {
-      await router.replace(`/projects/${id}/source`)
+    } else if (type === 'SCRIPT_TO_DRAMA') {
+      if (activeId.value === 'script') await router.replace(`/projects/${id}/assets`)
+      else if (!['source', 'assets', 'storyboard', 'generation', 'overview'].includes(activeId.value)) await router.replace(`/projects/${id}/source`)
     }
   } catch { projectType.value = null }
 }
