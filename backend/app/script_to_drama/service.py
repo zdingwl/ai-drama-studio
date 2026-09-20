@@ -23,6 +23,7 @@ from app.projects.service import get_project
 from app.script_localization.long_text import CHUNK_CONTRACT_VERSION, SourceChunk, split_source
 from app.script_localization.providers import ScriptLocalizationProvider
 from app.script_localization.schemas import AnalysisSemantic
+from app.script_to_drama.grounding import normalize_world_evidence
 from app.script_to_drama.models import ScriptToDramaRevision
 from app.script_to_drama.schemas import (
     DirectedShot, ResultStatus, ScriptToDramaState, StageRead, StoryboardChunk, WorldChunk,
@@ -305,10 +306,10 @@ def _prompt(bundle: Inputs, stage: str, chunk: SourceChunk, previous: list[dict]
 
 def _validate_part(stage: str, chunk: SourceChunk, value: dict, bundle: Inputs) -> None:
     if stage == "world":
-        sem = WorldChunk.model_validate(value)
-        for item in sem.characters + sem.locations + sem.props:
-            if item.source_evidence not in chunk.text:
-                raise AppError("SCRIPT_TO_DRAMA_UNGROUNDED_WORLD", "世界设定引用了本段原文中不存在的证据", status_code=422)
+        # Operate on the persisted dict, not Pydantic's temporary copy.
+        WorldChunk.model_validate(value)
+        normalize_world_evidence(chunk, value)
+        WorldChunk.model_validate(value)
     elif stage == "storyboard":
         sem = StoryboardChunk.model_validate(value)
         assert bundle.world is not None
@@ -346,22 +347,44 @@ def _execute(context: TaskExecutionContext, task: TaskWorkerRead) -> tuple[str, 
             raise AppError("SCRIPT_TO_DRAMA_CHECKPOINT_INVALID", "分段原文与已保存检查点不匹配", status_code=409)
         _validate_part(stage, chunk, row["semantic"], bundle)
     for chunk in bundle.chunks[len(previous):]:
-        with context.session_factory() as db:
-            fresh = _fresh(db, task, stage, profile)
-            prompt, output_model = _prompt(fresh, stage, chunk, previous)
-            def call(_job):
-                semantic, remote_id = provider.generate(skill_id=skill.id, prompt=prompt,
-                    output_model=output_model, max_output_tokens=8192)
-                return ProviderDispatchResult(value=semantic.model_dump(mode="json"), remote_job_id=remote_id, completed=True)
-            job, result = dispatch_provider_call(db, task_id=task.id,
-                provider=provider.provider_name, model=provider.model_name,
-                capability=CAPABILITIES[stage],
-                payload={"task": TASK_TYPE, "stage": stage, "chunk": chunk.manifest(),
-                         "chunk_total": len(bundle.chunks), "source_ids": [a.id for a in fresh.artifacts],
-                         "skill": [skill.id, skill.version], "provider_profile": profile},
-                artifact_id=fresh.artifacts[-1].id, remote_call=call)
-        value = output_model.model_validate(result.value).model_dump(mode="json")
-        _validate_part(stage, chunk, value, bundle)
+        correction = ""
+        for attempt in range(2 if stage == "world" else 1):
+            with context.session_factory() as db:
+                fresh = _fresh(db, task, stage, profile)
+                prompt, output_model = _prompt(fresh, stage, chunk, previous)
+                if correction:
+                    if len(prompt) + len(correction) > MAX_PROMPT_CHARS:
+                        raise AppError("SCRIPT_TO_DRAMA_CONTEXT_BUDGET_EXCEEDED", "纠正证据的提示词超出安全预算", status_code=422)
+                    prompt += correction
+
+                def call(_job):
+                    semantic, remote_id = provider.generate(skill_id=skill.id, prompt=prompt,
+                        output_model=output_model, max_output_tokens=8192)
+                    value = semantic.model_dump(mode="json")
+                    # Validate BEFORE marking ProviderJob succeeded. Invalid evidence must
+                    # remain a FAILED job and must never enter the durable checkpoint.
+                    _validate_part(stage, chunk, value, fresh)
+                    return ProviderDispatchResult(value=value, remote_job_id=remote_id, completed=True)
+
+                try:
+                    job, result = dispatch_provider_call(db, task_id=task.id,
+                        provider=provider.provider_name, model=provider.model_name,
+                        capability=CAPABILITIES[stage],
+                        payload={"task": TASK_TYPE, "stage": stage, "chunk": chunk.manifest(),
+                                 "chunk_total": len(bundle.chunks), "source_ids": [a.id for a in fresh.artifacts],
+                                 "skill": [skill.id, skill.version], "provider_profile": profile,
+                                 "grounding_attempt": attempt + 1},
+                        artifact_id=fresh.artifacts[-1].id, remote_call=call)
+                except AppError as exc:
+                    if stage != "world" or exc.code != "SCRIPT_TO_DRAMA_UNGROUNDED_WORLD" or attempt != 0:
+                        raise
+                    correction = ("\n校验反馈：上一轮提取包含不能在本段原文逐字找到的证据。"
+                                  "请只重新提取当前分段，source_evidence 必须直接复制下方本段原文的连续短句，"
+                                  "不得改写、补写或引用其他分段。无法举证的实体不要输出；仍须输出完整 JSON。")
+                    continue
+            value = output_model.model_validate(result.value).model_dump(mode="json")
+            _validate_part(stage, chunk, value, bundle)
+            break
         previous.append({"chunk_index": chunk.index,
                          "source_sha256": chunk.manifest()["source_sha256"], "semantic": value})
         job_ids.append(job.id)
@@ -505,4 +528,4 @@ def run_stage_task(factory: sessionmaker[Session], task_id: str) -> None:
     except Exception as exc:
         with factory() as db:
             db.rollback()
-            _publish_failed(db, task.id, f"预制作发布异常（{type(exc).__name__}）")
+            _publish_failed(db, task.id, f"预制作发布异常（type(exc).__name__）")
