@@ -1,34 +1,35 @@
-# 剧本生成短剧 Root Skill（1.1）
+# 剧本生成短剧 Root Skill（1.2）
 
-## 业务目标与当前执行边界
+## 业务目标与工程边界
 
-目标是从原剧本完成短剧；目前**已接通的预制作链**为：`SOURCE_TEXT → SCRIPT_ANALYSIS → SOURCE_TEXT_SNAPSHOT / STORY_SKELETON / RHYTHM_SKELETON → TARGET_BIBLE / TARGET_ASSETS（定义） → TARGET_STORYBOARD（导演计划）`。
+从原剧本生成短剧，独立执行：`SOURCE_TEXT → SCRIPT_ANALYSIS → SOURCE_TEXT_SNAPSHOT / STORY_SKELETON / RHYTHM_SKELETON → TARGET_BIBLE / TARGET_ASSETS（定义） → TARGET_ASSET_IMAGES（正式参考图） → TARGET_STORYBOARD（导演分镜） → GENERATION_SEGMENTS（MiniMax H3 模型专属 Prompt） → GENERATED_VIDEO（待审镜头） → GENERATION_SELECTION（人工确认） → FINAL_OUTPUT（FFmpeg 成片）`。
 
-现阶段尚未接通的是：资产图片与首帧生成、模型专属 H3 提示词、真实 H3 视频调用、视频质检和人工正式选片、剪辑/字幕/音轨与成片导出。不能把预制作计划当成可播放视频，也不得为了提供一个看似可点击的页面而放宽 Replica-only API。
+**工程入口已接通，不等于真实图片/视频模型已完成出片验收。** 用户需配置所选图片、文本和 H3 Provider，并在同一实际项目检查人物一致性、画面、对白/音轨、镜头衔接及成片质量；未通过前不得把该能力宣传为已完成真实端到端验收。
 
-## 输入与复用
+## 输入和复用边界
 
-- 复用当前 `SOURCE_TEXT` 不可变上传、版本失效与 Artifact Graph。
-- 复用 `script-analysis` 专业技能手册及其 typed 输出。
-- 复用 `script_localization.long_text` 的 **纯确定性无损分块与来源指纹算法**和文本 Provider/Task/ProviderJob 技术适配，不复用剧本本土化的服务和项目类型授权。
-- 新增独立 `script-world-design`、`script-storyboard-directing` 专业技能手册和 `SCRIPT_TO_DRAMA_PREPRODUCTION` 调度器、修订表、API 与 UI。
+- 复用 `SOURCE_TEXT` 不可变上传、版本失效、Artifact Graph、任务/ProviderJob 和 `script_localization.long_text` 无损分块；保留自己的项目类型授权、业务服务与修订数据。
+- 分析阶段沿用经登记的 `script-analysis`；目标世界和导演分镜分别执行 `script-world-design` 与 `script-storyboard-directing`。
+- 资产图通过现有图片模型专属 Prompt Skill 及图片 Runtime 执行；人物优先生成稳定主身份图并从正式人物参考板拆出面部、正面参考。复用模型底层适配器，不直接读写 Replica 专属版本表或放宽 Replica 接口。
+- 视频阶段通过模型专属 `minimax-h3-prompting` 和 H3 Runtime；参考图槽位连续且不超过当前合同上限，正式分段输出须通过文件校验、ffprobe 与时长校验。
+- 只有用户明确确认全部待审分段后才能发布正式选片；FFmpeg 从当前正式选片合成 H.264/AAC MP4，媒体读取只认该项目当前正式版本。
 
-## 规则
+## 不可妥协的业务规则
 
-原文是 Source Fact；视觉形态补足需标成 Visual Inference，影响剧情的歧义进入人工决策。按自然场次/段落分块，跨段承接使用同一人物/场景/道具 registry；所有分段完成且通过引用校验后原子发布正式产物。模型上下文、JSON schema、输出长度和分段遗漏失败时保留检查点，拒绝发布不完整下游。修改原剧本会使此项目下游版本自动过期，不影响其他项目。
+原剧本是 Source Fact；非原文事实的视觉补足属于 Visual Inference，剧情歧义交人工决定。源文本按自然场次/段落分段，跨段共用人物/场景/道具 registry；分段输出必须精确覆盖、引用逐字可查、实体 ID 有效，禁止静默截断。上游版本变更后旧下游必须过期，重新生成不得回退到旧媒体。失败时保留有效分段的检查点，不得发布残缺产物。
 
-## 依据
+图片 Prompt 必须服从用户确认的视觉身份，模型执行由 Runtime 负责，不能把 Skill 当成图片或视频模型本身。素材模型未就绪、参考图超限、输出不完整、文件缺失或未确认选片时应明确失败，不得使用空参考或 Replica 专属产物伪造成功。
 
-Final Draft 剧本元素：https://kb.finaldraft.com/hc/en-us/articles/27646947570196-What-are-script-elements
+## 参考依据
 
-StudioBinder 剧本拆解：https://www.studiobinder.com/tutorials/breakdown/intro-to-script-breakdowns/
+- Final Draft 剧本元素：https://kb.finaldraft.com/hc/en-us/articles/27646947570196-What-are-script-elements
+- StudioBinder 剧本拆解：https://www.studiobinder.com/tutorials/breakdown/intro-to-script-breakdowns/
+- Adobe 镜头清单：https://www.adobe.com/uk/creativecloud/video/discover/shot-list.html
+- Adobe 镜头连续性：https://www.adobe.com/creativecloud/video/production/cinematography/camera-shots-and-angles/sequence-shot.html
+- Runway 视频提示编排：https://help.runwayml.com/hc/en-us/articles/48324313115155-Image-to-Video-Prompting-Guide
 
-Adobe 分镜/镜头清单：https://www.adobe.com/uk/creativecloud/video/discover/shot-list.html
+以上资料提供剧本元素、拆解与镜头编排思路；**具体模型输入/参考图、Prompt 长度、图片和视频质量的有效性必须以所选模型正式合同和真实项目验收为准**，不从上述通用资料推断供应商未承诺的能力。
 
-Adobe 镜头连续性：https://www.adobe.com/creativecloud/video/production/cinematography/camera-shots-and-angles/sequence-shot.html
+## 验收标准
 
-Runway 视频提示编排：https://help.runwayml.com/hc/en-us/articles/48324313115155-Image-to-Video-Prompting-Guide
-
-## 验收
-
-预制作工程验收不等于全项目完成。只有实际资产图片、模型专属提示词、真实视频 Provider/QC/正式选片和合成成片均由独立合规合同贯通、经同一真实项目人工验收后，才能将剧本生成短剧项目标记为可完整使用。
+工程验收：项目类型隔离、完整分段/资产/镜头覆盖、模型字段适配、任务续跑、版本失效、人工确认门禁、媒体 hash、真实本机 FFmpeg 拼接和前后端回归。真实验收：在同一剧本项目跑通正式图片与视频 Provider，人工检查身份/空间/动作/对白/音轨/成片，记录失败用例并修复后再标记为完整可用。
