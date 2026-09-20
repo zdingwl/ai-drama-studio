@@ -1,4 +1,4 @@
-"""Script-to-drama only: text source, source analysis, visual registry and storyboard plan."""
+"""Script-to-drama only: script ingestion, preproduction and independent media stages."""
 
 from enum import StrEnum
 from io import BytesIO
@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.db.session import get_db
 from app.script_to_drama.schemas import ScriptToDramaState, SelectionCommand
-from app.script_to_drama.production import accept_generated_video, media_path, start_stage as start_production_stage
+from app.script_to_drama.production import accept_generated_video, start_stage as start_production_stage
+from app.script_to_drama.media_read import media_path
 from app.script_to_drama.service import require_project, start_stage, state
 from app.sources.models import SourceAsset, SourceDocument
 from app.sources.schemas import SourceDocumentRead
