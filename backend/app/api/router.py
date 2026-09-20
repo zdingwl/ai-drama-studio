@@ -24,6 +24,7 @@ from app.api.routes.target_bible import router as target_bible_router
 from app.api.routes.target_script import router as target_script_router
 from app.api.routes.tasks import router as tasks_router
 from app.api.routes.understanding import router as understanding_router
+from app.script_to_drama.library import router as script_to_drama_library_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
@@ -34,6 +35,7 @@ api_router.include_router(sources_router)
 api_router.include_router(script_localization_router)
 api_router.include_router(script_to_drama_router)
 api_router.include_router(script_to_drama_asset_review_router)
+api_router.include_router(script_to_drama_library_router)
 api_router.include_router(preprocessing_router)
 api_router.include_router(evidence_router)
 api_router.include_router(understanding_router)
