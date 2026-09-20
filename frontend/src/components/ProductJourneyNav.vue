@@ -22,11 +22,11 @@ const scriptSteps: { id: WorkspaceId; label: string; hint: string }[] = [
   { id: 'script', label: '本土化剧本', hint: '分析与改写' },
 ]
 const dramaSteps: { id: WorkspaceId; label: string; hint: string }[] = [
-  { id: 'source', label: '原剧本', hint: '上传与粘贴' },
+  { id: 'source', label: '剧本库', hint: '搜索 · 上传 · 选用' },
   { id: 'script', label: '剧本分析', hint: '人物 · 场次 · 节奏' },
-  { id: 'assets', label: '目标世界', hint: '人物 · 场景 · 资产定义' },
+  { id: 'assets', label: '视觉资产', hint: '人物 · 场景 · 道具 · 审核' },
   { id: 'storyboard', label: '导演分镜', hint: '镜头计划' },
-  { id: 'generation', label: '视频生成（待接入）', hint: '尚未连通模型' },
+  { id: 'generation', label: '视频制作', hint: '提示词 · 生成 · 选片 · 成片' },
 ]
 const legacySteps: { id: WorkspaceId; label: string; hint: string }[] = [
   { id: 'source', label: '原作', hint: '上传与解析' },
