@@ -39,10 +39,11 @@ def _ark_text(response: Any) -> str:
             continue
         for part in getattr(item, "content", None) or []:
             if getattr(part, "type", None) == "output_text":
-                pieces.append(str(getattr(part, "text", "")))
-    if not pieces:
-        raise AppError("SCRIPT_LOCALIZATION_PROVIDER_EMPTY", "文本模型未返回内容", status_code=502)
-    return "".join(pieces)
+                pieces.append(str(getattr(part, "text", "") or ""))
+    text = "".join(pieces)
+    if not text.strip():
+        raise AppError("SCRIPT_LOCALIZATION_PROVIDER_EMPTY", "文本模型未返回最终正文（可能仅有思考内容或输出预算不足）", status_code=502)
+    return text
 
 
 class ScriptLocalizationProvider:
@@ -88,13 +89,23 @@ class ScriptLocalizationProvider:
             assert self.api_key is not None
             client = Ark(api_key=self.api_key.get_secret_value(), base_url=self.base_url,
                          timeout=self.settings.p7_doubao_request_timeout_seconds, max_retries=2)
-            response = client.responses.create(
-                model=self.model_name,
-                input=[{"role": "user", "content": [{"type": "input_text", "text": content}]}],
-                thinking={"type": "enabled"},
-                max_output_tokens=output_budget,
-            )
-            raw = _ark_text(response)
+            request = {"model": self.model_name,
+                       "input": [{"role": "user", "content": [{"type": "input_text", "text": content}]}]}
+            response = client.responses.create(**request, thinking={"type": "enabled"},
+                                               max_output_tokens=output_budget)
+            try:
+                raw = _ark_text(response)
+            except AppError as exc:
+                if exc.code not in {"SCRIPT_LOCALIZATION_PROVIDER_EMPTY", "SCRIPT_LOCALIZATION_PROVIDER_INCOMPLETE"}:
+                    raise
+                # Some reasoning models spend the entire per-chunk token budget on reasoning
+                # without producing a final message. Retry this specific failure once with
+                # reasoning disabled and more space for the required JSON. Never accept an
+                # empty/reasoning-only response or invent extraction results.
+                retry_budget = min(MAX_OUTPUT_TOKENS, max(16_384, output_budget * 2))
+                response = client.responses.create(**request, thinking={"type": "disabled"},
+                                                   max_output_tokens=retry_budget)
+                raw = _ark_text(response)
             remote_id = str(getattr(response, "id", "") or "") or None
         else:
             headers = {"Content-Type": "application/json"}
