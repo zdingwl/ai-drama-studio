@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { listProjectTasks } from '@/features/projects/api'
-import { dramaMediaUrl, getDramaState, runDramaProductionStage, runDramaStage, type ScriptToDramaState } from '@/features/projects/scriptToDrama'
+import { dramaMediaUrl, getDramaState, runDramaProductionStage, type ScriptToDramaState } from '@/features/projects/scriptToDrama'
 import type { TaskRead } from '@/features/projects/types'
 import { apiRequest } from '@/lib/api'
 
@@ -32,10 +32,12 @@ const categories: { id: 'all' | Category; label: string }[] = [
   { id: 'locations', label: '场景' }, { id: 'props', label: '道具' },
 ]
 const latest = computed(() => [...tasks.value]
-  .filter(item => ['SCRIPT_TO_DRAMA_PREPRODUCTION', 'SCRIPT_TO_DRAMA_PRODUCTION'].includes(item.task_type ?? ''))
+  .filter(item => ['SCRIPT_TO_DRAMA_ASSET_EXTRACTION', 'SCRIPT_TO_DRAMA_PREPRODUCTION', 'SCRIPT_TO_DRAMA_PRODUCTION'].includes(item.task_type ?? ''))
   .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))[0] ?? null)
 const processing = computed(() => busy.value || latest.value?.status === 'queued' || latest.value?.status === 'running')
 const worldReady = computed(() => state.value?.world.status === 'CURRENT')
+const approved = computed(() => worldReady.value && state.value?.assets.status === 'CURRENT' &&
+  state.value?.world.content?.review_status === 'APPROVED' && state.value?.assets.content?.review_status === 'APPROVED')
 const imageReady = computed(() => state.value?.asset_images.status === 'CURRENT')
 const pendingDecisions = computed(() => strings(state.value?.world.content?.unresolved_decisions))
 
@@ -80,19 +82,18 @@ async function refresh(silent = false) {
     const [nextState, nextTasks] = await Promise.all([getDramaState(id), listProjectTasks(id)])
     if (id !== projectId.value) return
     state.value = nextState
-    tasks.value = nextTasks
+    tasks.value = [...nextTasks]
   } catch (exc) {
     if (id === projectId.value) error.value = exc instanceof Error ? exc.message : '读取资产库失败'
   } finally { if (id === projectId.value && !silent) loading.value = false }
 }
 
-async function run(stage: 'world' | 'asset_images') {
-  if (processing.value) return
+async function generateImages() {
+  if (processing.value || !approved.value) return
   busy.value = true; error.value = ''; notice.value = ''
   try {
-    if (stage === 'world') await runDramaStage(projectId.value, 'world')
-    else await runDramaProductionStage(projectId.value, 'asset_images')
-    notice.value = stage === 'world' ? '已提交世界设定任务。' : '已提交全部正式资产图生成任务；现阶段不支持按所选资产局部重做。'
+    await runDramaProductionStage(projectId.value, 'asset_images')
+    notice.value = '已提交当前确认版本的全部资产图生成任务。'
     await refresh(true)
   } catch (exc) { error.value = exc instanceof Error ? exc.message : '任务提交失败' }
   finally { busy.value = false }
@@ -106,11 +107,11 @@ function openDecisions() {
   selected.value = null; editing.value = true; description.value = ''
   reason.value = '人工核定目标世界冲突'; acknowledged.value = []
 }
-async function saveReview() {
+async function submitReview(approve: boolean) {
   const worldId = state.value?.world.artifact_id
   if (processing.value || !worldReady.value || !worldId || !reason.value.trim()) return
   const changed = selected.value && description.value.trim() !== selected.value.visual_description
-  if (!changed && !acknowledged.value.length) return
+  if (!approve && !changed && !acknowledged.value.length) return
   busy.value = true; error.value = ''; notice.value = ''
   try {
     await apiRequest(`/projects/${projectId.value}/script-to-drama/commands/review-world`, {
@@ -123,15 +124,25 @@ async function saveReview() {
         }] : [],
         acknowledged_decisions: acknowledged.value,
         reason: reason.value.trim(),
+        approve,
       }),
     })
     selected.value = null; editing.value = false
-    notice.value = '人工审核已保存为新版本；旧资产图、分镜和下游视频已失效，需按流程重新制作。'
+    notice.value = approve ? '资产清单已人工确认，可以出图并进入导演分镜。' :
+      '设定已保存为新版本，请继续核对并点击「确认资产清单」；旧资产图和后续结果已失效。'
     await refresh(true)
   } catch (exc) { error.value = exc instanceof Error ? exc.message : '审核保存失败，请刷新后重试' }
   finally { busy.value = false }
 }
+async function approveWorld() {
+  if (processing.value || approved.value || unresolved.value || !worldReady.value) return
+  selected.value = null; acknowledged.value = []; description.value = ''
+  reason.value = '人工核对人物、场景和道具后确认资产清单'
+  if (!window.confirm('确认当前人物、场景和道具清单？确认后才能生成图片和导演分镜；以后修改设定会让相关下游版本过期。')) return
+  await submitReview(true)
+}
 function close() { if (!busy.value) { selected.value = null; editing.value = false } }
+watch(projectId, () => { state.value = null; tasks.value = []; selected.value = null; error.value = ''; notice.value = ''; void refresh() })
 onMounted(() => {
   void refresh()
   timer = window.setInterval(() => { if (!busy.value) void refresh(true) }, 3000)
@@ -142,21 +153,27 @@ onBeforeUnmount(() => { if (timer !== undefined) window.clearInterval(timer) })
 <template>
   <section class="asset-library" data-testid="script-to-drama-asset-library">
     <header class="library-header">
-      <div><p class="eyebrow">剧本生成短剧 · 视觉资产</p><h2>人物、场景与道具</h2><p>以当前剧本分析为依据管理资产。人工修改会建立新版本，不覆盖原文或复刻短剧的资产。</p></div>
-      <div class="header-actions"><button type="button" class="secondary" :disabled="processing || !worldReady" @click="openDecisions">核定未决事项 <span v-if="unresolved">({{ pendingDecisions.length }})</span></button><button type="button" :disabled="processing || !worldReady || unresolved" @click="run('asset_images')">{{ imageReady ? '重新生成全部资产图' : '生成全部资产图' }}</button></div>
+      <div><p class="eyebrow">剧本生成短剧 · 资产审核</p><h2>人物、场景与道具</h2><p>解析在后台完成。请核对提取结果、修改设定并确认；分镜和正式出图只使用已确认的资产版本。</p></div>
+      <div class="header-actions">
+        <button type="button" class="secondary" :disabled="processing || !worldReady" @click="openDecisions">核定未决事项 <span v-if="unresolved">({{ pendingDecisions.length }})</span></button>
+        <button v-if="!approved" type="button" :disabled="processing || !worldReady || unresolved" @click="approveWorld">确认资产清单</button>
+        <button v-if="approved" type="button" :disabled="processing" @click="generateImages">{{ imageReady ? '重新生成全部资产图' : '生成全部资产图' }}</button>
+      </div>
     </header>
     <p v-if="error" class="alert error" role="alert">{{ error }}</p>
     <p v-if="notice" class="alert" role="status">{{ notice }}</p>
-    <p v-if="latest && ['failed', 'interrupted'].includes(latest.status)" class="alert error">{{ latest.last_error || '任务失败，请检查模型配置。' }}</p>
+    <p v-if="latest && ['failed', 'interrupted'].includes(latest.status)" class="alert error">{{ latest.last_error || '任务失败，请返回剧本库重新提取。' }}</p>
     <p v-if="latest && ['queued', 'running'].includes(latest.status)" class="alert">{{ latest.task_name }} · {{ latest.status === 'queued' ? '等待执行' : `进行中 ${latest.progress_percent}%` }}</p>
     <div v-if="loading" class="panel">正在读取资产…</div>
     <template v-else-if="!worldReady">
-      <div class="panel empty"><h3>先生成目标世界和资产定义</h3><p>需要先在「剧本分析」完成原文解析，再提取人物、场景与道具。</p><button type="button" :disabled="processing || state?.analysis.status !== 'CURRENT'" @click="run('world')">生成目标世界</button></div>
+      <div class="panel empty"><h3>{{ processing ? '正在提取当前剧本的资产…' : '尚未生成资产清单' }}</h3><p>在剧本库选定剧本后点击「一键提取人物／场景／道具」，后台会自动执行必要的原文解析，无需单独操作。</p><a :href="`/projects/${projectId}/source`">返回剧本库</a></div>
     </template>
     <template v-else>
-      <div v-if="unresolved" class="alert error">存在 {{ pendingDecisions.length }} 条未决事项，请先人工核定再生成图片。<button type="button" class="text-action" @click="openDecisions">查看并核定</button></div>
+      <p v-if="approved" class="alert" role="status">当前人物、场景和道具清单已人工确认。后续图片与分镜会引用本版资产 ID。</p>
+      <p v-else class="alert">当前清单尚未确认：请检查人物别名、外观、场景和道具，确认后才可出图与生成分镜。</p>
+      <div v-if="unresolved" class="alert error">存在 {{ pendingDecisions.length }} 条未决事项，请核定后确认资产清单。<button type="button" class="text-action" @click="openDecisions">查看并核定</button></div>
       <div class="toolbar"><div class="filters"><button v-for="kind in categories" :key="kind.id" type="button" :class="{ active: category === kind.id }" @click="category = kind.id">{{ kind.label }} <small>{{ kind.id === 'all' ? entries.length : entries.filter(item => item.category === kind.id).length }}</small></button></div><div class="tools"><input v-model="keyword" type="search" aria-label="搜索资产" placeholder="搜索人物、场景、道具…" /><button type="button" class="secondary" :aria-pressed="view === 'cards'" @click="view = 'cards'">卡片</button><button type="button" class="secondary" :aria-pressed="view === 'table'" @click="view = 'table'">列表</button></div></div>
-      <p class="hint">当前为项目级资产库；重新生成会处理全部资产定义。单资产候选生成和局部重做尚未接入，请勿将此操作理解为仅重做筛选结果。</p>
+      <p class="hint">重新生成目前会处理全部资产；单项多候选、局部重做仍在后续制作范围内，请勿理解为只重做当前筛选项。</p>
       <div v-if="!filtered.length" class="panel empty">没有符合条件的资产。</div>
       <div v-else-if="view === 'cards'" class="cards">
         <article v-for="item in filtered" :key="item.id" class="asset-card">
@@ -170,8 +187,8 @@ onBeforeUnmount(() => { if (timer !== undefined) window.clearInterval(timer) })
       <section class="dialog" role="dialog" aria-modal="true" :aria-label="selected ? `审核${selected.name}` : '人工核定未决事项'">
         <header class="dialog-head"><div><small>{{ selected ? typeName(selected.category) : '目标世界' }} · 人工审核</small><h3>{{ selected?.name || '核定未决事项' }}</h3></div><button type="button" class="close" aria-label="关闭" @click="close">×</button></header>
         <div v-if="selected" class="dialog-body"><div class="detail-preview"><img v-if="selected.reference_id" :src="media(selected.reference_id)" :alt="selected.name" /><span v-else>尚未生成正式参考图</span></div><p class="hint">实体 ID：{{ selected.id }}。人工审核只修改视觉描述，不更改原文证据、实体 ID 或剧情。</p><label>视觉描述<textarea v-model="description" rows="5" maxlength="1200" :disabled="processing" /></label></div>
-        <div v-if="pendingDecisions.length" class="decisions"><strong>尚待人工核定的事项</strong><p>核定前请确认相关人物与场景设定，勾选即视为你明确接受当前修改后的解释。</p><label v-for="item in pendingDecisions" :key="item" class="decision"><input v-model="acknowledged" type="checkbox" :value="item" :disabled="processing" />{{ item }}</label></div>
-        <div class="dialog-foot"><label>审核理由<input v-model="reason" maxlength="800" :disabled="processing" placeholder="记录为何修改或确认该设定" /></label><div class="foot-actions"><button type="button" class="secondary" :disabled="busy" @click="close">取消</button><button type="button" :disabled="processing || reason.trim().length < 2 || (!acknowledged.length && (!selected || description.trim() === selected.visual_description)) || (selected !== null && !description.trim())" @click="saveReview">保存审核版本</button></div></div>
+        <div v-if="pendingDecisions.length" class="decisions"><strong>尚待人工核定的事项</strong><p>勾选代表已核对并明确接受本次人工决定。</p><label v-for="item in pendingDecisions" :key="item" class="decision"><input v-model="acknowledged" type="checkbox" :value="item" :disabled="processing" />{{ item }}</label></div>
+        <div class="dialog-foot"><label>审核理由<input v-model="reason" maxlength="800" :disabled="processing" placeholder="记录为何修改或确认该设定" /></label><div class="foot-actions"><button type="button" class="secondary" :disabled="busy" @click="close">取消</button><button type="button" :disabled="processing || reason.trim().length < 2 || (!acknowledged.length && (!selected || description.trim() === selected.visual_description)) || (selected !== null && !description.trim())" @click="submitReview(false)">保存修改，继续审核</button></div></div>
       </section>
     </div>
   </section>
