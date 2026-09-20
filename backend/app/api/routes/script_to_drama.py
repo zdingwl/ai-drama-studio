@@ -51,6 +51,19 @@ class ProductionStageName(StrEnum):
     POST = "post"
 
 
+def _require_approved_assets(db: Session, project_id: str) -> None:
+    snapshot = state(db, project_id)
+    if snapshot.world.status != "CURRENT" or snapshot.assets.status != "CURRENT":
+        raise AppError("SCRIPT_TO_DRAMA_ASSETS_NOT_READY", "请先提取当前剧本的人物、场景和道具", status_code=409)
+    if (snapshot.world.content or {}).get("review_status") != "APPROVED" or \
+            (snapshot.assets.content or {}).get("review_status") != "APPROVED":
+        raise AppError("SCRIPT_TO_DRAMA_ASSETS_NOT_APPROVED", "请先在资产库人工核对并确认人物、场景和道具", status_code=409)
+    if (snapshot.world.content or {}).get("unresolved_decisions"):
+        raise AppError("SCRIPT_TO_DRAMA_ASSETS_UNRESOLVED", "资产仍有未决事项，不能进入分镜或出图", status_code=409)
+    if (snapshot.assets.content or {}).get("target_bible_artifact_id") != snapshot.world.artifact_id:
+        raise AppError("SCRIPT_TO_DRAMA_ASSET_LINEAGE_INVALID", "资产定义与当前目标世界版本不匹配", status_code=409)
+
+
 @router.get("/source", response_model=SourceRead)
 def get_source(project_id: str, db: Session = Depends(get_db)) -> SourceRead:
     require_project(db, project_id)
@@ -92,6 +105,8 @@ def get_state(project_id: str, db: Session = Depends(get_db)) -> ScriptToDramaSt
 def run_stage(project_id: str, stage: StageName,
               idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
               db: Session = Depends(get_db)) -> TaskRead:
+    if stage == StageName.STORYBOARD:
+        _require_approved_assets(db, project_id)
     return task_to_read(start_stage(db, project_id, stage.value, idempotency_key))
 
 
@@ -102,6 +117,8 @@ def run_production_stage(
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
     db: Session = Depends(get_db),
 ) -> TaskRead:
+    if stage == ProductionStageName.ASSET_IMAGES:
+        _require_approved_assets(db, project_id)
     return task_to_read(start_production_stage(db, project_id, stage.value, idempotency_key))
 
 
