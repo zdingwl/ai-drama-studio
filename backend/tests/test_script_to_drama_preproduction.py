@@ -1,5 +1,6 @@
 """Mock-model tests prove task/artifact plumbing, not real Provider quality or video generation."""
 
+import time
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -69,9 +70,17 @@ def execute(client: TestClient, factory: sessionmaker[Session], project_id: str,
     base = f"/api/v3/projects/{project_id}/script-to-drama"
     response = client.post(f"{base}/commands/run/{stage}", headers={"Idempotency-Key": str(uuid4())})
     assert response.status_code == 202, response.text
-    run_dispatcher_once(factory)
-    result = client.get(f"/api/v3/projects/{project_id}/tasks/{response.json()['id']}").json()
-    return result
+    task_url = f"/api/v3/projects/{project_id}/tasks/{response.json()['id']}"
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        # The app's persistent dispatcher may claim the task before the test runner;
+        # run_dispatcher_once can therefore return while that task is RUNNING.
+        run_dispatcher_once(factory)
+        result = client.get(task_url).json()
+        if result["status"] in {"succeeded", "failed", "cancelled"}:
+            return result
+        time.sleep(0.05)
+    raise AssertionError(f"preproduction task never reached terminal status: {client.get(task_url).json()}")
 
 
 def approve_assets(client: TestClient, project_id: str) -> dict:
