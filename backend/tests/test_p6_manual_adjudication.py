@@ -1,4 +1,5 @@
 import subprocess
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -105,8 +106,16 @@ def _build_current_p6(client: TestClient, tmp_path: Path, monkeypatch) -> tuple[
         headers={"Idempotency-Key": "p6-human-seed"},
     )
     assert started.status_code == 202, started.text
-    task = client.get(f"/api/v3/projects/{project_id}/tasks/{started.json()['id']}").json()
-    assert task["status"] == "succeeded"
+    task_url = f"/api/v3/projects/{project_id}/tasks/{started.json()['id']}"
+    # P6 is asynchronous. The persistent dispatcher may still be executing its
+    # provider and publishing artifacts when the POST has already returned.
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        task = client.get(task_url).json()
+        if task["status"] in {"succeeded", "failed", "cancelled"}:
+            break
+        time.sleep(0.05)
+    assert task["status"] == "succeeded", task
 
     result = client.get(
         f"/api/v3/projects/{project_id}/episodes/{episode_id}/source-evidence"
