@@ -3,8 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { listProjectTasks } from '@/features/projects/api'
-import { getDramaState, runDramaStage, type ScriptToDramaState } from '@/features/projects/scriptToDrama'
-import { listDramaScripts, pasteDramaScript, selectDramaScript, uploadDramaScripts,
+import { getDramaState, type ScriptToDramaState } from '@/features/projects/scriptToDrama'
+import { extractDramaAssets, listDramaScripts, pasteDramaScript, selectDramaScript, uploadDramaScripts,
   type DramaScriptItem, type DramaScriptLibrary } from '@/features/projects/scriptToDramaLibrary'
 import type { TaskRead } from '@/features/projects/types'
 
@@ -26,7 +26,7 @@ const notice = ref('')
 let timer: number | undefined
 
 const latest = computed(() => [...tasks.value]
-  .filter(task => ['SCRIPT_TO_DRAMA_PREPRODUCTION', 'SCRIPT_TO_DRAMA_PRODUCTION'].includes(task.task_type ?? ''))
+  .filter(task => ['SCRIPT_TO_DRAMA_ASSET_EXTRACTION', 'SCRIPT_TO_DRAMA_PREPRODUCTION', 'SCRIPT_TO_DRAMA_PRODUCTION'].includes(task.task_type ?? ''))
   .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))[0] ?? null)
 const processing = computed(() => busy.value || ['queued', 'running'].includes(latest.value?.status ?? ''))
 const current = computed(() => library.value?.scripts.find(item => item.is_active) ?? null)
@@ -116,15 +116,9 @@ async function openProduction() {
   if (worldReady.value) { await router.push(`/projects/${projectId.value}/assets`); return }
   busy.value = true; error.value = ''; notice.value = ''
   try {
-    if (!analysisReady.value) {
-      await runDramaStage(projectId.value, 'analyze')
-      notice.value = '已启动原剧本解析。解析完成后进入「目标世界」提取人物、场景和道具。'
-      await router.push(`/projects/${projectId.value}/script`)
-    } else {
-      await runDramaStage(projectId.value, 'world')
-      notice.value = '已启动目标世界与资产定义提取。'
-      await router.push(`/projects/${projectId.value}/assets`)
-    }
+    await extractDramaAssets(projectId.value)
+    notice.value = '已启动一键资产提取：后台先解析原文，再自动提取人物、场景和道具；完成后请在资产库核对并确认。'
+    await router.push(`/projects/${projectId.value}/assets`)
   } catch (exc) { changeError(exc, '启动资产提取失败') }
   finally { busy.value = false }
 }
@@ -146,7 +140,7 @@ onBeforeUnmount(() => { if (timer !== undefined) window.clearInterval(timer) })
 <template>
   <section class="script-shelf" data-testid="script-to-drama-script-library">
     <header class="panel shelf-header">
-      <div><p class="eyebrow">剧本生成短剧 · 剧本管理</p><h2>剧本库</h2><p>先管理和选择正式剧本，再解析剧情、提取资产、制作分镜与生成视频。</p></div>
+      <div><p class="eyebrow">剧本生成短剧 · 剧本管理</p><h2>剧本库</h2><p>选择剧本 → 一键提取并审核人物／场景／道具 → 制作分镜 → 生成视频。解析在后台自动执行。</p></div>
       <div class="header-actions">
         <button type="button" :disabled="processing" @click="createOpen = !createOpen">{{ createOpen ? '收起新建' : '+ 新建剧本' }}</button>
         <label class="upload-button" :class="{ disabled: processing }">批量上传剧本 <input type="file" accept=".txt,.md,.markdown" multiple :disabled="processing" @change="upload" /></label>
@@ -165,22 +159,22 @@ onBeforeUnmount(() => { if (timer !== undefined) window.clearInterval(timer) })
     <template v-else>
       <section class="panel toolbar">
         <label class="search-label">搜索剧本<input v-model="keyword" type="search" placeholder="按剧本名称或内容搜索…" /></label>
-        <span>共 {{ library?.scripts.length ?? 0 }} 份 · 选用 {{ current?.title ?? '无' }}</span>
-        <button type="button" :disabled="processing || !current || (current.char_count > 200000)" @click="openProduction">{{ worldReady ? '查看已提取资产' : analysisReady ? '提取人物 / 场景 / 道具' : '解析所选剧本' }}</button>
+        <span>共 {{ library?.scripts.length ?? 0 }} 份 · 当前剧本 {{ current?.title ?? '无' }}</span>
+        <button type="button" :disabled="processing || !current || current.char_count > 200000" @click="openProduction">{{ worldReady ? '查看／审核已提取资产' : '一键提取人物／场景／道具' }}</button>
       </section>
-      <p class="hint">此项目可以保存多份候选剧本，但同一时间只制作一份「当前剧本」。切换后旧产物保留历史、不与新剧本混用。</p>
+      <p class="hint">项目内可以保存多份候选剧本，同一时间仅制作当前选用的一份；切换不会把旧剧本的资产混入新剧本。</p>
       <div v-if="!filtered.length" class="panel empty">{{ library?.scripts.length ? '没有匹配的剧本' : '剧本库为空。点击「新建剧本」或批量上传 TXT / MD 开始。' }}</div>
       <div v-else class="script-grid">
         <article v-for="item in filtered" :key="item.id" class="script-card" :class="{ active: item.is_active, selected: item.id === selectedId }">
           <div class="card-head"><h3>{{ item.title }}</h3><span v-if="item.is_active" class="badge">当前制作</span></div>
           <p class="excerpt">{{ item.excerpt || '暂无内容预览' }}</p>
           <div class="card-meta"><span>{{ item.char_count.toLocaleString() }} 字符</span><span>源版本 r{{ item.latest_revision }}</span></div>
-          <div class="card-actions"><button type="button" class="secondary" @click="selectedId = item.id">{{ selectedId === item.id ? '正在预览' : '查看内容' }}</button><button v-if="!item.is_active" type="button" :disabled="processing" @click="selectScript(item)">设为当前剧本</button><button v-else type="button" :disabled="processing" @click="openProduction">继续制作</button></div>
+          <div class="card-actions"><button type="button" class="secondary" @click="selectedId = item.id">{{ selectedId === item.id ? '正在预览' : '查看内容' }}</button><button v-if="!item.is_active" type="button" :disabled="processing" @click="selectScript(item)">设为当前剧本</button><button v-else type="button" :disabled="processing" @click="openProduction">{{ worldReady ? '审核资产' : '提取资产' }}</button></div>
         </article>
       </div>
       <section v-if="selected" class="panel selected-detail">
         <div class="detail-top"><div><h3>{{ selected.title }}</h3><p>{{ selected.filename }} · {{ selected.char_count.toLocaleString() }} 字符</p></div><button type="button" class="secondary" @click="selectedId = null">关闭预览</button></div>
-        <p class="hint">显示前 200 字符摘要。完整原文仅在设为当前剧本后进入「剧本分析」页面读取，防止编辑错版本。</p>
+        <p class="hint">显示前 200 字符摘要。完整原文仅供当前选用剧本的后端任务读取，避免编辑错版本。</p>
         <pre>{{ selected.excerpt }}</pre>
         <button v-if="!selected.is_active" type="button" :disabled="processing" @click="selectScript(selected)">选用这份剧本</button>
       </section>
