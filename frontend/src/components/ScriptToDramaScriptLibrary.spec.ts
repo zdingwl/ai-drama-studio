@@ -3,26 +3,33 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ScriptToDramaScriptLibrary from './ScriptToDramaScriptLibrary.vue'
 import { listProjectTasks } from '@/features/projects/api'
-import { getDramaSource, getDramaState } from '@/features/projects/scriptToDrama'
-import { extractDramaAssets, listDramaScripts, pasteDramaScript } from '@/features/projects/scriptToDramaLibrary'
+import { getDramaState } from '@/features/projects/scriptToDrama'
+import {
+  extractDramaAssets, getDramaScript, listDramaScripts, pasteDramaScript, updateDramaScript,
+} from '@/features/projects/scriptToDramaLibrary'
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ params: { id: 'script-project' } }),
   useRouter: () => ({ push: vi.fn() }),
 }))
 vi.mock('@/features/projects/api', () => ({ listProjectTasks: vi.fn() }))
-vi.mock('@/features/projects/scriptToDrama', () => ({ getDramaSource: vi.fn(), getDramaState: vi.fn() }))
+vi.mock('@/features/projects/scriptToDrama', () => ({ getDramaState: vi.fn() }))
 vi.mock('@/features/projects/scriptToDramaLibrary', () => ({
-  listDramaScripts: vi.fn(), pasteDramaScript: vi.fn(), extractDramaAssets: vi.fn(),
-  uploadDramaScripts: vi.fn(), selectDramaScript: vi.fn(),
+  listDramaScripts: vi.fn(), getDramaScript: vi.fn(), updateDramaScript: vi.fn(),
+  pasteDramaScript: vi.fn(), extractDramaAssets: vi.fn(), uploadDramaScripts: vi.fn(),
+  selectDramaScript: vi.fn(),
 }))
 
 const shelf = {
   project_id: 'script-project', current_document_id: 'document-1',
   scripts: [
     { id: 'script-1', title: '第一集', filename: '第一集.txt', excerpt: '林诗语走进宴会厅', char_count: 100, latest_revision: 1, is_active: true },
-    { id: 'script-2', title: '第二集', filename: '第二集.txt', excerpt: '赵教授出场', char_count: 80, latest_revision: 2, is_active: false },
+    { id: 'script-2', title: '第二集', filename: '第二集.txt', excerpt: '赵教授出场', char_count: 80, latest_revision: 1, is_active: false },
   ],
+}
+const details = {
+  'script-1': { ...shelf.scripts[0], text: '完整剧本正文', sha256: 'hash-1' },
+  'script-2': { ...shelf.scripts[1], text: '第二份完整正文', sha256: 'hash-2' },
 }
 
 async function workspace(extracted = false) {
@@ -40,10 +47,10 @@ describe('ScriptToDramaScriptLibrary', () => {
     vi.clearAllMocks()
     vi.mocked(listDramaScripts).mockResolvedValue(shelf)
     vi.mocked(listProjectTasks).mockResolvedValue([])
-    vi.mocked(getDramaSource).mockResolvedValue({ text: '完整剧本正文', document_id: 'document-1' } as never)
+    vi.mocked(getDramaScript).mockImplementation(async (_, id) => details[id as keyof typeof details] as never)
   })
 
-  it('does not display asset tags before extraction, even if names appear in raw text', async () => {
+  it('does not display asset tags before extraction, even if names occur in the original text', async () => {
     const wrapper = await workspace()
     expect(wrapper.findAll('.script-card')).toHaveLength(2)
     expect(wrapper.findAll('.asset-tags')).toHaveLength(0)
@@ -52,19 +59,21 @@ describe('ScriptToDramaScriptLibrary', () => {
     wrapper.unmount()
   })
 
-  it('shows extracted tags only for the current script, never attaches them to another script', async () => {
+  it('shows extracted tags only on the currently produced script', async () => {
     const wrapper = await workspace(true)
     expect(wrapper.findAll('.script-card')[0]?.find('.asset-tags').text()).toContain('林诗语')
     expect(wrapper.findAll('.script-card')[1]?.find('.asset-tags').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('separates card detail from checkboxes and never sends unsupported batch extraction', async () => {
+  it('reads full text for any script, without switching the production source', async () => {
     const wrapper = await workspace()
-    await wrapper.find('.card-content').trigger('click')
+    await wrapper.findAll('.card-content')[1]!.trigger('click')
     await flushPromises()
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
-    expect((wrapper.find('textarea[readonly]').element as HTMLTextAreaElement).value).toBe('完整剧本正文')
+    expect(getDramaScript).toHaveBeenCalledWith('script-project', 'script-2')
+    expect((wrapper.find('.dialog-body textarea').element as HTMLTextAreaElement).value).toBe('第二份完整正文')
+    expect(wrapper.find('.dialog-body textarea').attributes('readonly')).toBeUndefined()
+    expect(wrapper.find('.dialog-footer button:last-child').attributes('disabled')).toBeDefined()
     await wrapper.find('.dialog-footer .secondary').trigger('click')
     await wrapper.find('.select-all input').setValue(true)
     expect(wrapper.text()).toContain('已选 2 份')
@@ -75,7 +84,20 @@ describe('ScriptToDramaScriptLibrary', () => {
     wrapper.unmount()
   })
 
-  it('creates a script only after the new-script dialog has a name and body', async () => {
+  it('saves an edit with optimistic revision and leaves other scripts untouched', async () => {
+    vi.mocked(updateDramaScript).mockResolvedValue({ ...details['script-2'], text: '编辑后的第二份', latest_revision: 2 } as never)
+    const wrapper = await workspace()
+    await wrapper.findAll('.card-content')[1]!.trigger('click')
+    await flushPromises()
+    await wrapper.find('.dialog-body textarea').setValue('编辑后的第二份')
+    await wrapper.find('.dialog-footer button:last-child').trigger('click')
+    await flushPromises()
+    expect(updateDramaScript).toHaveBeenCalledWith('script-project', 'script-2', 1, '第二集', '编辑后的第二份')
+    expect(wrapper.text()).toContain('正文已保存为独立的新版本')
+    wrapper.unmount()
+  })
+
+  it('creates a script only after the dialog has a name and text', async () => {
     vi.mocked(pasteDramaScript).mockResolvedValue(shelf)
     const wrapper = await workspace()
     await wrapper.find('.toolbar-actions button').trigger('click')
@@ -87,6 +109,7 @@ describe('ScriptToDramaScriptLibrary', () => {
     await wrapper.find('.dialog-footer button:last-child').trigger('click')
     await flushPromises()
     expect(pasteDramaScript).toHaveBeenCalledWith('script-project', '第三集', '场次 01：开始')
+    expect(wrapper.text()).toContain('当前制作剧本没有改变')
     wrapper.unmount()
   })
 })
