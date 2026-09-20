@@ -18,6 +18,7 @@ import ProductJourneyNav from '@/components/ProductJourneyNav.vue'
 import ReplicaProductionWorkspace from '@/components/ReplicaProductionWorkspace.vue'
 import ScriptLocalizationWorkspace from '@/components/ScriptLocalizationWorkspace.vue'
 import ScriptToDramaAssetLibrary from '@/components/ScriptToDramaAssetLibrary.vue'
+import ScriptToDramaScriptLibrary from '@/components/ScriptToDramaScriptLibrary.vue'
 import ScriptToDramaWorkspace from '@/components/ScriptToDramaWorkspace.vue'
 import SourceResultApprovalBar from '@/components/SourceResultApprovalBar.vue'
 import SourceScriptStoryboardWorkspace from '@/components/SourceScriptStoryboardWorkspace.vue'
@@ -68,7 +69,7 @@ watch(() => String(route.params.id ?? ''), async id => {
             <section v-else class="product-page"><ScriptLocalizationWorkspace mode="script" /></section>
           </template>
           <template v-else-if="scriptToDrama">
-            <section v-if="activeWorkspace === 'source' || activeWorkspace === 'overview'" class="product-page"><ScriptToDramaWorkspace mode="source" /></section>
+            <section v-if="activeWorkspace === 'source' || activeWorkspace === 'overview'" class="product-page"><ScriptToDramaScriptLibrary /></section>
             <section v-else-if="activeWorkspace === 'script'" class="product-page"><ScriptToDramaWorkspace mode="script" /></section>
             <section v-else-if="activeWorkspace === 'assets'" class="product-page"><ScriptToDramaAssetLibrary /></section>
             <section v-else-if="activeWorkspace === 'storyboard'" class="product-page"><ScriptToDramaWorkspace mode="storyboard" /></section>
