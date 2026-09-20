@@ -13,15 +13,10 @@ def test_skill_registry_exposes_six_versioned_root_skills(client: TestClient) ->
     assert len(skills) == 6
     by_type = {skill["project_type"]: skill for skill in skills}
     assert set(by_type) == {
-        "REPLICA",
-        "REDRAW",
-        "TRANSLATION",
-        "NOVEL_TO_DRAMA",
-        "SCRIPT_TO_DRAMA",
-        "SCRIPT_LOCALIZATION",
+        "REPLICA", "REDRAW", "TRANSLATION", "NOVEL_TO_DRAMA", "SCRIPT_TO_DRAMA", "SCRIPT_LOCALIZATION",
     }
     assert by_type["REPLICA"]["version"] == "1.7.0"
-    assert by_type["SCRIPT_TO_DRAMA"]["version"] == "1.1.0"
+    assert by_type["SCRIPT_TO_DRAMA"]["version"] == "1.2.0"
     assert {skill["version"] for project_type, skill in by_type.items() if project_type not in {"REPLICA", "SCRIPT_TO_DRAMA"}} == {"1.0.0"}
     assert all(skill["required_capabilities"] for skill in skills)
     assert all(skill["completion_criteria"] for skill in skills)
@@ -42,11 +37,7 @@ def test_skill_detail_contains_replica_five_step_contract(client: TestClient) ->
     assert "qwen-image-edit-character-asset-prompting" in detail["subskills"]
 
     assert [step["id"] for step in detail["steps"]] == [
-        "source_storyboard",
-        "localized_storyboard",
-        "asset_images",
-        "model_prompting",
-        "generate",
+        "source_storyboard", "localized_storyboard", "asset_images", "model_prompting", "generate",
     ]
     steps = {step["id"]: step for step in detail["steps"]}
     assert steps["source_storyboard"]["requires"] == ["SOURCE_VIDEO"]
@@ -61,8 +52,6 @@ def test_skill_detail_contains_replica_five_step_contract(client: TestClient) ->
     assert steps["model_prompting"]["produces"] == ["GENERATION_SEGMENTS"]
     assert steps["generate"]["requires"] == ["TARGET_STORYBOARD", "TARGET_ASSETS", "GENERATION_SEGMENTS"]
     assert steps["generate"]["produces"] == ["GENERATED_VIDEO", "GENERATION_SELECTION"]
-
-    # Historical P11/P12/P14/P15/P17 artifacts may remain readable, but are not ordinary Replica steps.
     assert "target_bible" not in steps
     assert "target_script" not in steps
     assert "target_audio" not in steps
@@ -211,9 +200,6 @@ def test_capability_registry_keeps_new_five_step_capabilities_planned_until_real
     assert capabilities["STORY_RHYTHM"]["title"] == "故事与节奏"
     assert capabilities["SHOT_BREAKDOWN"]["availability"] == "AVAILABLE"
     assert capabilities["SOURCE_SNAPSHOT"]["availability"] == "AVAILABLE"
-
-    # Historical accepted capabilities remain recorded; the new five-step capabilities must not be
-    # promoted merely because code/tests exist. docs/55 requires real same-project human acceptance.
     assert capabilities["LOCALIZATION"]["availability"] == "AVAILABLE"
     assert capabilities["TARGET_BIBLE"]["availability"] == "AVAILABLE"
     assert capabilities["TARGET_SCRIPT"]["availability"] == "AVAILABLE"
@@ -229,7 +215,6 @@ def test_invalid_skill_manifest_fails_fast(tmp_path: Path) -> None:
     skill_dir = tmp_path / "broken"
     skill_dir.mkdir()
     (skill_dir / "manifest.json").write_text('{"id":"broken"}', encoding="utf-8")
-
     with pytest.raises(RuntimeError, match="Skill manifest 无效"):
         SkillRegistry.load_from(tmp_path)
 
