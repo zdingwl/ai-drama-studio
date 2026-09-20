@@ -70,8 +70,7 @@ watch(() => String(route.params.id ?? ''), async id => {
           </template>
           <template v-else-if="scriptToDrama">
             <section v-if="activeWorkspace === 'source' || activeWorkspace === 'overview'" class="product-page"><ScriptToDramaScriptLibrary /></section>
-            <section v-else-if="activeWorkspace === 'script'" class="product-page"><ScriptToDramaWorkspace mode="script" /></section>
-            <section v-else-if="activeWorkspace === 'assets'" class="product-page"><ScriptToDramaAssetLibrary /></section>
+            <section v-else-if="activeWorkspace === 'assets' || activeWorkspace === 'script'" class="product-page"><ScriptToDramaAssetLibrary /></section>
             <section v-else-if="activeWorkspace === 'storyboard'" class="product-page"><ScriptToDramaWorkspace mode="storyboard" /></section>
             <section v-else class="product-page"><ScriptToDramaWorkspace mode="generation" /></section>
           </template>
