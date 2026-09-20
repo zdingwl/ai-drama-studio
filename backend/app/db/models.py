@@ -40,6 +40,7 @@ from app.replica_pipeline.models import (
 )
 from app.script_localization.models import ScriptLocalizationRevision
 from app.script_to_drama.models import ScriptToDramaRevision
+from app.script_to_drama.shelf_models import DramaShelfRevision, DramaShelfScript
 from app.shot_breakdown.models import SourceShotFactsRevision
 from app.skills.plan_models import ProjectExecutionPlanRecord, ProjectExecutionPlanStepRecord
 from app.source_analysis.models import SourceStoryboardDraftRevision
@@ -54,16 +55,17 @@ from app.understanding.models import SourceBibleRevision
 from app.workflow.models import ProviderJob, Task
 
 __all__ = [
-    "ArtifactEdge", "ArtifactNode", "AsrEvidenceSegment", "Episode", "IndexTTSVoiceMetadata",
-    "OcrEvidenceObservation", "Project", "ProjectExecutionPlanRecord", "ProjectExecutionPlanStepRecord",
-    "ProviderJob", "ReplicaFinalOutputRevision", "ReplicaAssetImageCandidate", "ReplicaAssetImageRevision",
+    "ArtifactEdge", "ArtifactNode", "AsrEvidenceSegment", "DramaShelfRevision", "DramaShelfScript",
+    "Episode", "IndexTTSVoiceMetadata", "OcrEvidenceObservation", "Project",
+    "ProjectExecutionPlanRecord", "ProjectExecutionPlanStepRecord", "ProviderJob",
+    "ReplicaFinalOutputRevision", "ReplicaAssetImageCandidate", "ReplicaAssetImageRevision",
     "ReplicaAssetWorkspace", "ReplicaGeneratedVideoRevision", "ReplicaGenerationAttempt",
     "ReplicaGenerationSelectionCandidate", "ReplicaGenerationSelectionRevision", "ReplicaGenerationSegmentsRevision",
     "ReplicaPostCandidate", "ReplicaH3PromptRevision", "ReplicaLocalizedStoryboardCandidate",
     "ReplicaLocalizedStoryboardRevision", "ReplicaStoryboardCandidate", "ReplicaTargetAssetsCandidate",
     "ReplicaTargetAssetsRevision", "ReplicaTargetAudioCandidate", "ReplicaTargetAudioRevision",
     "ReplicaTargetRevision", "ReplicaTargetScriptRevision", "ReplicaTargetStoryboardRevision",
-    "ReplicaTimingPlanCandidate", "ScriptLocalizationRevision", "ScriptToDramaRevision", "ShotAnchor", "ShotBoundarySet",
+    "ReplicaTimingPlanCandidate", "ScriptLocalizationRevision", "ScriptToDramaRevision", "ShotAnchor",
     "ShotDialogueProjection", "SourceAsset", "SourceBibleRevision", "SourceDialogueUtterance",
     "SourceDocument", "SourceEvidenceSet", "SourceResolutionRevision", "SourceScriptRevision",
     "SourceShotFactsRevision", "SourceStoryboardDraftRevision", "SourceVideoSnapshotRevision",
