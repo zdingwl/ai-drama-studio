@@ -4,12 +4,12 @@ The first queued task runs existing checkpointed analysis and publishes its norm
 source artifacts. Only after publication can the existing world task be queued.
 If enqueueing world fails, a repeated command resumes at world without reanalysing.
 """
+import logging
 from uuid import uuid4
 
 from sqlalchemy import update, func
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.artifacts.enums import ArtifactValidity
 from app.core.errors import AppError
 from app.core.time import utc_now
 from app.core.config import get_settings
@@ -19,10 +19,14 @@ from app.script_to_drama import service
 from app.skills.models import ArtifactType
 from app.workflow.models import Task, TaskStatus
 from app.workflow.schemas import TaskCommandCreate, TaskWorkerRead
-from app.workflow.task_service import TaskCancelled, create_task_from_command, mark_task_failed, mark_task_succeeded, task_to_read
+from app.workflow.task_service import (
+    TaskCancelled, create_task_from_command, mark_task_failed, mark_task_succeeded,
+    resume_task, retry_task,
+)
 from app.workflow.worker import TaskExecutionContext
 
 TASK_TYPE = "SCRIPT_TO_DRAMA_ASSET_EXTRACTION"
+logger = logging.getLogger(__name__)
 
 
 def start_extraction(db: Session, project_id: str, idempotency_key: str) -> Task:
@@ -46,6 +50,10 @@ def start_extraction(db: Session, project_id: str, idempotency_key: str) -> Task
             max_attempts=3,
         ),
     )
+    if task.status == TaskStatus.FAILED and task.idempotency_key != idempotency_key.strip():
+        return retry_task(db, project_id, task.id)
+    if task.status == TaskStatus.INTERRUPTED and task.idempotency_key != idempotency_key.strip():
+        return resume_task(db, project_id, task.id)
     return task
 
 
@@ -103,12 +111,10 @@ def run_extraction_task(factory: sessionmaker[Session], task_id: str) -> None:
         with factory() as db:
             service._publish_failed(db, snapshot.id, f"剧本分析发布异常（{type(exc).__name__}）")
         return
-    # A distinct durable world task is queued only once the analysis artifacts
-    # are CURRENT. The endpoint can retry this enqueue step without reanalysis.
+    # A distinct durable world task is queued only once analysis artifacts are
+    # CURRENT. If enqueue fails, a new command resumes directly from world.
     try:
         with factory() as db:
             service.start_stage(db, snapshot.project_id, "world", f"asset-extract-world-{snapshot.id}")
-    except AppError:
-        # Analysis remains a valid, independently completed artifact; the next
-        # extract command sees it and starts the missing world task directly.
-        return
+    except Exception:
+        logger.exception("asset extraction world enqueue failed; repeat extract-assets to resume: %s", snapshot.project_id)
