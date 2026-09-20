@@ -11,6 +11,11 @@ export interface DramaScriptItem {
   excerpt: string
 }
 
+export interface DramaScriptDetail extends DramaScriptItem {
+  text: string
+  sha256: string
+}
+
 export interface DramaScriptLibrary {
   project_id: string
   current_document_id: string | null
@@ -21,6 +26,16 @@ const base = (projectId: string) => `/projects/${projectId}/script-to-drama/libr
 
 export function listDramaScripts(projectId: string): Promise<DramaScriptLibrary> {
   return apiRequest<DramaScriptLibrary>(base(projectId), { cache: 'no-store' })
+}
+
+export function getDramaScript(projectId: string, scriptId: string): Promise<DramaScriptDetail> {
+  return apiRequest<DramaScriptDetail>(`${base(projectId)}/${encodeURIComponent(scriptId)}`, { cache: 'no-store' })
+}
+
+export function updateDramaScript(projectId: string, scriptId: string, expectedRevision: number, title: string, text: string): Promise<DramaScriptDetail> {
+  return apiRequest<DramaScriptDetail>(`${base(projectId)}/${encodeURIComponent(scriptId)}`, {
+    method: 'PUT', body: JSON.stringify({ expected_revision: expectedRevision, title, text }),
+  })
 }
 
 export function selectDramaScript(projectId: string, scriptId: string, currentDocumentId: string | null): Promise<DramaScriptLibrary> {
