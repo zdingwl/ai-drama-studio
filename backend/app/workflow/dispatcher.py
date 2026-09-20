@@ -19,6 +19,7 @@ from app.replica_pipeline.h3_prompting import TASK_TYPE as H3_PROMPT_TASK_TYPE, 
 from app.replica_pipeline.localized_storyboard import TASK_TYPE as LOCALIZED_STORYBOARD_TASK_TYPE, run_localized_storyboard_task
 from app.script_localization.long_pipeline import TASK_TYPE as LONG_SCRIPT_LOCALIZATION_TASK_TYPE, run_long_stage_task
 from app.script_localization.service import TASK_TYPE as SCRIPT_LOCALIZATION_TASK_TYPE, run_stage_task
+from app.script_to_drama.extraction import TASK_TYPE as SCRIPT_TO_DRAMA_EXTRACTION_TASK_TYPE, run_extraction_task
 from app.script_to_drama.production_media import TASK_TYPE as SCRIPT_TO_DRAMA_PRODUCTION_TASK_TYPE, run_stage_task as run_script_to_drama_production_task
 from app.script_to_drama.service import TASK_TYPE as SCRIPT_TO_DRAMA_TASK_TYPE, run_stage_task as run_script_to_drama_stage_task
 from app.shot_breakdown.service_v2 import P8_TASK_TYPE, run_p8_shot_breakdown_task
@@ -69,6 +70,8 @@ def _runner_for_task(task: Task) -> TaskRunner | None:
         return run_stage_task
     if task.task_type == LONG_SCRIPT_LOCALIZATION_TASK_TYPE:
         return run_long_stage_task
+    if task.task_type == SCRIPT_TO_DRAMA_EXTRACTION_TASK_TYPE:
+        return run_extraction_task
     if task.task_type == SCRIPT_TO_DRAMA_TASK_TYPE:
         return run_script_to_drama_stage_task
     if task.task_type == SCRIPT_TO_DRAMA_PRODUCTION_TASK_TYPE:
