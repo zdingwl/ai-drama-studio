@@ -1,4 +1,5 @@
 import { apiRequest } from '@/lib/api'
+import type { TaskRead } from './types'
 
 export interface DramaScriptItem {
   id: string
@@ -39,4 +40,11 @@ export function uploadDramaScripts(projectId: string, files: File[]): Promise<Dr
   const body = new FormData()
   for (const file of files) body.append('files', file)
   return apiRequest<DramaScriptLibrary>(`${base(projectId)}/uploads`, { method: 'POST', body })
+}
+
+export function extractDramaAssets(projectId: string): Promise<TaskRead> {
+  return apiRequest<TaskRead>(`/projects/${projectId}/script-to-drama/commands/extract-assets`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': `asset-extract-${crypto.randomUUID()}` },
+  })
 }
