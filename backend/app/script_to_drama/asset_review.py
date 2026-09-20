@@ -1,7 +1,7 @@
 """Project-scoped human review of script-to-drama asset definitions.
 
-An edit creates new World/Assets revisions and invalidates downstream media; it
-never mutates a model-derived source fact or a Replica artifact in place.
+A correction or explicit approval creates new World/Assets revisions and invalidates
+downstream media. It never mutates model-derived source facts or Replica artifacts.
 """
 
 from typing import Literal
@@ -29,11 +29,12 @@ class ReviewWorldCommand(BaseModel):
     corrections: list[AssetCorrection] = Field(default_factory=list, max_length=100)
     acknowledged_decisions: list[str] = Field(default_factory=list, max_length=100)
     reason: str = Field(min_length=2, max_length=800)
+    approve: bool = False
 
     @model_validator(mode="after")
     def requires_change(self):
-        if not self.corrections and not self.acknowledged_decisions:
-            raise ValueError("请至少修改一个资产设定或确认一条未决事项")
+        if not self.corrections and not self.acknowledged_decisions and not self.approve:
+            raise ValueError("请至少修改一个资产设定、核定一条待决事项或确认当前资产清单")
         keys = [(item.category, item.entity_id) for item in self.corrections]
         if len(set(keys)) != len(keys) or len(set(self.acknowledged_decisions)) != len(self.acknowledged_decisions):
             raise ValueError("重复的资产修改或未决事项")
@@ -65,14 +66,20 @@ def review_world(db: Session, project_id: str, command: ReviewWorldCommand):
     if unknown:
         raise AppError("SCRIPT_TO_DRAMA_DECISION_CONFLICT", "待决事项已变化，请刷新后重新确认", status_code=409)
     reviewed["unresolved_decisions"] = [item for item in unresolved if item not in command.acknowledged_decisions]
+    if command.approve and reviewed["unresolved_decisions"]:
+        raise AppError("SCRIPT_TO_DRAMA_REVIEW_UNRESOLVED", "仍有未决事项，必须全部核定后才能确认资产清单", status_code=409)
+    # Any correction after approval must be reviewed again explicitly; a simple
+    # edit is never silently treated as a new approved reference version.
+    reviewed["review_status"] = "APPROVED" if command.approve else "NEEDS_REVIEW"
     reviewed["manual_review"] = {
         "reason": command.reason.strip(),
         "previous_world_artifact_id": current.id,
         "corrected_entity_ids": [item.entity_id for item in command.corrections],
         "acknowledged_decisions": command.acknowledged_decisions,
+        "approved": command.approve,
     }
     common = dict(project_id=project_id, skill_id="script-to-drama-human-review",
-                  skill_version="1.0.0", task_id=None, job_id="human-review")
+                  skill_version="1.1.0", task_id=None, job_id="human-review")
     world = service._publish_one(
         db, kind=ArtifactType.TARGET_BIBLE, namespace=ArtifactNamespace.TARGET,
         label="剧本生成短剧·人工核定目标世界", content=reviewed,
@@ -83,7 +90,8 @@ def review_world(db: Session, project_id: str, command: ReviewWorldCommand):
         label="剧本生成短剧·人工核定资产定义",
         content={"characters": reviewed.get("characters", []), "locations": reviewed.get("locations", []),
                  "props": reviewed.get("props", []), "target_bible_artifact_id": world.id,
-                 "status": "DEFINITIONS_ONLY", "manual_review": reviewed["manual_review"]},
+                 "status": "DEFINITIONS_ONLY", "review_status": reviewed["review_status"],
+                 "manual_review": reviewed["manual_review"]},
         sources=[world], **common,
     )
     _invalidate_project_plan(db, project)
